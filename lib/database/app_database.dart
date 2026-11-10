@@ -9,6 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
 
+import 'library_tables.dart';
 import 'tables.dart';
 import 'plex_metadata_recovery.dart';
 import 'tvos_database_recovery_store.dart';
@@ -62,6 +63,16 @@ final class AppDatabaseBootstrap {
     ProfileConnections,
     MusicSessions,
     Mounts,
+    LibraryItems,
+    LibraryFiles,
+    LibraryUserStates,
+    LibraryGenres,
+    LibraryItemGenres,
+    LibraryPeople,
+    LibraryCredits,
+    LibraryLists,
+    LibraryListItems,
+    LibraryScanStates,
   ],
 )
 class AppDatabase extends _$AppDatabase {
@@ -369,7 +380,7 @@ class AppDatabase extends _$AppDatabase {
   static const FormatException _invalidRecoveryImage = FormatException('Invalid tvOS database recovery image');
 
   @override
-  int get schemaVersion => 26;
+  int get schemaVersion => 27;
 
   @override
   MigrationStrategy get migration {
@@ -769,6 +780,28 @@ class AppDatabase extends _$AppDatabase {
         if (from < 26) {
           appLogger.i('Adding Mounts table (v26 migration)');
           await _ignoreAlreadyExists('Mounts table', () => m.createTable(mounts));
+        }
+        if (from < 27) {
+          appLogger.i('Adding local media library tables (v27 migration)');
+          for (final table in <TableInfo<Table, Object?>>[
+            libraryItems,
+            libraryFiles,
+            libraryUserStates,
+            libraryGenres,
+            libraryItemGenres,
+            libraryPeople,
+            libraryCredits,
+            libraryLists,
+            libraryListItems,
+            libraryScanStates,
+          ]) {
+            await _ignoreAlreadyExists('${table.actualTableName} table', () => m.createTable(table));
+          }
+          // createTable leaves a table's indexes out; createAll (fresh installs) does not.
+          for (final index in allSchemaEntities.whereType<Index>()) {
+            if (!index.entityName.startsWith('idx_library_')) continue;
+            await _ignoreAlreadyExists('${index.entityName} index', () => m.create(index));
+          }
         }
       },
     );

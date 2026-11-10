@@ -1,6 +1,6 @@
 # 二次開發計劃：無伺服器的本地媒體庫播放器
 
-> 狀態：階段 1 的程式碼已完成——驅動介面、本地、SMB、WebDAV、Quark、串流代理、掛載頁面；尚待在真實服務上驗證。
+> 狀態：階段 1（存儲驅動、串流代理、掛載介面）與階段 2（媒體庫資料庫與查詢層）已完成；下一步是階段 3 掃描器。
 > 日期：2026-11-09
 > 基線：plezy 2.26.0（commit `77f11b86f`）
 
@@ -131,21 +131,25 @@ app 內起一個只綁定 127.0.0.1 的 HTTP 服務，所有播放和下載都�
 
 ### 4.3 媒體庫資料庫
 
-在 drift 中新增（表名為暫定）：
+已實作（schema v27，`lib/database/library_tables.dart`；查詢層在 `lib/library/library_repository.dart`）：
 
-- `mounts`：掛載點設定。
-- `scan_entries`：掃到的原始檔案（掛載點、路徑、大小、修改時間、驅動側 ID），用於增量掃描。
-- `media_items`：電影、劇集、季、集的統一條目，含類型、標題、原始標題、年份、簡介、評分、外部 ID。
-- `media_files`：條目對應的檔案版本（一對多，支撐多版本），含媒體資訊欄位。
-- `subtitles`：外掛字幕與檔案的關聯。
-- `people`、`item_people`、`genres`、`item_genres`。
-- `collections`、`playlists` 及其成員表。
-- `watch_state`：播放進度、已看、最後播放時間、收藏。
-- `artwork`：海報、背景圖等的來源 URL 與本地快取路徑。
-- 全文搜尋索引（FTS5），涵蓋標題、原始標題、別名。
+| 資料表 | 內容 |
+| --- | --- |
+| `library_items` | 電影、劇集、季、集共用一張表；含標題、排序標題、別名、年份、簡介、評分、季集編號、圖片來源、各刮削源的外部 ID、手動鎖定旗標 |
+| `library_files` | 掃到的檔案：影片、字幕、圖片、NFO。同一條目的多個影片就是多個版本；含檔名解析結果、匹配狀態、懶加載的媒體資訊、最後一次見到它的掃描編號 |
+| `library_user_states` | 播放進度、已看、播放次數、收藏、從「繼續觀看」隱藏 |
+| `library_genres`、`library_item_genres` | 類型 |
+| `library_people`、`library_credits` | 演職員 |
+| `library_lists`、`library_list_items` | 合集與播放列表，共用結構，以 `kind` 區分 |
+| `library_scan_states` | 每個掛載點的掃描進度，供中斷後續掃 |
 
-現有的 `ApiCache`、`Connections`、`Profiles`、`ProfileConnections`、`OfflineWatchProgress`
-在拆除階段移除；下載相關的表保留並改為引用新的條目 ID。
+與原草案的差異：
+
+- **搜尋用 `LIKE` 而不是 FTS5。** FTS5 的預設分詞器不切分中文，trigram 分詞器又搜不到兩個字的片名（例如「三體」）。
+  個人片庫的規模下 `LIKE` 足夠快，而且任意長度的中文都能搜。標題、原始標題、別名三欄都會比對。
+- **圖片來源直接存在條目上**（海報、背景、標誌三欄），沒有獨立的 `artwork` 表。
+- **合集和播放列表合併成一組表。**
+- 現有的 `ApiCache`、`Connections`、`Profiles` 等舊表仍留著，到階段 6 才移除。
 
 ### 4.4 掃描器
 
