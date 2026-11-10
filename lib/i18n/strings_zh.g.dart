@@ -2480,10 +2480,6 @@ class Translations$storage$zh extends Translations$storage$en {
 	@override String get username => '用户名（可选）';
 	@override String get password => '密码（可选）';
 	@override String get allowSelfSigned => '允许自签名证书';
-	@override String get cookie => 'Cookie';
-	@override String get cookieHelp => '已登录 pan.quark.cn 会话的完整 Cookie 请求头';
-	@override String get rootFolderId => '根文件夹 ID';
-	@override String get rootFolderIdHelp => '0 表示网盘根目录';
 	@override String get requestInterval => 'API 请求最小间隔（毫秒）';
 	@override String requestIntervalHelp({required Object min}) => '不低于 ${min}。数值越大对账号越安全。';
 	@override String requestIntervalInvalid({required Object min}) => '请输入 ${min} 或更大的值';
@@ -2492,8 +2488,36 @@ class Translations$storage$zh extends Translations$storage$en {
 	@override String get testAndSave => '测试并保存';
 	@override String get smbHost => '服务器';
 	@override String get smbShare => '共享名称';
-	@override String get smbSubfolder => '子文件夹（可选）';
 	@override String get smbDomain => '域（可选）';
+	@override String get emptyTitle => '还没有挂载';
+	@override String get chooseType => '选择存储类型';
+	@override String get changeType => '更换类型';
+	@override String get sectionConnection => '连接';
+	@override String get sectionLibrary => '媒体库';
+	@override String get sectionAdvanced => '高级';
+	@override String get nameHint => '留空则使用默认名称';
+	@override String get open => '浏览';
+	@override late final Translations$storage$kindDescription$zh kindDescription = Translations$storage$kindDescription$zh.internal(_root);
+	@override String get quarkSignedIn => '已登录';
+	@override String get quarkSignedOut => '尚未登录';
+	@override String get quarkScan => '扫码登录';
+	@override String get quarkRescan => '重新登录';
+	@override String get quarkScanTitle => '登录夸克网盘';
+	@override String get quarkScanHint => '使用夸克 App 扫码，并在手机上确认登录';
+	@override String get quarkScanExpired => '二维码已过期';
+	@override String get quarkScanNew => '获取新二维码';
+	@override String get quarkScanLoading => '正在获取二维码…';
+	@override String get quarkLoginRequired => '请扫码登录或粘贴 Cookie';
+	@override String get quarkCookieManual => 'Cookie（手动粘贴）';
+	@override String get pickFolderTitle => '选择文件夹';
+	@override String get selectThisFolder => '使用此文件夹';
+	@override String get rootFolder => '根目录';
+	@override String get mountFolder => '挂载目录';
+	@override String get choose => '选择';
+	@override String get noSubfolders => '这里没有子文件夹';
+	@override String get parentFolder => '返回上一级';
+	@override String get quarkFolderNeedsLogin => '请先登录再选择目录';
+	@override String get smbFolderNeedsServer => '请先填写服务器和共享名称';
 }
 
 // Path: appIcon.names
@@ -3449,6 +3473,19 @@ class Translations$storage$content$zh extends Translations$storage$content$en {
 	@override String get movie => '电影';
 	@override String get show => '电视剧';
 	@override String get anime => '动漫';
+}
+
+// Path: storage.kindDescription
+class Translations$storage$kindDescription$zh extends Translations$storage$kindDescription$en {
+	Translations$storage$kindDescription$zh.internal(TranslationsZh root) : this._root = root, super.internal(root);
+
+	final TranslationsZh _root; // ignore: unused_field
+
+	// Translations
+	@override String get local => '本机或外接硬盘上的文件夹';
+	@override String get smb => '局域网中的 NAS 或 Windows 共享';
+	@override String get webdav => 'WebDAV 服务器，包括 OpenList 和 AList';
+	@override String get quark => '夸克网盘，扫码登录';
 }
 
 /// The flat map containing all translations for locale <zh>.
@@ -5799,10 +5836,6 @@ extension on TranslationsZh {
 			'storage.username' => '用户名（可选）',
 			'storage.password' => '密码（可选）',
 			'storage.allowSelfSigned' => '允许自签名证书',
-			'storage.cookie' => 'Cookie',
-			'storage.cookieHelp' => '已登录 pan.quark.cn 会话的完整 Cookie 请求头',
-			'storage.rootFolderId' => '根文件夹 ID',
-			'storage.rootFolderIdHelp' => '0 表示网盘根目录',
 			'storage.requestInterval' => 'API 请求最小间隔（毫秒）',
 			'storage.requestIntervalHelp' => ({required Object min}) => '不低于 ${min}。数值越大对账号越安全。',
 			'storage.requestIntervalInvalid' => ({required Object min}) => '请输入 ${min} 或更大的值',
@@ -5811,8 +5844,39 @@ extension on TranslationsZh {
 			'storage.testAndSave' => '测试并保存',
 			'storage.smbHost' => '服务器',
 			'storage.smbShare' => '共享名称',
-			'storage.smbSubfolder' => '子文件夹（可选）',
 			'storage.smbDomain' => '域（可选）',
+			'storage.emptyTitle' => '还没有挂载',
+			'storage.chooseType' => '选择存储类型',
+			'storage.changeType' => '更换类型',
+			'storage.sectionConnection' => '连接',
+			'storage.sectionLibrary' => '媒体库',
+			'storage.sectionAdvanced' => '高级',
+			'storage.nameHint' => '留空则使用默认名称',
+			'storage.open' => '浏览',
+			'storage.kindDescription.local' => '本机或外接硬盘上的文件夹',
+			'storage.kindDescription.smb' => '局域网中的 NAS 或 Windows 共享',
+			'storage.kindDescription.webdav' => 'WebDAV 服务器，包括 OpenList 和 AList',
+			'storage.kindDescription.quark' => '夸克网盘，扫码登录',
+			'storage.quarkSignedIn' => '已登录',
+			'storage.quarkSignedOut' => '尚未登录',
+			'storage.quarkScan' => '扫码登录',
+			'storage.quarkRescan' => '重新登录',
+			'storage.quarkScanTitle' => '登录夸克网盘',
+			'storage.quarkScanHint' => '使用夸克 App 扫码，并在手机上确认登录',
+			'storage.quarkScanExpired' => '二维码已过期',
+			'storage.quarkScanNew' => '获取新二维码',
+			'storage.quarkScanLoading' => '正在获取二维码…',
+			'storage.quarkLoginRequired' => '请扫码登录或粘贴 Cookie',
+			'storage.quarkCookieManual' => 'Cookie（手动粘贴）',
+			'storage.pickFolderTitle' => '选择文件夹',
+			'storage.selectThisFolder' => '使用此文件夹',
+			'storage.rootFolder' => '根目录',
+			'storage.mountFolder' => '挂载目录',
+			'storage.choose' => '选择',
+			'storage.noSubfolders' => '这里没有子文件夹',
+			'storage.parentFolder' => '返回上一级',
+			'storage.quarkFolderNeedsLogin' => '请先登录再选择目录',
+			'storage.smbFolderNeedsServer' => '请先填写服务器和共享名称',
 			_ => null,
 		};
 	}

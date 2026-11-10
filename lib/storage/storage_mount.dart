@@ -124,6 +124,10 @@ abstract final class MountKeys {
   /// Quark: folder id to treat as the mount root. `0` is the drive root.
   static const String rootFolderId = 'rootFolderId';
 
+  /// Quark: the path of [rootFolderId] as the user picked it. Display only;
+  /// the id is what addresses the folder.
+  static const String rootFolderPath = 'rootFolderPath';
+
   /// Quark: minimum gap between two API calls, in milliseconds.
   static const String requestIntervalMs = 'requestIntervalMs';
 

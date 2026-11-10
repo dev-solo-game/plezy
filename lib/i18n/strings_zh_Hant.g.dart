@@ -2481,10 +2481,6 @@ class _Translations$storage$zh_Hant extends Translations$storage$zh {
 	@override String get username => '使用者名稱（選填）';
 	@override String get password => '密碼（選填）';
 	@override String get allowSelfSigned => '允許自簽憑證';
-	@override String get cookie => 'Cookie';
-	@override String get cookieHelp => '已登入 pan.quark.cn 工作階段的完整 Cookie 標頭';
-	@override String get rootFolderId => '根資料夾 ID';
-	@override String get rootFolderIdHelp => '0 表示網盤根目錄';
 	@override String get requestInterval => 'API 請求最小間隔（毫秒）';
 	@override String requestIntervalHelp({required Object min}) => '不低於 ${min}。數值越大對帳號越安全。';
 	@override String requestIntervalInvalid({required Object min}) => '請輸入 ${min} 或更大的值';
@@ -2493,8 +2489,36 @@ class _Translations$storage$zh_Hant extends Translations$storage$zh {
 	@override String get testAndSave => '測試並儲存';
 	@override String get smbHost => '伺服器';
 	@override String get smbShare => '共用名稱';
-	@override String get smbSubfolder => '子資料夾（選填）';
 	@override String get smbDomain => '網域（選填）';
+	@override String get emptyTitle => '還沒有掛載';
+	@override String get chooseType => '選擇儲存類型';
+	@override String get changeType => '更換類型';
+	@override String get sectionConnection => '連線';
+	@override String get sectionLibrary => '媒體庫';
+	@override String get sectionAdvanced => '進階';
+	@override String get nameHint => '留空則使用預設名稱';
+	@override String get open => '瀏覽';
+	@override late final _Translations$storage$kindDescription$zh_Hant kindDescription = _Translations$storage$kindDescription$zh_Hant._(_root);
+	@override String get quarkSignedIn => '已登入';
+	@override String get quarkSignedOut => '尚未登入';
+	@override String get quarkScan => '掃碼登入';
+	@override String get quarkRescan => '重新登入';
+	@override String get quarkScanTitle => '登入夸克網盤';
+	@override String get quarkScanHint => '使用夸克 App 掃碼，並在手機上確認登入';
+	@override String get quarkScanExpired => 'QR 碼已過期';
+	@override String get quarkScanNew => '取得新的 QR 碼';
+	@override String get quarkScanLoading => '正在取得 QR 碼…';
+	@override String get quarkLoginRequired => '請掃碼登入或貼上 Cookie';
+	@override String get quarkCookieManual => 'Cookie（手動貼上）';
+	@override String get pickFolderTitle => '選擇資料夾';
+	@override String get selectThisFolder => '使用此資料夾';
+	@override String get rootFolder => '根目錄';
+	@override String get mountFolder => '掛載目錄';
+	@override String get choose => '選擇';
+	@override String get noSubfolders => '這裡沒有子資料夾';
+	@override String get parentFolder => '回上一層';
+	@override String get quarkFolderNeedsLogin => '請先登入再選擇目錄';
+	@override String get smbFolderNeedsServer => '請先填寫伺服器和共用名稱';
 }
 
 // Path: appIcon.names
@@ -3450,6 +3474,19 @@ class _Translations$storage$content$zh_Hant extends Translations$storage$content
 	@override String get movie => '電影';
 	@override String get show => '電視劇';
 	@override String get anime => '動漫';
+}
+
+// Path: storage.kindDescription
+class _Translations$storage$kindDescription$zh_Hant extends Translations$storage$kindDescription$zh {
+	_Translations$storage$kindDescription$zh_Hant._(TranslationsZhHant root) : this._root = root, super.internal(root);
+
+	final TranslationsZhHant _root; // ignore: unused_field
+
+	// Translations
+	@override String get local => '本機或外接硬碟上的資料夾';
+	@override String get smb => '區域網路中的 NAS 或 Windows 共用';
+	@override String get webdav => 'WebDAV 伺服器，包括 OpenList 和 AList';
+	@override String get quark => '夸克網盤，掃碼登入';
 }
 
 /// The flat map containing all translations for locale <zh-Hant>.
@@ -5800,10 +5837,6 @@ extension on TranslationsZhHant {
 			'storage.username' => '使用者名稱（選填）',
 			'storage.password' => '密碼（選填）',
 			'storage.allowSelfSigned' => '允許自簽憑證',
-			'storage.cookie' => 'Cookie',
-			'storage.cookieHelp' => '已登入 pan.quark.cn 工作階段的完整 Cookie 標頭',
-			'storage.rootFolderId' => '根資料夾 ID',
-			'storage.rootFolderIdHelp' => '0 表示網盤根目錄',
 			'storage.requestInterval' => 'API 請求最小間隔（毫秒）',
 			'storage.requestIntervalHelp' => ({required Object min}) => '不低於 ${min}。數值越大對帳號越安全。',
 			'storage.requestIntervalInvalid' => ({required Object min}) => '請輸入 ${min} 或更大的值',
@@ -5812,8 +5845,39 @@ extension on TranslationsZhHant {
 			'storage.testAndSave' => '測試並儲存',
 			'storage.smbHost' => '伺服器',
 			'storage.smbShare' => '共用名稱',
-			'storage.smbSubfolder' => '子資料夾（選填）',
 			'storage.smbDomain' => '網域（選填）',
+			'storage.emptyTitle' => '還沒有掛載',
+			'storage.chooseType' => '選擇儲存類型',
+			'storage.changeType' => '更換類型',
+			'storage.sectionConnection' => '連線',
+			'storage.sectionLibrary' => '媒體庫',
+			'storage.sectionAdvanced' => '進階',
+			'storage.nameHint' => '留空則使用預設名稱',
+			'storage.open' => '瀏覽',
+			'storage.kindDescription.local' => '本機或外接硬碟上的資料夾',
+			'storage.kindDescription.smb' => '區域網路中的 NAS 或 Windows 共用',
+			'storage.kindDescription.webdav' => 'WebDAV 伺服器，包括 OpenList 和 AList',
+			'storage.kindDescription.quark' => '夸克網盤，掃碼登入',
+			'storage.quarkSignedIn' => '已登入',
+			'storage.quarkSignedOut' => '尚未登入',
+			'storage.quarkScan' => '掃碼登入',
+			'storage.quarkRescan' => '重新登入',
+			'storage.quarkScanTitle' => '登入夸克網盤',
+			'storage.quarkScanHint' => '使用夸克 App 掃碼，並在手機上確認登入',
+			'storage.quarkScanExpired' => 'QR 碼已過期',
+			'storage.quarkScanNew' => '取得新的 QR 碼',
+			'storage.quarkScanLoading' => '正在取得 QR 碼…',
+			'storage.quarkLoginRequired' => '請掃碼登入或貼上 Cookie',
+			'storage.quarkCookieManual' => 'Cookie（手動貼上）',
+			'storage.pickFolderTitle' => '選擇資料夾',
+			'storage.selectThisFolder' => '使用此資料夾',
+			'storage.rootFolder' => '根目錄',
+			'storage.mountFolder' => '掛載目錄',
+			'storage.choose' => '選擇',
+			'storage.noSubfolders' => '這裡沒有子資料夾',
+			'storage.parentFolder' => '回上一層',
+			'storage.quarkFolderNeedsLogin' => '請先登入再選擇目錄',
+			'storage.smbFolderNeedsServer' => '請先填寫伺服器和共用名稱',
 			_ => null,
 		};
 	}

@@ -6248,18 +6248,6 @@ class Translations$storage$en {
 	/// en: 'Allow self-signed certificate'
 	String get allowSelfSigned => 'Allow self-signed certificate';
 
-	/// en: 'Cookie'
-	String get cookie => 'Cookie';
-
-	/// en: 'The full Cookie header of a logged-in pan.quark.cn session'
-	String get cookieHelp => 'The full Cookie header of a logged-in pan.quark.cn session';
-
-	/// en: 'Root folder ID'
-	String get rootFolderId => 'Root folder ID';
-
-	/// en: '0 is the drive root'
-	String get rootFolderIdHelp => '0 is the drive root';
-
 	/// en: 'Minimum gap between API requests (ms)'
 	String get requestInterval => 'Minimum gap between API requests (ms)';
 
@@ -6284,11 +6272,94 @@ class Translations$storage$en {
 	/// en: 'Share name'
 	String get smbShare => 'Share name';
 
-	/// en: 'Sub-folder (optional)'
-	String get smbSubfolder => 'Sub-folder (optional)';
-
 	/// en: 'Domain (optional)'
 	String get smbDomain => 'Domain (optional)';
+
+	/// en: 'No mounts yet'
+	String get emptyTitle => 'No mounts yet';
+
+	/// en: 'Choose a storage type'
+	String get chooseType => 'Choose a storage type';
+
+	/// en: 'Change type'
+	String get changeType => 'Change type';
+
+	/// en: 'Connection'
+	String get sectionConnection => 'Connection';
+
+	/// en: 'Library'
+	String get sectionLibrary => 'Library';
+
+	/// en: 'Advanced'
+	String get sectionAdvanced => 'Advanced';
+
+	/// en: 'Leave empty to use a default name'
+	String get nameHint => 'Leave empty to use a default name';
+
+	/// en: 'Browse'
+	String get open => 'Browse';
+
+	late final Translations$storage$kindDescription$en kindDescription = Translations$storage$kindDescription$en.internal(_root);
+
+	/// en: 'Signed in'
+	String get quarkSignedIn => 'Signed in';
+
+	/// en: 'Not signed in'
+	String get quarkSignedOut => 'Not signed in';
+
+	/// en: 'Sign in with QR code'
+	String get quarkScan => 'Sign in with QR code';
+
+	/// en: 'Sign in again'
+	String get quarkRescan => 'Sign in again';
+
+	/// en: 'Sign in to Quark'
+	String get quarkScanTitle => 'Sign in to Quark';
+
+	/// en: 'Scan with the Quark app and confirm the sign-in on your phone'
+	String get quarkScanHint => 'Scan with the Quark app and confirm the sign-in on your phone';
+
+	/// en: 'This QR code has expired'
+	String get quarkScanExpired => 'This QR code has expired';
+
+	/// en: 'Get a new code'
+	String get quarkScanNew => 'Get a new code';
+
+	/// en: 'Getting a QR code…'
+	String get quarkScanLoading => 'Getting a QR code…';
+
+	/// en: 'Sign in with a QR code or paste a cookie'
+	String get quarkLoginRequired => 'Sign in with a QR code or paste a cookie';
+
+	/// en: 'Cookie (paste manually)'
+	String get quarkCookieManual => 'Cookie (paste manually)';
+
+	/// en: 'Choose a folder'
+	String get pickFolderTitle => 'Choose a folder';
+
+	/// en: 'Use this folder'
+	String get selectThisFolder => 'Use this folder';
+
+	/// en: 'Root'
+	String get rootFolder => 'Root';
+
+	/// en: 'Folder to mount'
+	String get mountFolder => 'Folder to mount';
+
+	/// en: 'Choose'
+	String get choose => 'Choose';
+
+	/// en: 'No sub-folders here'
+	String get noSubfolders => 'No sub-folders here';
+
+	/// en: 'Up one level'
+	String get parentFolder => 'Up one level';
+
+	/// en: 'Sign in first to choose a folder'
+	String get quarkFolderNeedsLogin => 'Sign in first to choose a folder';
+
+	/// en: 'Enter the server and share first'
+	String get smbFolderNeedsServer => 'Enter the server and share first';
 }
 
 // Path: appIcon.names
@@ -8269,6 +8340,27 @@ class Translations$storage$content$en {
 
 	/// en: 'Anime'
 	String get anime => 'Anime';
+}
+
+// Path: storage.kindDescription
+class Translations$storage$kindDescription$en {
+	Translations$storage$kindDescription$en.internal(this._root);
+
+	final Translations _root; // ignore: unused_field
+
+	// Translations
+
+	/// en: 'A folder on this device or an attached drive'
+	String get local => 'A folder on this device or an attached drive';
+
+	/// en: 'A NAS or Windows share on your network'
+	String get smb => 'A NAS or Windows share on your network';
+
+	/// en: 'A WebDAV server, including OpenList and AList'
+	String get webdav => 'A WebDAV server, including OpenList and AList';
+
+	/// en: 'Quark cloud drive, signed in by QR code'
+	String get quark => 'Quark cloud drive, signed in by QR code';
 }
 
 /// The flat map containing all translations for locale <en>.
@@ -10645,10 +10737,6 @@ extension on Translations {
 			'storage.username' => 'Username (optional)',
 			'storage.password' => 'Password (optional)',
 			'storage.allowSelfSigned' => 'Allow self-signed certificate',
-			'storage.cookie' => 'Cookie',
-			'storage.cookieHelp' => 'The full Cookie header of a logged-in pan.quark.cn session',
-			'storage.rootFolderId' => 'Root folder ID',
-			'storage.rootFolderIdHelp' => '0 is the drive root',
 			'storage.requestInterval' => 'Minimum gap between API requests (ms)',
 			'storage.requestIntervalHelp' => ({required Object min}) => 'At least ${min}. Higher is safer for the account.',
 			'storage.requestIntervalInvalid' => ({required Object min}) => 'Enter ${min} or more',
@@ -10657,8 +10745,39 @@ extension on Translations {
 			'storage.testAndSave' => 'Test and save',
 			'storage.smbHost' => 'Server',
 			'storage.smbShare' => 'Share name',
-			'storage.smbSubfolder' => 'Sub-folder (optional)',
 			'storage.smbDomain' => 'Domain (optional)',
+			'storage.emptyTitle' => 'No mounts yet',
+			'storage.chooseType' => 'Choose a storage type',
+			'storage.changeType' => 'Change type',
+			'storage.sectionConnection' => 'Connection',
+			'storage.sectionLibrary' => 'Library',
+			'storage.sectionAdvanced' => 'Advanced',
+			'storage.nameHint' => 'Leave empty to use a default name',
+			'storage.open' => 'Browse',
+			'storage.kindDescription.local' => 'A folder on this device or an attached drive',
+			'storage.kindDescription.smb' => 'A NAS or Windows share on your network',
+			'storage.kindDescription.webdav' => 'A WebDAV server, including OpenList and AList',
+			'storage.kindDescription.quark' => 'Quark cloud drive, signed in by QR code',
+			'storage.quarkSignedIn' => 'Signed in',
+			'storage.quarkSignedOut' => 'Not signed in',
+			'storage.quarkScan' => 'Sign in with QR code',
+			'storage.quarkRescan' => 'Sign in again',
+			'storage.quarkScanTitle' => 'Sign in to Quark',
+			'storage.quarkScanHint' => 'Scan with the Quark app and confirm the sign-in on your phone',
+			'storage.quarkScanExpired' => 'This QR code has expired',
+			'storage.quarkScanNew' => 'Get a new code',
+			'storage.quarkScanLoading' => 'Getting a QR code…',
+			'storage.quarkLoginRequired' => 'Sign in with a QR code or paste a cookie',
+			'storage.quarkCookieManual' => 'Cookie (paste manually)',
+			'storage.pickFolderTitle' => 'Choose a folder',
+			'storage.selectThisFolder' => 'Use this folder',
+			'storage.rootFolder' => 'Root',
+			'storage.mountFolder' => 'Folder to mount',
+			'storage.choose' => 'Choose',
+			'storage.noSubfolders' => 'No sub-folders here',
+			'storage.parentFolder' => 'Up one level',
+			'storage.quarkFolderNeedsLogin' => 'Sign in first to choose a folder',
+			'storage.smbFolderNeedsServer' => 'Enter the server and share first',
 			_ => null,
 		};
 	}
