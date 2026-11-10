@@ -2600,6 +2600,10 @@
     "requestIntervalInvalid": "請輸入 ${min} 或更大的值",
     "required": "必填",
     "connecting": "連線中…",
-    "testAndSave": "測試並儲存"
+    "testAndSave": "測試並儲存",
+    "smbHost": "伺服器",
+    "smbShare": "共用名稱",
+    "smbSubfolder": "子資料夾（選填）",
+    "smbDomain": "網域（選填）"
   }
 }

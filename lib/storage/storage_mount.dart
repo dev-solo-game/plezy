@@ -107,8 +107,14 @@ class StorageMount {
 
 /// Config and secret keys shared between the drivers and the mount editor.
 abstract final class MountKeys {
-  /// Local: absolute directory on this device.
+  /// Local: absolute directory on this device. SMB: optional sub-folder of
+  /// the share to treat as the mount root.
   static const String rootPath = 'rootPath';
+
+  /// SMB: server name or address, the share on it, and an optional domain.
+  static const String host = 'host';
+  static const String share = 'share';
+  static const String domain = 'domain';
 
   /// WebDAV: collection URL, e.g. `https://nas.example/dav/media`.
   static const String baseUrl = 'baseUrl';

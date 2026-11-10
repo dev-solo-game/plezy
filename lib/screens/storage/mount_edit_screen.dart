@@ -26,7 +26,12 @@ class MountEditScreen extends StatefulWidget {
 }
 
 class _MountEditScreenState extends State<MountEditScreen> {
-  static const List<StorageKind> _selectableKinds = [StorageKind.local, StorageKind.webdav, StorageKind.quark];
+  static const List<StorageKind> _selectableKinds = [
+    StorageKind.local,
+    StorageKind.smb,
+    StorageKind.webdav,
+    StorageKind.quark,
+  ];
 
   final _formKey = GlobalKey<FormState>();
   late StorageKind _kind;
@@ -39,6 +44,10 @@ class _MountEditScreenState extends State<MountEditScreen> {
   late final TextEditingController _password;
   late final TextEditingController _cookie;
   late final TextEditingController _rootFolderId;
+  late final TextEditingController _host;
+  late final TextEditingController _share;
+  late final TextEditingController _domain;
+  late final TextEditingController _subfolder;
   late final TextEditingController _requestInterval;
 
   bool _saving = false;
@@ -57,6 +66,12 @@ class _MountEditScreenState extends State<MountEditScreen> {
     _username = TextEditingController(text: mount?.configString(MountKeys.username) ?? '');
     _password = TextEditingController(text: mount?.secret(MountKeys.secretPassword) ?? '');
     _cookie = TextEditingController(text: mount?.secret(MountKeys.secretCookie) ?? '');
+    _host = TextEditingController(text: mount?.configString(MountKeys.host) ?? '');
+    _share = TextEditingController(text: mount?.configString(MountKeys.share) ?? '');
+    _domain = TextEditingController(text: mount?.configString(MountKeys.domain) ?? '');
+    _subfolder = TextEditingController(
+      text: mount?.kind == StorageKind.smb ? mount?.configString(MountKeys.rootPath) ?? '' : '',
+    );
     _rootFolderId = TextEditingController(
       text: mount?.configString(MountKeys.rootFolderId) ?? QuarkStorageDriver.defaultRootFolderId,
     );
@@ -77,6 +92,10 @@ class _MountEditScreenState extends State<MountEditScreen> {
       _cookie,
       _rootFolderId,
       _requestInterval,
+      _host,
+      _share,
+      _domain,
+      _subfolder,
     ]) {
       controller.dispose();
     }
@@ -102,7 +121,16 @@ class _MountEditScreenState extends State<MountEditScreen> {
         },
         {MountKeys.secretCookie: _cookie.text.trim()},
       ),
-      StorageKind.smb => (const <String, Object?>{}, const <String, String>{}),
+      StorageKind.smb => (
+        {
+          MountKeys.host: _host.text.trim(),
+          MountKeys.share: _share.text.trim(),
+          MountKeys.rootPath: _subfolder.text.trim(),
+          MountKeys.username: _username.text.trim(),
+          MountKeys.domain: _domain.text.trim(),
+        },
+        {if (_password.text.isNotEmpty) MountKeys.secretPassword: _password.text},
+      ),
     };
     final name = _name.text.trim();
     return StorageMount(
@@ -249,7 +277,42 @@ class _MountEditScreenState extends State<MountEditScreen> {
           ),
         ];
       case StorageKind.smb:
-        return const [];
+        return [
+          TextFormField(
+            controller: _host,
+            decoration: InputDecoration(labelText: t.storage.smbHost, hintText: '192.168.1.10'),
+            autocorrect: false,
+            validator: _required,
+          ),
+          TextFormField(
+            controller: _share,
+            decoration: InputDecoration(labelText: t.storage.smbShare),
+            autocorrect: false,
+            validator: _required,
+          ),
+          TextFormField(
+            controller: _subfolder,
+            decoration: InputDecoration(labelText: t.storage.smbSubfolder),
+            autocorrect: false,
+          ),
+          TextFormField(
+            controller: _username,
+            decoration: InputDecoration(labelText: t.storage.username),
+            autocorrect: false,
+          ),
+          TextFormField(
+            controller: _password,
+            decoration: InputDecoration(labelText: t.storage.password),
+            obscureText: true,
+            autocorrect: false,
+            enableSuggestions: false,
+          ),
+          TextFormField(
+            controller: _domain,
+            decoration: InputDecoration(labelText: t.storage.smbDomain),
+            autocorrect: false,
+          ),
+        ];
     }
   }
 

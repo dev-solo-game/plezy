@@ -6277,6 +6277,18 @@ class Translations$storage$en {
 
 	/// en: 'Test and save'
 	String get testAndSave => 'Test and save';
+
+	/// en: 'Server'
+	String get smbHost => 'Server';
+
+	/// en: 'Share name'
+	String get smbShare => 'Share name';
+
+	/// en: 'Sub-folder (optional)'
+	String get smbSubfolder => 'Sub-folder (optional)';
+
+	/// en: 'Domain (optional)'
+	String get smbDomain => 'Domain (optional)';
 }
 
 // Path: appIcon.names
@@ -10643,6 +10655,10 @@ extension on Translations {
 			'storage.required' => 'Required',
 			'storage.connecting' => 'Connecting…',
 			'storage.testAndSave' => 'Test and save',
+			'storage.smbHost' => 'Server',
+			'storage.smbShare' => 'Share name',
+			'storage.smbSubfolder' => 'Sub-folder (optional)',
+			'storage.smbDomain' => 'Domain (optional)',
 			_ => null,
 		};
 	}

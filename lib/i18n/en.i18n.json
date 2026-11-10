@@ -2612,6 +2612,10 @@
     "requestIntervalInvalid": "Enter ${min} or more",
     "required": "Required",
     "connecting": "Connecting…",
-    "testAndSave": "Test and save"
+    "testAndSave": "Test and save",
+    "smbHost": "Server",
+    "smbShare": "Share name",
+    "smbSubfolder": "Sub-folder (optional)",
+    "smbDomain": "Domain (optional)"
   }
 }

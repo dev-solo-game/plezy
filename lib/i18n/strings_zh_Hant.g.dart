@@ -2491,6 +2491,10 @@ class _Translations$storage$zh_Hant extends Translations$storage$zh {
 	@override String get required => '必填';
 	@override String get connecting => '連線中…';
 	@override String get testAndSave => '測試並儲存';
+	@override String get smbHost => '伺服器';
+	@override String get smbShare => '共用名稱';
+	@override String get smbSubfolder => '子資料夾（選填）';
+	@override String get smbDomain => '網域（選填）';
 }
 
 // Path: appIcon.names
@@ -5806,6 +5810,10 @@ extension on TranslationsZhHant {
 			'storage.required' => '必填',
 			'storage.connecting' => '連線中…',
 			'storage.testAndSave' => '測試並儲存',
+			'storage.smbHost' => '伺服器',
+			'storage.smbShare' => '共用名稱',
+			'storage.smbSubfolder' => '子資料夾（選填）',
+			'storage.smbDomain' => '網域（選填）',
 			_ => null,
 		};
 	}

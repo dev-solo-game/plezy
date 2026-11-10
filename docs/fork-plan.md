@@ -1,6 +1,6 @@
 # 二次開發計劃：無伺服器的本地媒體庫播放器
 
-> 狀態：階段 1 進行中——驅動介面、本地、WebDAV、Quark、串流代理、掛載頁面已完成；SMB 未實作。
+> 狀態：階段 1 的程式碼已完成——驅動介面、本地、SMB、WebDAV、Quark、串流代理、掛載頁面；尚待在真實服務上驗證。
 > 日期：2026-11-09
 > 基線：plezy 2.26.0（commit `77f11b86f`）
 
@@ -252,7 +252,7 @@ Quark 直鏈過期後播放不中斷。
 
 | 項目 | 風險 | 處理 |
 | --- | --- | --- |
-| SMB | 不必自己編譯 libsmb2：pub.dev 上有現成套件（見下方註記），但尚未實測 | 先試 `dart_smb2`，重點驗證範圍讀取和四個平台的建置；不行再試 `smb_connect` |
+| SMB | 已用 `dart_smb2`（基於 libsmb2）接入，Windows 可建置；尚未連過真實共享，Android、macOS、Linux 建置未驗證；不支援自訂連接埠 | 用真實 NAS 驗證播放與拖動；不行再試 `smb_connect` |
 | Quark | 非官方 API，介面可能變動；掃描目錄過於頻繁會觸發風控 | 流程已實測可行；驅動內集中處理限速與重試，掃描頻率可設定且預設保守 |
 | 自動分類 | 電影劇集混放的目錄在「自動分類」模式下容易誤判 | 掛載時可直接指定類型；手動匹配結果鎖定 |
 | 豆瓣 | 無公開 API，非官方介面隨時失效 | 只作補充源，可關閉，失敗不影響入庫 |
@@ -272,8 +272,9 @@ Quark 直鏈過期後播放不中斷。
 | `dart_smb2` 0.3.0 | 基於 libsmb2（原生庫） | SMB2/3 | macOS、Windows、Linux、iOS、Android | 活躍，兩天前剛發佈；BSD-3-Clause |
 | `smb_connect` 0.0.9 | 純 Dart | SMB1、2.0、2.1，無 3.x | Android、iOS、Linux、macOS、Windows | 21 個月未更新；Apache-2.0 |
 
-待驗證：`dart_smb2` 是否支援任意偏移的範圍讀取（拖動進度必需）、Android TV 上的建置、
-libsmb2 的 LGPL 授權在各平台的連結方式。
+已確認：`dart_smb2` 提供任意偏移的範圍讀取（`readFileRange`），原生庫由建置鉤子下載預編譯檔並核對 SHA-256，
+以動態庫形式打包（libsmb2 為 LGPL-2.1，內含 OpenSSL libcrypto）。
+待驗證：Android TV、macOS、Linux 上的建置，以及真實共享上的播放。
 
 ## 8. 未決事項
 

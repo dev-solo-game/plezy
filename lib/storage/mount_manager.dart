@@ -3,6 +3,7 @@ import 'dart:async';
 import '../utils/app_logger.dart';
 import 'drivers/local_storage_driver.dart';
 import 'drivers/quark_storage_driver.dart';
+import 'drivers/smb_storage_driver.dart';
 import 'drivers/webdav_storage_driver.dart';
 import 'mount_registry.dart';
 import 'storage_driver.dart';
@@ -31,7 +32,7 @@ class MountManager {
         mount,
         onCookieChanged: (cookie) => unawaited(_persistSecret(mount.id, MountKeys.secretCookie, cookie)),
       ),
-      StorageKind.smb => throw const StorageException(StorageErrorKind.unsupported, 'SMB is not implemented yet'),
+      StorageKind.smb => SmbStorageDriver.fromMount(mount),
     };
   }
 

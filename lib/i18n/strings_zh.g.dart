@@ -2490,6 +2490,10 @@ class Translations$storage$zh extends Translations$storage$en {
 	@override String get required => '必填';
 	@override String get connecting => '连接中…';
 	@override String get testAndSave => '测试并保存';
+	@override String get smbHost => '服务器';
+	@override String get smbShare => '共享名称';
+	@override String get smbSubfolder => '子文件夹（可选）';
+	@override String get smbDomain => '域（可选）';
 }
 
 // Path: appIcon.names
@@ -5805,6 +5809,10 @@ extension on TranslationsZh {
 			'storage.required' => '必填',
 			'storage.connecting' => '连接中…',
 			'storage.testAndSave' => '测试并保存',
+			'storage.smbHost' => '服务器',
+			'storage.smbShare' => '共享名称',
+			'storage.smbSubfolder' => '子文件夹（可选）',
+			'storage.smbDomain' => '域（可选）',
 			_ => null,
 		};
 	}
