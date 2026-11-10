@@ -7241,6 +7241,489 @@ class MusicSessionsCompanion extends UpdateCompanion<MusicSessionRow> {
   }
 }
 
+class $MountsTable extends Mounts with TableInfo<$MountsTable, MountRow> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $MountsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<String> id = GeneratedColumn<String>(
+    'id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _kindMeta = const VerificationMeta('kind');
+  @override
+  late final GeneratedColumn<String> kind = GeneratedColumn<String>(
+    'kind',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _displayNameMeta = const VerificationMeta(
+    'displayName',
+  );
+  @override
+  late final GeneratedColumn<String> displayName = GeneratedColumn<String>(
+    'display_name',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _libraryTypeMeta = const VerificationMeta(
+    'libraryType',
+  );
+  @override
+  late final GeneratedColumn<String> libraryType = GeneratedColumn<String>(
+    'library_type',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    defaultValue: const Constant('auto'),
+  );
+  static const VerificationMeta _configJsonMeta = const VerificationMeta(
+    'configJson',
+  );
+  @override
+  late final GeneratedColumn<String> configJson = GeneratedColumn<String>(
+    'config_json',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _secretsMeta = const VerificationMeta(
+    'secrets',
+  );
+  @override
+  late final GeneratedColumn<String> secrets = GeneratedColumn<String>(
+    'secrets',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(''),
+  );
+  static const VerificationMeta _createdAtMeta = const VerificationMeta(
+    'createdAt',
+  );
+  @override
+  late final GeneratedColumn<int> createdAt = GeneratedColumn<int>(
+    'created_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    id,
+    kind,
+    displayName,
+    libraryType,
+    configJson,
+    secrets,
+    createdAt,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'mounts';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<MountRow> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    } else if (isInserting) {
+      context.missing(_idMeta);
+    }
+    if (data.containsKey('kind')) {
+      context.handle(
+        _kindMeta,
+        kind.isAcceptableOrUnknown(data['kind']!, _kindMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_kindMeta);
+    }
+    if (data.containsKey('display_name')) {
+      context.handle(
+        _displayNameMeta,
+        displayName.isAcceptableOrUnknown(
+          data['display_name']!,
+          _displayNameMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_displayNameMeta);
+    }
+    if (data.containsKey('library_type')) {
+      context.handle(
+        _libraryTypeMeta,
+        libraryType.isAcceptableOrUnknown(
+          data['library_type']!,
+          _libraryTypeMeta,
+        ),
+      );
+    }
+    if (data.containsKey('config_json')) {
+      context.handle(
+        _configJsonMeta,
+        configJson.isAcceptableOrUnknown(data['config_json']!, _configJsonMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_configJsonMeta);
+    }
+    if (data.containsKey('secrets')) {
+      context.handle(
+        _secretsMeta,
+        secrets.isAcceptableOrUnknown(data['secrets']!, _secretsMeta),
+      );
+    }
+    if (data.containsKey('created_at')) {
+      context.handle(
+        _createdAtMeta,
+        createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_createdAtMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  MountRow map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return MountRow(
+      id: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}id'],
+      )!,
+      kind: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}kind'],
+      )!,
+      displayName: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}display_name'],
+      )!,
+      libraryType: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}library_type'],
+      )!,
+      configJson: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}config_json'],
+      )!,
+      secrets: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}secrets'],
+      )!,
+      createdAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}created_at'],
+      )!,
+    );
+  }
+
+  @override
+  $MountsTable createAlias(String alias) {
+    return $MountsTable(attachedDatabase, alias);
+  }
+}
+
+class MountRow extends DataClass implements Insertable<MountRow> {
+  /// Generated UUID.
+  final String id;
+
+  /// Driver kind: `'local'`, `'webdav'`, `'quark'` or `'smb'`.
+  final String kind;
+
+  /// User-visible label.
+  final String displayName;
+
+  /// How the scanner classifies content: `'auto'`, `'movie'`, `'show'` or `'anime'`.
+  final String libraryType;
+
+  /// Driver-specific, non-sensitive settings as a JSON object.
+  final String configJson;
+
+  /// Credentials as a JSON object, encrypted by `CredentialVault`. Empty when
+  /// the mount has none.
+  final String secrets;
+
+  /// Timestamp this mount was added (milliseconds since epoch).
+  final int createdAt;
+  const MountRow({
+    required this.id,
+    required this.kind,
+    required this.displayName,
+    required this.libraryType,
+    required this.configJson,
+    required this.secrets,
+    required this.createdAt,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<String>(id);
+    map['kind'] = Variable<String>(kind);
+    map['display_name'] = Variable<String>(displayName);
+    map['library_type'] = Variable<String>(libraryType);
+    map['config_json'] = Variable<String>(configJson);
+    map['secrets'] = Variable<String>(secrets);
+    map['created_at'] = Variable<int>(createdAt);
+    return map;
+  }
+
+  MountsCompanion toCompanion(bool nullToAbsent) {
+    return MountsCompanion(
+      id: Value(id),
+      kind: Value(kind),
+      displayName: Value(displayName),
+      libraryType: Value(libraryType),
+      configJson: Value(configJson),
+      secrets: Value(secrets),
+      createdAt: Value(createdAt),
+    );
+  }
+
+  factory MountRow.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return MountRow(
+      id: serializer.fromJson<String>(json['id']),
+      kind: serializer.fromJson<String>(json['kind']),
+      displayName: serializer.fromJson<String>(json['displayName']),
+      libraryType: serializer.fromJson<String>(json['libraryType']),
+      configJson: serializer.fromJson<String>(json['configJson']),
+      secrets: serializer.fromJson<String>(json['secrets']),
+      createdAt: serializer.fromJson<int>(json['createdAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<String>(id),
+      'kind': serializer.toJson<String>(kind),
+      'displayName': serializer.toJson<String>(displayName),
+      'libraryType': serializer.toJson<String>(libraryType),
+      'configJson': serializer.toJson<String>(configJson),
+      'secrets': serializer.toJson<String>(secrets),
+      'createdAt': serializer.toJson<int>(createdAt),
+    };
+  }
+
+  MountRow copyWith({
+    String? id,
+    String? kind,
+    String? displayName,
+    String? libraryType,
+    String? configJson,
+    String? secrets,
+    int? createdAt,
+  }) => MountRow(
+    id: id ?? this.id,
+    kind: kind ?? this.kind,
+    displayName: displayName ?? this.displayName,
+    libraryType: libraryType ?? this.libraryType,
+    configJson: configJson ?? this.configJson,
+    secrets: secrets ?? this.secrets,
+    createdAt: createdAt ?? this.createdAt,
+  );
+  MountRow copyWithCompanion(MountsCompanion data) {
+    return MountRow(
+      id: data.id.present ? data.id.value : this.id,
+      kind: data.kind.present ? data.kind.value : this.kind,
+      displayName: data.displayName.present
+          ? data.displayName.value
+          : this.displayName,
+      libraryType: data.libraryType.present
+          ? data.libraryType.value
+          : this.libraryType,
+      configJson: data.configJson.present
+          ? data.configJson.value
+          : this.configJson,
+      secrets: data.secrets.present ? data.secrets.value : this.secrets,
+      createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('MountRow(')
+          ..write('id: $id, ')
+          ..write('kind: $kind, ')
+          ..write('displayName: $displayName, ')
+          ..write('libraryType: $libraryType, ')
+          ..write('configJson: $configJson, ')
+          ..write('secrets: $secrets, ')
+          ..write('createdAt: $createdAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    id,
+    kind,
+    displayName,
+    libraryType,
+    configJson,
+    secrets,
+    createdAt,
+  );
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is MountRow &&
+          other.id == this.id &&
+          other.kind == this.kind &&
+          other.displayName == this.displayName &&
+          other.libraryType == this.libraryType &&
+          other.configJson == this.configJson &&
+          other.secrets == this.secrets &&
+          other.createdAt == this.createdAt);
+}
+
+class MountsCompanion extends UpdateCompanion<MountRow> {
+  final Value<String> id;
+  final Value<String> kind;
+  final Value<String> displayName;
+  final Value<String> libraryType;
+  final Value<String> configJson;
+  final Value<String> secrets;
+  final Value<int> createdAt;
+  final Value<int> rowid;
+  const MountsCompanion({
+    this.id = const Value.absent(),
+    this.kind = const Value.absent(),
+    this.displayName = const Value.absent(),
+    this.libraryType = const Value.absent(),
+    this.configJson = const Value.absent(),
+    this.secrets = const Value.absent(),
+    this.createdAt = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  MountsCompanion.insert({
+    required String id,
+    required String kind,
+    required String displayName,
+    this.libraryType = const Value.absent(),
+    required String configJson,
+    this.secrets = const Value.absent(),
+    required int createdAt,
+    this.rowid = const Value.absent(),
+  }) : id = Value(id),
+       kind = Value(kind),
+       displayName = Value(displayName),
+       configJson = Value(configJson),
+       createdAt = Value(createdAt);
+  static Insertable<MountRow> custom({
+    Expression<String>? id,
+    Expression<String>? kind,
+    Expression<String>? displayName,
+    Expression<String>? libraryType,
+    Expression<String>? configJson,
+    Expression<String>? secrets,
+    Expression<int>? createdAt,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (kind != null) 'kind': kind,
+      if (displayName != null) 'display_name': displayName,
+      if (libraryType != null) 'library_type': libraryType,
+      if (configJson != null) 'config_json': configJson,
+      if (secrets != null) 'secrets': secrets,
+      if (createdAt != null) 'created_at': createdAt,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  MountsCompanion copyWith({
+    Value<String>? id,
+    Value<String>? kind,
+    Value<String>? displayName,
+    Value<String>? libraryType,
+    Value<String>? configJson,
+    Value<String>? secrets,
+    Value<int>? createdAt,
+    Value<int>? rowid,
+  }) {
+    return MountsCompanion(
+      id: id ?? this.id,
+      kind: kind ?? this.kind,
+      displayName: displayName ?? this.displayName,
+      libraryType: libraryType ?? this.libraryType,
+      configJson: configJson ?? this.configJson,
+      secrets: secrets ?? this.secrets,
+      createdAt: createdAt ?? this.createdAt,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<String>(id.value);
+    }
+    if (kind.present) {
+      map['kind'] = Variable<String>(kind.value);
+    }
+    if (displayName.present) {
+      map['display_name'] = Variable<String>(displayName.value);
+    }
+    if (libraryType.present) {
+      map['library_type'] = Variable<String>(libraryType.value);
+    }
+    if (configJson.present) {
+      map['config_json'] = Variable<String>(configJson.value);
+    }
+    if (secrets.present) {
+      map['secrets'] = Variable<String>(secrets.value);
+    }
+    if (createdAt.present) {
+      map['created_at'] = Variable<int>(createdAt.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('MountsCompanion(')
+          ..write('id: $id, ')
+          ..write('kind: $kind, ')
+          ..write('displayName: $displayName, ')
+          ..write('libraryType: $libraryType, ')
+          ..write('configJson: $configJson, ')
+          ..write('secrets: $secrets, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
 abstract class _$AppDatabase extends GeneratedDatabase {
   _$AppDatabase(QueryExecutor e) : super(e);
   $AppDatabaseManager get managers => $AppDatabaseManager(this);
@@ -7264,6 +7747,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   late final $ProfileConnectionsTable profileConnections =
       $ProfileConnectionsTable(this);
   late final $MusicSessionsTable musicSessions = $MusicSessionsTable(this);
+  late final $MountsTable mounts = $MountsTable(this);
   late final Index idxDownloadedMediaStatus = Index(
     'idx_downloaded_media_status',
     'CREATE INDEX idx_downloaded_media_status ON downloaded_media (status)',
@@ -7338,6 +7822,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     profiles,
     profileConnections,
     musicSessions,
+    mounts,
     idxDownloadedMediaStatus,
     idxDownloadedMediaServer,
     idxDownloadedMediaParent,
@@ -11435,6 +11920,244 @@ typedef $$MusicSessionsTableProcessedTableManager =
       MusicSessionRow,
       PrefetchHooks Function()
     >;
+typedef $$MountsTableCreateCompanionBuilder =
+    MountsCompanion Function({
+      required String id,
+      required String kind,
+      required String displayName,
+      Value<String> libraryType,
+      required String configJson,
+      Value<String> secrets,
+      required int createdAt,
+      Value<int> rowid,
+    });
+typedef $$MountsTableUpdateCompanionBuilder =
+    MountsCompanion Function({
+      Value<String> id,
+      Value<String> kind,
+      Value<String> displayName,
+      Value<String> libraryType,
+      Value<String> configJson,
+      Value<String> secrets,
+      Value<int> createdAt,
+      Value<int> rowid,
+    });
+
+class $$MountsTableFilterComposer
+    extends Composer<_$AppDatabase, $MountsTable> {
+  $$MountsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get kind => $composableBuilder(
+    column: $table.kind,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get displayName => $composableBuilder(
+    column: $table.displayName,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get libraryType => $composableBuilder(
+    column: $table.libraryType,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get configJson => $composableBuilder(
+    column: $table.configJson,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get secrets => $composableBuilder(
+    column: $table.secrets,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get createdAt => $composableBuilder(
+    column: $table.createdAt,
+    builder: (column) => ColumnFilters(column),
+  );
+}
+
+class $$MountsTableOrderingComposer
+    extends Composer<_$AppDatabase, $MountsTable> {
+  $$MountsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get kind => $composableBuilder(
+    column: $table.kind,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get displayName => $composableBuilder(
+    column: $table.displayName,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get libraryType => $composableBuilder(
+    column: $table.libraryType,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get configJson => $composableBuilder(
+    column: $table.configJson,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get secrets => $composableBuilder(
+    column: $table.secrets,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get createdAt => $composableBuilder(
+    column: $table.createdAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$MountsTableAnnotationComposer
+    extends Composer<_$AppDatabase, $MountsTable> {
+  $$MountsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get id =>
+      $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<String> get kind =>
+      $composableBuilder(column: $table.kind, builder: (column) => column);
+
+  GeneratedColumn<String> get displayName => $composableBuilder(
+    column: $table.displayName,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get libraryType => $composableBuilder(
+    column: $table.libraryType,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get configJson => $composableBuilder(
+    column: $table.configJson,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get secrets =>
+      $composableBuilder(column: $table.secrets, builder: (column) => column);
+
+  GeneratedColumn<int> get createdAt =>
+      $composableBuilder(column: $table.createdAt, builder: (column) => column);
+}
+
+class $$MountsTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $MountsTable,
+          MountRow,
+          $$MountsTableFilterComposer,
+          $$MountsTableOrderingComposer,
+          $$MountsTableAnnotationComposer,
+          $$MountsTableCreateCompanionBuilder,
+          $$MountsTableUpdateCompanionBuilder,
+          (MountRow, BaseReferences<_$AppDatabase, $MountsTable, MountRow>),
+          MountRow,
+          PrefetchHooks Function()
+        > {
+  $$MountsTableTableManager(_$AppDatabase db, $MountsTable table)
+    : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$MountsTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$MountsTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$MountsTableAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback:
+              ({
+                Value<String> id = const Value.absent(),
+                Value<String> kind = const Value.absent(),
+                Value<String> displayName = const Value.absent(),
+                Value<String> libraryType = const Value.absent(),
+                Value<String> configJson = const Value.absent(),
+                Value<String> secrets = const Value.absent(),
+                Value<int> createdAt = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => MountsCompanion(
+                id: id,
+                kind: kind,
+                displayName: displayName,
+                libraryType: libraryType,
+                configJson: configJson,
+                secrets: secrets,
+                createdAt: createdAt,
+                rowid: rowid,
+              ),
+          createCompanionCallback:
+              ({
+                required String id,
+                required String kind,
+                required String displayName,
+                Value<String> libraryType = const Value.absent(),
+                required String configJson,
+                Value<String> secrets = const Value.absent(),
+                required int createdAt,
+                Value<int> rowid = const Value.absent(),
+              }) => MountsCompanion.insert(
+                id: id,
+                kind: kind,
+                displayName: displayName,
+                libraryType: libraryType,
+                configJson: configJson,
+                secrets: secrets,
+                createdAt: createdAt,
+                rowid: rowid,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$MountsTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $MountsTable,
+      MountRow,
+      $$MountsTableFilterComposer,
+      $$MountsTableOrderingComposer,
+      $$MountsTableAnnotationComposer,
+      $$MountsTableCreateCompanionBuilder,
+      $$MountsTableUpdateCompanionBuilder,
+      (MountRow, BaseReferences<_$AppDatabase, $MountsTable, MountRow>),
+      MountRow,
+      PrefetchHooks Function()
+    >;
 
 class $AppDatabaseManager {
   final _$AppDatabase _db;
@@ -11468,4 +12191,6 @@ class $AppDatabaseManager {
       $$ProfileConnectionsTableTableManager(_db, _db.profileConnections);
   $$MusicSessionsTableTableManager get musicSessions =>
       $$MusicSessionsTableTableManager(_db, _db.musicSessions);
+  $$MountsTableTableManager get mounts =>
+      $$MountsTableTableManager(_db, _db.mounts);
 }

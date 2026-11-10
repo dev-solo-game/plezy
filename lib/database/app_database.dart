@@ -61,6 +61,7 @@ final class AppDatabaseBootstrap {
     Profiles,
     ProfileConnections,
     MusicSessions,
+    Mounts,
   ],
 )
 class AppDatabase extends _$AppDatabase {
@@ -368,7 +369,7 @@ class AppDatabase extends _$AppDatabase {
   static const FormatException _invalidRecoveryImage = FormatException('Invalid tvOS database recovery image');
 
   @override
-  int get schemaVersion => 25;
+  int get schemaVersion => 26;
 
   @override
   MigrationStrategy get migration {
@@ -764,6 +765,10 @@ class AppDatabase extends _$AppDatabase {
           appLogger.i('Adding download collection membership tables (v25 migration)');
           await _ignoreAlreadyExists('DownloadCollections table', () => m.createTable(downloadCollections));
           await _ignoreAlreadyExists('DownloadCollectionSyncs table', () => m.createTable(downloadCollectionSyncs));
+        }
+        if (from < 26) {
+          appLogger.i('Adding Mounts table (v26 migration)');
+          await _ignoreAlreadyExists('Mounts table', () => m.createTable(mounts));
         }
       },
     );

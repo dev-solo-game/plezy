@@ -94,6 +94,7 @@ class TranslationsZhHant extends TranslationsZh with BaseTranslations<AppLocale,
 	@override late final _Translations$seerr$zh_Hant seerr = _Translations$seerr$zh_Hant._(_root);
 	@override late final _Translations$services$zh_Hant services = _Translations$services$zh_Hant._(_root);
 	@override late final _Translations$addServer$zh_Hant addServer = _Translations$addServer$zh_Hant._(_root);
+	@override late final _Translations$storage$zh_Hant storage = _Translations$storage$zh_Hant._(_root);
 }
 
 // Path: app
@@ -2450,6 +2451,48 @@ class _Translations$addServer$zh_Hant extends Translations$addServer$zh {
 	@override String redirectUnsupportedEnterFinal({required Object product}) => '伺服器重新導向至不支援的 URL。請直接輸入最終的 ${product} URL。';
 }
 
+// Path: storage
+class _Translations$storage$zh_Hant extends Translations$storage$zh {
+	_Translations$storage$zh_Hant._(TranslationsZhHant root) : this._root = root, super.internal(root);
+
+	final TranslationsZhHant _root; // ignore: unused_field
+
+	// Translations
+	@override String get title => '儲存掛載';
+	@override String get description => '掛載本機資料夾、WebDAV 伺服器和網盤';
+	@override String get addMount => '新增掛載';
+	@override String get editMount => '編輯掛載';
+	@override String get remove => '移除';
+	@override String get removeMountTitle => '移除掛載？';
+	@override String removeMountMessage({required Object name}) => '將移除「${name}」。儲存上的檔案不會被更動。';
+	@override String get empty => '還沒有掛載。新增本機資料夾、WebDAV 伺服器或夸克網盤。';
+	@override String get emptyFolder => '空資料夾';
+	@override late final _Translations$storage$kind$zh_Hant kind = _Translations$storage$kind$zh_Hant._(_root);
+	@override late final _Translations$storage$content$zh_Hant content = _Translations$storage$content$zh_Hant._(_root);
+	@override String get fieldType => '類型';
+	@override String get fieldName => '名稱';
+	@override String get fieldContent => '內容';
+	@override String get fieldContentHelp => '指定類型可略過猜測，或讓每個檔案自動分類';
+	@override String get folderPath => '資料夾路徑';
+	@override String get browse => '瀏覽';
+	@override String get selectFolder => '選擇資料夾';
+	@override String get url => 'URL';
+	@override String get urlInvalid => '請輸入 http(s) 網址';
+	@override String get username => '使用者名稱（選填）';
+	@override String get password => '密碼（選填）';
+	@override String get allowSelfSigned => '允許自簽憑證';
+	@override String get cookie => 'Cookie';
+	@override String get cookieHelp => '已登入 pan.quark.cn 工作階段的完整 Cookie 標頭';
+	@override String get rootFolderId => '根資料夾 ID';
+	@override String get rootFolderIdHelp => '0 表示網盤根目錄';
+	@override String get requestInterval => 'API 請求最小間隔（毫秒）';
+	@override String requestIntervalHelp({required Object min}) => '不低於 ${min}。數值越大對帳號越安全。';
+	@override String requestIntervalInvalid({required Object min}) => '請輸入 ${min} 或更大的值';
+	@override String get required => '必填';
+	@override String get connecting => '連線中…';
+	@override String get testAndSave => '測試並儲存';
+}
+
 // Path: appIcon.names
 class _Translations$appIcon$names$zh_Hant extends Translations$appIcon$names$zh {
 	_Translations$appIcon$names$zh_Hant._(TranslationsZhHant root) : this._root = root, super.internal(root);
@@ -3377,6 +3420,32 @@ class _Translations$services$libraryFilter$zh_Hant extends Translations$services
 	@override String get modeHintWhitelist => '僅同步下方已勾選的媒體庫。';
 	@override String get libraries => '媒體庫';
 	@override String get noLibraries => '沒有可用的媒體庫';
+}
+
+// Path: storage.kind
+class _Translations$storage$kind$zh_Hant extends Translations$storage$kind$zh {
+	_Translations$storage$kind$zh_Hant._(TranslationsZhHant root) : this._root = root, super.internal(root);
+
+	final TranslationsZhHant _root; // ignore: unused_field
+
+	// Translations
+	@override String get local => '本機資料夾';
+	@override String get webdav => 'WebDAV';
+	@override String get quark => '夸克網盤';
+	@override String get smb => 'SMB';
+}
+
+// Path: storage.content
+class _Translations$storage$content$zh_Hant extends Translations$storage$content$zh {
+	_Translations$storage$content$zh_Hant._(TranslationsZhHant root) : this._root = root, super.internal(root);
+
+	final TranslationsZhHant _root; // ignore: unused_field
+
+	// Translations
+	@override String get auto => '自動分類';
+	@override String get movie => '電影';
+	@override String get show => '電視劇';
+	@override String get anime => '動漫';
 }
 
 /// The flat map containing all translations for locale <zh-Hant>.
@@ -5698,6 +5767,45 @@ extension on TranslationsZhHant {
 			'addServer.redirectDifferentHost' => ({required Object product}) => '伺服器重新導向至不同的主機。請直接輸入最終的 ${product} URL。',
 			'addServer.redirectInsecure' => '伺服器從 HTTPS 重新導向至不安全的 URL',
 			'addServer.redirectUnsupportedEnterFinal' => ({required Object product}) => '伺服器重新導向至不支援的 URL。請直接輸入最終的 ${product} URL。',
+			'storage.title' => '儲存掛載',
+			'storage.description' => '掛載本機資料夾、WebDAV 伺服器和網盤',
+			'storage.addMount' => '新增掛載',
+			'storage.editMount' => '編輯掛載',
+			'storage.remove' => '移除',
+			'storage.removeMountTitle' => '移除掛載？',
+			'storage.removeMountMessage' => ({required Object name}) => '將移除「${name}」。儲存上的檔案不會被更動。',
+			'storage.empty' => '還沒有掛載。新增本機資料夾、WebDAV 伺服器或夸克網盤。',
+			'storage.emptyFolder' => '空資料夾',
+			'storage.kind.local' => '本機資料夾',
+			'storage.kind.webdav' => 'WebDAV',
+			'storage.kind.quark' => '夸克網盤',
+			'storage.kind.smb' => 'SMB',
+			'storage.content.auto' => '自動分類',
+			'storage.content.movie' => '電影',
+			'storage.content.show' => '電視劇',
+			'storage.content.anime' => '動漫',
+			'storage.fieldType' => '類型',
+			'storage.fieldName' => '名稱',
+			'storage.fieldContent' => '內容',
+			'storage.fieldContentHelp' => '指定類型可略過猜測，或讓每個檔案自動分類',
+			'storage.folderPath' => '資料夾路徑',
+			'storage.browse' => '瀏覽',
+			'storage.selectFolder' => '選擇資料夾',
+			'storage.url' => 'URL',
+			'storage.urlInvalid' => '請輸入 http(s) 網址',
+			'storage.username' => '使用者名稱（選填）',
+			'storage.password' => '密碼（選填）',
+			'storage.allowSelfSigned' => '允許自簽憑證',
+			'storage.cookie' => 'Cookie',
+			'storage.cookieHelp' => '已登入 pan.quark.cn 工作階段的完整 Cookie 標頭',
+			'storage.rootFolderId' => '根資料夾 ID',
+			'storage.rootFolderIdHelp' => '0 表示網盤根目錄',
+			'storage.requestInterval' => 'API 請求最小間隔（毫秒）',
+			'storage.requestIntervalHelp' => ({required Object min}) => '不低於 ${min}。數值越大對帳號越安全。',
+			'storage.requestIntervalInvalid' => ({required Object min}) => '請輸入 ${min} 或更大的值',
+			'storage.required' => '必填',
+			'storage.connecting' => '連線中…',
+			'storage.testAndSave' => '測試並儲存',
 			_ => null,
 		};
 	}

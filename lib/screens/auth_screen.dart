@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:material_symbols_icons/symbols.dart';
 import 'package:provider/provider.dart';
 import '../connection/connection.dart';
 import '../connection/connection_registry.dart';
@@ -28,11 +29,13 @@ import '../media/media_backend.dart';
 import '../media/media_browser_dialect.dart';
 import '../navigation/profile_session_screen.dart';
 import '../utils/navigation_transitions.dart';
+import '../widgets/app_icon.dart';
 import '../widgets/backend_badge.dart';
 import '../widgets/dialog_action_button.dart';
 import 'auth/plex_pin_auth_flow.dart';
 import 'profile/profile_switch_screen.dart';
 import 'settings/add_jellyfin_screen.dart';
+import 'storage/mounts_screen.dart';
 
 class AuthScreen extends StatefulWidget {
   const AuthScreen({
@@ -227,6 +230,10 @@ class _AuthScreenState extends State<AuthScreen> {
         _errorMessage = t.serverSelection.failedToLoadServers(error: e);
       });
     }
+  }
+
+  void _openStorageMounts() {
+    unawaited(Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const MountsScreen())));
   }
 
   void _handleDebugTap() {
@@ -451,6 +458,16 @@ class _AuthScreenState extends State<AuthScreen> {
             style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 16)),
             icon: const BackendBadge(backend: MediaBackend.emby, size: 18),
             label: Text(t.auth.connectToMediaBrowser(product: embyDialect.productName)),
+          ),
+        ),
+        const SizedBox(height: 12),
+        FocusableButton(
+          onPressed: _openStorageMounts,
+          child: OutlinedButton.icon(
+            onPressed: _openStorageMounts,
+            style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 16)),
+            icon: const AppIcon(Symbols.hard_drive_rounded, size: 18),
+            label: Text(t.storage.title),
           ),
         ),
         if (kDebugMode) ...[

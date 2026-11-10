@@ -2556,5 +2556,50 @@
     "openAsProfile": "",
     "copy": "",
     "copied": ""
+  },
+  "storage": {
+    "title": "儲存掛載",
+    "description": "掛載本機資料夾、WebDAV 伺服器和網盤",
+    "addMount": "新增掛載",
+    "editMount": "編輯掛載",
+    "remove": "移除",
+    "removeMountTitle": "移除掛載？",
+    "removeMountMessage": "將移除「${name}」。儲存上的檔案不會被更動。",
+    "empty": "還沒有掛載。新增本機資料夾、WebDAV 伺服器或夸克網盤。",
+    "emptyFolder": "空資料夾",
+    "kind": {
+      "local": "本機資料夾",
+      "webdav": "WebDAV",
+      "quark": "夸克網盤",
+      "smb": "SMB"
+    },
+    "content": {
+      "auto": "自動分類",
+      "movie": "電影",
+      "show": "電視劇",
+      "anime": "動漫"
+    },
+    "fieldType": "類型",
+    "fieldName": "名稱",
+    "fieldContent": "內容",
+    "fieldContentHelp": "指定類型可略過猜測，或讓每個檔案自動分類",
+    "folderPath": "資料夾路徑",
+    "browse": "瀏覽",
+    "selectFolder": "選擇資料夾",
+    "url": "URL",
+    "urlInvalid": "請輸入 http(s) 網址",
+    "username": "使用者名稱（選填）",
+    "password": "密碼（選填）",
+    "allowSelfSigned": "允許自簽憑證",
+    "cookie": "Cookie",
+    "cookieHelp": "已登入 pan.quark.cn 工作階段的完整 Cookie 標頭",
+    "rootFolderId": "根資料夾 ID",
+    "rootFolderIdHelp": "0 表示網盤根目錄",
+    "requestInterval": "API 請求最小間隔（毫秒）",
+    "requestIntervalHelp": "不低於 ${min}。數值越大對帳號越安全。",
+    "requestIntervalInvalid": "請輸入 ${min} 或更大的值",
+    "required": "必填",
+    "connecting": "連線中…",
+    "testAndSave": "測試並儲存"
   }
 }

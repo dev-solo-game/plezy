@@ -57,6 +57,7 @@ import 'account_preferences_screen.dart';
 import 'appearance_settings_screen.dart';
 import 'general_settings_screen.dart';
 import 'keyboard_shortcuts_screen.dart';
+import '../storage/mounts_screen.dart';
 import 'logs_screen.dart';
 import 'playback_settings_screen.dart';
 import '../profile/profile_switch_screen.dart';
@@ -114,6 +115,7 @@ class _SettingsScreenState extends State<SettingsScreen> with FocusableTab, Moun
   static const _kDebugLogging = 'debug_logging';
   static const _kAutoHidePerformanceOverlay = 'auto_hide_performance_overlay';
   static const _kViewLogs = 'view_logs';
+  static const _kStorageMounts = 'storage_mounts';
   static const _kClearImageCache = 'clear_image_cache';
   static const _kResetSettings = 'reset_settings';
   static const _kCheckForUpdates = 'check_for_updates';
@@ -577,6 +579,13 @@ class _SettingsScreenState extends State<SettingsScreen> with FocusableTab, Moun
           icon: Symbols.speed_rounded,
           title: t.settings.autoHidePerformanceOverlay,
           subtitle: t.settings.autoHidePerformanceOverlayDescription,
+        ),
+        SettingNavigationTile(
+          focusNode: _focusTracker.get(_kStorageMounts),
+          icon: Symbols.hard_drive_rounded,
+          title: t.storage.title,
+          subtitle: t.storage.description,
+          destinationBuilder: (context) => const MountsScreen(),
         ),
         SettingNavigationTile(
           focusNode: _focusTracker.get(_kViewLogs),

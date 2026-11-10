@@ -370,3 +370,35 @@ class MusicSessions extends Table {
   @override
   Set<Column> get primaryKey => {profileId};
 }
+
+/// User-configured storage locations — see `StorageMount`.
+///
+/// One row per mounted local folder, SMB share, WebDAV collection or cloud
+/// drive. The local media library is scanned out of these.
+@DataClassName('MountRow')
+class Mounts extends Table {
+  /// Generated UUID.
+  TextColumn get id => text()();
+
+  /// Driver kind: `'local'`, `'webdav'`, `'quark'` or `'smb'`.
+  TextColumn get kind => text()();
+
+  /// User-visible label.
+  TextColumn get displayName => text()();
+
+  /// How the scanner classifies content: `'auto'`, `'movie'`, `'show'` or `'anime'`.
+  TextColumn get libraryType => text().withDefault(const Constant('auto'))();
+
+  /// Driver-specific, non-sensitive settings as a JSON object.
+  TextColumn get configJson => text()();
+
+  /// Credentials as a JSON object, encrypted by `CredentialVault`. Empty when
+  /// the mount has none.
+  TextColumn get secrets => text().withDefault(const Constant(''))();
+
+  /// Timestamp this mount was added (milliseconds since epoch).
+  IntColumn get createdAt => integer()();
+
+  @override
+  Set<Column> get primaryKey => {id};
+}

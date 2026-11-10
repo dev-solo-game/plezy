@@ -1,0 +1,321 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:clock/clock.dart';
+
+import '../../utils/app_logger.dart';
+import '../http_range_reader.dart';
+import '../request_throttle.dart';
+import '../storage_driver.dart';
+import '../storage_mount.dart';
+import '../storage_path.dart';
+
+/// Quark cloud drive, through the web client's private API.
+///
+/// The account is identified by the browser cookie. Files are addressed by
+/// `fid`, so the driver keeps a path → fid map filled in as directories are
+/// listed. Every API call goes through a [RequestThrottle]: Quark flags
+/// accounts that list directories too quickly.
+class QuarkStorageDriver implements StorageDriver {
+  QuarkStorageDriver({
+    required String cookie,
+    String rootFolderId = defaultRootFolderId,
+    Duration requestInterval = defaultRequestInterval,
+    this.onCookieChanged,
+    HttpClient? httpClient,
+    Uri? apiBase,
+  }) : _cookie = cookie.trim(),
+       _apiBase = apiBase ?? Uri.parse('https://drive-pc.quark.cn/1/clouddrive'),
+       _client = httpClient ?? HttpClient(),
+       _throttle = RequestThrottle(requestInterval) {
+    _client
+      ..connectionTimeout = const Duration(seconds: 15)
+      ..userAgent = _userAgent;
+    _reader = HttpRangeReader(_client);
+    _folderIds[StoragePath.root] = rootFolderId.isEmpty ? defaultRootFolderId : rootFolderId;
+  }
+
+  factory QuarkStorageDriver.fromMount(StorageMount mount, {void Function(String cookie)? onCookieChanged}) {
+    final cookie = mount.secret(MountKeys.secretCookie);
+    if (cookie == null) {
+      throw const StorageException(StorageErrorKind.unauthorized, 'Quark mount has no cookie');
+    }
+    final intervalMs = mount.configInt(MountKeys.requestIntervalMs);
+    return QuarkStorageDriver(
+      cookie: cookie,
+      rootFolderId: mount.configString(MountKeys.rootFolderId) ?? defaultRootFolderId,
+      requestInterval: intervalMs == null
+          ? defaultRequestInterval
+          : Duration(milliseconds: intervalMs.clamp(minRequestIntervalMs, 60000)),
+      onCookieChanged: onCookieChanged,
+    );
+  }
+
+  static const String defaultRootFolderId = '0';
+  static const Duration defaultRequestInterval = Duration(milliseconds: 1000);
+  static const int minRequestIntervalMs = 200;
+
+  static const int _pageSize = 100;
+  static const Duration _linkLifetime = Duration(minutes: 30);
+  static const String _referer = 'https://pan.quark.cn';
+  static const String _userAgent =
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) '
+      'quark-cloud-drive/2.5.20 Chrome/100.0.4896.160 Electron/18.3.5.4-b478491100 '
+      'Safari/537.36 Channel/pckk_other_ch';
+
+  /// Session cookies the API rotates through `Set-Cookie`.
+  static const Set<String> _rotatingCookies = {'__puus', '__pus'};
+
+  /// Called with the full cookie string whenever Quark rotates a session
+  /// cookie, so the owner can persist it.
+  final void Function(String cookie)? onCookieChanged;
+
+  final Uri _apiBase;
+  final HttpClient _client;
+  final RequestThrottle _throttle;
+  late final HttpRangeReader _reader;
+
+  String _cookie;
+  final Map<String, String> _folderIds = {};
+  final Map<String, StorageLink> _links = {};
+
+  @override
+  StorageKind get kind => StorageKind.quark;
+
+  @override
+  Future<void> check() async {
+    await _api('GET', '/config');
+  }
+
+  @override
+  Future<List<StorageEntry>> list(String path, {StorageEntry? parent}) async {
+    final normalized = StoragePath.normalize(path);
+    final folderId = parent?.id ?? await _resolveFolderId(normalized);
+    return _listFolder(normalized, folderId);
+  }
+
+  @override
+  Future<StorageEntry> stat(String path) async {
+    final normalized = StoragePath.normalize(path);
+    if (normalized == StoragePath.root) {
+      return StorageEntry(path: StoragePath.root, name: '', isDirectory: true, id: _folderIds[StoragePath.root]);
+    }
+    final siblings = await list(StoragePath.parent(normalized));
+    for (final entry in siblings) {
+      if (entry.path == normalized) return entry;
+    }
+    throw StorageException(StorageErrorKind.notFound, 'Not found: $normalized');
+  }
+
+  @override
+  Stream<List<int>> openRead(StorageEntry entry, {int start = 0, int? end}) {
+    return _reader.read(
+      ({required bool forceRefresh}) => _linkFor(entry, forceRefresh: forceRefresh),
+      start: start,
+      end: end,
+    );
+  }
+
+  Future<String> _resolveFolderId(String path) async {
+    final known = _folderIds[path];
+    if (known != null) return known;
+
+    // Walk down from the deepest ancestor whose id is already known.
+    final segments = StoragePath.segments(path);
+    var depth = segments.length - 1;
+    while (depth > 0 && !_folderIds.containsKey('/${segments.sublist(0, depth).join('/')}')) {
+      depth--;
+    }
+    for (var i = depth; i < segments.length; i++) {
+      final parentPath = i == 0 ? StoragePath.root : '/${segments.sublist(0, i).join('/')}';
+      await _listFolder(parentPath, _folderIds[parentPath]!);
+      final childPath = '/${segments.sublist(0, i + 1).join('/')}';
+      if (!_folderIds.containsKey(childPath)) {
+        throw StorageException(StorageErrorKind.notFound, 'Not found: $childPath');
+      }
+    }
+    return _folderIds[path]!;
+  }
+
+  Future<List<StorageEntry>> _listFolder(String path, String folderId) async {
+    final entries = <StorageEntry>[];
+    for (var page = 1; ; page++) {
+      final json = await _api(
+        'GET',
+        '/file/sort',
+        query: {
+          'pdir_fid': folderId,
+          '_size': '$_pageSize',
+          '_page': '$page',
+          '_fetch_total': '1',
+          '_sort': 'file_type:asc,file_name:asc',
+        },
+      );
+      final data = json['data'];
+      final rows = data is Map && data['list'] is List ? data['list'] as List : const [];
+      for (final row in rows) {
+        if (row is! Map) continue;
+        final entry = _entryFromRow(path, row);
+        if (entry == null) continue;
+        entries.add(entry);
+        if (entry.isDirectory) _folderIds[entry.path] = entry.id!;
+      }
+      final metadata = json['metadata'];
+      final total = metadata is Map && metadata['_total'] is num ? (metadata['_total'] as num).toInt() : null;
+      if (rows.length < _pageSize || (total != null && page * _pageSize >= total)) break;
+    }
+    return entries;
+  }
+
+  StorageEntry? _entryFromRow(String parentPath, Map<dynamic, dynamic> row) {
+    final fid = row['fid'];
+    final name = row['file_name'];
+    if (fid is! String || fid.isEmpty || name is! String || name.isEmpty) return null;
+    // A name that would change meaning when normalized cannot be addressed by path.
+    if (name == '.' || name == '..' || name.contains('/') || name.contains('\\')) return null;
+    final isFile = row['file'] == true;
+    final updatedAt = row['updated_at'];
+    final size = row['size'];
+    return StorageEntry(
+      path: StoragePath.join(parentPath, name),
+      name: name,
+      isDirectory: !isFile,
+      size: isFile && size is num ? size.toInt() : null,
+      modifiedAt: updatedAt is num ? DateTime.fromMillisecondsSinceEpoch(updatedAt.toInt()) : null,
+      id: fid,
+    );
+  }
+
+  Future<StorageLink> _linkFor(StorageEntry entry, {required bool forceRefresh}) async {
+    final fid = entry.id ?? (await stat(entry.path)).id!;
+    if (!forceRefresh) {
+      final cached = _links[fid];
+      if (cached != null && cached.expiresAt!.isAfter(clock.now())) {
+        // The cookie may have rotated since the link was cached.
+        return StorageLink(cached.url, headers: _downloadHeaders(), expiresAt: cached.expiresAt);
+      }
+    }
+    final json = await _api(
+      'POST',
+      '/file/download',
+      body: {
+        'fids': [fid],
+      },
+    );
+    final data = json['data'];
+    final first = data is List && data.isNotEmpty ? data.first : null;
+    final url = first is Map ? first['download_url'] : null;
+    final uri = url is String ? Uri.tryParse(url) : null;
+    if (uri == null || !uri.hasScheme) {
+      throw const StorageException(StorageErrorKind.other, 'Quark returned no download link');
+    }
+    final link = StorageLink(uri, headers: _downloadHeaders(), expiresAt: clock.now().add(_linkLifetime));
+    _links[fid] = link;
+    return link;
+  }
+
+  Map<String, String> _downloadHeaders() => {
+    HttpHeaders.cookieHeader: _cookie,
+    HttpHeaders.refererHeader: _referer,
+    HttpHeaders.userAgentHeader: _userAgent,
+  };
+
+  Future<Map<String, dynamic>> _api(
+    String method,
+    String path, {
+    Map<String, String> query = const {},
+    Map<String, Object?>? body,
+  }) {
+    return _throttle.run(() async {
+      final url = _apiBase.replace(
+        path: '${_apiBase.path}$path',
+        queryParameters: {'pr': 'ucpro', 'fr': 'pc', ...query},
+      );
+      final int status;
+      final String text;
+      try {
+        final request = await _client.openUrl(method, url);
+        request.headers
+          ..set(HttpHeaders.cookieHeader, _cookie)
+          ..set(HttpHeaders.refererHeader, _referer)
+          ..set(HttpHeaders.acceptHeader, 'application/json, text/plain, */*');
+        if (body != null) {
+          request.headers.contentType = ContentType.json;
+          request.add(utf8.encode(jsonEncode(body)));
+        }
+        final response = await request.close().timeout(const Duration(seconds: 30));
+        status = response.statusCode;
+        try {
+          _absorbCookies(response.cookies);
+        } on Exception catch (e) {
+          // dart:io rejects Set-Cookie values it considers malformed.
+          appLogger.d('Ignoring unparsable Quark Set-Cookie header: $e');
+        }
+        text = await utf8.decodeStream(response).timeout(const Duration(seconds: 30));
+      } on SocketException catch (e) {
+        throw StorageException(StorageErrorKind.network, 'Cannot reach Quark', cause: e);
+      } on HandshakeException catch (e) {
+        throw StorageException(StorageErrorKind.network, 'TLS handshake with Quark failed', cause: e);
+      } on TimeoutException catch (e) {
+        throw StorageException(StorageErrorKind.network, 'Quark request timed out', cause: e);
+      } on HttpException catch (e) {
+        throw StorageException(StorageErrorKind.network, e.message, cause: e);
+      }
+
+      Object? decoded;
+      try {
+        decoded = jsonDecode(text);
+      } on FormatException {
+        decoded = null;
+      }
+      final json = decoded is Map<String, dynamic> ? decoded : null;
+      final code = json?['code'];
+      final apiStatus = json?['status'];
+      final failed =
+          status >= 400 || json == null || (code is num && code != 0) || (apiStatus is num && apiStatus >= 400);
+      if (!failed) return json;
+
+      final message = json?['message'] is String ? json!['message'] as String : 'HTTP $status';
+      throw StorageException(_errorKind(status, apiStatus, message), 'Quark: $message');
+    });
+  }
+
+  static StorageErrorKind _errorKind(int httpStatus, Object? apiStatus, String message) {
+    final effective = apiStatus is num && apiStatus >= 400 ? apiStatus.toInt() : httpStatus;
+    if (effective == HttpStatus.unauthorized || message.toLowerCase().contains('require login')) {
+      return StorageErrorKind.unauthorized;
+    }
+    if (effective == HttpStatus.tooManyRequests) return StorageErrorKind.rateLimited;
+    if (effective == HttpStatus.notFound) return StorageErrorKind.notFound;
+    return StorageErrorKind.other;
+  }
+
+  void _absorbCookies(List<Cookie> received) {
+    var updated = _cookie;
+    for (final cookie in received) {
+      if (!_rotatingCookies.contains(cookie.name) || cookie.value.isEmpty) continue;
+      updated = _replaceCookie(updated, cookie.name, cookie.value);
+    }
+    if (updated == _cookie) return;
+    _cookie = updated;
+    appLogger.d('Quark rotated a session cookie');
+    onCookieChanged?.call(updated);
+  }
+
+  static String _replaceCookie(String cookieHeader, String name, String value) {
+    final parts = cookieHeader.split(';').map((p) => p.trim()).where((p) => p.isNotEmpty).toList();
+    final index = parts.indexWhere((p) => p.startsWith('$name='));
+    if (index >= 0) {
+      parts[index] = '$name=$value';
+    } else {
+      parts.add('$name=$value');
+    }
+    return parts.join('; ');
+  }
+
+  @override
+  Future<void> close() async {
+    _client.close(force: true);
+  }
+}

@@ -81,6 +81,8 @@ import 'services/connectivity_probe.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'services/jellyfin_api_cache.dart';
 import 'services/plex_api_cache.dart';
+import 'storage/mount_manager.dart';
+import 'storage/mount_registry.dart';
 import 'database/app_database.dart';
 import 'database/download_operations.dart';
 import 'database/tvos_database_recovery_store.dart';
@@ -1750,6 +1752,10 @@ class _MainAppState extends State<MainApp> with WidgetsBindingObserver {
         Provider<SettingsService>.value(value: widget.settings),
         Provider<StorageService>.value(value: widget.storage),
         Provider<AppDatabase>.value(value: _appDatabase),
+        Provider<MountManager>(
+          create: (_) => MountManager(MountRegistry(_appDatabase)),
+          dispose: (_, manager) => unawaited(manager.dispose()),
+        ),
         Provider<ConnectionRegistry>.value(value: _connections),
         Provider<ProfileRegistry>(create: (_) => ProfileRegistry(_appDatabase)),
         Provider<ProfileConnectionRegistry>.value(value: _profileConnections),

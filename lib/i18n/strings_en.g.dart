@@ -95,6 +95,7 @@ class Translations with BaseTranslations<AppLocale, Translations> {
 	late final Translations$services$en services = Translations$services$en.internal(_root);
 	late final Translations$addServer$en addServer = Translations$addServer$en.internal(_root);
 	late final Translations$deepLinks$en deepLinks = Translations$deepLinks$en.internal(_root);
+	late final Translations$storage$en storage = Translations$storage$en.internal(_root);
 }
 
 // Path: app
@@ -6173,6 +6174,111 @@ class Translations$deepLinks$en {
 	String get copied => 'Link copied';
 }
 
+// Path: storage
+class Translations$storage$en {
+	Translations$storage$en.internal(this._root);
+
+	final Translations _root; // ignore: unused_field
+
+	// Translations
+
+	/// en: 'Storage mounts'
+	String get title => 'Storage mounts';
+
+	/// en: 'Mount local folders, WebDAV servers and cloud drives'
+	String get description => 'Mount local folders, WebDAV servers and cloud drives';
+
+	/// en: 'Add mount'
+	String get addMount => 'Add mount';
+
+	/// en: 'Edit mount'
+	String get editMount => 'Edit mount';
+
+	/// en: 'Remove'
+	String get remove => 'Remove';
+
+	/// en: 'Remove mount?'
+	String get removeMountTitle => 'Remove mount?';
+
+	/// en: '"${name}" will be removed. Files on the storage are not touched.'
+	String removeMountMessage({required Object name}) => '"${name}" will be removed. Files on the storage are not touched.';
+
+	/// en: 'No mounts yet. Add a local folder, WebDAV server or Quark drive.'
+	String get empty => 'No mounts yet. Add a local folder, WebDAV server or Quark drive.';
+
+	/// en: 'Empty folder'
+	String get emptyFolder => 'Empty folder';
+
+	late final Translations$storage$kind$en kind = Translations$storage$kind$en.internal(_root);
+	late final Translations$storage$content$en content = Translations$storage$content$en.internal(_root);
+
+	/// en: 'Type'
+	String get fieldType => 'Type';
+
+	/// en: 'Name'
+	String get fieldName => 'Name';
+
+	/// en: 'Content'
+	String get fieldContent => 'Content';
+
+	/// en: 'Pick a type to skip guessing, or let each file be classified automatically'
+	String get fieldContentHelp => 'Pick a type to skip guessing, or let each file be classified automatically';
+
+	/// en: 'Folder path'
+	String get folderPath => 'Folder path';
+
+	/// en: 'Browse'
+	String get browse => 'Browse';
+
+	/// en: 'Select folder'
+	String get selectFolder => 'Select folder';
+
+	/// en: 'URL'
+	String get url => 'URL';
+
+	/// en: 'Enter an http(s) URL'
+	String get urlInvalid => 'Enter an http(s) URL';
+
+	/// en: 'Username (optional)'
+	String get username => 'Username (optional)';
+
+	/// en: 'Password (optional)'
+	String get password => 'Password (optional)';
+
+	/// en: 'Allow self-signed certificate'
+	String get allowSelfSigned => 'Allow self-signed certificate';
+
+	/// en: 'Cookie'
+	String get cookie => 'Cookie';
+
+	/// en: 'The full Cookie header of a logged-in pan.quark.cn session'
+	String get cookieHelp => 'The full Cookie header of a logged-in pan.quark.cn session';
+
+	/// en: 'Root folder ID'
+	String get rootFolderId => 'Root folder ID';
+
+	/// en: '0 is the drive root'
+	String get rootFolderIdHelp => '0 is the drive root';
+
+	/// en: 'Minimum gap between API requests (ms)'
+	String get requestInterval => 'Minimum gap between API requests (ms)';
+
+	/// en: 'At least ${min}. Higher is safer for the account.'
+	String requestIntervalHelp({required Object min}) => 'At least ${min}. Higher is safer for the account.';
+
+	/// en: 'Enter ${min} or more'
+	String requestIntervalInvalid({required Object min}) => 'Enter ${min} or more';
+
+	/// en: 'Required'
+	String get required => 'Required';
+
+	/// en: 'Connecting…'
+	String get connecting => 'Connecting…';
+
+	/// en: 'Test and save'
+	String get testAndSave => 'Test and save';
+}
+
 // Path: appIcon.names
 class Translations$appIcon$names$en {
 	Translations$appIcon$names$en.internal(this._root);
@@ -8109,6 +8215,48 @@ class Translations$services$libraryFilter$en {
 
 	/// en: 'No libraries available'
 	String get noLibraries => 'No libraries available';
+}
+
+// Path: storage.kind
+class Translations$storage$kind$en {
+	Translations$storage$kind$en.internal(this._root);
+
+	final Translations _root; // ignore: unused_field
+
+	// Translations
+
+	/// en: 'Local folder'
+	String get local => 'Local folder';
+
+	/// en: 'WebDAV'
+	String get webdav => 'WebDAV';
+
+	/// en: 'Quark'
+	String get quark => 'Quark';
+
+	/// en: 'SMB'
+	String get smb => 'SMB';
+}
+
+// Path: storage.content
+class Translations$storage$content$en {
+	Translations$storage$content$en.internal(this._root);
+
+	final Translations _root; // ignore: unused_field
+
+	// Translations
+
+	/// en: 'Auto-detect'
+	String get auto => 'Auto-detect';
+
+	/// en: 'Movies'
+	String get movie => 'Movies';
+
+	/// en: 'TV shows'
+	String get show => 'TV shows';
+
+	/// en: 'Anime'
+	String get anime => 'Anime';
 }
 
 /// The flat map containing all translations for locale <en>.
@@ -10456,6 +10604,45 @@ extension on Translations {
 			'deepLinks.openAsProfile' => ({required Object name}) => 'Open as ${name}',
 			'deepLinks.copy' => 'Copy',
 			'deepLinks.copied' => 'Link copied',
+			'storage.title' => 'Storage mounts',
+			'storage.description' => 'Mount local folders, WebDAV servers and cloud drives',
+			'storage.addMount' => 'Add mount',
+			'storage.editMount' => 'Edit mount',
+			'storage.remove' => 'Remove',
+			'storage.removeMountTitle' => 'Remove mount?',
+			'storage.removeMountMessage' => ({required Object name}) => '"${name}" will be removed. Files on the storage are not touched.',
+			'storage.empty' => 'No mounts yet. Add a local folder, WebDAV server or Quark drive.',
+			'storage.emptyFolder' => 'Empty folder',
+			'storage.kind.local' => 'Local folder',
+			'storage.kind.webdav' => 'WebDAV',
+			'storage.kind.quark' => 'Quark',
+			'storage.kind.smb' => 'SMB',
+			'storage.content.auto' => 'Auto-detect',
+			'storage.content.movie' => 'Movies',
+			'storage.content.show' => 'TV shows',
+			'storage.content.anime' => 'Anime',
+			'storage.fieldType' => 'Type',
+			'storage.fieldName' => 'Name',
+			'storage.fieldContent' => 'Content',
+			'storage.fieldContentHelp' => 'Pick a type to skip guessing, or let each file be classified automatically',
+			'storage.folderPath' => 'Folder path',
+			'storage.browse' => 'Browse',
+			'storage.selectFolder' => 'Select folder',
+			'storage.url' => 'URL',
+			'storage.urlInvalid' => 'Enter an http(s) URL',
+			'storage.username' => 'Username (optional)',
+			'storage.password' => 'Password (optional)',
+			'storage.allowSelfSigned' => 'Allow self-signed certificate',
+			'storage.cookie' => 'Cookie',
+			'storage.cookieHelp' => 'The full Cookie header of a logged-in pan.quark.cn session',
+			'storage.rootFolderId' => 'Root folder ID',
+			'storage.rootFolderIdHelp' => '0 is the drive root',
+			'storage.requestInterval' => 'Minimum gap between API requests (ms)',
+			'storage.requestIntervalHelp' => ({required Object min}) => 'At least ${min}. Higher is safer for the account.',
+			'storage.requestIntervalInvalid' => ({required Object min}) => 'Enter ${min} or more',
+			'storage.required' => 'Required',
+			'storage.connecting' => 'Connecting…',
+			'storage.testAndSave' => 'Test and save',
 			_ => null,
 		};
 	}

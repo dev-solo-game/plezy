@@ -2556,5 +2556,50 @@
     "openAsProfile": "",
     "copy": "",
     "copied": ""
+  },
+  "storage": {
+    "title": "存储挂载",
+    "description": "挂载本地文件夹、WebDAV 服务器和网盘",
+    "addMount": "添加挂载",
+    "editMount": "编辑挂载",
+    "remove": "移除",
+    "removeMountTitle": "移除挂载？",
+    "removeMountMessage": "将移除“${name}”。存储上的文件不会被改动。",
+    "empty": "还没有挂载。添加本地文件夹、WebDAV 服务器或夸克网盘。",
+    "emptyFolder": "空文件夹",
+    "kind": {
+      "local": "本地文件夹",
+      "webdav": "WebDAV",
+      "quark": "夸克网盘",
+      "smb": "SMB"
+    },
+    "content": {
+      "auto": "自动分类",
+      "movie": "电影",
+      "show": "电视剧",
+      "anime": "动漫"
+    },
+    "fieldType": "类型",
+    "fieldName": "名称",
+    "fieldContent": "内容",
+    "fieldContentHelp": "指定类型可跳过猜测，或让每个文件自动分类",
+    "folderPath": "文件夹路径",
+    "browse": "浏览",
+    "selectFolder": "选择文件夹",
+    "url": "URL",
+    "urlInvalid": "请输入 http(s) 地址",
+    "username": "用户名（可选）",
+    "password": "密码（可选）",
+    "allowSelfSigned": "允许自签名证书",
+    "cookie": "Cookie",
+    "cookieHelp": "已登录 pan.quark.cn 会话的完整 Cookie 请求头",
+    "rootFolderId": "根文件夹 ID",
+    "rootFolderIdHelp": "0 表示网盘根目录",
+    "requestInterval": "API 请求最小间隔（毫秒）",
+    "requestIntervalHelp": "不低于 ${min}。数值越大对账号越安全。",
+    "requestIntervalInvalid": "请输入 ${min} 或更大的值",
+    "required": "必填",
+    "connecting": "连接中…",
+    "testAndSave": "测试并保存"
   }
 }

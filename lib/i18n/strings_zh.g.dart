@@ -93,6 +93,7 @@ class TranslationsZh extends Translations with BaseTranslations<AppLocale, Trans
 	@override late final Translations$seerr$zh seerr = Translations$seerr$zh.internal(_root);
 	@override late final Translations$services$zh services = Translations$services$zh.internal(_root);
 	@override late final Translations$addServer$zh addServer = Translations$addServer$zh.internal(_root);
+	@override late final Translations$storage$zh storage = Translations$storage$zh.internal(_root);
 }
 
 // Path: app
@@ -2449,6 +2450,48 @@ class Translations$addServer$zh extends Translations$addServer$en {
 	@override String redirectUnsupportedEnterFinal({required Object product}) => '服务器重定向到了不受支持的 URL。请直接输入最终的 ${product} URL。';
 }
 
+// Path: storage
+class Translations$storage$zh extends Translations$storage$en {
+	Translations$storage$zh.internal(TranslationsZh root) : this._root = root, super.internal(root);
+
+	final TranslationsZh _root; // ignore: unused_field
+
+	// Translations
+	@override String get title => '存储挂载';
+	@override String get description => '挂载本地文件夹、WebDAV 服务器和网盘';
+	@override String get addMount => '添加挂载';
+	@override String get editMount => '编辑挂载';
+	@override String get remove => '移除';
+	@override String get removeMountTitle => '移除挂载？';
+	@override String removeMountMessage({required Object name}) => '将移除“${name}”。存储上的文件不会被改动。';
+	@override String get empty => '还没有挂载。添加本地文件夹、WebDAV 服务器或夸克网盘。';
+	@override String get emptyFolder => '空文件夹';
+	@override late final Translations$storage$kind$zh kind = Translations$storage$kind$zh.internal(_root);
+	@override late final Translations$storage$content$zh content = Translations$storage$content$zh.internal(_root);
+	@override String get fieldType => '类型';
+	@override String get fieldName => '名称';
+	@override String get fieldContent => '内容';
+	@override String get fieldContentHelp => '指定类型可跳过猜测，或让每个文件自动分类';
+	@override String get folderPath => '文件夹路径';
+	@override String get browse => '浏览';
+	@override String get selectFolder => '选择文件夹';
+	@override String get url => 'URL';
+	@override String get urlInvalid => '请输入 http(s) 地址';
+	@override String get username => '用户名（可选）';
+	@override String get password => '密码（可选）';
+	@override String get allowSelfSigned => '允许自签名证书';
+	@override String get cookie => 'Cookie';
+	@override String get cookieHelp => '已登录 pan.quark.cn 会话的完整 Cookie 请求头';
+	@override String get rootFolderId => '根文件夹 ID';
+	@override String get rootFolderIdHelp => '0 表示网盘根目录';
+	@override String get requestInterval => 'API 请求最小间隔（毫秒）';
+	@override String requestIntervalHelp({required Object min}) => '不低于 ${min}。数值越大对账号越安全。';
+	@override String requestIntervalInvalid({required Object min}) => '请输入 ${min} 或更大的值';
+	@override String get required => '必填';
+	@override String get connecting => '连接中…';
+	@override String get testAndSave => '测试并保存';
+}
+
 // Path: appIcon.names
 class Translations$appIcon$names$zh extends Translations$appIcon$names$en {
 	Translations$appIcon$names$zh.internal(TranslationsZh root) : this._root = root, super.internal(root);
@@ -3376,6 +3419,32 @@ class Translations$services$libraryFilter$zh extends Translations$services$libra
 	@override String get modeHintWhitelist => '仅同步下方勾选的媒体库。';
 	@override String get libraries => '媒体库';
 	@override String get noLibraries => '没有可用的媒体库';
+}
+
+// Path: storage.kind
+class Translations$storage$kind$zh extends Translations$storage$kind$en {
+	Translations$storage$kind$zh.internal(TranslationsZh root) : this._root = root, super.internal(root);
+
+	final TranslationsZh _root; // ignore: unused_field
+
+	// Translations
+	@override String get local => '本地文件夹';
+	@override String get webdav => 'WebDAV';
+	@override String get quark => '夸克网盘';
+	@override String get smb => 'SMB';
+}
+
+// Path: storage.content
+class Translations$storage$content$zh extends Translations$storage$content$en {
+	Translations$storage$content$zh.internal(TranslationsZh root) : this._root = root, super.internal(root);
+
+	final TranslationsZh _root; // ignore: unused_field
+
+	// Translations
+	@override String get auto => '自动分类';
+	@override String get movie => '电影';
+	@override String get show => '电视剧';
+	@override String get anime => '动漫';
 }
 
 /// The flat map containing all translations for locale <zh>.
@@ -5697,6 +5766,45 @@ extension on TranslationsZh {
 			'addServer.redirectDifferentHost' => ({required Object product}) => '服务器重定向到了其他主机。请直接输入最终的 ${product} URL。',
 			'addServer.redirectInsecure' => '服务器从 HTTPS 重定向到了不安全的 URL',
 			'addServer.redirectUnsupportedEnterFinal' => ({required Object product}) => '服务器重定向到了不受支持的 URL。请直接输入最终的 ${product} URL。',
+			'storage.title' => '存储挂载',
+			'storage.description' => '挂载本地文件夹、WebDAV 服务器和网盘',
+			'storage.addMount' => '添加挂载',
+			'storage.editMount' => '编辑挂载',
+			'storage.remove' => '移除',
+			'storage.removeMountTitle' => '移除挂载？',
+			'storage.removeMountMessage' => ({required Object name}) => '将移除“${name}”。存储上的文件不会被改动。',
+			'storage.empty' => '还没有挂载。添加本地文件夹、WebDAV 服务器或夸克网盘。',
+			'storage.emptyFolder' => '空文件夹',
+			'storage.kind.local' => '本地文件夹',
+			'storage.kind.webdav' => 'WebDAV',
+			'storage.kind.quark' => '夸克网盘',
+			'storage.kind.smb' => 'SMB',
+			'storage.content.auto' => '自动分类',
+			'storage.content.movie' => '电影',
+			'storage.content.show' => '电视剧',
+			'storage.content.anime' => '动漫',
+			'storage.fieldType' => '类型',
+			'storage.fieldName' => '名称',
+			'storage.fieldContent' => '内容',
+			'storage.fieldContentHelp' => '指定类型可跳过猜测，或让每个文件自动分类',
+			'storage.folderPath' => '文件夹路径',
+			'storage.browse' => '浏览',
+			'storage.selectFolder' => '选择文件夹',
+			'storage.url' => 'URL',
+			'storage.urlInvalid' => '请输入 http(s) 地址',
+			'storage.username' => '用户名（可选）',
+			'storage.password' => '密码（可选）',
+			'storage.allowSelfSigned' => '允许自签名证书',
+			'storage.cookie' => 'Cookie',
+			'storage.cookieHelp' => '已登录 pan.quark.cn 会话的完整 Cookie 请求头',
+			'storage.rootFolderId' => '根文件夹 ID',
+			'storage.rootFolderIdHelp' => '0 表示网盘根目录',
+			'storage.requestInterval' => 'API 请求最小间隔（毫秒）',
+			'storage.requestIntervalHelp' => ({required Object min}) => '不低于 ${min}。数值越大对账号越安全。',
+			'storage.requestIntervalInvalid' => ({required Object min}) => '请输入 ${min} 或更大的值',
+			'storage.required' => '必填',
+			'storage.connecting' => '连接中…',
+			'storage.testAndSave' => '测试并保存',
 			_ => null,
 		};
 	}

@@ -2568,5 +2568,50 @@
     "openAsProfile": "Open as ${name}",
     "copy": "Copy",
     "copied": "Link copied"
+  },
+  "storage": {
+    "title": "Storage mounts",
+    "description": "Mount local folders, WebDAV servers and cloud drives",
+    "addMount": "Add mount",
+    "editMount": "Edit mount",
+    "remove": "Remove",
+    "removeMountTitle": "Remove mount?",
+    "removeMountMessage": "\"${name}\" will be removed. Files on the storage are not touched.",
+    "empty": "No mounts yet. Add a local folder, WebDAV server or Quark drive.",
+    "emptyFolder": "Empty folder",
+    "kind": {
+      "local": "Local folder",
+      "webdav": "WebDAV",
+      "quark": "Quark",
+      "smb": "SMB"
+    },
+    "content": {
+      "auto": "Auto-detect",
+      "movie": "Movies",
+      "show": "TV shows",
+      "anime": "Anime"
+    },
+    "fieldType": "Type",
+    "fieldName": "Name",
+    "fieldContent": "Content",
+    "fieldContentHelp": "Pick a type to skip guessing, or let each file be classified automatically",
+    "folderPath": "Folder path",
+    "browse": "Browse",
+    "selectFolder": "Select folder",
+    "url": "URL",
+    "urlInvalid": "Enter an http(s) URL",
+    "username": "Username (optional)",
+    "password": "Password (optional)",
+    "allowSelfSigned": "Allow self-signed certificate",
+    "cookie": "Cookie",
+    "cookieHelp": "The full Cookie header of a logged-in pan.quark.cn session",
+    "rootFolderId": "Root folder ID",
+    "rootFolderIdHelp": "0 is the drive root",
+    "requestInterval": "Minimum gap between API requests (ms)",
+    "requestIntervalHelp": "At least ${min}. Higher is safer for the account.",
+    "requestIntervalInvalid": "Enter ${min} or more",
+    "required": "Required",
+    "connecting": "Connecting…",
+    "testAndSave": "Test and save"
   }
 }
