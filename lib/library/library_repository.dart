@@ -219,6 +219,55 @@ class LibraryRepository {
     return query.getSingleOrNull();
   }
 
+  /// Finds a movie or show by the name a file gave it: its sort title or one
+  /// of its aliases. A [year] only rules a candidate out when both sides
+  /// have one and they differ.
+  Future<LibraryItemRow?> findTitleByName({
+    required String kind,
+    required String libraryType,
+    required String name,
+    int? year,
+  }) async {
+    final items = _db.libraryItems;
+    final key = sortTitleFor(name);
+    final wanted = name.trim().toLowerCase();
+    Expression<bool> filter =
+        items.kind.equals(kind) &
+        items.libraryType.equals(libraryType) &
+        (items.sortTitle.equals(key) | items.aliases.like(_likePattern(name.trim()), escapeChar: r'\'));
+    if (year != null) filter = filter & (items.year.isNull() | items.year.equals(year));
+    final candidates =
+        await (_db.select(items)
+              ..where((_) => filter)
+              // An exact-year candidate beats one with no year.
+              ..orderBy([(t) => OrderingTerm(expression: t.year, mode: OrderingMode.desc, nulls: NullsOrder.last)]))
+            .get();
+    for (final candidate in candidates) {
+      if (candidate.sortTitle == key) return candidate;
+      // LIKE finds the name anywhere in the alias list; it has to be a whole line.
+      final aliases = (candidate.aliases ?? '').toLowerCase().split('\n').map((a) => a.trim());
+      if (aliases.contains(wanted)) return candidate;
+    }
+    return null;
+  }
+
+  /// The season of [showId] numbered [seasonNumber], or the episode of a
+  /// season numbered [episodeNumber].
+  Future<LibraryItemRow?> findChild(int parentId, {int? seasonNumber, int? episodeNumber}) {
+    final query = _db.select(_db.libraryItems)
+      ..where((t) {
+        Expression<bool> filter = t.parentId.equals(parentId);
+        if (episodeNumber != null) {
+          filter = filter & t.kind.equals(LibraryKinds.episode) & t.episodeNumber.equals(episodeNumber);
+        } else if (seasonNumber != null) {
+          filter = filter & t.kind.equals(LibraryKinds.season) & t.seasonNumber.equals(seasonNumber);
+        }
+        return filter;
+      })
+      ..limit(1);
+    return query.getSingleOrNull();
+  }
+
   Expression<bool> _shelfFilter(LibraryQuery query) {
     final items = _db.libraryItems;
     final states = _db.libraryUserStates;
@@ -710,6 +759,26 @@ class LibraryRepository {
         matchLocked: locked ? const Value(true) : const Value.absent(),
       ),
     );
+  }
+
+  /// Points a video at a title without recording a match: the scanner files
+  /// it under the name it parsed, and the scraper confirms or corrects that.
+  Future<void> linkFile(int fileId, int? itemId) async {
+    await (_db.update(
+      _db.libraryFiles,
+    )..where((t) => t.id.equals(fileId))).write(LibraryFilesCompanion(itemId: Value(itemId)));
+  }
+
+  /// How many videos a mount holds, and how many of them no title claims.
+  Future<({int videos, int unidentified})> mountSummary(String mountId) async {
+    final files = _db.libraryFiles;
+    final total = files.id.count();
+    final loose = files.id.count(filter: files.itemId.isNull());
+    final query = _db.selectOnly(files)
+      ..addColumns([total, loose])
+      ..where(files.mountId.equals(mountId) & files.role.equals(LibraryFileRoles.video));
+    final row = await query.getSingle();
+    return (videos: row.read(total) ?? 0, unidentified: row.read(loose) ?? 0);
   }
 
   Future<void> setFileMatchState(int fileId, String state) async {

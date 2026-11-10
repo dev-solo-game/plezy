@@ -2518,6 +2518,18 @@ class Translations$storage$zh extends Translations$storage$en {
 	@override String get parentFolder => '返回上一级';
 	@override String get quarkFolderNeedsLogin => '请先登录再选择目录';
 	@override String get smbFolderNeedsServer => '请先填写服务器和共享名称';
+	@override String get scan => '扫描';
+	@override String get scanStop => '停止扫描';
+	@override String scanning({required Object files}) => '扫描中… 已发现 ${files} 个文件';
+	@override String scanSummary({required Object videos}) => '${videos} 个视频';
+	@override String scanSummaryUnidentified({required Object videos, required Object unidentified}) => '${videos} 个视频 · ${unidentified} 个未识别';
+	@override String scanFailed({required Object message}) => '扫描失败：${message}';
+	@override String get scanNever => '尚未扫描';
+	@override String get scanResults => '扫描结果';
+	@override String get unidentified => '未识别';
+	@override String versionCount({required Object n}) => '${n} 个版本';
+	@override String episodeCount({required Object n}) => '${n} 集';
+	@override String get emptyShelf => '这里还没有内容';
 }
 
 // Path: appIcon.names
@@ -5877,6 +5889,18 @@ extension on TranslationsZh {
 			'storage.parentFolder' => '返回上一级',
 			'storage.quarkFolderNeedsLogin' => '请先登录再选择目录',
 			'storage.smbFolderNeedsServer' => '请先填写服务器和共享名称',
+			'storage.scan' => '扫描',
+			'storage.scanStop' => '停止扫描',
+			'storage.scanning' => ({required Object files}) => '扫描中… 已发现 ${files} 个文件',
+			'storage.scanSummary' => ({required Object videos}) => '${videos} 个视频',
+			'storage.scanSummaryUnidentified' => ({required Object videos, required Object unidentified}) => '${videos} 个视频 · ${unidentified} 个未识别',
+			'storage.scanFailed' => ({required Object message}) => '扫描失败：${message}',
+			'storage.scanNever' => '尚未扫描',
+			'storage.scanResults' => '扫描结果',
+			'storage.unidentified' => '未识别',
+			'storage.versionCount' => ({required Object n}) => '${n} 个版本',
+			'storage.episodeCount' => ({required Object n}) => '${n} 集',
+			'storage.emptyShelf' => '这里还没有内容',
 			_ => null,
 		};
 	}

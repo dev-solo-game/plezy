@@ -81,6 +81,9 @@ import 'services/connectivity_probe.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'services/jellyfin_api_cache.dart';
 import 'services/plex_api_cache.dart';
+import 'library/library_repository.dart';
+import 'library/library_scan_service.dart';
+import 'library/library_scanner.dart';
 import 'storage/mount_manager.dart';
 import 'storage/mount_registry.dart';
 import 'database/app_database.dart';
@@ -1755,6 +1758,17 @@ class _MainAppState extends State<MainApp> with WidgetsBindingObserver {
         Provider<MountManager>(
           create: (_) => MountManager(MountRegistry(_appDatabase)),
           dispose: (_, manager) => unawaited(manager.dispose()),
+        ),
+        Provider<LibraryRepository>(create: (_) => LibraryRepository(_appDatabase)),
+        ChangeNotifierProvider<LibraryScanService>(
+          create: (context) {
+            final repository = context.read<LibraryRepository>();
+            return LibraryScanService(
+              repository: repository,
+              scanner: LibraryScanner(_appDatabase, repository),
+              mounts: context.read<MountManager>(),
+            );
+          },
         ),
         Provider<ConnectionRegistry>.value(value: _connections),
         Provider<ProfileRegistry>(create: (_) => ProfileRegistry(_appDatabase)),

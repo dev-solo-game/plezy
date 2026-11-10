@@ -2645,6 +2645,18 @@
     "noSubfolders": "No sub-folders here",
     "parentFolder": "Up one level",
     "quarkFolderNeedsLogin": "Sign in first to choose a folder",
-    "smbFolderNeedsServer": "Enter the server and share first"
+    "smbFolderNeedsServer": "Enter the server and share first",
+    "scan": "Scan",
+    "scanStop": "Stop scanning",
+    "scanning": "Scanning… ${files} files seen",
+    "scanSummary": "${videos} videos",
+    "scanSummaryUnidentified": "${videos} videos · ${unidentified} unidentified",
+    "scanFailed": "Scan failed: ${message}",
+    "scanNever": "Not scanned yet",
+    "scanResults": "Scan results",
+    "unidentified": "Unidentified",
+    "versionCount": "${n} versions",
+    "episodeCount": "${n} episodes",
+    "emptyShelf": "Nothing here yet"
   }
 }

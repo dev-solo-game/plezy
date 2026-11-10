@@ -2633,6 +2633,18 @@
     "noSubfolders": "这里没有子文件夹",
     "parentFolder": "返回上一级",
     "quarkFolderNeedsLogin": "请先登录再选择目录",
-    "smbFolderNeedsServer": "请先填写服务器和共享名称"
+    "smbFolderNeedsServer": "请先填写服务器和共享名称",
+    "scan": "扫描",
+    "scanStop": "停止扫描",
+    "scanning": "扫描中… 已发现 ${files} 个文件",
+    "scanSummary": "${videos} 个视频",
+    "scanSummaryUnidentified": "${videos} 个视频 · ${unidentified} 个未识别",
+    "scanFailed": "扫描失败：${message}",
+    "scanNever": "尚未扫描",
+    "scanResults": "扫描结果",
+    "unidentified": "未识别",
+    "versionCount": "${n} 个版本",
+    "episodeCount": "${n} 集",
+    "emptyShelf": "这里还没有内容"
   }
 }

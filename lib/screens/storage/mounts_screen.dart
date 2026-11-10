@@ -1,14 +1,18 @@
 // Phase-1 scaffolding for the local media library: lets a mount be added,
 // browsed and played before the scanner and library UI exist.
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:material_symbols_icons/symbols.dart';
 import 'package:provider/provider.dart';
 
 import '../../i18n/strings.g.dart';
+import '../../library/library_scan_service.dart';
 import '../../storage/mount_manager.dart';
 import '../../storage/storage_mount.dart';
 import '../../storage/storage_path.dart';
 import '../../widgets/app_icon.dart';
+import 'library_preview_screen.dart';
 import 'mount_edit_screen.dart';
 import 'storage_browser_screen.dart';
 
@@ -84,7 +88,7 @@ class StorageKindBadge extends StatelessWidget {
   }
 }
 
-enum _MountAction { edit, remove }
+enum _MountAction { scan, edit, remove }
 
 class MountsScreen extends StatelessWidget {
   const MountsScreen({super.key});
@@ -95,6 +99,7 @@ class MountsScreen extends StatelessWidget {
 
   Future<void> _confirmRemove(BuildContext context, StorageMount mount) async {
     final manager = context.read<MountManager>();
+    final scans = context.read<LibraryScanService>();
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -106,14 +111,29 @@ class MountsScreen extends StatelessWidget {
         ],
       ),
     );
-    if (confirmed == true) await manager.remove(mount.id);
+    if (confirmed != true) return;
+    scans.cancel(mount.id);
+    await manager.remove(mount.id);
+    // The mount's files went with it; drop the titles that leaves empty.
+    await scans.repository.pruneEmptyTitles();
   }
 
   @override
   Widget build(BuildContext context) {
     final manager = context.read<MountManager>();
     return Scaffold(
-      appBar: AppBar(title: Text(t.storage.title)),
+      appBar: AppBar(
+        title: Text(t.storage.title),
+        actions: [
+          TextButton.icon(
+            onPressed: () =>
+                Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const LibraryPreviewScreen())),
+            icon: const AppIcon(Symbols.video_library_rounded),
+            label: Text(t.storage.scanResults),
+          ),
+          const SizedBox(width: 8),
+        ],
+      ),
       body: StreamBuilder<List<StorageMount>>(
         stream: manager.registry.watch(),
         builder: (context, snapshot) {
@@ -149,6 +169,14 @@ class MountsScreen extends StatelessWidget {
                         builder: (_) => StorageBrowserScreen(mount: mount, path: StoragePath.root),
                       ),
                     ),
+                    onScan: () {
+                      final scans = context.read<LibraryScanService>();
+                      if (scans.isScanning(mount.id)) {
+                        scans.cancel(mount.id);
+                      } else {
+                        unawaited(scans.scan(mount));
+                      }
+                    },
                     onEdit: () => _edit(context, mount),
                     onRemove: () => _confirmRemove(context, mount),
                   );
@@ -207,6 +235,7 @@ class _MountCard extends StatelessWidget {
   const _MountCard({
     required this.mount,
     required this.onOpen,
+    required this.onScan,
     required this.onEdit,
     required this.onRemove,
     this.autofocus = false,
@@ -214,6 +243,7 @@ class _MountCard extends StatelessWidget {
 
   final StorageMount mount;
   final VoidCallback onOpen;
+  final VoidCallback onScan;
   final VoidCallback onEdit;
   final VoidCallback onRemove;
   final bool autofocus;
@@ -223,6 +253,7 @@ class _MountCard extends StatelessWidget {
     final theme = Theme.of(context);
     final muted = theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant);
     final location = mountLocationSummary(mount);
+    final status = context.watch<LibraryScanService>().statusOf(mount.id);
     return Card(
       margin: EdgeInsets.zero,
       clipBehavior: Clip.antiAlias,
@@ -248,6 +279,8 @@ class _MountCard extends StatelessWidget {
                     const SizedBox(height: 2),
                     Text('${storageKindLabel(mount.kind)} · ${mountLibraryTypeLabel(mount.libraryType)}', style: muted),
                     if (location != null) Text(location, style: muted, maxLines: 1, overflow: TextOverflow.ellipsis),
+                    const SizedBox(height: 6),
+                    _ScanLine(mountId: mount.id, status: status),
                   ],
                 ),
               ),
@@ -255,10 +288,15 @@ class _MountCard extends StatelessWidget {
                 tooltip: t.common.options,
                 icon: const AppIcon(Symbols.more_vert_rounded),
                 onSelected: (action) => switch (action) {
+                  _MountAction.scan => onScan(),
                   _MountAction.edit => onEdit(),
                   _MountAction.remove => onRemove(),
                 },
                 itemBuilder: (context) => [
+                  PopupMenuItem(
+                    value: _MountAction.scan,
+                    child: Text(status.isRunning ? t.storage.scanStop : t.storage.scan),
+                  ),
                   PopupMenuItem(value: _MountAction.edit, child: Text(t.common.edit)),
                   PopupMenuItem(value: _MountAction.remove, child: Text(t.storage.remove)),
                 ],
@@ -267,6 +305,65 @@ class _MountCard extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// One line under a mount: scan progress, the last failure, or what the
+/// library holds from it.
+class _ScanLine extends StatelessWidget {
+  const _ScanLine({required this.mountId, required this.status});
+
+  final String mountId;
+  final MountScanStatus status;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final style = theme.textTheme.bodySmall;
+    final progress = status.progress;
+    if (progress != null) {
+      return Row(
+        children: [
+          const SizedBox.square(dimension: 12, child: CircularProgressIndicator(strokeWidth: 2)),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              t.storage.scanning(files: progress.filesSeen),
+              style: style?.copyWith(color: theme.colorScheme.primary),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ],
+      );
+    }
+    final error = status.error;
+    if (error != null) {
+      return Text(
+        t.storage.scanFailed(message: error),
+        style: style?.copyWith(color: theme.colorScheme.error),
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
+      );
+    }
+    final scans = context.read<LibraryScanService>();
+    return FutureBuilder(
+      // Keyed on the last result so the counts refresh when a scan ends.
+      key: ValueKey(status.lastResult),
+      future: scans.repository.mountSummary(mountId),
+      builder: (context, snapshot) {
+        final summary = snapshot.data;
+        final muted = style?.copyWith(color: theme.colorScheme.onSurfaceVariant);
+        if (summary == null) return Text('', style: muted);
+        if (summary.videos == 0) return Text(t.storage.scanNever, style: muted);
+        return Text(
+          summary.unidentified == 0
+              ? t.storage.scanSummary(videos: summary.videos)
+              : t.storage.scanSummaryUnidentified(videos: summary.videos, unidentified: summary.unidentified),
+          style: muted,
+        );
+      },
     );
   }
 }

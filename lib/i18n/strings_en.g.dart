@@ -6360,6 +6360,42 @@ class Translations$storage$en {
 
 	/// en: 'Enter the server and share first'
 	String get smbFolderNeedsServer => 'Enter the server and share first';
+
+	/// en: 'Scan'
+	String get scan => 'Scan';
+
+	/// en: 'Stop scanning'
+	String get scanStop => 'Stop scanning';
+
+	/// en: 'Scanning… ${files} files seen'
+	String scanning({required Object files}) => 'Scanning… ${files} files seen';
+
+	/// en: '${videos} videos'
+	String scanSummary({required Object videos}) => '${videos} videos';
+
+	/// en: '${videos} videos · ${unidentified} unidentified'
+	String scanSummaryUnidentified({required Object videos, required Object unidentified}) => '${videos} videos · ${unidentified} unidentified';
+
+	/// en: 'Scan failed: ${message}'
+	String scanFailed({required Object message}) => 'Scan failed: ${message}';
+
+	/// en: 'Not scanned yet'
+	String get scanNever => 'Not scanned yet';
+
+	/// en: 'Scan results'
+	String get scanResults => 'Scan results';
+
+	/// en: 'Unidentified'
+	String get unidentified => 'Unidentified';
+
+	/// en: '${n} versions'
+	String versionCount({required Object n}) => '${n} versions';
+
+	/// en: '${n} episodes'
+	String episodeCount({required Object n}) => '${n} episodes';
+
+	/// en: 'Nothing here yet'
+	String get emptyShelf => 'Nothing here yet';
 }
 
 // Path: appIcon.names
@@ -10778,6 +10814,18 @@ extension on Translations {
 			'storage.parentFolder' => 'Up one level',
 			'storage.quarkFolderNeedsLogin' => 'Sign in first to choose a folder',
 			'storage.smbFolderNeedsServer' => 'Enter the server and share first',
+			'storage.scan' => 'Scan',
+			'storage.scanStop' => 'Stop scanning',
+			'storage.scanning' => ({required Object files}) => 'Scanning… ${files} files seen',
+			'storage.scanSummary' => ({required Object videos}) => '${videos} videos',
+			'storage.scanSummaryUnidentified' => ({required Object videos, required Object unidentified}) => '${videos} videos · ${unidentified} unidentified',
+			'storage.scanFailed' => ({required Object message}) => 'Scan failed: ${message}',
+			'storage.scanNever' => 'Not scanned yet',
+			'storage.scanResults' => 'Scan results',
+			'storage.unidentified' => 'Unidentified',
+			'storage.versionCount' => ({required Object n}) => '${n} versions',
+			'storage.episodeCount' => ({required Object n}) => '${n} episodes',
+			'storage.emptyShelf' => 'Nothing here yet',
 			_ => null,
 		};
 	}

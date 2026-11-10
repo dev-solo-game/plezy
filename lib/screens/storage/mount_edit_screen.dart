@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -5,6 +6,7 @@ import 'package:material_symbols_icons/symbols.dart';
 import 'package:provider/provider.dart';
 
 import '../../i18n/strings.g.dart';
+import '../../library/library_scan_service.dart';
 import '../../services/file_picker_service.dart';
 import '../../storage/drivers/quark_storage_driver.dart';
 import '../../storage/drivers/smb_storage_driver.dart';
@@ -168,6 +170,7 @@ class _MountEditScreenState extends State<MountEditScreen> {
       return;
     }
     final manager = context.read<MountManager>();
+    final scans = context.read<LibraryScanService>();
     final navigator = Navigator.of(context);
     setState(() {
       _saving = true;
@@ -184,6 +187,8 @@ class _MountEditScreenState extends State<MountEditScreen> {
         await probe.close();
       }
       await manager.save(mount);
+      // A new or changed mount is scanned straight away; the list shows progress.
+      unawaited(scans.scan(mount));
     } on StorageException catch (e) {
       error = e.message;
     } catch (e) {

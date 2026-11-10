@@ -2633,6 +2633,18 @@
     "noSubfolders": "這裡沒有子資料夾",
     "parentFolder": "回上一層",
     "quarkFolderNeedsLogin": "請先登入再選擇目錄",
-    "smbFolderNeedsServer": "請先填寫伺服器和共用名稱"
+    "smbFolderNeedsServer": "請先填寫伺服器和共用名稱",
+    "scan": "掃描",
+    "scanStop": "停止掃描",
+    "scanning": "掃描中… 已發現 ${files} 個檔案",
+    "scanSummary": "${videos} 個影片",
+    "scanSummaryUnidentified": "${videos} 個影片 · ${unidentified} 個未識別",
+    "scanFailed": "掃描失敗：${message}",
+    "scanNever": "尚未掃描",
+    "scanResults": "掃描結果",
+    "unidentified": "未識別",
+    "versionCount": "${n} 個版本",
+    "episodeCount": "${n} 集",
+    "emptyShelf": "這裡還沒有內容"
   }
 }
