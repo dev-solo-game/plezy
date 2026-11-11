@@ -10,6 +10,11 @@
 // Only define these if the SDK doesn't already have them (SDK < 10.0.26100.0).
 #ifndef NTDDI_WIN11_GE
 
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable : 4201)
+#endif
+
 enum {
   DISPLAYCONFIG_DEVICE_INFO_SET_RESERVED1 = 14,
   DISPLAYCONFIG_DEVICE_INFO_GET_ADVANCED_COLOR_INFO_2 = 15,
@@ -54,6 +59,10 @@ typedef struct _DISPLAYCONFIG_SET_HDR_STATE {
     UINT32 value;
   };
 } DISPLAYCONFIG_SET_HDR_STATE;
+
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
 
 #endif  // NTDDI_WIN11_GE
 
