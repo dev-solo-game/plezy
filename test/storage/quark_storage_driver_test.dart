@@ -10,9 +10,11 @@ class _FakeQuark {
   late HttpServer server;
   final List<String> apiCalls = [];
   final List<String?> cookiesSeen = [];
+  final List<Map<String, dynamic>> playInfoBodies = [];
   final Set<String> revokedLinks = {};
   int linkCounter = 0;
   String? rotateCookieTo;
+  bool addMalformedSetCookie = false;
   bool requireLogin = false;
 
   static final fileBytes = List<int>.generate(64, (i) => i);
@@ -57,6 +59,10 @@ class _FakeQuark {
 
     apiCalls.add('${request.method} ${path.replaceFirst('/1/clouddrive', '')} ${request.uri.queryParameters}');
     response.headers.contentType = ContentType.json;
+    if (addMalformedSetCookie) {
+      response.headers.add(HttpHeaders.setCookieHeader, 'noequals');
+      response.headers.add(HttpHeaders.setCookieHeader, 'bad=x; Expires=NotADate');
+    }
     if (rotateCookieTo != null) {
       response.headers.add(HttpHeaders.setCookieHeader, '__puus=$rotateCookieTo; Path=/');
     }
@@ -84,6 +90,16 @@ class _FakeQuark {
         for (final fid in fids)
           {'fid': fid, 'download_url': 'http://127.0.0.1:${server.port}/dl/${fid}_${++linkCounter}'},
       ];
+    } else if (path.endsWith('/file/v2/play')) {
+      playInfoBodies.add(jsonDecode(body) as Map<String, dynamic>);
+      data = {
+        'video_list': [
+          {
+            'resolution': 'super',
+            'video_info': {'url': 'http://127.0.0.1:${server.port}/hls/super.m3u8', 'width': 1920, 'height': 1080},
+          },
+        ],
+      };
     }
     response.write(jsonEncode({'status': 200, 'code': 0, 'message': 'ok', 'data': data, 'metadata': metadata}));
     return response.close();
@@ -190,6 +206,26 @@ void main() {
     await driver.check();
     expect(fake.cookiesSeen.last, '__pus=abc; __puus=new; other=1');
     expect(rotated.length, 1, reason: 'an unchanged cookie is not reported again');
+  });
+
+  test('rotates __puus even when sibling Set-Cookie headers are malformed', () async {
+    fake.addMalformedSetCookie = true;
+    fake.rotateCookieTo = 'rotated-2';
+    await driver.check();
+    expect(rotated, ['__pus=abc; __puus=rotated-2; other=1']);
+
+    fake.addMalformedSetCookie = false;
+    fake.rotateCookieTo = null;
+    await driver.check();
+    expect(fake.cookiesSeen.last, '__pus=abc; __puus=rotated-2; other=1');
+  });
+
+  test('requests apollo and dolby_low capabilities in web play-info', () async {
+    const film = StorageEntry(path: '/Movies/Film (2020).mkv', name: 'Film (2020).mkv', isDirectory: false, id: 'f-film');
+    final variants = await driver.streamVariants(film);
+    expect(variants.map((v) => v.id), ['super']);
+    final supports = fake.playInfoBodies.single['supports'] as String;
+    expect(supports.split(','), containsAll(['m3u8', 'fmp4', 'apollo', 'dolby_vision', 'dolby_low']));
   });
 
   test('an expired cookie surfaces as unauthorized', () async {

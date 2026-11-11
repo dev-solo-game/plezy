@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import '../../utils/app_logger.dart';
+import '../storage_driver.dart';
 import 'quark_pc_session.dart';
 import 'quark_wsg.dart';
 
@@ -44,12 +45,24 @@ abstract class QuarkTransport {
   /// and the client supports it.
   Future<void> writeBody(HttpClientRequest request, Map<String, Object?> body, {required bool wsgBody});
 
+  /// Whether [playInfo] directly returns `trans_status == 'raw'` streams that
+  /// [QuarkStorageDriver] should prefer for original-quality playback.
+  bool get prefersRawPlayInfo => false;
+
   /// Takes in any session rotation the response carries (web cookies); a no-op
   /// for clients without one.
   void absorbResponse(HttpClientResponse response);
 
   /// Headers for a direct file download link.
-  Map<String, String> downloadHeaders();
+  Future<Map<String, String>> downloadHeaders();
+
+  /// Rebuilds headers for a cached download/play link so rotating or
+  /// short-lived session material stays current while preserving link-scoped
+  /// cookies such as `Video-Auth`.
+  Future<Map<String, String>> refreshHeaders(Map<String, String> cached) => downloadHeaders();
+
+  /// Requests a direct download link for [fid] as `(download_url, headers)`.
+  Future<(Uri, Map<String, String>)> downloadLink(String fid, QuarkApiCall call);
 
   /// A lightweight request that fails if the session is no longer valid.
   Future<void> check(QuarkApiCall call, String rootFolderId);
@@ -57,17 +70,40 @@ abstract class QuarkTransport {
   /// The file's renditions as `(video_list rows, player headers)`.
   Future<(List<dynamic>, Map<String, String>)> playInfo(String fid, QuarkApiCall call);
 
-  /// Reads a named cookie out of raw `Set-Cookie` headers. Raw because
-  /// dart:io rejects some values Quark sends.
-  static String? cookieValue(List<String> setCookies, String name) {
+  /// Extracts `name -> value` pairs from raw `Set-Cookie` header lines. Raw
+  /// because `dart:io` rejects some values Quark sends.
+  static Map<String, String> parseSetCookies(List<String> setCookies) {
+    final parsed = <String, String>{};
     for (final raw in setCookies) {
-      final pair = raw.split(';').first;
-      final eq = pair.indexOf('=');
-      if (eq <= 0 || pair.substring(0, eq).trim() != name) continue;
-      final value = pair.substring(eq + 1).trim();
-      if (value.isNotEmpty) return value;
+      final pair = parsePair(raw.split(';').first);
+      if (pair != null) parsed[pair.$1] = pair.$2;
     }
-    return null;
+    return parsed;
+  }
+
+  /// Splits a single `name=value` segment, returning null when missing or empty.
+  static (String, String)? parsePair(String rawSegment) {
+    final eq = rawSegment.indexOf('=');
+    if (eq <= 0) return null;
+    final name = rawSegment.substring(0, eq).trim();
+    final value = rawSegment.substring(eq + 1).trim();
+    if (name.isEmpty || value.isEmpty) return null;
+    return (name, value);
+  }
+
+  /// Reads a named cookie out of raw `Set-Cookie` headers.
+  static String? cookieValue(List<String> setCookies, String name) => parseSetCookies(setCookies)[name];
+
+  /// Reads `download_url` out of a `/file/download` response payload.
+  static Uri parseDownloadUrl(Map<String, dynamic> json) {
+    final data = json['data'];
+    final first = data is List && data.isNotEmpty ? data.first : null;
+    final url = first is Map ? first['download_url'] : null;
+    final uri = url is String ? Uri.tryParse(url) : null;
+    if (uri == null || !uri.hasScheme) {
+      throw const StorageException(StorageErrorKind.other, 'Quark returned no download link');
+    }
+    return uri;
   }
 }
 
@@ -105,18 +141,15 @@ class QuarkWebTransport extends QuarkTransport {
 
   @override
   void absorbResponse(HttpClientResponse response) {
-    final List<Cookie> received;
-    try {
-      received = response.cookies;
-    } on Exception catch (e) {
-      // dart:io rejects Set-Cookie values it considers malformed.
-      appLogger.d('Ignoring unparsable Quark Set-Cookie header: $e');
-      return;
-    }
+    // Read raw header lines rather than response.cookies: dart:io throws if
+    // any sibling Set-Cookie is malformed, which would drop __puus/__pus rotation.
+    final raw = response.headers[HttpHeaders.setCookieHeader];
+    if (raw == null || raw.isEmpty) return;
+    final received = QuarkTransport.parseSetCookies(raw);
     var updated = _cookie;
-    for (final cookie in received) {
-      if (!_rotatingCookies.contains(cookie.name) || cookie.value.isEmpty) continue;
-      updated = _replaceCookie(updated, cookie.name, cookie.value);
+    for (final entry in received.entries) {
+      if (!_rotatingCookies.contains(entry.key)) continue;
+      updated = _replaceCookie(updated, entry.key, entry.value);
     }
     if (updated == _cookie) return;
     _cookie = updated;
@@ -125,11 +158,23 @@ class QuarkWebTransport extends QuarkTransport {
   }
 
   @override
-  Map<String, String> downloadHeaders() => {
+  Future<Map<String, String>> downloadHeaders() async => {
     HttpHeaders.cookieHeader: _cookie,
     HttpHeaders.refererHeader: quarkReferer,
     HttpHeaders.userAgentHeader: userAgent,
   };
+
+  @override
+  Future<(Uri, Map<String, String>)> downloadLink(String fid, QuarkApiCall call) async {
+    final json = await call(
+      'POST',
+      '/file/download',
+      body: {
+        'fids': [fid],
+      },
+    );
+    return (QuarkTransport.parseDownloadUrl(json), await downloadHeaders());
+  }
 
   @override
   Future<void> check(QuarkApiCall call, String rootFolderId) async {
@@ -143,7 +188,11 @@ class QuarkWebTransport extends QuarkTransport {
       'POST',
       '/file/v2/play',
       base: playApiBase,
-      body: {'fid': fid, 'resolutions': _renditions.reversed.join(','), 'supports': 'fmp4_av,m3u8,dolby_vision'},
+      body: {
+        'fid': fid,
+        'resolutions': _renditions.reversed.join(','),
+        'supports': 'm3u8,fmp4,apollo,dolby_vision,dolby_low',
+      },
       setCookies: setCookies,
     );
     // The CDN refuses the renditions (HTTP 412) without this play-scoped cookie.
@@ -205,17 +254,52 @@ class QuarkPcTransport extends QuarkTransport {
   }
 
   @override
+  bool get prefersRawPlayInfo => true;
+
+  @override
   void absorbResponse(HttpClientResponse response) {
     // The desktop session is ticket-based; nothing to rotate.
   }
 
-  @override
-  Map<String, String> downloadHeaders() => {
-    // The stored secret is the session string, not a cookie; the desktop
-    // download link is reached with just the referer and agent.
-    HttpHeaders.refererHeader: quarkReferer,
+  Map<String, String> _cdnHeadersFor(String kuus, {String? videoAuth}) => {
+    HttpHeaders.cookieHeader: videoAuth == null ? kuus : '$kuus; Video-Auth=$videoAuth',
+    HttpHeaders.refererHeader: '$quarkReferer/',
     HttpHeaders.userAgentHeader: userAgent,
   };
+
+  static String? _cookieParam(String? header, String name) {
+    if (header == null || header.isEmpty) return null;
+    for (final part in header.split(';')) {
+      final pair = QuarkTransport.parsePair(part);
+      if (pair != null && pair.$1 == name) return pair.$2;
+    }
+    return null;
+  }
+
+  @override
+  Future<Map<String, String>> downloadHeaders() async => _cdnHeadersFor(await session.kuusCookie(wsg));
+
+  @override
+  Future<Map<String, String>> refreshHeaders(Map<String, String> cached) async =>
+      _cdnHeadersFor(await session.kuusCookie(wsg), videoAuth: _cookieParam(cached[HttpHeaders.cookieHeader], 'Video-Auth'));
+
+  @override
+  Future<(Uri, Map<String, String>)> downloadLink(String fid, QuarkApiCall call) async {
+    final setCookies = <String>[];
+    final kuus = await session.kuusCookie(wsg);
+    final json = await call(
+      'POST',
+      '/file/download',
+      body: {
+        'fids': [fid],
+      },
+      wsgBody: true,
+      cookie: kuus,
+      setCookies: setCookies,
+    );
+    final videoAuth = QuarkTransport.cookieValue(setCookies, 'Video-Auth');
+    return (QuarkTransport.parseDownloadUrl(json), _cdnHeadersFor(kuus, videoAuth: videoAuth));
+  }
 
   @override
   Future<void> check(QuarkApiCall call, String rootFolderId) async {
@@ -248,11 +332,7 @@ class QuarkPcTransport extends QuarkTransport {
       setCookies: setCookies,
     );
     final videoAuth = QuarkTransport.cookieValue(setCookies, 'Video-Auth');
-    final headers = {
-      HttpHeaders.cookieHeader: videoAuth == null ? kuus : '$kuus; Video-Auth=$videoAuth',
-      HttpHeaders.refererHeader: '$quarkReferer/',
-      HttpHeaders.userAgentHeader: userAgent,
-    };
+    final headers = _cdnHeadersFor(kuus, videoAuth: videoAuth);
     final data = json['data'];
     final rows = <dynamic>[];
     if (data is Map) {

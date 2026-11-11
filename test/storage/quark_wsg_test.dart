@@ -7,14 +7,11 @@ void main() {
   final wsg = QuarkWsg();
 
   // Vectors computed from the reference (Python) implementation against the
-  // measured 7.5.0.825 constants. They pin the Dart cipher to the protocol.
+  // prod gateway constants (`uwRrFVXjBeLMysYN` salt). They pin Dart to the protocol.
   group('QuarkWsg', () {
     test('encode matches the reference envelope', () async {
       expect(await wsg.encode('hello'), 'NekuJk6akqiCpTUTuJKfz1/z');
-      expect(
-        await wsg.encode('token=T&uid=U&nickname=N'),
-        'NelHlcq7CM++p8aMhOzFItdtbhH/aDo+52fEDHQQ8V3g/Q==',
-      );
+      expect(await wsg.encode('token=T&uid=U&nickname=N'), 'NelHlcq7CM++p8aMhOzFItdtbhH/aDo+52fEDHQQ8V3g/Q==');
     });
 
     test('decode reverses encode', () async {
@@ -28,10 +25,10 @@ void main() {
     });
 
     test('sign matches the reference HMAC', () {
-      expect(wsg.sign({'a': '1', 'b': '2'}), '35e96fc1ffb3a2d50b38a5845950c53b2dbf7d383738');
+      expect(wsg.sign({'a': '1', 'b': '2'}), '35e971172b86505735b593b748a287a961c1605ce109');
       expect(
         wsg.sign({'client_id': '640', 'method': 'cas.getTokenForQrcodeLogin', 'v': '1.2'}),
-        '35e9c0360a0b287c8462d570d06e84110148a3fc63a1',
+        '35e926799168bcaafec1a695b1be60a6fbd6159c427a',
       );
     });
 

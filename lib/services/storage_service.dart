@@ -6,6 +6,7 @@ import '../media/library_query.dart';
 import 'package:uuid/uuid.dart';
 
 import '../profiles/profile.dart';
+import '../storage/drivers/quark_pc_device_store.dart';
 import '../utils/log_redaction_manager.dart';
 import 'base_shared_preferences_service.dart';
 
@@ -50,6 +51,7 @@ class StorageService extends BaseSharedPreferencesService {
     // migration ran (after migration the slot is empty so this is a no-op).
     // ignore: deprecated_member_use_from_same_package
     LogRedactionManager.registerToken(getPlexToken());
+    await QuarkPcDeviceStore.loadIfPresent(prefs: prefs);
     await _migratePlexHomeUserScopes();
   }
 

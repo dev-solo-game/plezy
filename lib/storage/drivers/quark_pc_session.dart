@@ -33,8 +33,21 @@ class QuarkPcDevice {
     );
   }
 
+  /// Restores a persisted device from a JSON map, returning null if incomplete.
+  static QuarkPcDevice? tryFromJson(Object? json) {
+    if (json is! Map) return null;
+    final utdid = json['utdid'];
+    final machine = json['machine'];
+    if (utdid is String && utdid.isNotEmpty && machine is String && machine.isNotEmpty) {
+      return QuarkPcDevice(utdid: utdid, machine: machine);
+    }
+    return null;
+  }
+
   final String utdid;
   final String machine;
+
+  Map<String, String> toJson() => {'utdid': utdid, 'machine': machine};
 }
 
 /// The Quark desktop ("PC") session a mount holds: the refreshed service
@@ -47,10 +60,23 @@ class QuarkPcSession {
   QuarkPcSession({required this.ticket, required this.uid, required this.nickname, QuarkPcDevice? device})
     : device = device ?? QuarkPcDevice.generate();
 
+  /// Reads a previously persisted device from a serialized [secret], or returns
+  /// null for legacy device-less or unreadable secrets.
+  static QuarkPcDevice? tryParseDevice(String secret) {
+    final trimmed = secret.trim();
+    if (!trimmed.startsWith('{')) return null;
+    try {
+      return QuarkPcDevice.tryFromJson(jsonDecode(trimmed));
+    } on FormatException {
+      return null;
+    }
+  }
+
   /// Reads the secret [serialize] writes. Falls back to the earlier
-  /// `token=…&uid=…&nickname=…` form (a fresh device is generated for it), so
-  /// a session stored before the device was persisted still loads.
-  factory QuarkPcSession.parse(String secret) {
+  /// `token=…&uid=…&nickname=…` form (reusing [fallbackDevice] when provided, or
+  /// generating one otherwise), so a session stored before the device was
+  /// persisted still loads.
+  factory QuarkPcSession.parse(String secret, {QuarkPcDevice? fallbackDevice}) {
     if (secret.startsWith('{')) {
       try {
         final json = jsonDecode(secret);
@@ -59,9 +85,7 @@ class QuarkPcSession {
             ticket: '${json['token'] ?? ''}',
             uid: '${json['uid'] ?? ''}',
             nickname: '${json['nickname'] ?? ''}',
-            device: json['utdid'] is String && json['machine'] is String
-                ? QuarkPcDevice(utdid: json['utdid'] as String, machine: json['machine'] as String)
-                : null,
+            device: QuarkPcDevice.tryFromJson(json) ?? fallbackDevice,
           );
         }
       } on FormatException {
@@ -82,6 +106,7 @@ class QuarkPcSession {
       ticket: between('token=', '&uid='),
       uid: between('&uid=', '&nickname='),
       nickname: between('&nickname=', null),
+      device: fallbackDevice,
     );
   }
 

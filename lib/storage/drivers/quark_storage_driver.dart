@@ -10,6 +10,7 @@ import '../storage_driver.dart';
 import '../storage_mount.dart';
 import '../storage_path.dart';
 import '../stream_variant.dart';
+import 'quark_pc_device_store.dart';
 import 'quark_pc_session.dart';
 import 'quark_transport.dart';
 import 'quark_wsg.dart';
@@ -48,11 +49,16 @@ class QuarkStorageDriver implements StorageDriver, StreamVariantSource {
     HttpClient? httpClient,
     Uri? apiBase,
     Uri? playApiBase,
+    QuarkPcDevice? fallbackDevice,
   }) : _apiBase = apiBase ?? Uri.parse('https://drive-pc.quark.cn/1/clouddrive'),
        _client = httpClient ?? HttpClient(),
        _throttle = RequestThrottle(requestInterval) {
     _transport = mode == QuarkMode.pc
-        ? QuarkPcTransport(session: QuarkPcSession.parse(cookie.trim()), wsg: QuarkWsg(), playInfoBase: _apiBase)
+        ? QuarkPcTransport(
+            session: QuarkPcSession.parse(cookie.trim(), fallbackDevice: fallbackDevice),
+            wsg: QuarkWsg(),
+            playInfoBase: _apiBase,
+          )
         : QuarkWebTransport(
             cookie: cookie,
             // The web client reads play info from drive.quark.cn, not the
@@ -67,7 +73,11 @@ class QuarkStorageDriver implements StorageDriver, StreamVariantSource {
     _folderIds[StoragePath.root] = rootFolderId.isEmpty ? defaultRootFolderId : rootFolderId;
   }
 
-  factory QuarkStorageDriver.fromMount(StorageMount mount, {void Function(String cookie)? onCookieChanged}) {
+  factory QuarkStorageDriver.fromMount(
+    StorageMount mount, {
+    void Function(String cookie)? onCookieChanged,
+    QuarkPcDevice? fallbackDevice,
+  }) {
     final mode = QuarkMode.parse(mount.configString(MountKeys.quarkMode));
     if (!QuarkMode.supported.contains(mode)) {
       throw StorageException(StorageErrorKind.unsupported, 'Quark ${mode.name} sign-in is not supported yet');
@@ -85,6 +95,7 @@ class QuarkStorageDriver implements StorageDriver, StreamVariantSource {
           ? defaultRequestInterval
           : Duration(milliseconds: intervalMs.clamp(minRequestIntervalMs, 60000)),
       onCookieChanged: onCookieChanged,
+      fallbackDevice: fallbackDevice ?? QuarkPcDeviceStore.cached,
     );
   }
 
@@ -103,6 +114,7 @@ class QuarkStorageDriver implements StorageDriver, StreamVariantSource {
 
   final Map<String, String> _folderIds = {};
   final Map<String, StorageLink> _links = {};
+  final Map<String, StorageLink> _rawLinks = {};
   final Map<String, ({List<StreamVariant> variants, DateTime expiresAt})> _variants = {};
 
   /// Quark's rendition names, best first.
@@ -118,12 +130,24 @@ class QuarkStorageDriver implements StorageDriver, StreamVariantSource {
   @override
   Future<List<StreamVariant>> streamVariants(StorageEntry entry, {bool forceRefresh = false}) async {
     final fid = entry.id ?? (await stat(entry.path)).id!;
+    return _loadVariants(fid, forceRefresh: forceRefresh);
+  }
+
+  Future<List<StreamVariant>> _loadVariants(String fid, {required bool forceRefresh}) async {
     final cached = _variants[fid];
     if (!forceRefresh && cached != null && cached.expiresAt.isAfter(clock.now())) return cached.variants;
 
     final (rows, headers) = await _transport.playInfo(fid, _api);
-
+    final expiresAt = clock.now().add(_variantLifetime);
     final variants = <StreamVariant>[];
+    StorageLink? bestRawLink;
+    var bestRawRank = renditions.length + 1;
+
+    int rankId(String id) {
+      final index = renditions.indexOf(id);
+      return index < 0 ? renditions.length : index;
+    }
+
     for (final row in rows) {
       if (row is! Map || row['accessable'] == false) continue;
       final id = row['resolution'];
@@ -135,6 +159,7 @@ class QuarkStorageDriver implements StorageDriver, StreamVariantSource {
       final width = info['width'];
       final height = info['height'];
       final format = info['format'];
+      final isHls = url.path.toLowerCase().endsWith('.m3u8') || (format is String && format.contains('m3u8'));
       variants.add(
         StreamVariant(
           id: id,
@@ -142,17 +167,25 @@ class QuarkStorageDriver implements StorageDriver, StreamVariantSource {
           headers: headers,
           width: width is num ? width.toInt() : null,
           height: height is num ? height.toInt() : null,
-          isHls: url.path.toLowerCase().endsWith('.m3u8') || (format is String && format.contains('m3u8')),
+          isHls: isHls,
         ),
       );
-    }
-    int rank(StreamVariant v) {
-      final index = renditions.indexOf(v.id);
-      return index < 0 ? renditions.length : index;
+      if (!isHls && row['trans_status'] == 'raw') {
+        final rank = rankId(id);
+        if (rank < bestRawRank) {
+          bestRawRank = rank;
+          bestRawLink = StorageLink(url, headers: headers, expiresAt: expiresAt);
+        }
+      }
     }
 
-    variants.sort((a, b) => rank(a).compareTo(rank(b)));
-    _variants[fid] = (variants: variants, expiresAt: clock.now().add(_variantLifetime));
+    variants.sort((a, b) => rankId(a.id).compareTo(rankId(b.id)));
+    _variants[fid] = (variants: variants, expiresAt: expiresAt);
+    if (bestRawLink != null) {
+      _rawLinks[fid] = bestRawLink;
+    } else {
+      _rawLinks.remove(fid);
+    }
     return variants;
   }
 
@@ -260,30 +293,43 @@ class QuarkStorageDriver implements StorageDriver, StreamVariantSource {
 
   Future<StorageLink> _linkFor(StorageEntry entry, {required bool forceRefresh}) async {
     final fid = entry.id ?? (await stat(entry.path)).id!;
-    if (!forceRefresh) {
+    if (forceRefresh) {
+      _links.remove(fid);
+      _rawLinks.remove(fid);
+    } else {
       final cached = _links[fid];
       if (cached != null && cached.expiresAt!.isAfter(clock.now())) {
-        // The session may have rotated since the link was cached.
-        return StorageLink(cached.url, headers: _transport.downloadHeaders(), expiresAt: cached.expiresAt);
+        // Session cookies or signed tokens may have rotated since caching.
+        return StorageLink(
+          cached.url,
+          headers: await _transport.refreshHeaders(cached.headers),
+          expiresAt: cached.expiresAt,
+        );
+      }
+      if (_transport.prefersRawPlayInfo) {
+        final raw = _rawLinks[fid];
+        if (raw != null && raw.expiresAt!.isAfter(clock.now())) {
+          return StorageLink(raw.url, headers: await _transport.refreshHeaders(raw.headers), expiresAt: raw.expiresAt);
+        }
       }
     }
-    final json = await _api(
-      'POST',
-      '/file/download',
-      body: {
-        'fids': [fid],
-      },
-    );
-    final data = json['data'];
-    final first = data is List && data.isNotEmpty ? data.first : null;
-    final url = first is Map ? first['download_url'] : null;
-    final uri = url is String ? Uri.tryParse(url) : null;
-    if (uri == null || !uri.hasScheme) {
-      throw const StorageException(StorageErrorKind.other, 'Quark returned no download link');
+
+    try {
+      final (uri, headers) = await _transport.downloadLink(fid, _api);
+      final link = StorageLink(uri, headers: headers, expiresAt: clock.now().add(_linkLifetime));
+      _links[fid] = link;
+      return link;
+    } on StorageException catch (e) {
+      if (!_transport.prefersRawPlayInfo ||
+          e.kind == StorageErrorKind.unauthorized ||
+          e.kind == StorageErrorKind.rateLimited) {
+        rethrow;
+      }
+      await _loadVariants(fid, forceRefresh: true);
+      final raw = _rawLinks[fid];
+      if (raw != null) return raw;
+      rethrow;
     }
-    final link = StorageLink(uri, headers: _transport.downloadHeaders(), expiresAt: clock.now().add(_linkLifetime));
-    _links[fid] = link;
-    return link;
   }
 
   Future<Map<String, dynamic>> _api(

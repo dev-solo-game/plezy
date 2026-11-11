@@ -19,12 +19,18 @@ void main() {
       }
     });
 
-    test('parses the legacy device-less form, minting a device', () {
+    test('parses the legacy device-less form, minting a device or reusing fallback', () {
       final parsed = QuarkPcSession.parse('token=TK&uid=42&nickname=Nick');
       expect(parsed.ticket, 'TK');
       expect(parsed.uid, '42');
       expect(parsed.nickname, 'Nick');
       expect(parsed.device.utdid, isNotEmpty);
+
+      final reused = QuarkPcSession.parse('token=TK&uid=42&nickname=Nick', fallbackDevice: device);
+      expect(reused.device.utdid, 'UT');
+      expect(reused.device.machine, 'DESKTOP-ABC123');
+      expect(QuarkPcSession.tryParseDevice('token=TK&uid=42&nickname=Nick'), isNull);
+      expect(QuarkPcSession.tryParseDevice(reused.serialize())?.machine, 'DESKTOP-ABC123');
     });
 
     test('business headers decode back to the signed material', () async {

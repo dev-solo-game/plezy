@@ -8,6 +8,7 @@ import 'package:provider/provider.dart';
 import '../../i18n/strings.g.dart';
 import '../../library/library_scan_service.dart';
 import '../../services/file_picker_service.dart';
+import '../../storage/drivers/quark_pc_device_store.dart';
 import '../../storage/drivers/quark_pc_session.dart';
 import '../../storage/drivers/quark_storage_driver.dart';
 import '../../storage/drivers/smb_storage_driver.dart';
@@ -213,10 +214,19 @@ class _MountEditScreenState extends State<MountEditScreen> {
   }
 
   Future<void> _scanQuark() async {
-    // Carry the mount's existing desktop device into a re-scan, so the account
-    // keeps seeing one machine instead of a new one on every sign-in.
-    final existing = _cookie.text.trim();
-    final device = _quarkMode == QuarkMode.pc && existing.isNotEmpty ? QuarkPcSession.parse(existing).device : null;
+    // Keep one stable desktop device across mounts, re-scans, and mode
+    // switches so Quark keeps seeing the same Windows machine.
+    QuarkPcDevice? device;
+    if (_quarkMode == QuarkMode.pc) {
+      final existing = QuarkPcSession.tryParseDevice(_cookie.text.trim());
+      if (existing != null) {
+        unawaited(QuarkPcDeviceStore.adoptIfAbsent(existing));
+        device = existing;
+      } else {
+        device = await QuarkPcDeviceStore.getOrCreate();
+      }
+    }
+    if (!mounted) return;
     final cookie = await showQuarkQrLoginDialog(context, mode: _quarkMode, device: device);
     if (cookie != null && mounted) {
       setState(() {

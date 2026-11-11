@@ -2,6 +2,8 @@ import 'dart:async';
 
 import '../utils/app_logger.dart';
 import 'drivers/local_storage_driver.dart';
+import 'drivers/quark_pc_device_store.dart';
+import 'drivers/quark_pc_session.dart';
 import 'drivers/quark_storage_driver.dart';
 import 'drivers/smb_storage_driver.dart';
 import 'drivers/webdav_storage_driver.dart';
@@ -31,10 +33,21 @@ class MountManager {
       StorageKind.webdav => WebDavStorageDriver.fromMount(mount),
       StorageKind.quark => QuarkStorageDriver.fromMount(
         mount,
+        fallbackDevice: _pcFallbackDevice(mount),
         onCookieChanged: (cookie) => unawaited(_persistSecret(mount.id, MountKeys.secretCookie, cookie)),
       ),
       StorageKind.smb => SmbStorageDriver.fromMount(mount),
     };
+  }
+
+  QuarkPcDevice? _pcFallbackDevice(StorageMount mount) {
+    if (QuarkMode.parse(mount.configString(MountKeys.quarkMode)) != QuarkMode.pc) return null;
+    final cached = QuarkPcDeviceStore.cached;
+    if (cached != null) return cached;
+    final secret = mount.secret(MountKeys.secretCookie);
+    final candidate = (secret != null ? QuarkPcSession.tryParseDevice(secret) : null) ?? QuarkPcDevice.generate();
+    unawaited(QuarkPcDeviceStore.adoptIfAbsent(candidate));
+    return QuarkPcDeviceStore.cached ?? candidate;
   }
 
   /// The shared driver for [mount], created on first use.

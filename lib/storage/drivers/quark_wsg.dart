@@ -22,8 +22,9 @@ class QuarkWsg {
   /// gateway signatures and, via its MD5, as the AES key.
   static const String _hmacKey = 'C88EAC2B-F07C-4FE2-ABDF-C8F049C46C7B';
 
-  /// Appended to the signing input before the HMAC.
-  static const String _salt = 'nyztq31FYcsAvECM';
+  /// Appended to the signing input before the HMAC (prod `access-open.quark.cn`
+  /// gateway salt; `nyztq31FYcsAvECM` is Quark's daily environment salt).
+  static const String _salt = 'uwRrFVXjBeLMysYN';
 
   /// The two-byte envelope marker (big-endian `0x35e9`) and the hex prefix a
   /// signature carries.
@@ -34,9 +35,7 @@ class QuarkWsg {
 
   /// AES key and IV, both `md5(hmacKey)[:16]` as ASCII. The desktop client
   /// uses the same 16 bytes for key and IV.
-  static final List<int> _aesKeyIv = ascii.encode(
-    crypto.md5.convert(_hmacKeyBytes).toString().substring(0, 16),
-  );
+  static final List<int> _aesKeyIv = ascii.encode(crypto.md5.convert(_hmacKeyBytes).toString().substring(0, 16));
 
   static final AesCbc _aes = AesCbc.with128bits(macAlgorithm: MacAlgorithm.empty);
   static final SecretKey _secretKey = SecretKey(_aesKeyIv);
@@ -44,11 +43,7 @@ class QuarkWsg {
   /// `EncryptToBase64`: PKCS#7-pad, AES-128-CBC encrypt, prepend the selector,
   /// Base64. Used for request bodies and for the WSG business headers.
   Future<String> encode(String plaintext) async {
-    final box = await _aes.encrypt(
-      utf8.encode(plaintext),
-      secretKey: _secretKey,
-      nonce: _aesKeyIv,
-    );
+    final box = await _aes.encrypt(utf8.encode(plaintext), secretKey: _secretKey, nonce: _aesKeyIv);
     final body = Uint8List(2 + box.cipherText.length)
       ..[0] = (_selector >> 8) & 0xff
       ..[1] = _selector & 0xff
