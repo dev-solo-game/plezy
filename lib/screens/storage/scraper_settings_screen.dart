@@ -1,4 +1,9 @@
+import '../../focus/focusable_button.dart';
+import '../../focus/focusable_text_field.dart';
+import '../../utils/dialogs.dart';
+import '../../utils/platform_detector.dart';
 import '../../widgets/app_icon.dart';
+import '../../widgets/focusable_list_tile.dart';
 import '../../library/scrapers/scraper_http.dart';
 import '../../library/scrapers/scraped_metadata.dart';
 import 'package:material_symbols_icons/symbols.dart';
@@ -45,8 +50,9 @@ class _ScraperSettingsScreenState extends State<ScraperSettingsScreen> {
     if (!mounted) return;
     setState(() {
       _apiKey.text = settings.tmdbApiKey;
-      _apiBase.text = settings.tmdbApiBase;
-      _imageBase.text = settings.tmdbImageBase;
+      // Shown filled in, so the default host can be edited rather than typed.
+      _apiBase.text = settings.tmdbApiBase.isEmpty ? TmdbProvider.defaultApiHost : settings.tmdbApiBase;
+      _imageBase.text = settings.tmdbImageBase.isEmpty ? TmdbProvider.defaultImageHost : settings.tmdbImageBase;
       _proxy.text = settings.proxy;
       _language = settings.language;
       _bangumi = settings.bangumiEnabled;
@@ -124,6 +130,21 @@ class _ScraperSettingsScreenState extends State<ScraperSettingsScreen> {
     if (mounted) navigator.pop();
   }
 
+  Future<void> _pickLanguage() async {
+    final picked = await showOptionPickerDialog<String>(
+      context,
+      title: t.storage.metadataLanguage,
+      options: [
+        for (final code in _languages)
+          (icon: code == _language ? Symbols.check_rounded : null, label: code, value: code),
+      ],
+    );
+    if (picked != null && mounted) setState(() => _language = picked);
+  }
+
+  // The fields set TvTextInputAutoOpenBehavior.never: on Android TV the
+  // keyboard otherwise opens as the remote lands on a field and keeps its
+  // arrows. OK starts typing.
   InputDecoration _decoration(String label, {String? hint, String? helper}) => InputDecoration(
     labelText: label,
     hintText: hint,
@@ -146,22 +167,29 @@ class _ScraperSettingsScreenState extends State<ScraperSettingsScreen> {
                 child: ListView(
                   padding: const EdgeInsets.all(16),
                   children: [
-                    TextField(
+                    FocusableTextField(
+                      tvTextInputAutoOpenBehavior: TvTextInputAutoOpenBehavior.never,
                       controller: _apiKey,
+                      autofocus: PlatformDetector.isTV(),
                       decoration: _decoration(t.storage.tmdbKey, helper: t.storage.tmdbKeyHelp),
                       autocorrect: false,
                       enableSuggestions: false,
                     ),
                     const SizedBox(height: _gap),
-                    DropdownButtonFormField<String>(
-                      initialValue: _languages.contains(_language) ? _language : null,
-                      decoration: _decoration(t.storage.metadataLanguage),
-                      items: [for (final code in _languages) DropdownMenuItem(value: code, child: Text(code))],
-                      onChanged: (value) => setState(() => _language = value ?? _language),
-                    ),
-                    const SizedBox(height: _gap),
-                    SwitchListTile(
+                    // A picker rather than a dropdown: a remote's arrows move
+                    // between rows instead of getting lost in a menu.
+                    FocusableListTile(
                       contentPadding: EdgeInsets.zero,
+                      dense: false,
+                      leading: const AppIcon(Symbols.translate_rounded),
+                      title: Text(t.storage.metadataLanguage),
+                      subtitle: Text(_language),
+                      trailing: const AppIcon(Symbols.chevron_right_rounded),
+                      onTap: _pickLanguage,
+                    ),
+                    FocusableSwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      dense: false,
                       title: Text(t.storage.bangumiForAnime),
                       subtitle: Text(t.storage.bangumiForAnimeHelp),
                       value: _bangumi,
@@ -174,7 +202,8 @@ class _ScraperSettingsScreenState extends State<ScraperSettingsScreen> {
                         style: theme.textTheme.titleSmall?.copyWith(color: theme.colorScheme.primary),
                       ),
                     ),
-                    TextField(
+                    FocusableTextField(
+                      tvTextInputAutoOpenBehavior: TvTextInputAutoOpenBehavior.never,
                       controller: _proxy,
                       decoration: _decoration(
                         t.storage.metadataProxy,
@@ -184,26 +213,31 @@ class _ScraperSettingsScreenState extends State<ScraperSettingsScreen> {
                       autocorrect: false,
                     ),
                     const SizedBox(height: _gap),
-                    TextField(
+                    FocusableTextField(
+                      tvTextInputAutoOpenBehavior: TvTextInputAutoOpenBehavior.never,
                       controller: _apiBase,
-                      decoration: _decoration(t.storage.tmdbApiBase, hint: TmdbProvider.defaultApiBase),
+                      decoration: _decoration(t.storage.tmdbApiBase, hint: TmdbProvider.defaultApiHost),
                       autocorrect: false,
                     ),
                     const SizedBox(height: _gap),
-                    TextField(
+                    FocusableTextField(
+                      tvTextInputAutoOpenBehavior: TvTextInputAutoOpenBehavior.never,
                       controller: _imageBase,
-                      decoration: _decoration(t.storage.tmdbImageBase, hint: TmdbProvider.defaultImageBase),
+                      decoration: _decoration(t.storage.tmdbImageBase, hint: TmdbProvider.defaultImageHost),
                       autocorrect: false,
                     ),
                     const SizedBox(height: _gap),
                     Row(
                       children: [
-                        OutlinedButton.icon(
+                        FocusableButton(
                           onPressed: _testing ? null : _testConnection,
-                          icon: _testing
-                              ? const SizedBox.square(dimension: 16, child: CircularProgressIndicator(strokeWidth: 2))
-                              : const AppIcon(Symbols.network_check_rounded),
-                          label: Text(t.storage.tmdbTest),
+                          child: OutlinedButton.icon(
+                            onPressed: _testing ? null : _testConnection,
+                            icon: _testing
+                                ? const SizedBox.square(dimension: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                                : const AppIcon(Symbols.network_check_rounded),
+                            label: Text(t.storage.tmdbTest),
+                          ),
                         ),
                         const SizedBox(width: 12),
                         if (_testResult case final result?)
@@ -228,10 +262,14 @@ class _ScraperSettingsScreenState extends State<ScraperSettingsScreen> {
             constraints: const BoxConstraints(maxWidth: storageContentMaxWidth),
             child: Padding(
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-              child: FilledButton(
+              child: FocusableButton(
+                useBackgroundFocus: true,
                 onPressed: _saving || !_loaded ? null : _save,
-                style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52)),
-                child: Text(t.common.save),
+                child: FilledButton(
+                  onPressed: _saving || !_loaded ? null : _save,
+                  style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52)),
+                  child: Text(t.common.save),
+                ),
               ),
             ),
           ),

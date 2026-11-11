@@ -13,8 +13,12 @@ class TmdbProvider implements MetadataProvider {
       _imageBase = normalizeBase(imageBase, defaultImageBase, defaultPath: '/t/p'),
       _http = http ?? ScraperHttp();
 
-  static const String defaultApiBase = 'https://api.themoviedb.org/3';
-  static const String defaultImageBase = 'https://image.tmdb.org/t/p';
+  /// TMDB's own short API host; it answers like api.themoviedb.org and is
+  /// reachable from more networks.
+  static const String defaultApiHost = 'api.tmdb.org';
+  static const String defaultImageHost = 'image.tmdb.org';
+  static const String defaultApiBase = 'https://$defaultApiHost/3';
+  static const String defaultImageBase = 'https://$defaultImageHost/t/p';
 
   final String _apiKey;
   final String language;
