@@ -11,6 +11,23 @@ abstract final class LibraryKinds {
   static const String episode = 'episode';
 }
 
+/// The shelves of the library, persisted as a title's `libraryType`.
+///
+/// A title starts as [pending] when the scanner creates it from a file name
+/// and gets its shelf from what the scraper finds out about it. Pending
+/// titles are on no shelf.
+abstract final class LibraryTypes {
+  static const String movie = 'movie';
+  static const String show = 'show';
+  static const String anime = 'anime';
+  static const String variety = 'variety';
+  static const String documentary = 'documentary';
+  static const String pending = 'pending';
+
+  /// In the order the UI lists them.
+  static const List<String> shelves = [movie, show, anime, variety, documentary];
+}
+
 abstract final class LibraryFileRoles {
   static const String video = 'video';
   static const String subtitle = 'subtitle';
@@ -36,7 +53,7 @@ enum LibrarySort { title, year, releaseDate, rating, addedAt, lastPlayed }
 class LibraryQuery {
   const LibraryQuery({
     required this.libraryType,
-    required this.kind,
+    this.kind,
     this.sort = LibrarySort.title,
     this.descending = false,
     this.genreId,
@@ -48,11 +65,12 @@ class LibraryQuery {
     this.limit = 60,
   });
 
-  /// `'movie'`, `'show'` or `'anime'`.
+  /// One of [LibraryTypes].
   final String libraryType;
 
-  /// [LibraryKinds.movie] or [LibraryKinds.show].
-  final String kind;
+  /// [LibraryKinds.movie] or [LibraryKinds.show]; null lists both together,
+  /// as the shelves that mix series and films do.
+  final String? kind;
   final LibrarySort sort;
   final bool descending;
   final int? genreId;
@@ -197,7 +215,6 @@ class LibraryRepository {
   /// film becomes another version instead of a duplicate entry.
   Future<LibraryItemRow?> findByExternalId({
     required String kind,
-    required String libraryType,
     String? tmdbId,
     String? bangumiId,
     String? imdbId,
@@ -214,26 +231,20 @@ class LibraryRepository {
       return null;
     }
     final query = _db.select(items)
-      ..where((t) => t.kind.equals(kind) & t.libraryType.equals(libraryType) & idMatch)
+      ..where((t) => t.kind.equals(kind) & idMatch)
       ..limit(1);
     return query.getSingleOrNull();
   }
 
   /// Finds a movie or show by the name a file gave it: its sort title or one
-  /// of its aliases. A [year] only rules a candidate out when both sides
-  /// have one and they differ.
-  Future<LibraryItemRow?> findTitleByName({
-    required String kind,
-    required String libraryType,
-    required String name,
-    int? year,
-  }) async {
+  /// of its aliases, on whichever shelf it ended up. A [year] only rules a
+  /// candidate out when both sides have one and they differ.
+  Future<LibraryItemRow?> findTitleByName({required String kind, required String name, int? year}) async {
     final items = _db.libraryItems;
     final key = sortTitleFor(name);
     final wanted = name.trim().toLowerCase();
     Expression<bool> filter =
         items.kind.equals(kind) &
-        items.libraryType.equals(libraryType) &
         (items.sortTitle.equals(key) | items.aliases.like(_likePattern(name.trim()), escapeChar: r'\'));
     if (year != null) filter = filter & (items.year.isNull() | items.year.equals(year));
     final candidates =
@@ -271,7 +282,10 @@ class LibraryRepository {
   Expression<bool> _shelfFilter(LibraryQuery query) {
     final items = _db.libraryItems;
     final states = _db.libraryUserStates;
-    Expression<bool> filter = items.kind.equals(query.kind) & items.libraryType.equals(query.libraryType);
+    final kind = query.kind;
+    Expression<bool> filter =
+        (kind == null ? items.kind.isIn([LibraryKinds.movie, LibraryKinds.show]) : items.kind.equals(kind)) &
+        items.libraryType.equals(query.libraryType);
     if (query.genreId case final genreId?) {
       filter =
           filter &
@@ -368,13 +382,60 @@ class LibraryRepository {
     return null;
   }
 
+  /// Titles still waiting for the scraper to place them are on no shelf.
+  Expression<bool> get _onAShelf => _db.libraryItems.libraryType.isNotValue(LibraryTypes.pending);
+
+  /// Movies and shows waiting to be placed on a shelf: not looked up yet, or
+  /// looked up without a match.
+  Future<List<LibraryItemView>> pendingTitles({int limit = 500}) async {
+    final items = _db.libraryItems;
+    final rows =
+        await (_viewSelect()
+              ..where(
+                items.kind.isIn([LibraryKinds.movie, LibraryKinds.show]) &
+                    items.libraryType.equals(LibraryTypes.pending),
+              )
+              ..orderBy([OrderingTerm.asc(items.sortTitle)])
+              ..limit(limit))
+            .get();
+    return rows.map(_toView).toList();
+  }
+
+  /// Movies and shows off every shelf: [queued] not looked up yet, and
+  /// [unmatched] looked up without a match.
+  Future<({int queued, int unmatched})> pendingCounts() async {
+    final items = _db.libraryItems;
+    final count = items.id.count();
+    Future<int> countWhere(Expression<bool> filter) =>
+        (_db.selectOnly(items)
+              ..addColumns([count])
+              ..where(
+                items.kind.isIn([LibraryKinds.movie, LibraryKinds.show]) &
+                    items.libraryType.equals(LibraryTypes.pending) &
+                    filter,
+              ))
+            .map((row) => row.read(count) ?? 0)
+            .getSingle();
+    return (
+      queued: await countWhere(items.scrapedAt.isNull()),
+      unmatched: await countWhere(items.scrapedAt.isNotNull()),
+    );
+  }
+
+  /// Moves a movie or show, with its seasons and episodes, to [libraryType].
+  Future<void> setLibraryType(int itemId, String libraryType) async {
+    await (_db.update(_db.libraryItems)..where((t) => t.id.equals(itemId) | t.showId.equals(itemId))).write(
+      LibraryItemsCompanion(libraryType: Value(libraryType)),
+    );
+  }
+
   /// Movies and shows across every shelf whose names contain [text].
   Future<List<LibraryItemView>> search(String text, {int limit = 50}) async {
     if (text.trim().isEmpty) return const [];
     final items = _db.libraryItems;
     final rows =
         await (_viewSelect()
-              ..where(items.kind.isIn([LibraryKinds.movie, LibraryKinds.show]) & _matchesText(text))
+              ..where(items.kind.isIn([LibraryKinds.movie, LibraryKinds.show]) & _onAShelf & _matchesText(text))
               ..orderBy([OrderingTerm.asc(items.sortTitle)])
               ..limit(limit))
             .get();
@@ -383,7 +444,7 @@ class LibraryRepository {
 
   Future<List<LibraryItemView>> recentlyAdded({String? libraryType, int limit = 20}) async {
     final items = _db.libraryItems;
-    Expression<bool> filter = items.kind.isIn([LibraryKinds.movie, LibraryKinds.show]);
+    Expression<bool> filter = items.kind.isIn([LibraryKinds.movie, LibraryKinds.show]) & _onAShelf;
     if (libraryType != null) filter = filter & items.libraryType.equals(libraryType);
     final rows =
         await (_viewSelect()
@@ -402,6 +463,7 @@ class LibraryRepository {
         await (_viewSelect()
               ..where(
                 items.kind.isIn([LibraryKinds.movie, LibraryKinds.episode]) &
+                    _onAShelf &
                     states.positionMs.isBiggerThanValue(0) &
                     states.watched.equals(false) &
                     states.hiddenFromContinue.equals(false),

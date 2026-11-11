@@ -8,12 +8,14 @@ import 'package:provider/provider.dart';
 
 import '../../i18n/strings.g.dart';
 import '../../library/library_scan_service.dart';
+import '../../library/library_scrape_runner.dart';
 import '../../storage/mount_manager.dart';
 import '../../storage/storage_mount.dart';
 import '../../storage/storage_path.dart';
 import '../../widgets/app_icon.dart';
 import 'library_preview_screen.dart';
 import 'mount_edit_screen.dart';
+import 'scraper_settings_screen.dart';
 import 'storage_browser_screen.dart';
 
 /// Widest the mount screens let their content grow on large windows.
@@ -38,13 +40,6 @@ IconData storageKindIcon(StorageKind kind) => switch (kind) {
   StorageKind.webdav => Symbols.dns_rounded,
   StorageKind.quark => Symbols.cloud_rounded,
   StorageKind.smb => Symbols.lan_rounded,
-};
-
-String mountLibraryTypeLabel(MountLibraryType type) => switch (type) {
-  MountLibraryType.auto => t.storage.content.auto,
-  MountLibraryType.movie => t.storage.content.movie,
-  MountLibraryType.show => t.storage.content.show,
-  MountLibraryType.anime => t.storage.content.anime,
 };
 
 /// Where a mount points, in one line, without credentials.
@@ -116,6 +111,7 @@ class MountsScreen extends StatelessWidget {
     await manager.remove(mount.id);
     // The mount's files went with it; drop the titles that leaves empty.
     await scans.repository.pruneEmptyTitles();
+    scans.notifyLibraryChanged();
   }
 
   @override
@@ -125,6 +121,12 @@ class MountsScreen extends StatelessWidget {
       appBar: AppBar(
         title: Text(t.storage.title),
         actions: [
+          IconButton(
+            tooltip: t.storage.scraperSettings,
+            icon: const AppIcon(Symbols.travel_explore_rounded),
+            onPressed: () =>
+                Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const ScraperSettingsScreen())),
+          ),
           TextButton.icon(
             onPressed: () =>
                 Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const LibraryPreviewScreen())),
@@ -146,9 +148,11 @@ class MountsScreen extends StatelessWidget {
               constraints: const BoxConstraints(maxWidth: storageContentMaxWidth),
               child: ListView.separated(
                 padding: const EdgeInsets.all(16),
-                itemCount: mounts.length + 1,
+                itemCount: mounts.length + 2,
                 separatorBuilder: (_, _) => const SizedBox(height: 12),
                 itemBuilder: (context, index) {
+                  if (index == 0) return const _LibraryStatusCard();
+                  index--;
                   if (index == mounts.length) {
                     return Padding(
                       padding: const EdgeInsets.only(top: 4),
@@ -277,7 +281,7 @@ class _MountCard extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                     ),
                     const SizedBox(height: 2),
-                    Text('${storageKindLabel(mount.kind)} · ${mountLibraryTypeLabel(mount.libraryType)}', style: muted),
+                    Text(storageKindLabel(mount.kind), style: muted),
                     if (location != null) Text(location, style: muted, maxLines: 1, overflow: TextOverflow.ellipsis),
                     const SizedBox(height: 6),
                     _ScanLine(mountId: mount.id, status: status),
@@ -364,6 +368,108 @@ class _ScanLine extends StatelessWidget {
           style: muted,
         );
       },
+    );
+  }
+}
+
+/// The library as a whole: how many titles still wait for metadata, and the
+/// button that looks them up. Scanning only reads names; this is where they
+/// become library entries.
+class _LibraryStatusCard extends StatelessWidget {
+  const _LibraryStatusCard();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scans = context.watch<LibraryScanService>();
+    final status = scans.scrapeStatus;
+    final muted = theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant);
+    return Card(
+      margin: EdgeInsets.zero,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+        child: FutureBuilder<({int queued, int unmatched})>(
+          // Re-counted whenever a lookup starts, advances or ends.
+          key: ValueKey((status.running, status.done, status.runs)),
+          future: scans.repository.pendingCounts(),
+          builder: (context, snapshot) {
+            final counts = snapshot.data;
+            final queued = counts?.queued ?? 0;
+            final unmatched = counts?.unmatched ?? 0;
+            final note = status.note;
+
+            final Widget line;
+            if (status.running) {
+              line = Row(
+                children: [
+                  const SizedBox.square(dimension: 14, child: CircularProgressIndicator(strokeWidth: 2)),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      status.total == 0
+                          ? t.storage.scraping
+                          : t.storage.scrapingProgress(done: status.done, total: status.total),
+                      style: muted?.copyWith(color: theme.colorScheme.primary),
+                    ),
+                  ),
+                ],
+              );
+            } else if (note != null) {
+              line = Text(
+                note == LibraryScrapeRunner.noTmdbKey ? t.storage.scrapeNoKey : t.storage.scrapeStopped(message: note),
+                style: muted?.copyWith(color: theme.colorScheme.error),
+              );
+            } else if (queued == 0 && unmatched == 0) {
+              line = Text(t.storage.scrapeAllDone, style: muted);
+            } else {
+              line = Text(
+                [
+                  if (queued > 0) t.storage.scrapeQueued(n: queued),
+                  if (unmatched > 0) t.storage.scrapeUnmatched(n: unmatched),
+                ].join(' · '),
+                style: muted,
+              );
+            }
+
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const AppIcon(Symbols.auto_awesome_rounded),
+                    const SizedBox(width: 10),
+                    Expanded(child: Text(t.storage.scrapeTitle, style: theme.textTheme.titleMedium)),
+                    if (status.running)
+                      TextButton(onPressed: scans.cancelScrape, child: Text(t.common.cancel))
+                    else if (note == LibraryScrapeRunner.noTmdbKey)
+                      FilledButton.tonal(
+                        onPressed: () => Navigator.of(
+                          context,
+                        ).push(MaterialPageRoute<void>(builder: (_) => const ScraperSettingsScreen())),
+                        child: Text(t.storage.scraperSettings),
+                      )
+                    else
+                      FilledButton.icon(
+                        onPressed: queued == 0 && unmatched == 0
+                            ? null
+                            : () => unawaited(scans.scrapeLibrary(retryUnmatched: true)),
+                        icon: const AppIcon(Symbols.play_arrow_rounded),
+                        label: Text(t.storage.scrapeStart),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                line,
+                const SizedBox(height: 4),
+                Text(
+                  t.storage.scrapeHint,
+                  style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.outline),
+                ),
+              ],
+            );
+          },
+        ),
+      ),
     );
   }
 }

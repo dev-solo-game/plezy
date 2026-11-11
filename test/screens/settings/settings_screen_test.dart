@@ -115,7 +115,7 @@ void main() {
     await _pumpUi(tester);
 
     expect(find.text('Maestro Movies'), findsNothing, reason: 'system back dismisses the sheet');
-    expect(find.text(t.settings.services), findsOneWidget, reason: 'the settings route remains current');
+    expect(find.text(t.storage.mediaSources), findsOneWidget, reason: 'the settings route remains current');
     expect(find.text('Settings launcher'), findsNothing, reason: 'system back must not pop the settings route');
   });
 

@@ -175,4 +175,42 @@ void main() {
       expect(folder.title, '葬送的芙莉莲');
     });
   });
+
+  group('organised names (title (year) / Season N / title - S01E01)', () {
+    test('film files keep their whole title and year', () {
+      final a = MediaNameParser.parseFile('仙逆剧场版：弑仙之战 (2026) - 1080p.mkv');
+      expect((a.title, a.year, a.resolution), ('仙逆剧场版:弑仙之战', 2026, '1080p'));
+      final b = MediaNameParser.parseFile('三国的星空第一部 (2025) - 1080p.mkv');
+      expect((b.title, b.year, b.season, b.episode), ('三国的星空第一部', 2025, null, null));
+      final c = MediaNameParser.parseFile('F1：狂飙飞车 (2025) - 4k.mp4');
+      expect((c.title, c.year), ('F1:狂飙飞车', 2025));
+      final d = MediaNameParser.parseFile('V (2026) - 1080p.mkv');
+      expect((d.title, d.year), ('V', 2026));
+      final e = MediaNameParser.parseFile('罗小黑战记 2 (2025)-part2 - 2160p.mp4');
+      expect((e.title, e.year, e.resolution), ('罗小黑战记 2', 2025, '2160p'));
+      final f = MediaNameParser.parseFile('你行！你上！ (2025).mkv');
+      expect((f.title, f.year), ('你行！你上！', 2025));
+    });
+
+    test('film folders read the same way', () {
+      final folder = MediaNameParser.parseFolder('仙逆剧场版：神临之战 (2025)');
+      expect((folder.title, folder.year), ('仙逆剧场版:神临之战', 2025));
+    });
+
+    test('episode files give title, season and episode', () {
+      final a = MediaNameParser.parseFile('一瓯春 - S01E01 - 第 1 集.mkv');
+      expect((a.title, a.season, a.episode, a.year), ('一瓯春', 1, 1, null));
+      final b = MediaNameParser.parseFile('乘风破浪的姐姐 - S07E12 - 第 12 集.mkv');
+      expect((b.title, b.season, b.episode), ('乘风破浪的姐姐', 7, 12));
+      final c = MediaNameParser.parseFile('繁花 - S01E01-E02 - 第 1 集.mkv');
+      expect((c.episode, c.episodeEnd), (1, 2));
+      final d = MediaNameParser.parseFile('仙逆 - S00E03.mkv');
+      expect((d.season, d.episode, d.isSpecial), (0, 3, true));
+    });
+
+    test('a loosely numbered episode after a year is still an episode', () {
+      final a = MediaNameParser.parseFile('Some Show (2019) - 05.mkv');
+      expect(a.looseEpisode ?? a.episode, 5);
+    });
+  });
 }

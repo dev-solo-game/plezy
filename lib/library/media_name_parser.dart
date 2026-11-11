@@ -162,6 +162,9 @@ abstract final class MediaNameParser {
     var name = fileName.replaceFirst(_extension, '').trim();
     name = _fullWidthToAscii(name);
 
+    final standard = _parseStandard(name);
+    if (standard != null) return standard;
+
     // ─── Fansub brackets ────────────────────────────────────────────────
     String? group;
     var fansub = false;
@@ -347,6 +350,66 @@ abstract final class MediaNameParser {
       edition: _canonicalEdition(_edition.firstMatch(details)),
       releaseGroup: group,
       fansubStyle: fansub,
+    );
+  }
+
+  // ─── Organised names ───────────────────────────────────────────────────
+
+  /// `Title (2025)`, `Title (2025)-part - 1080p`: the shape organisers
+  /// (MoviePilot, Radarr, Jellyfin's own) give film folders and files.
+  static final RegExp _standardMovie = RegExp(
+    r'^(?<title>[^\[\]【】]+?)\s\((?<year>(?:19|20)\d{2})\)(?:-(?<part>\S+?))?(?:\s-\s(?<rest>.+))?$',
+  );
+
+  /// `Title - S01E02`, `Title - S01E02-E03 - 第 2 集`: the same tools' episode
+  /// files. The year sits on the show folder, not here.
+  static final RegExp _standardEpisode = RegExp(
+    r'^(?<title>[^\[\]【】]+?)\s-\s[Ss](?<season>\d{1,2})[Ee](?<episode>\d{1,4})(?:-?[Ee](?<end>\d{1,4}))?(?:-(?<part>\S+?))?(?:\s-\s(?<rest>.+))?$',
+  );
+
+  /// Names an organiser wrote are taken at their word: the title is
+  /// everything before ` (year)` or ` - S01E02`, verbatim. Guessing would only
+  /// lose information here — "仙逆剧场版:弑仙之战" is a title, not a film
+  /// marker, and "三国的星空第一部" is not season one.
+  static ParsedName? _parseStandard(String name) {
+    final episode = _standardEpisode.firstMatch(name);
+    if (episode != null) {
+      final rest = episode.namedGroup('rest') ?? '';
+      final start = int.parse(episode.namedGroup('episode')!);
+      final end = int.tryParse(episode.namedGroup('end') ?? '');
+      return ParsedName(
+        title: episode.namedGroup('title')!.trim(),
+        season: int.parse(episode.namedGroup('season')!),
+        episode: start,
+        episodeEnd: end != null && end > start ? end : null,
+        isSpecial: int.parse(episode.namedGroup('season')!) == 0,
+        resolution: _resolutionOf(rest),
+        source: _canonicalSource(_source.firstMatch(rest)?.group(1)),
+        videoCodec: _canonicalCodec(_codec.firstMatch(rest)?.group(1)),
+        hdr: _canonicalHdr(_hdr.firstMatch(rest)?.group(1)),
+        edition: _canonicalEdition(_edition.firstMatch(rest)),
+      );
+    }
+
+    final movie = _standardMovie.firstMatch(name);
+    if (movie == null) return null;
+    final rest = movie.namedGroup('rest') ?? '';
+    // "Show (2019) - 05" is an episode numbered loosely; leave it to the
+    // general rules, which know about those.
+    if (RegExp(r'^\d{1,4}(?:\s|$)').hasMatch(rest) ||
+        _seasonEpisode.hasMatch(rest) ||
+        _episodeChinese.hasMatch(rest) ||
+        _episodeWord.hasMatch(rest)) {
+      return null;
+    }
+    return ParsedName(
+      title: movie.namedGroup('title')!.trim(),
+      year: int.parse(movie.namedGroup('year')!),
+      resolution: _resolutionOf(rest),
+      source: _canonicalSource(_source.firstMatch(rest)?.group(1)),
+      videoCodec: _canonicalCodec(_codec.firstMatch(rest)?.group(1)),
+      hdr: _canonicalHdr(_hdr.firstMatch(rest)?.group(1)),
+      edition: _canonicalEdition(_edition.firstMatch(rest)),
     );
   }
 

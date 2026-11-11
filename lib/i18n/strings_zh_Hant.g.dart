@@ -2471,8 +2471,6 @@ class _Translations$storage$zh_Hant extends Translations$storage$zh {
 	@override late final _Translations$storage$content$zh_Hant content = _Translations$storage$content$zh_Hant._(_root);
 	@override String get fieldType => '類型';
 	@override String get fieldName => '名稱';
-	@override String get fieldContent => '內容';
-	@override String get fieldContentHelp => '指定類型可略過猜測，或讓每個檔案自動分類';
 	@override String get folderPath => '資料夾路徑';
 	@override String get browse => '瀏覽';
 	@override String get selectFolder => '選擇資料夾';
@@ -2527,10 +2525,51 @@ class _Translations$storage$zh_Hant extends Translations$storage$zh {
 	@override String scanFailed({required Object message}) => '掃描失敗：${message}';
 	@override String get scanNever => '尚未掃描';
 	@override String get scanResults => '掃描結果';
+	@override String get scrapeTitle => '刮削';
+	@override String get scrapeStart => '開始刮削';
+	@override String scrapingProgress({required Object done, required Object total}) => '正在刮削 ${done} / ${total}…';
+	@override String scrapeQueued({required Object n}) => '${n} 個待刮削';
+	@override String scrapeUnmatched({required Object n}) => '${n} 個未匹配';
+	@override String get scrapeAllDone => '所有條目都已刮削';
+	@override String scrapeStopped({required Object message}) => '刮削中斷：${message}';
+	@override String get scrapeHint => '掃描只讀取檔名；刮削向 TMDB、Bangumi 查詢資料並歸入媒體庫，掃描完成後會自動進行，不會存取網盤。';
+	@override String get tmdbTest => '測試連線';
+	@override String get tmdbTestOk => '已連上 TMDB';
+	@override String get tmdbTestNoKey => '請先填寫 TMDB API key';
+	@override String tmdbTestFailed({required Object message}) => '失敗：${message}';
+	@override String get unmatchedTitles => '未匹配';
+	@override String get category => '分類';
+	@override String get kindSeries => '影集';
 	@override String get unidentified => '未識別';
 	@override String versionCount({required Object n}) => '${n} 個版本';
 	@override String episodeCount({required Object n}) => '${n} 集';
 	@override String get emptyShelf => '這裡還沒有內容';
+	@override String get localLibraryName => '本機媒體庫';
+	@override String get defaultProfileName => '我';
+	@override String get sortTitle => '標題';
+	@override String get sortYear => '年份';
+	@override String get sortReleaseDate => '上映日期';
+	@override String get sortRating => '評分';
+	@override String get sortAddedAt => '加入時間';
+	@override String get sortLastPlayed => '最近播放';
+	@override String recentlyAdded({required Object shelf}) => '最近加入的${shelf}';
+	@override String get continueWatching => '繼續觀看';
+	@override String get scraping => '正在刮削中繼資料…';
+	@override String get scrapeNoKey => '尚未設定 TMDB API key，影片暫時沒有中繼資料';
+	@override String get scraperSettings => '刮削設定';
+	@override String get tmdbKey => 'TMDB API key';
+	@override String get tmdbKeyHelp => 'themoviedb.org 的 v3 API key 或 v4 讀取權杖。電影和電視劇的刮削需要它。';
+	@override String get metadataLanguage => '中繼資料語言';
+	@override String get bangumiForAnime => '動漫使用 Bangumi';
+	@override String get bangumiForAnimeHelp => '動漫先查 Bangumi，查不到再查 TMDB';
+	@override String get metadataProxy => 'HTTP 代理';
+	@override String get metadataProxyHelp => '主機:連接埠，僅用於刮削請求。留空則直接連線。';
+	@override String get tmdbApiBase => 'TMDB API 位址';
+	@override String get tmdbImageBase => 'TMDB 圖片位址';
+	@override String get manualMatch => '手動匹配';
+	@override String get noMatchResults => '沒有結果';
+	@override String get mediaSources => '媒體來源';
+	@override String get scraperSettingsDescription => 'TMDB key、語言與刮削代理';
 }
 
 // Path: appIcon.names
@@ -3486,6 +3525,8 @@ class _Translations$storage$content$zh_Hant extends Translations$storage$content
 	@override String get movie => '電影';
 	@override String get show => '電視劇';
 	@override String get anime => '動漫';
+	@override String get variety => '綜藝';
+	@override String get documentary => '紀錄片';
 }
 
 // Path: storage.kindDescription
@@ -5837,10 +5878,10 @@ extension on TranslationsZhHant {
 			'storage.content.movie' => '電影',
 			'storage.content.show' => '電視劇',
 			'storage.content.anime' => '動漫',
+			'storage.content.variety' => '綜藝',
+			'storage.content.documentary' => '紀錄片',
 			'storage.fieldType' => '類型',
 			'storage.fieldName' => '名稱',
-			'storage.fieldContent' => '內容',
-			'storage.fieldContentHelp' => '指定類型可略過猜測，或讓每個檔案自動分類',
 			'storage.folderPath' => '資料夾路徑',
 			'storage.browse' => '瀏覽',
 			'storage.selectFolder' => '選擇資料夾',
@@ -5898,10 +5939,51 @@ extension on TranslationsZhHant {
 			'storage.scanFailed' => ({required Object message}) => '掃描失敗：${message}',
 			'storage.scanNever' => '尚未掃描',
 			'storage.scanResults' => '掃描結果',
+			'storage.scrapeTitle' => '刮削',
+			'storage.scrapeStart' => '開始刮削',
+			'storage.scrapingProgress' => ({required Object done, required Object total}) => '正在刮削 ${done} / ${total}…',
+			'storage.scrapeQueued' => ({required Object n}) => '${n} 個待刮削',
+			'storage.scrapeUnmatched' => ({required Object n}) => '${n} 個未匹配',
+			'storage.scrapeAllDone' => '所有條目都已刮削',
+			'storage.scrapeStopped' => ({required Object message}) => '刮削中斷：${message}',
+			'storage.scrapeHint' => '掃描只讀取檔名；刮削向 TMDB、Bangumi 查詢資料並歸入媒體庫，掃描完成後會自動進行，不會存取網盤。',
+			'storage.tmdbTest' => '測試連線',
+			'storage.tmdbTestOk' => '已連上 TMDB',
+			'storage.tmdbTestNoKey' => '請先填寫 TMDB API key',
+			'storage.tmdbTestFailed' => ({required Object message}) => '失敗：${message}',
+			'storage.unmatchedTitles' => '未匹配',
+			'storage.category' => '分類',
+			'storage.kindSeries' => '影集',
 			'storage.unidentified' => '未識別',
 			'storage.versionCount' => ({required Object n}) => '${n} 個版本',
 			'storage.episodeCount' => ({required Object n}) => '${n} 集',
 			'storage.emptyShelf' => '這裡還沒有內容',
+			'storage.localLibraryName' => '本機媒體庫',
+			'storage.defaultProfileName' => '我',
+			'storage.sortTitle' => '標題',
+			'storage.sortYear' => '年份',
+			'storage.sortReleaseDate' => '上映日期',
+			'storage.sortRating' => '評分',
+			'storage.sortAddedAt' => '加入時間',
+			'storage.sortLastPlayed' => '最近播放',
+			'storage.recentlyAdded' => ({required Object shelf}) => '最近加入的${shelf}',
+			'storage.continueWatching' => '繼續觀看',
+			'storage.scraping' => '正在刮削中繼資料…',
+			'storage.scrapeNoKey' => '尚未設定 TMDB API key，影片暫時沒有中繼資料',
+			'storage.scraperSettings' => '刮削設定',
+			'storage.tmdbKey' => 'TMDB API key',
+			'storage.tmdbKeyHelp' => 'themoviedb.org 的 v3 API key 或 v4 讀取權杖。電影和電視劇的刮削需要它。',
+			'storage.metadataLanguage' => '中繼資料語言',
+			'storage.bangumiForAnime' => '動漫使用 Bangumi',
+			'storage.bangumiForAnimeHelp' => '動漫先查 Bangumi，查不到再查 TMDB',
+			'storage.metadataProxy' => 'HTTP 代理',
+			'storage.metadataProxyHelp' => '主機:連接埠，僅用於刮削請求。留空則直接連線。',
+			'storage.tmdbApiBase' => 'TMDB API 位址',
+			'storage.tmdbImageBase' => 'TMDB 圖片位址',
+			'storage.manualMatch' => '手動匹配',
+			'storage.noMatchResults' => '沒有結果',
+			'storage.mediaSources' => '媒體來源',
+			'storage.scraperSettingsDescription' => 'TMDB key、語言與刮削代理',
 			_ => null,
 		};
 	}

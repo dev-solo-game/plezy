@@ -1,3 +1,4 @@
+import '../library/local_library_client.dart';
 import 'dart:async';
 import '../media/ids.dart';
 
@@ -423,6 +424,11 @@ class ActiveProfileBinder {
           if (connectionsById[pc.connectionId] case JellyfinConnection(:final id)) id,
       };
       for (final serverId in serverManager.registeredServerIds) {
+        if (serverId == LocalLibraryClient.localServerId) {
+          // Not tied to any connection: every profile sees the local library.
+          visibleServerIds.add(serverId);
+          continue;
+        }
         final belongs = visibleServerIds.contains(serverId) || expectedServerIds.contains(serverId);
         if (belongs &&
             !serverManager.isRegisteredForOtherProfile(
@@ -1227,11 +1233,16 @@ class ActiveProfileBinder {
   }
 
   void _clearBoundServers() {
+    var hasLocalLibrary = false;
     for (final serverId in serverManager.registeredServerIds) {
+      if (serverId == LocalLibraryClient.localServerId) {
+        hasLocalLibrary = true;
+        continue;
+      }
       serverManager.removeServer(ServerId(serverId));
     }
     multiServerProvider.setExpectedVisibleServerIds(<String>{});
-    multiServerProvider.setVisibleServerIds(<String>{});
+    multiServerProvider.setVisibleServerIds(<String>{if (hasLocalLibrary) LocalLibraryClient.localServerId});
   }
 
   void dispose() {

@@ -44,7 +44,9 @@ class ScanResult {
 }
 
 /// Walks a mount, records what it finds in the library tables, and files each
-/// video under a title derived from its name.
+/// video under a provisional title derived from its name. It only ever lists
+/// directories: no file is opened. Titles it creates wait as
+/// [LibraryTypes.pending] for the scraper to identify them and pick a shelf.
 ///
 /// A scan is incremental — unchanged files keep their rows, matches and
 /// probed info — and resumable: the directories still to visit are saved
@@ -249,12 +251,7 @@ class LibraryScanner {
       final videoIds = <String, int>{};
       for (final video in videos) {
         final name = parsed[video.path]!;
-        final classified = MediaClassifier.classify(
-          file: name,
-          folders: folders,
-          mountType: mount.libraryType,
-          numberedSiblings: numbered,
-        );
+        final classified = MediaClassifier.classify(file: name, folders: folders, numberedSiblings: numbered);
         final previous = await _fileAt(mount.id, video.path);
         final id = await _repo.upsertFile(
           mountId: mount.id,
@@ -302,6 +299,52 @@ class LibraryScanner {
     return videos.length;
   }
 
+  /// Bumped whenever parsing or classification changes in a way that files
+  /// already in the library should be re-filed under.
+  static const int namingVersion = 1;
+
+  /// Re-files every video of [mountId] from the paths already in the
+  /// database, without listing the mount: for when the naming rules changed.
+  /// Files whose classification is unchanged, and files the user matched by
+  /// hand, stay where they are. Returns how many files moved.
+  Future<int> refileFromNames(String mountId) async {
+    final rows = await (_db.select(
+      _db.libraryFiles,
+    )..where((t) => t.mountId.equals(mountId) & t.role.equals(LibraryFileRoles.video))).get();
+    final byDirectory = <String, List<LibraryFileRow>>{};
+    for (final row in rows) {
+      byDirectory.putIfAbsent(StoragePath.parent(row.path), () => []).add(row);
+    }
+
+    var moved = 0;
+    for (final MapEntry(key: directory, value: files) in byDirectory.entries) {
+      final folders = [
+        for (final segment in StoragePath.segments(directory).reversed.take(3)) MediaNameParser.parseFolder(segment),
+      ];
+      final parsed = {for (final file in files) file.id: MediaNameParser.parseFile(StoragePath.name(file.path))};
+      final numbered = parsed.values.where((p) => p.episode != null || p.looseEpisode != null).length;
+      await _db.transaction(() async {
+        for (final file in files) {
+          if (file.matchLocked) continue;
+          final name = parsed[file.id]!;
+          final classified = MediaClassifier.classify(file: name, folders: folders, numberedSiblings: numbered);
+          if (_keyOf(file.parsed) == classified.key) continue;
+          await _repo.updateFile(
+            file.id,
+            LibraryFilesCompanion(
+              parsed: Value(jsonEncode({...name.toJson(), 'key': classified.key})),
+              versionLabel: Value(classified.versionLabel),
+            ),
+          );
+          await _file(file.id, file, classified);
+          moved++;
+        }
+      });
+    }
+    if (moved > 0) await _repo.pruneEmptyTitles();
+    return moved;
+  }
+
   Future<LibraryFileRow?> _fileAt(String mountId, String path) {
     return (_db.select(
       _db.libraryFiles,
@@ -311,8 +354,8 @@ class LibraryScanner {
   /// Files a video under the title its name points at.
   ///
   /// A video that is already filed is left alone unless its classification
-  /// changed (renamed, moved, or the mount's type was changed) — and never
-  /// when the user chose its match by hand.
+  /// changed (renamed or moved) — and never when the user chose its match by
+  /// hand.
   Future<void> _file(int fileId, LibraryFileRow? previous, ClassifiedVideo classified) async {
     if (previous != null) {
       if (previous.matchLocked) return;
@@ -349,25 +392,17 @@ class LibraryScanner {
   }
 
   Future<int> _movieFor(ClassifiedVideo video) async {
-    final existing = await _repo.findTitleByName(
-      kind: LibraryKinds.movie,
-      libraryType: video.libraryType!,
-      name: video.title!,
-      year: video.year,
-    );
+    final existing = await _repo.findTitleByName(kind: LibraryKinds.movie, name: video.title!, year: video.year);
     if (existing != null) return existing.id;
-    return _insert(kind: LibraryKinds.movie, libraryType: video.libraryType!, title: video.title!, year: video.year);
+    return _insert(kind: LibraryKinds.movie, libraryType: LibraryTypes.pending, title: video.title!, year: video.year);
   }
 
   Future<int> _episodeFor(ClassifiedVideo video) async {
-    final libraryType = video.libraryType!;
+    final known = await _repo.findTitleByName(kind: LibraryKinds.show, name: video.title!, year: video.year);
+    // New seasons and episodes join the show on the shelf it already has.
+    final libraryType = known?.libraryType ?? LibraryTypes.pending;
     final show =
-        (await _repo.findTitleByName(
-          kind: LibraryKinds.show,
-          libraryType: libraryType,
-          name: video.title!,
-          year: video.year,
-        ))?.id ??
+        known?.id ??
         await _insert(kind: LibraryKinds.show, libraryType: libraryType, title: video.title!, year: video.year);
 
     final seasonNumber = video.season!;

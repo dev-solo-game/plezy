@@ -47,7 +47,6 @@ class _MountEditScreenState extends State<MountEditScreen> {
 
   /// Null while a new mount is still on the type picker.
   StorageKind? _kind;
-  late MountLibraryType _libraryType;
   late bool _allowInsecureTls;
   late final TextEditingController _name;
   late final TextEditingController _rootPath;
@@ -75,7 +74,6 @@ class _MountEditScreenState extends State<MountEditScreen> {
     super.initState();
     final mount = widget.mount;
     _kind = mount?.kind;
-    _libraryType = mount?.libraryType ?? MountLibraryType.auto;
     _allowInsecureTls = mount?.configBool(MountKeys.allowInsecureTls) ?? false;
     _name = TextEditingController(text: mount?.displayName ?? '');
     _rootPath = TextEditingController(
@@ -155,7 +153,6 @@ class _MountEditScreenState extends State<MountEditScreen> {
       id: widget.mount?.id ?? MountRegistry.newId(),
       kind: kind,
       displayName: name.isEmpty ? storageKindLabel(kind) : name,
-      libraryType: _libraryType,
       config: config,
       secrets: secrets,
       createdAt: widget.mount?.createdAt,
@@ -488,26 +485,6 @@ class _MountEditScreenState extends State<MountEditScreen> {
           TextFormField(
             controller: _name,
             decoration: _decoration(t.storage.fieldName, hint: storageKindLabel(kind), helper: t.storage.nameHint),
-          ),
-          const SizedBox(height: _fieldGap),
-          Text(t.storage.fieldContent, style: theme.textTheme.labelLarge),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              for (final type in MountLibraryType.values)
-                ChoiceChip(
-                  label: Text(mountLibraryTypeLabel(type)),
-                  selected: _libraryType == type,
-                  onSelected: (_) => setState(() => _libraryType = type),
-                ),
-            ],
-          ),
-          const SizedBox(height: 6),
-          Text(
-            t.storage.fieldContentHelp,
-            style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
           ),
           if (advanced.isNotEmpty)
             Theme(

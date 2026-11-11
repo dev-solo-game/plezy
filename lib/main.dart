@@ -81,7 +81,12 @@ import 'services/connectivity_probe.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'services/jellyfin_api_cache.dart';
 import 'services/plex_api_cache.dart';
+import 'package:uuid/uuid.dart';
+import 'screens/storage/mounts_screen.dart';
 import 'library/library_repository.dart';
+import 'library/library_scrape_runner.dart';
+import 'library/library_settings.dart';
+import 'library/local_library_client.dart';
 import 'library/library_scan_service.dart';
 import 'library/library_scanner.dart';
 import 'storage/mount_manager.dart';
@@ -1760,6 +1765,18 @@ class _MainAppState extends State<MainApp> with WidgetsBindingObserver {
           dispose: (_, manager) => unawaited(manager.dispose()),
         ),
         Provider<LibraryRepository>(create: (_) => LibraryRepository(_appDatabase)),
+        Provider<LibrarySettingsStore>(create: (_) => LibrarySettingsStore(_appDatabase)),
+        Provider<LibraryScrapeRunner>(
+          create: (context) => LibraryScrapeRunner(
+            database: _appDatabase,
+            repository: context.read<LibraryRepository>(),
+            settings: context.read<LibrarySettingsStore>(),
+          ),
+        ),
+        Provider<LocalLibraryClient>(
+          create: (context) =>
+              LocalLibraryClient(repository: context.read<LibraryRepository>(), mounts: context.read<MountManager>()),
+        ),
         ChangeNotifierProvider<LibraryScanService>(
           create: (context) {
             final repository = context.read<LibraryRepository>();
@@ -1767,6 +1784,7 @@ class _MainAppState extends State<MainApp> with WidgetsBindingObserver {
               repository: repository,
               scanner: LibraryScanner(_appDatabase, repository),
               mounts: context.read<MountManager>(),
+              scrape: context.read<LibraryScrapeRunner>().scrapePending,
             );
           },
         ),
@@ -2194,6 +2212,66 @@ class _SetupScreenState extends State<SetupScreen> with MountedSetStateMixin {
     );
   }
 
+  /// Makes the local media library part of the session: registers it as a
+  /// server, and makes sure there is a profile to browse it with.
+  Future<void> _prepareLocalLibrary() async {
+    final local = context.read<LocalLibraryClient>();
+    final serverManager = context.read<MultiServerProvider>().serverManager;
+    final profiles = context.read<ProfileRegistry>();
+    final activeProfile = context.read<ActiveProfileProvider>();
+    final scans = context.read<LibraryScanService>();
+
+    local
+      ..serverName = t.storage.localLibraryName
+      ..shelfTitles = {
+        'movie': t.storage.content.movie,
+        'show': t.storage.content.show,
+        'anime': t.storage.content.anime,
+        'variety': t.storage.content.variety,
+        'documentary': t.storage.content.documentary,
+      }
+      ..sortTitles = {
+        'title': t.storage.sortTitle,
+        'year': t.storage.sortYear,
+        'releaseDate': t.storage.sortReleaseDate,
+        'rating': t.storage.sortRating,
+        'addedAt': t.storage.sortAddedAt,
+        'lastPlayed': t.storage.sortLastPlayed,
+      }
+      ..recentlyAddedTitle = t.storage.recentlyAdded(shelf: '{shelf}')
+      ..continueWatchingTitle = t.storage.continueWatching;
+    await local.refreshMounts();
+    serverManager.registerLocalLibrary(local);
+    // Until a session's library list takes over, keep the mounts current.
+    scans.onLibraryChanged ??= () => unawaited(local.refreshMounts());
+    // Titles still waiting for a shelf (an interrupted run, or an upgrade
+    // that re-queued them) are looked up now. This asks the metadata sources
+    // only; it never touches a mount.
+    unawaited(
+      () async {
+        // Naming rules changed since the library was filed: re-file from the
+        // stored names (no mount is listed), then look everything up.
+        final settings = context.read<LibrarySettingsStore>();
+        if (await settings.namingVersion() < LibraryScanner.namingVersion) {
+          await scans.refileAll();
+          await settings.setNamingVersion(LibraryScanner.namingVersion);
+        }
+        await scans.scrapeLibrary();
+      }().catchError((Object e) => appLogger.w('Preparing the local library failed: $e')),
+    );
+
+    await activeProfile.reloadFromStorage();
+    if (activeProfile.profiles.isEmpty) {
+      await profiles.upsert(
+        Profile.local(id: const Uuid().v4(), displayName: t.storage.defaultProfileName, createdAt: DateTime.now()),
+      );
+      await activeProfile.reloadFromStorage();
+    }
+    if (activeProfile.active == null && activeProfile.profiles.isNotEmpty) {
+      await activeProfile.activate(activeProfile.profiles.first);
+    }
+  }
+
   Future<void> _loadSavedCredentials() async {
     if (shouldBypassSetupForDatabaseRecovery(widget.databaseRecoveryOutcome)) {
       final message = t.auth.localDataRecoveryRequired;
@@ -2298,11 +2376,12 @@ class _SetupScreenState extends State<SetupScreen> with MountedSetStateMixin {
       return;
     }
 
-    if (allConnections.isEmpty) {
-      if (mounted) {
-        unawaited(Navigator.pushReplacement(context, fadeRoute(const AuthScreen())));
-      }
-      return;
+    // The local library needs no sign-in: with or without server
+    // connections, startup goes on to the library.
+    try {
+      await _prepareLocalLibrary();
+    } catch (e, st) {
+      appLogger.e('Setup: failed to prepare the local library', error: e, stackTrace: st);
     }
 
     if (!mounted) return;
@@ -2429,12 +2508,16 @@ class _SetupScreenState extends State<SetupScreen> with MountedSetStateMixin {
       if (!mounted) return;
 
       AndroidExitDiagnostics.markStartupPhase(AndroidStartupPhase.mainScreen);
+      final navigator = Navigator.of(context);
+      final hasMounts = (await context.read<MountManager>().registry.list()).isNotEmpty;
+      if (!mounted) return;
       unawaited(
-        Navigator.pushReplacement(
-          context,
-          fadeRoute(ProfileSessionScreen(initialPromptHandled: shouldPrompt || linkApplied)),
-        ),
+        navigator.pushReplacement(fadeRoute(ProfileSessionScreen(initialPromptHandled: shouldPrompt || linkApplied))),
       );
+      // Nothing to show yet: take the user straight to adding a source.
+      if (!hasMounts && allConnections.isEmpty) {
+        unawaited(navigator.push(MaterialPageRoute<void>(builder: (_) => const MountsScreen())));
+      }
     } finally {
       deepLinks.settleStartupProfile(applied: linkApplied);
     }

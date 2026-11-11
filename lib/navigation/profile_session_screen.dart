@@ -1,3 +1,5 @@
+import '../library/library_scan_service.dart';
+import '../library/local_library_client.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -225,17 +227,29 @@ class _ProfileSessionScreenState extends State<ProfileSessionScreen> {
               ChangeNotifierProvider(
                 create: (context) {
                   final activeProfile = context.read<ActiveProfileProvider>();
-                  return LibrariesProvider(
+                  final libraries = LibrariesProvider(
                     storageService: context.read<StorageService>(),
                     multiServer: context.read<MultiServerProvider>(),
                     isProfileBinding: () => activeProfile.isBinding,
                   );
+                  // A scan or scrape changes what the local library holds:
+                  // reload the shelves so the new titles show up.
+                  try {
+                    final local = context.read<LocalLibraryClient>();
+                    context.read<LibraryScanService>().onLibraryChanged = () {
+                      unawaited(local.refreshMounts());
+                      if (!libraries.isDisposed) unawaited(libraries.refresh());
+                    };
+                  } on ProviderNotFoundException {
+                    // Hosted without the local library (tests): nothing to hook.
+                  }
+                  return libraries;
                 },
               ),
               ChangeNotifierProvider(
                 create: (context) {
                   final activeProfile = context.read<ActiveProfileProvider>();
-                  return DiscoverProvider(
+                  final discover = DiscoverProvider(
                     context.read<MultiServerProvider>(),
                     context.read<HiddenLibrariesProvider>(),
                     context.read<LibrariesProvider>(),
@@ -249,6 +263,23 @@ class _ProfileSessionScreenState extends State<ProfileSessionScreen> {
                     isRefreshBlocked: () => VideoPlayerScreenState.activeGlobalKey != null,
                     profileId: activeId,
                   );
+                  // New titles from a scan or scrape belong on the home hubs
+                  // (recently added) as well.
+                  try {
+                    final scans = context.read<LibraryScanService>();
+                    void reload() {
+                      if (discover.isDisposed) {
+                        scans.removeLibraryListener(reload);
+                      } else {
+                        unawaited(discover.load());
+                      }
+                    }
+
+                    scans.addLibraryListener(reload);
+                  } on ProviderNotFoundException {
+                    // Hosted without the local library (tests).
+                  }
+                  return discover;
                 },
               ),
               ChangeNotifierProvider(create: (context) => PlaybackStateProvider()),

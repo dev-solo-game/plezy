@@ -6218,12 +6218,6 @@ class Translations$storage$en {
 	/// en: 'Name'
 	String get fieldName => 'Name';
 
-	/// en: 'Content'
-	String get fieldContent => 'Content';
-
-	/// en: 'Pick a type to skip guessing, or let each file be classified automatically'
-	String get fieldContentHelp => 'Pick a type to skip guessing, or let each file be classified automatically';
-
 	/// en: 'Folder path'
 	String get folderPath => 'Folder path';
 
@@ -6385,6 +6379,51 @@ class Translations$storage$en {
 	/// en: 'Scan results'
 	String get scanResults => 'Scan results';
 
+	/// en: 'Metadata'
+	String get scrapeTitle => 'Metadata';
+
+	/// en: 'Start lookup'
+	String get scrapeStart => 'Start lookup';
+
+	/// en: 'Looking up ${done} / ${total}…'
+	String scrapingProgress({required Object done, required Object total}) => 'Looking up ${done} / ${total}…';
+
+	/// en: '${n} waiting'
+	String scrapeQueued({required Object n}) => '${n} waiting';
+
+	/// en: '${n} not found'
+	String scrapeUnmatched({required Object n}) => '${n} not found';
+
+	/// en: 'Every title has metadata'
+	String get scrapeAllDone => 'Every title has metadata';
+
+	/// en: 'Lookup stopped: ${message}'
+	String scrapeStopped({required Object message}) => 'Lookup stopped: ${message}';
+
+	/// en: 'Scanning only reads file names. Lookup asks TMDB and Bangumi and sorts titles into the library; it runs by itself after a scan and does not touch your drives.'
+	String get scrapeHint => 'Scanning only reads file names. Lookup asks TMDB and Bangumi and sorts titles into the library; it runs by itself after a scan and does not touch your drives.';
+
+	/// en: 'Test connection'
+	String get tmdbTest => 'Test connection';
+
+	/// en: 'Connected to TMDB'
+	String get tmdbTestOk => 'Connected to TMDB';
+
+	/// en: 'Enter a TMDB API key first'
+	String get tmdbTestNoKey => 'Enter a TMDB API key first';
+
+	/// en: 'Failed: ${message}'
+	String tmdbTestFailed({required Object message}) => 'Failed: ${message}';
+
+	/// en: 'Unmatched'
+	String get unmatchedTitles => 'Unmatched';
+
+	/// en: 'Category'
+	String get category => 'Category';
+
+	/// en: 'Series'
+	String get kindSeries => 'Series';
+
 	/// en: 'Unidentified'
 	String get unidentified => 'Unidentified';
 
@@ -6396,6 +6435,84 @@ class Translations$storage$en {
 
 	/// en: 'Nothing here yet'
 	String get emptyShelf => 'Nothing here yet';
+
+	/// en: 'Local library'
+	String get localLibraryName => 'Local library';
+
+	/// en: 'Me'
+	String get defaultProfileName => 'Me';
+
+	/// en: 'Title'
+	String get sortTitle => 'Title';
+
+	/// en: 'Year'
+	String get sortYear => 'Year';
+
+	/// en: 'Release date'
+	String get sortReleaseDate => 'Release date';
+
+	/// en: 'Rating'
+	String get sortRating => 'Rating';
+
+	/// en: 'Date added'
+	String get sortAddedAt => 'Date added';
+
+	/// en: 'Last played'
+	String get sortLastPlayed => 'Last played';
+
+	/// en: 'Recently added in ${shelf}'
+	String recentlyAdded({required Object shelf}) => 'Recently added in ${shelf}';
+
+	/// en: 'Continue watching'
+	String get continueWatching => 'Continue watching';
+
+	/// en: 'Looking up metadata…'
+	String get scraping => 'Looking up metadata…';
+
+	/// en: 'No TMDB API key is set, so titles have no metadata yet'
+	String get scrapeNoKey => 'No TMDB API key is set, so titles have no metadata yet';
+
+	/// en: 'Metadata sources'
+	String get scraperSettings => 'Metadata sources';
+
+	/// en: 'TMDB API key'
+	String get tmdbKey => 'TMDB API key';
+
+	/// en: 'A v3 API key or v4 read access token from themoviedb.org. Needed for movies and TV shows.'
+	String get tmdbKeyHelp => 'A v3 API key or v4 read access token from themoviedb.org. Needed for movies and TV shows.';
+
+	/// en: 'Metadata language'
+	String get metadataLanguage => 'Metadata language';
+
+	/// en: 'Use Bangumi for anime'
+	String get bangumiForAnime => 'Use Bangumi for anime';
+
+	/// en: 'Anime is looked up on Bangumi first, then TMDB'
+	String get bangumiForAnimeHelp => 'Anime is looked up on Bangumi first, then TMDB';
+
+	/// en: 'HTTP proxy'
+	String get metadataProxy => 'HTTP proxy';
+
+	/// en: 'host:port, used for metadata requests only. Leave empty to connect directly.'
+	String get metadataProxyHelp => 'host:port, used for metadata requests only. Leave empty to connect directly.';
+
+	/// en: 'TMDB API address'
+	String get tmdbApiBase => 'TMDB API address';
+
+	/// en: 'TMDB image address'
+	String get tmdbImageBase => 'TMDB image address';
+
+	/// en: 'Match manually'
+	String get manualMatch => 'Match manually';
+
+	/// en: 'No results'
+	String get noMatchResults => 'No results';
+
+	/// en: 'Media sources'
+	String get mediaSources => 'Media sources';
+
+	/// en: 'TMDB key, language and proxy for metadata'
+	String get scraperSettingsDescription => 'TMDB key, language and proxy for metadata';
 }
 
 // Path: appIcon.names
@@ -8376,6 +8493,12 @@ class Translations$storage$content$en {
 
 	/// en: 'Anime'
 	String get anime => 'Anime';
+
+	/// en: 'Variety'
+	String get variety => 'Variety';
+
+	/// en: 'Documentaries'
+	String get documentary => 'Documentaries';
 }
 
 // Path: storage.kindDescription
@@ -10761,10 +10884,10 @@ extension on Translations {
 			'storage.content.movie' => 'Movies',
 			'storage.content.show' => 'TV shows',
 			'storage.content.anime' => 'Anime',
+			'storage.content.variety' => 'Variety',
+			'storage.content.documentary' => 'Documentaries',
 			'storage.fieldType' => 'Type',
 			'storage.fieldName' => 'Name',
-			'storage.fieldContent' => 'Content',
-			'storage.fieldContentHelp' => 'Pick a type to skip guessing, or let each file be classified automatically',
 			'storage.folderPath' => 'Folder path',
 			'storage.browse' => 'Browse',
 			'storage.selectFolder' => 'Select folder',
@@ -10822,10 +10945,51 @@ extension on Translations {
 			'storage.scanFailed' => ({required Object message}) => 'Scan failed: ${message}',
 			'storage.scanNever' => 'Not scanned yet',
 			'storage.scanResults' => 'Scan results',
+			'storage.scrapeTitle' => 'Metadata',
+			'storage.scrapeStart' => 'Start lookup',
+			'storage.scrapingProgress' => ({required Object done, required Object total}) => 'Looking up ${done} / ${total}…',
+			'storage.scrapeQueued' => ({required Object n}) => '${n} waiting',
+			'storage.scrapeUnmatched' => ({required Object n}) => '${n} not found',
+			'storage.scrapeAllDone' => 'Every title has metadata',
+			'storage.scrapeStopped' => ({required Object message}) => 'Lookup stopped: ${message}',
+			'storage.scrapeHint' => 'Scanning only reads file names. Lookup asks TMDB and Bangumi and sorts titles into the library; it runs by itself after a scan and does not touch your drives.',
+			'storage.tmdbTest' => 'Test connection',
+			'storage.tmdbTestOk' => 'Connected to TMDB',
+			'storage.tmdbTestNoKey' => 'Enter a TMDB API key first',
+			'storage.tmdbTestFailed' => ({required Object message}) => 'Failed: ${message}',
+			'storage.unmatchedTitles' => 'Unmatched',
+			'storage.category' => 'Category',
+			'storage.kindSeries' => 'Series',
 			'storage.unidentified' => 'Unidentified',
 			'storage.versionCount' => ({required Object n}) => '${n} versions',
 			'storage.episodeCount' => ({required Object n}) => '${n} episodes',
 			'storage.emptyShelf' => 'Nothing here yet',
+			'storage.localLibraryName' => 'Local library',
+			'storage.defaultProfileName' => 'Me',
+			'storage.sortTitle' => 'Title',
+			'storage.sortYear' => 'Year',
+			'storage.sortReleaseDate' => 'Release date',
+			'storage.sortRating' => 'Rating',
+			'storage.sortAddedAt' => 'Date added',
+			'storage.sortLastPlayed' => 'Last played',
+			'storage.recentlyAdded' => ({required Object shelf}) => 'Recently added in ${shelf}',
+			'storage.continueWatching' => 'Continue watching',
+			'storage.scraping' => 'Looking up metadata…',
+			'storage.scrapeNoKey' => 'No TMDB API key is set, so titles have no metadata yet',
+			'storage.scraperSettings' => 'Metadata sources',
+			'storage.tmdbKey' => 'TMDB API key',
+			'storage.tmdbKeyHelp' => 'A v3 API key or v4 read access token from themoviedb.org. Needed for movies and TV shows.',
+			'storage.metadataLanguage' => 'Metadata language',
+			'storage.bangumiForAnime' => 'Use Bangumi for anime',
+			'storage.bangumiForAnimeHelp' => 'Anime is looked up on Bangumi first, then TMDB',
+			'storage.metadataProxy' => 'HTTP proxy',
+			'storage.metadataProxyHelp' => 'host:port, used for metadata requests only. Leave empty to connect directly.',
+			'storage.tmdbApiBase' => 'TMDB API address',
+			'storage.tmdbImageBase' => 'TMDB image address',
+			'storage.manualMatch' => 'Match manually',
+			'storage.noMatchResults' => 'No results',
+			'storage.mediaSources' => 'Media sources',
+			'storage.scraperSettingsDescription' => 'TMDB key, language and proxy for metadata',
 			_ => null,
 		};
 	}

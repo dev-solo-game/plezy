@@ -387,6 +387,8 @@ class Mounts extends Table {
   TextColumn get displayName => text()();
 
   /// How the scanner classifies content: `'auto'`, `'movie'`, `'show'` or `'anime'`.
+  /// Unused: mounts no longer carry a type, the scraper picks each title's
+  /// shelf. Kept so the table needs no rebuild.
   TextColumn get libraryType => text().withDefault(const Constant('auto'))();
 
   /// Driver-specific, non-sensitive settings as a JSON object.

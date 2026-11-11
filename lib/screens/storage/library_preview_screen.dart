@@ -1,5 +1,7 @@
 // Scaffolding: shows what the scanner filed, shelf by shelf, until the real
 // library screens read from the local library.
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:material_symbols_icons/symbols.dart';
 import 'package:provider/provider.dart';
@@ -8,15 +10,26 @@ import '../../database/app_database.dart';
 import '../../i18n/strings.g.dart';
 import '../../library/library_repository.dart';
 import '../../widgets/app_icon.dart';
+import 'manual_match_dialog.dart';
 import 'mounts_screen.dart';
 
 class LibraryPreviewScreen extends StatelessWidget {
   const LibraryPreviewScreen({super.key});
 
+  static String _shelfLabel(String shelf) => switch (shelf) {
+    LibraryTypes.movie => t.storage.content.movie,
+    LibraryTypes.show => t.storage.content.show,
+    LibraryTypes.anime => t.storage.content.anime,
+    LibraryTypes.variety => t.storage.content.variety,
+    LibraryTypes.documentary => t.storage.content.documentary,
+    _ => shelf,
+  };
+
   @override
   Widget build(BuildContext context) {
+    final repo = context.read<LibraryRepository>();
     return DefaultTabController(
-      length: 4,
+      length: LibraryTypes.shelves.length + 2,
       child: Scaffold(
         appBar: AppBar(
           title: Text(t.storage.scanResults),
@@ -24,59 +37,29 @@ class LibraryPreviewScreen extends StatelessWidget {
             isScrollable: true,
             tabAlignment: TabAlignment.center,
             tabs: [
-              Tab(text: t.storage.content.movie),
-              Tab(text: t.storage.content.show),
-              Tab(text: t.storage.content.anime),
+              for (final shelf in LibraryTypes.shelves) Tab(text: _shelfLabel(shelf)),
+              Tab(text: t.storage.unmatchedTitles),
               Tab(text: t.storage.unidentified),
             ],
           ),
         ),
-        body: const TabBarView(
+        body: TabBarView(
           children: [
-            _Shelf(libraryType: 'movie', kind: LibraryKinds.movie),
-            _Shelf(libraryType: 'show', kind: LibraryKinds.show),
-            _AnimeShelf(),
-            _UnidentifiedList(),
+            for (final shelf in LibraryTypes.shelves)
+              _Loaded<List<LibraryItemView>>(
+                load: () async => (await repo.queryTitles(LibraryQuery(libraryType: shelf, limit: 500))).items,
+                builder: (titles) => _TitleList(titles: titles),
+              ),
+            // Titles no source recognised, or not looked up yet: on no shelf
+            // until the user matches them.
+            _Loaded<List<LibraryItemView>>(
+              load: repo.pendingTitles,
+              builder: (titles) => _TitleList(titles: titles),
+            ),
+            const _UnidentifiedList(),
           ],
         ),
       ),
-    );
-  }
-}
-
-/// Anime holds both series and films, so its tab lists the two together.
-class _AnimeShelf extends StatelessWidget {
-  const _AnimeShelf();
-
-  @override
-  Widget build(BuildContext context) {
-    final repo = context.read<LibraryRepository>();
-    return _Loaded<List<LibraryItemView>>(
-      load: () async => [
-        ...(await repo.queryTitles(
-          const LibraryQuery(libraryType: 'anime', kind: LibraryKinds.show, limit: 500),
-        )).items,
-        ...(await repo.queryTitles(
-          const LibraryQuery(libraryType: 'anime', kind: LibraryKinds.movie, limit: 500),
-        )).items,
-      ],
-      builder: (titles) => _TitleList(titles: titles),
-    );
-  }
-}
-
-class _Shelf extends StatelessWidget {
-  const _Shelf({required this.libraryType, required this.kind});
-
-  final String libraryType;
-  final String kind;
-
-  @override
-  Widget build(BuildContext context) {
-    final repo = context.read<LibraryRepository>();
-    return _Loaded<List<LibraryItemView>>(
-      load: () async => (await repo.queryTitles(LibraryQuery(libraryType: libraryType, kind: kind, limit: 500))).items,
-      builder: (titles) => _TitleList(titles: titles),
     );
   }
 }
@@ -98,6 +81,15 @@ class _TitleList extends StatelessWidget {
           final item = view.item;
           final isShow = item.kind == LibraryKinds.show;
           return ListTile(
+            onTap: () async {
+              final navigator = Navigator.of(context);
+              if (await showManualMatchDialog(context, item)) {
+                // Simplest way to show the new state of every tab.
+                unawaited(
+                  navigator.pushReplacement(MaterialPageRoute<void>(builder: (_) => const LibraryPreviewScreen())),
+                );
+              }
+            },
             leading: AppIcon(isShow ? Symbols.tv_rounded : Symbols.movie_rounded),
             title: Text(item.year == null ? item.title : '${item.title} (${item.year})'),
             subtitle: isShow

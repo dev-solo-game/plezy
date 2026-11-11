@@ -77,6 +77,28 @@ class StreamProxy {
     );
   }
 
+  /// A loopback URL for [path] on [driver], without touching the driver: the
+  /// file's size is looked up when the URL is first requested. Synchronous,
+  /// for callers that must produce a URL on the spot (image widgets). Returns
+  /// null until [start] has completed.
+  Uri? urlForPath({required String mountId, required StorageDriver driver, required String path}) {
+    final server = _server;
+    if (server == null) return null;
+    final normalized = StoragePath.normalize(path);
+    final key = '$mountId\u0000$normalized';
+    final token = _tokensByKey.putIfAbsent(key, _newToken);
+    _sources.putIfAbsent(
+      token,
+      () => _Source(driver, StorageEntry(path: normalized, name: StoragePath.name(normalized), isDirectory: false)),
+    );
+    return Uri(
+      scheme: 'http',
+      host: InternetAddress.loopbackIPv4.address,
+      port: server.port,
+      pathSegments: ['s', token, StoragePath.name(normalized)],
+    );
+  }
+
   /// Forgets every file registered for [mountId], e.g. when the mount is
   /// removed or its driver is rebuilt with new credentials.
   void unregisterMount(String mountId) {

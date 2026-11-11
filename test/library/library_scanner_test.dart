@@ -1,3 +1,4 @@
+import 'package:drift/drift.dart' show Value;
 import 'dart:convert';
 
 import 'package:drift/native.dart';
@@ -69,8 +70,7 @@ void main() {
   late LibraryScanner scanner;
   late _TreeDriver driver;
 
-  StorageMount mount([MountLibraryType type = MountLibraryType.auto]) =>
-      StorageMount(id: 'm1', kind: StorageKind.local, displayName: 'Disk', libraryType: type);
+  StorageMount mount() => const StorageMount(id: 'm1', kind: StorageKind.local, displayName: 'Disk');
 
   setUp(() async {
     db = AppDatabase.forTesting(NativeDatabase.memory());
@@ -93,7 +93,7 @@ void main() {
       (await db.select(db.libraryFiles).get()).firstWhere((f) => f.path == path);
 
   group('auto classification', () {
-    test('files movies, shows and anime on their shelves', () async {
+    test('guesses movies and shows from names, all waiting for a shelf', () async {
       driver
         ..add('/Movies/The Matrix (1999)/The.Matrix.1999.1080p.BluRay.x264.mkv')
         ..add('/Movies/流浪地球2 (2023).mkv')
@@ -110,16 +110,21 @@ void main() {
 
       final movies = await items(LibraryKinds.movie);
       expect(movies.map((m) => '${m.title}|${m.year}|${m.libraryType}').toSet(), {
-        'The Matrix|1999|movie',
-        '流浪地球2|2023|movie',
+        'The Matrix|1999|pending',
+        '流浪地球2|2023|pending',
       });
 
       final shows = await items(LibraryKinds.show);
       expect(shows.map((s) => '${s.title}|${s.libraryType}').toSet(), {
-        'Breaking Bad|show',
-        '庆余年|show',
-        'Sousou no Frieren|anime',
+        'Breaking Bad|pending',
+        '庆余年|pending',
+        'Sousou no Frieren|pending',
       });
+      expect(
+        (await repo.queryTitles(const LibraryQuery(libraryType: LibraryTypes.movie))).total,
+        0,
+        reason: 'nothing is on a shelf before the scraper places it',
+      );
 
       final qyn = shows.firstWhere((s) => s.title == '庆余年');
       final seasons = await repo.children(qyn.id);
@@ -154,52 +159,79 @@ void main() {
     });
   });
 
-  group('fixed mount types', () {
-    test('a movie mount never guesses episodes', () async {
+  group('re-filing', () {
+    test('specials go to season 0', () async {
       driver
-        ..add('/Show.S01E01.mkv')
-        ..add('/Show.S01E02.mkv')
-        ..add('/Show.S01E03.mkv');
-      await scanner.scan(mount(MountLibraryType.movie), driver);
-      expect(await items(LibraryKinds.show), isEmpty);
-      // One "movie" with three files: same parsed title.
-      expect((await items(LibraryKinds.movie)).single.title, 'Show');
-    });
-
-    test('a show mount treats loose numbers as episodes and shelves nothing as a movie', () async {
-      driver
-        ..add('/Planet Earth/Planet Earth 01.mkv')
-        ..add('/Planet Earth/Behind.mkv');
-      await scanner.scan(mount(MountLibraryType.show), driver);
-      expect((await items(LibraryKinds.show)).single.title, 'Planet Earth');
-      expect((await items(LibraryKinds.episode)).single.episodeNumber, 1);
-      expect(await items(LibraryKinds.movie), isEmpty);
-      expect((await fileAt('/Planet Earth/Behind.mkv')).matchState, LibraryMatchStates.unmatched);
-    });
-
-    test('an anime mount shelves everything as anime, specials in season 0', () async {
-      driver
-        ..add('/Frieren/Frieren - 01.mkv')
-        ..add('/Frieren/Frieren - OVA 1.mkv');
-      await scanner.scan(mount(MountLibraryType.anime), driver);
+        ..add('/Frieren/[Group] Frieren - 01 [1080p].mkv')
+        ..add('/Frieren/[Group] Frieren - OVA 1 [1080p].mkv');
+      await scanner.scan(mount(), driver);
       final show = (await items(LibraryKinds.show)).single;
-      expect(show.libraryType, 'anime');
       expect((await repo.children(show.id)).map((s) => s.item.seasonNumber), [0, 1]);
     });
 
-    test('changing the mount type re-files what the user has not locked', () async {
+    test('a new episode joins its show on the shelf the show already has', () async {
+      driver.add('/TV/Severance/Severance.S01E01.mkv');
+      await scanner.scan(mount(), driver);
+      final show = (await items(LibraryKinds.show)).single;
+      await repo.setLibraryType(show.id, LibraryTypes.show);
+
+      driver.add('/TV/Severance/Severance.S01E02.mkv');
+      await scanner.scan(mount(), driver);
+      expect((await items(LibraryKinds.episode)).map((e) => e.libraryType).toSet(), {LibraryTypes.show});
+    });
+
+    test('a renamed file is re-filed unless the user locked its match', () async {
       driver
         ..add('/Show.S01E01.mkv')
         ..add('/Locked.S01E01.mkv');
-      await scanner.scan(mount(MountLibraryType.movie), driver);
+      await scanner.scan(mount(), driver);
       final locked = await fileAt('/Locked.S01E01.mkv');
       await repo.assignFile(locked.id, locked.itemId!, locked: true);
 
-      await scanner.scan(mount(MountLibraryType.show), driver);
-      expect((await items(LibraryKinds.show)).single.title, 'Show');
-      expect((await items(LibraryKinds.movie)).map((m) => m.title), [
-        'Locked',
-      ], reason: 'the emptied movie is pruned; the locked match stays');
+      driver
+        ..files.clear()
+        ..add('/Other.S01E01.mkv')
+        ..add('/Locked.S01E01.mkv');
+      await scanner.scan(mount(), driver);
+      expect((await items(LibraryKinds.show)).map((s) => s.title).toSet(), {'Other', 'Locked'});
+    });
+  });
+
+  group('re-filing from stored names', () {
+    test('files filed by older rules move to the titles their names give, without listing the mount', () async {
+      driver
+        ..add('/电影/动画电影/仙逆剧场版：弑仙之战 (2026)/仙逆剧场版：弑仙之战 (2026) - 1080p.mkv')
+        ..add('/电影/动画电影/仙逆剧场版：神临之战 (2025)/仙逆剧场版：神临之战 (2025) - 2160p.mp4');
+      await scanner.scan(mount(), driver);
+
+      // What an older parser did: both films under one title "仙逆".
+      final merged = await repo.insertItem(
+        LibraryItemsCompanion.insert(
+          kind: LibraryKinds.movie,
+          libraryType: LibraryTypes.anime,
+          title: '仙逆',
+          sortTitle: '仙逆',
+          addedAt: 0,
+          updatedAt: 0,
+        ),
+      );
+      for (final file in await db.select(db.libraryFiles).get()) {
+        await repo.updateFile(
+          file.id,
+          LibraryFilesCompanion(itemId: Value(merged), parsed: const Value('{"title":"仙逆","key":"movie|movie|仙逆|||"}')),
+        );
+      }
+      await repo.pruneEmptyTitles();
+
+      driver.files.clear(); // Nothing may be listed.
+      final moved = await scanner.refileFromNames('m1');
+      expect(moved, 2);
+      final movies = await items(LibraryKinds.movie);
+      expect(movies.map((m) => '${m.title}|${m.year}|${m.libraryType}').toSet(), {
+        '仙逆剧场版:弑仙之战|2026|pending',
+        '仙逆剧场版:神临之战|2025|pending',
+      });
+      expect(await scanner.refileFromNames('m1'), 0, reason: 'nothing left to move');
     });
   });
 

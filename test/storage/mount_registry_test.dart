@@ -26,7 +26,6 @@ void main() {
     id: id,
     kind: StorageKind.quark,
     displayName: 'My Quark',
-    libraryType: MountLibraryType.anime,
     config: const {MountKeys.rootFolderId: 'abc', MountKeys.requestIntervalMs: 1500},
     secrets: const {MountKeys.secretCookie: '__pus=secret-value'},
   );
@@ -36,7 +35,6 @@ void main() {
     final loaded = (await registry.list()).single;
     expect(loaded.kind, StorageKind.quark);
     expect(loaded.displayName, 'My Quark');
-    expect(loaded.libraryType, MountLibraryType.anime);
     expect(loaded.configString(MountKeys.rootFolderId), 'abc');
     expect(loaded.configInt(MountKeys.requestIntervalMs), 1500);
     expect(loaded.secret(MountKeys.secretCookie), '__pus=secret-value');

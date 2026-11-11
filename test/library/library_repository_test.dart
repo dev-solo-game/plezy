@@ -438,9 +438,9 @@ void main() {
       await addTitle('Dune', kind: LibraryKinds.show, libraryType: 'show', tmdbId: '90228');
       final ep = await addTitle('Dune pilot', kind: LibraryKinds.episode, libraryType: 'show');
 
-      final found = await repo.findByExternalId(kind: LibraryKinds.movie, libraryType: 'movie', tmdbId: '438631');
+      final found = await repo.findByExternalId(kind: LibraryKinds.movie, tmdbId: '438631');
       expect(found?.kind, LibraryKinds.movie);
-      expect(await repo.findByExternalId(kind: LibraryKinds.movie, libraryType: 'movie', tmdbId: '1'), isNull);
+      expect(await repo.findByExternalId(kind: LibraryKinds.movie, tmdbId: '1'), isNull);
 
       final hits = await repo.search('dune');
       expect(hits.map((v) => v.item.kind).toSet(), {LibraryKinds.movie, LibraryKinds.show});

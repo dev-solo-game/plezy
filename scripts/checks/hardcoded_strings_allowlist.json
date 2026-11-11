@@ -85,5 +85,8 @@
   "lib/screens/storage/mount_edit_screen.dart": {
     "https://nas.example/dav/media": "Example URL, not prose",
     "192.168.1.10": "Example address, not prose"
+  },
+  "lib/screens/storage/scraper_settings_screen.dart": {
+    "127.0.0.1:7890": "Example address, not prose"
   }
 }

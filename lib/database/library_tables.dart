@@ -265,3 +265,14 @@ class LibraryScanStates extends Table {
   @override
   Set<Column> get primaryKey => {mountId};
 }
+
+/// Settings of the local library — scraper keys, hosts, language — as plain
+/// key/value rows. Secret values are encrypted by `CredentialVault`.
+@DataClassName('LibrarySettingRow')
+class LibrarySettings extends Table {
+  TextColumn get key => text()();
+  TextColumn get value => text()();
+
+  @override
+  Set<Column> get primaryKey => {key};
+}

@@ -57,7 +57,9 @@ import 'account_preferences_screen.dart';
 import 'appearance_settings_screen.dart';
 import 'general_settings_screen.dart';
 import 'keyboard_shortcuts_screen.dart';
+import '../../connection/connection_registry.dart';
 import '../storage/mounts_screen.dart';
+import '../storage/scraper_settings_screen.dart';
 import 'logs_screen.dart';
 import 'playback_settings_screen.dart';
 import '../profile/profile_switch_screen.dart';
@@ -116,6 +118,10 @@ class _SettingsScreenState extends State<SettingsScreen> with FocusableTab, Moun
   static const _kAutoHidePerformanceOverlay = 'auto_hide_performance_overlay';
   static const _kViewLogs = 'view_logs';
   static const _kStorageMounts = 'storage_mounts';
+
+  /// Whether any Plex/Jellyfin/Emby connection is stored. Their settings
+  /// stay hidden for installs that only use the local library.
+  bool _hasServerConnections = false;
   static const _kClearImageCache = 'clear_image_cache';
   static const _kResetSettings = 'reset_settings';
   static const _kCheckForUpdates = 'check_for_updates';
@@ -137,6 +143,16 @@ class _SettingsScreenState extends State<SettingsScreen> with FocusableTab, Moun
   void initState() {
     super.initState();
     _focusTracker = FocusMemoryTracker(debugLabelPrefix: 'settings');
+    try {
+      unawaited(
+        context.read<ConnectionRegistry>().list().then(
+          (connections) => setStateIfMounted(() => _hasServerConnections = connections.isNotEmpty),
+          onError: (Object _) {},
+        ),
+      );
+    } on ProviderNotFoundException {
+      // Hosted without the registry (previews, tests): nothing to show.
+    }
     if (_keyboardShortcutsSupported) {
       KeyboardShortcutsService.getInstance().then((s) {
         setStateIfMounted(() => _keyboardService = s);
@@ -223,11 +239,14 @@ class _SettingsScreenState extends State<SettingsScreen> with FocusableTab, Moun
                       _buildAppearanceTile(),
                       _buildPlaybackTile(),
                       if (hasLibraries) _buildManageLibrariesTile(sheetContext),
-                      _buildServicesTile(),
+                      if (_hasServerConnections) _buildServicesTile(),
                     ],
                   ),
 
-                  _buildConnectionsSection(sheetContext),
+                  _buildMediaSourcesSection(),
+
+                  // Server connections only matter to installs that still have some.
+                  if (_hasServerConnections) _buildConnectionsSection(sheetContext),
 
                   if (!PlatformDetector.isAppleTV()) _buildDownloadsSection(),
 
@@ -347,6 +366,27 @@ class _SettingsScreenState extends State<SettingsScreen> with FocusableTab, Moun
           destinationBuilder: (_) => const ServicesSettingsScreen(),
         );
       },
+    );
+  }
+
+  Widget _buildMediaSourcesSection() {
+    return SettingsGroup(
+      title: t.storage.mediaSources,
+      children: [
+        SettingNavigationTile(
+          focusNode: _focusTracker.get(_kStorageMounts),
+          icon: Symbols.hard_drive_rounded,
+          title: t.storage.title,
+          subtitle: t.storage.description,
+          destinationBuilder: (context) => const MountsScreen(),
+        ),
+        SettingNavigationTile(
+          icon: Symbols.travel_explore_rounded,
+          title: t.storage.scraperSettings,
+          subtitle: t.storage.scraperSettingsDescription,
+          destinationBuilder: (context) => const ScraperSettingsScreen(),
+        ),
+      ],
     );
   }
 
@@ -579,13 +619,6 @@ class _SettingsScreenState extends State<SettingsScreen> with FocusableTab, Moun
           icon: Symbols.speed_rounded,
           title: t.settings.autoHidePerformanceOverlay,
           subtitle: t.settings.autoHidePerformanceOverlayDescription,
-        ),
-        SettingNavigationTile(
-          focusNode: _focusTracker.get(_kStorageMounts),
-          icon: Symbols.hard_drive_rounded,
-          title: t.storage.title,
-          subtitle: t.storage.description,
-          destinationBuilder: (context) => const MountsScreen(),
         ),
         SettingNavigationTile(
           focusNode: _focusTracker.get(_kViewLogs),

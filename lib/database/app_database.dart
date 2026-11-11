@@ -73,6 +73,7 @@ final class AppDatabaseBootstrap {
     LibraryLists,
     LibraryListItems,
     LibraryScanStates,
+    LibrarySettings,
   ],
 )
 class AppDatabase extends _$AppDatabase {
@@ -380,7 +381,7 @@ class AppDatabase extends _$AppDatabase {
   static const FormatException _invalidRecoveryImage = FormatException('Invalid tvOS database recovery image');
 
   @override
-  int get schemaVersion => 27;
+  int get schemaVersion => 30;
 
   @override
   MigrationStrategy get migration {
@@ -802,6 +803,47 @@ class AppDatabase extends _$AppDatabase {
             if (!index.entityName.startsWith('idx_library_')) continue;
             await _ignoreAlreadyExists('${index.entityName} index', () => m.create(index));
           }
+        }
+        if (from < 28) {
+          appLogger.i('Adding LibrarySettings table (v28 migration)');
+          await _ignoreAlreadyExists('LibrarySettings table', () => m.createTable(librarySettings));
+        }
+        if (from < 29) {
+          // Shelves used to come from the mount's type; now the scraper picks
+          // them. Titles the user did not match by hand go back in the queue
+          // to be looked up again and filed, without rescanning any mount.
+          appLogger.i('Re-queueing library titles for shelf classification (v29 migration)');
+          await customStatement(
+            "UPDATE library_items SET library_type = 'pending', metadata_source = NULL, scraped_at = NULL "
+            'WHERE locked = 0 AND (show_id IS NULL OR show_id NOT IN '
+            '(SELECT id FROM library_items WHERE locked = 1))',
+          );
+        }
+        if (from < 30) {
+          // Shelf rules changed: films in animation folders now ask TMDB
+          // before Bangumi, and folders name the shelf when the source does
+          // not. Re-queue what the old rules filed from Bangumi and what they
+          // could not match (a wrong TMDB address made every lookup miss).
+          appLogger.i('Re-queueing library titles for the new shelf rules (v30 migration)');
+          // Films Bangumi named get back the title and year their file name
+          // gave, so the new lookup searches for the right thing.
+          await customStatement(
+            "UPDATE library_items SET "
+            "title = COALESCE((SELECT json_extract(f.parsed, '\$.title') FROM library_files f "
+            "WHERE f.item_id = library_items.id AND f.role = 'video' AND f.parsed IS NOT NULL LIMIT 1), title), "
+            "year = COALESCE((SELECT json_extract(f.parsed, '\$.year') FROM library_files f "
+            "WHERE f.item_id = library_items.id AND f.role = 'video' AND f.parsed IS NOT NULL LIMIT 1), year) "
+            "WHERE locked = 0 AND kind = 'movie' AND metadata_source = 'bangumi'",
+          );
+          await customStatement(
+            "UPDATE library_items SET sort_title = LOWER(TRIM(title)) "
+            "WHERE locked = 0 AND kind = 'movie' AND metadata_source = 'bangumi'",
+          );
+          await customStatement(
+            "UPDATE library_items SET library_type = 'pending', metadata_source = NULL, scraped_at = NULL "
+            "WHERE locked = 0 AND kind IN ('movie', 'show') AND "
+            "((kind = 'movie' AND metadata_source = 'bangumi') OR library_type = 'pending')",
+          );
         }
       },
     );

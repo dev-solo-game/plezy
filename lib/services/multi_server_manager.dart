@@ -349,6 +349,14 @@ class MultiServerManager {
     _serverStatus[machineId] = online;
   }
 
+  /// Registers the local media library. It is not a network server: it has
+  /// no endpoints to probe or tokens to refresh, and is always online.
+  void registerLocalLibrary(MediaServerClient client) {
+    _clients[client.serverId] = client;
+    _serverStatus[client.serverId] = true;
+    _emitStatus();
+  }
+
   @visibleForTesting
   void debugRegisterClientForTesting(MediaServerClient client, {bool online = true}) {
     _clients[client.serverId] = client;

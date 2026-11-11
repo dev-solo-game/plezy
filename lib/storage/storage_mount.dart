@@ -17,29 +17,6 @@ enum StorageKind {
   }
 }
 
-/// How the scanner should classify what it finds under a mount.
-///
-/// [auto] guesses per file; the others force the whole mount to one type so
-/// nothing is guessed. Anime is its own type because it parses fansub naming
-/// and prefers Bangumi over TMDB.
-enum MountLibraryType {
-  auto('auto'),
-  movie('movie'),
-  show('show'),
-  anime('anime');
-
-  const MountLibraryType(this.id);
-
-  final String id;
-
-  static MountLibraryType fromId(String? id) {
-    for (final type in values) {
-      if (type.id == id) return type;
-    }
-    return MountLibraryType.auto;
-  }
-}
-
 /// A user-configured storage location.
 ///
 /// [config] holds non-sensitive settings and [secrets] holds credentials
@@ -50,7 +27,6 @@ class StorageMount {
     required this.id,
     required this.kind,
     required this.displayName,
-    this.libraryType = MountLibraryType.auto,
     this.config = const {},
     this.secrets = const {},
     this.createdAt,
@@ -59,22 +35,15 @@ class StorageMount {
   final String id;
   final StorageKind kind;
   final String displayName;
-  final MountLibraryType libraryType;
   final Map<String, Object?> config;
   final Map<String, String> secrets;
   final DateTime? createdAt;
 
-  StorageMount copyWith({
-    String? displayName,
-    MountLibraryType? libraryType,
-    Map<String, Object?>? config,
-    Map<String, String>? secrets,
-  }) {
+  StorageMount copyWith({String? displayName, Map<String, Object?>? config, Map<String, String>? secrets}) {
     return StorageMount(
       id: id,
       kind: kind,
       displayName: displayName ?? this.displayName,
-      libraryType: libraryType ?? this.libraryType,
       config: config ?? this.config,
       secrets: secrets ?? this.secrets,
       createdAt: createdAt,
