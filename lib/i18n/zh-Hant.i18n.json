@@ -2655,6 +2655,11 @@
     "tmdbTestNoKey": "請先填寫 TMDB API key",
     "tmdbTestFailed": "失敗：${message}",
     "reviewUnmatched": "查看未匹配並手動匹配",
+    "quarkMode": "登入方式",
+    "quarkModeWeb": "網頁版",
+    "quarkModePc": "PC 客戶端",
+    "quarkModeTv": "TV 端",
+    "quarkModeHelp": "登入方式按掛載固定，更換後需要重新掃碼。TV 端尚未支援。",
     "unmatchedTitles": "未匹配",
     "category": "分類",
     "kindSeries": "影集",
@@ -2688,5 +2693,12 @@
     "noMatchResults": "沒有結果",
     "mediaSources": "媒體來源",
     "scraperSettingsDescription": "TMDB key、語言與刮削代理"
+  },
+  "streamQuality": {
+    "original": "原畫",
+    "superHd": "超清",
+    "high": "高清",
+    "normal": "標清",
+    "low": "流暢"
   }
 }

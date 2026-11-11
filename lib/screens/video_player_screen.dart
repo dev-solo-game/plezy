@@ -35,6 +35,7 @@ import '../media/account_ref.dart';
 import '../utils/session_identifier.dart';
 import '../database/app_database.dart';
 import '../media/media_version.dart';
+import '../media/stream_quality.dart';
 import '../models/transcode_quality_preset.dart';
 import '../media/media_source_info.dart';
 import '../media/media_part_timeline.dart';
@@ -775,6 +776,11 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen>
   /// the player — rather than playback starting at the saved default. Sticky
   /// for this screen, so later episodes and retries honor the pick too.
   bool _qualityPresetExplicit = false;
+
+  /// The [StreamQuality] the viewer picked for this screen. Kept for later
+  /// episodes, which play the nearest rendition they have.
+  String _selectedStreamQuality = StreamQuality.original;
+
   int? _selectedAudioStreamId;
   AudioTrack? _preferredAudioTrack;
   SubtitlePreference? _preferredSubtitleTrack;
@@ -1816,6 +1822,7 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen>
             selectedMediaSourceId: _requestedMediaSourceId,
             preferredVersionSignature: widget.preferredVersionSignature,
             qualityPreset: _selectedQualityPreset,
+            streamQuality: _selectedStreamQuality,
             selectedAudioStreamId: _selectedAudioStreamId,
             preferredAudioTrack: _preferredAudioTrack,
             preferredSubtitleTrack: _preferredSubtitleTrack,

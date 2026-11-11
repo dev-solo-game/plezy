@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../../media/media_item.dart';
 import '../../../media/media_version.dart';
 import '../../../media/media_source_info.dart';
+import '../../../media/stream_quality.dart';
 import '../../../models/transcode_quality_preset.dart';
 import '../../../mpv/mpv.dart';
 import '../../../services/playback_initialization_types.dart';
@@ -18,6 +19,13 @@ class TrackControlsState {
   final int selectedMediaIndex;
   final TranscodeQualityPreset selectedQualityPreset;
   final bool serverSupportsTranscoding;
+
+  /// Renditions the source serves besides the file, best first; when there
+  /// are any they take the quality column's place. [selectedStreamQuality]
+  /// is the one playing, or [StreamQuality.original].
+  final List<StreamQuality> streamQualities;
+  final String selectedStreamQuality;
+  final Future<void> Function(String streamQuality)? onSwitchStreamQuality;
   final bool isTranscoding;
   final List<MediaAudioTrack> sourceAudioTracks;
   final int? selectedAudioStreamId;
@@ -89,6 +97,9 @@ class TrackControlsState {
     this.selectedMediaIndex = 0,
     this.selectedQualityPreset = TranscodeQualityPreset.original,
     this.serverSupportsTranscoding = false,
+    this.streamQualities = const [],
+    this.selectedStreamQuality = StreamQuality.original,
+    this.onSwitchStreamQuality,
     this.isTranscoding = false,
     this.sourceAudioTracks = const [],
     this.selectedAudioStreamId,
@@ -139,6 +150,13 @@ class TrackControlsState {
     this.onSubtitleDownloaded,
     this.subtitleSearchSupported = true,
   });
+
+  /// Whether the quality column lists the source's own renditions rather
+  /// than transcode presets.
+  bool get hasStreamQualities => streamQualities.isNotEmpty && onSwitchStreamQuality != null;
+
+  /// Whether the version/quality picker has a quality column at all.
+  bool get showsQuality => hasStreamQualities || serverSupportsTranscoding;
 
   /// Transcoded subtitle choices must be negotiated with the server and
   /// therefore replace the native rendition track list. A live session's

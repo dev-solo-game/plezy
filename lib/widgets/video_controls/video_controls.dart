@@ -42,6 +42,7 @@ import '../../providers/multi_server_provider.dart';
 import '../../media/media_source_info.dart';
 import '../../models/transcode_quality_preset.dart';
 import '../../media/media_version.dart';
+import '../../media/stream_quality.dart';
 import '../../screens/video_player_screen.dart';
 import '../../focus/key_event_utils.dart';
 import '../../services/keyboard_shortcuts_service.dart';
@@ -569,6 +570,12 @@ class PlexVideoControls extends StatefulWidget {
   final int selectedMediaIndex;
   final TranscodeQualityPreset selectedQualityPreset;
   final bool serverSupportsTranscoding;
+
+  /// Renditions the source serves besides the file, best first, and the one
+  /// playing ([StreamQuality.original] for the file).
+  final List<StreamQuality> streamQualities;
+  final String selectedStreamQuality;
+  final Future<void> Function(String streamQuality)? onStreamQualitySelected;
   final bool isTranscoding;
   final bool isOfflinePlayback;
   final List<MediaAudioTrack> sourceAudioTracks;
@@ -711,6 +718,9 @@ class PlexVideoControls extends StatefulWidget {
     this.selectedMediaIndex = 0,
     this.selectedQualityPreset = TranscodeQualityPreset.original,
     this.serverSupportsTranscoding = false,
+    this.streamQualities = const [],
+    this.selectedStreamQuality = StreamQuality.original,
+    this.onStreamQualitySelected,
     this.isTranscoding = false,
     this.isOfflinePlayback = false,
     this.sourceAudioTracks = const [],

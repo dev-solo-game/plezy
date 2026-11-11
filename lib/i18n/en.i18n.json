@@ -2667,6 +2667,11 @@
     "tmdbTestNoKey": "Enter a TMDB API key first",
     "tmdbTestFailed": "Failed: ${message}",
     "reviewUnmatched": "Review unmatched",
+    "quarkMode": "Sign in as",
+    "quarkModeWeb": "Web",
+    "quarkModePc": "PC client",
+    "quarkModeTv": "TV",
+    "quarkModeHelp": "The sign-in mode is fixed per mount; changing it means scanning the QR code again. TV is not supported yet.",
     "unmatchedTitles": "Unmatched",
     "category": "Category",
     "kindSeries": "Series",
@@ -2700,5 +2705,12 @@
     "noMatchResults": "No results",
     "mediaSources": "Media sources",
     "scraperSettingsDescription": "TMDB key, language and proxy for metadata"
+  },
+  "streamQuality": {
+    "original": "Original",
+    "superHd": "Full HD",
+    "high": "HD",
+    "normal": "SD",
+    "low": "Low"
   }
 }

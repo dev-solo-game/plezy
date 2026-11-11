@@ -27,6 +27,7 @@ import '../media/media_source_info.dart';
 import '../media/media_version.dart';
 import '../media/playback_report_metadata.dart';
 import '../media/server_capabilities.dart';
+import '../media/stream_quality.dart';
 import '../mpv/mpv.dart';
 import '../services/api_cache.dart';
 import '../services/jellyfin_api_cache.dart';
@@ -36,6 +37,8 @@ import '../storage/mount_manager.dart';
 import '../storage/storage_driver.dart';
 import '../storage/storage_mount.dart';
 import '../storage/storage_path.dart';
+import '../storage/stream_variant.dart';
+import '../utils/app_logger.dart';
 import '../utils/external_ids.dart';
 import '../utils/media_server_http_client.dart' show AbortController;
 import 'library_repository.dart' as lib;
@@ -930,19 +933,37 @@ class LocalLibraryClient implements MediaServerClient {
 
   // ─── Playback ──────────────────────────────────────────────────────────
 
-  Future<Uri> _streamUrl(LibraryFileRow file) async {
+  Future<StorageMount> _mountOf(LibraryFileRow file) async {
     final mount = _mountsById[file.mountId] ?? await _mountManager.registry.get(file.mountId);
     if (mount == null) throw const PlaybackException('The mount this file is on was removed');
-    return _mountManager.streamUrl(
-      mount,
-      StorageEntry(
-        path: file.path,
-        name: StoragePath.name(file.path),
-        isDirectory: false,
-        size: file.size,
-        id: file.remoteId,
-      ),
-    );
+    return mount;
+  }
+
+  static StorageEntry _entryOf(LibraryFileRow file) => StorageEntry(
+    path: file.path,
+    name: StoragePath.name(file.path),
+    isDirectory: false,
+    size: file.size,
+    id: file.remoteId,
+  );
+
+  Future<Uri> _streamUrl(LibraryFileRow file) async => _mountManager.streamUrl(await _mountOf(file), _entryOf(file));
+
+  /// How long playback waits for the backend's rendition list. Playing the
+  /// original goes ahead without the list rather than wait longer.
+  static const Duration _variantsTimeout = Duration(seconds: 8);
+
+  /// The renditions the backend serves for [file], best first; empty when it
+  /// serves none or cannot be asked right now.
+  Future<List<StreamVariant>> _streamVariants(StorageMount mount, LibraryFileRow file) async {
+    try {
+      return await _mountManager.streamVariants(mount, _entryOf(file)).timeout(_variantsTimeout);
+    } on StorageException catch (e) {
+      appLogger.w('No renditions for ${file.path}: ${e.message}');
+    } on TimeoutException {
+      appLogger.w('Timed out listing renditions for ${file.path}');
+    }
+    return const [];
   }
 
   Future<List<LibraryFileRow>> _versions(String itemId) async {
@@ -988,8 +1009,17 @@ class LocalLibraryClient implements MediaServerClient {
     }
     final String url;
     final List<SubtitleTrack> subtitles;
+    final List<StreamVariant> variants;
+    StreamVariant? variant;
     try {
-      url = (await _streamUrl(picked.file)).toString();
+      final mount = await _mountOf(picked.file);
+      variants = await _streamVariants(mount, picked.file);
+      variant = StreamVariant.pick(variants, options.streamQuality, _mountManager.variantOrder(mount));
+      url =
+          (variant == null
+                  ? await _mountManager.streamUrl(mount, _entryOf(picked.file))
+                  : await _mountManager.variantUrl(mount, _entryOf(picked.file), variant))
+              .toString();
       subtitles = await _externalSubtitles(picked.file);
     } on StorageException catch (e) {
       throw PlaybackException(e.message, reason: PlaybackFailureReason.serverUnavailable);
@@ -1007,9 +1037,11 @@ class LocalLibraryClient implements MediaServerClient {
         mediaIndex: picked.index,
       ),
       subtitleSidecars: [for (final track in subtitles) PlaybackSubtitleSidecar(sourceStreamId: null, track: track)],
-      playMethod: 'DirectPlay',
+      playMethod: variant == null ? 'DirectPlay' : 'DirectStream',
       selectedMediaIndex: picked.index,
       selectedMediaSourceId: '${picked.file.id}',
+      streamQualities: [for (final v in variants) StreamQuality(id: v.id, width: v.width, height: v.height)],
+      streamQuality: variant?.id ?? StreamQuality.original,
     );
   }
 

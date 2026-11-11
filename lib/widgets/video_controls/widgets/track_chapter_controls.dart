@@ -5,15 +5,18 @@ import 'package:flutter/services.dart';
 import '../../../focus/dpad_navigator.dart';
 import '../../../mpv/mpv.dart';
 import '../../../media/media_source_info.dart';
+import '../../../media/media_version.dart';
 import '../../../services/sleep_timer_service.dart';
 import '../../../utils/platform_detector.dart';
 import '../../../utils/quality_preset_labels.dart';
 import '../../../i18n/strings.g.dart';
 import '../../../widgets/overlay_sheet.dart';
 import '../models/track_controls_state.dart';
+import '../sheets/base_video_control_sheet.dart';
 import '../sheets/chapter_sheet.dart';
 import '../sheets/queue_sheet.dart';
 import '../sheets/track_sheet.dart';
+import '../sheets/version_quality_sheet.dart';
 import '../sheets/video_settings_sheet.dart';
 import '../../../utils/track_label_builder.dart';
 import '../video_control_button.dart';
@@ -109,6 +112,7 @@ class TrackChapterControls extends StatelessWidget {
     // by event time it reflects every button that build() actually added.
     required List<Widget> buttons,
     String? tooltip,
+    String? label,
     String? semanticValue,
     bool? checked,
     bool isActive = false,
@@ -116,6 +120,7 @@ class TrackChapterControls extends StatelessWidget {
     return VideoControlButton(
       icon: icon,
       tooltip: tooltip,
+      label: label,
       semanticLabel: semanticLabel,
       semanticValue: semanticValue,
       checked: checked,
@@ -143,6 +148,50 @@ class TrackChapterControls extends StatelessWidget {
         final buttons = <Widget>[];
         int buttonIndex = 0;
 
+        if (state.hasStreamQualities) {
+          final currentIndex = buttonIndex;
+          buttons.add(
+            ConstrainedBox(
+              // A labelled button needs a bounded width to ellipsize in.
+              constraints: const BoxConstraints(maxWidth: 160),
+              child: _buildTrackButton(
+                buttonIndex: currentIndex,
+                icon: Symbols.high_quality_rounded,
+                label: streamQualityName(state.selectedStreamQuality),
+                tooltip: t.videoControls.qualityColumnHeader,
+                semanticLabel: t.videoControls.qualityColumnHeader,
+                semanticValue: streamQualityName(state.selectedStreamQuality),
+                buttons: buttons,
+                onPressed: () {
+                  state.onCancelAutoHide?.call();
+                  OverlaySheetController.of(context)
+                      .show(
+                        builder: (_) => BaseVideoControlSheet(
+                          title: t.videoControls.qualityColumnHeader,
+                          icon: Symbols.high_quality_rounded,
+                          child: VersionQualityPicker(
+                            // Quality only: versions stay in the settings sheet.
+                            availableVersions: [?_selectedVersion(state)],
+                            selectedMediaIndex: 0,
+                            selectedQualityPreset: state.selectedQualityPreset,
+                            serverSupportsTranscoding: false,
+                            onVersionSelected: (_) {},
+                            onQualitySelected: (_) {},
+                            streamQualities: state.streamQualities,
+                            selectedStreamQuality: state.selectedStreamQuality,
+                            onStreamQualitySelected: (id) => state.onSwitchStreamQuality?.call(id),
+                          ),
+                        ),
+                      )
+                      .whenComplete(() => state.onStartAutoHide?.call());
+                },
+              ),
+            ),
+          );
+          buttonIndex++;
+        }
+
+        final settingsIndex = buttonIndex;
         buttons.add(
           ListenableBuilder(
             listenable: SleepTimerService(),
@@ -159,7 +208,7 @@ class TrackChapterControls extends StatelessWidget {
                   isShaderActive ||
                   isZoomActive;
               return _buildTrackButton(
-                buttonIndex: 0,
+                buttonIndex: settingsIndex,
                 icon: Symbols.tune_rounded,
                 isActive: isActive,
                 checked: isActive,
@@ -376,6 +425,11 @@ class TrackChapterControls extends StatelessWidget {
     );
   }
 
+  static MediaVersion? _selectedVersion(TrackControlsState state) {
+    final index = state.selectedMediaIndex;
+    return index >= 0 && index < state.availableVersions.length ? state.availableVersions[index] : null;
+  }
+
   String? _versionQualitySemanticValue() {
     final state = trackControlsState;
     final values = <String>[];
@@ -385,7 +439,9 @@ class TrackChapterControls extends StatelessWidget {
         values.add(state.availableVersions[index].displayLabel);
       }
     }
-    if (state.serverSupportsTranscoding) {
+    if (state.hasStreamQualities) {
+      values.add(streamQualityName(state.selectedStreamQuality));
+    } else if (state.serverSupportsTranscoding) {
       values.add(qualityPresetLabel(state.selectedQualityPreset));
     }
     return values.isEmpty ? null : values.join(' / ');

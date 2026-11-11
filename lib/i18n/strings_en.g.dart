@@ -96,6 +96,7 @@ class Translations with BaseTranslations<AppLocale, Translations> {
 	late final Translations$addServer$en addServer = Translations$addServer$en.internal(_root);
 	late final Translations$deepLinks$en deepLinks = Translations$deepLinks$en.internal(_root);
 	late final Translations$storage$en storage = Translations$storage$en.internal(_root);
+	late final Translations$streamQuality$en streamQuality = Translations$streamQuality$en.internal(_root);
 }
 
 // Path: app
@@ -6418,6 +6419,21 @@ class Translations$storage$en {
 	/// en: 'Review unmatched'
 	String get reviewUnmatched => 'Review unmatched';
 
+	/// en: 'Sign in as'
+	String get quarkMode => 'Sign in as';
+
+	/// en: 'Web'
+	String get quarkModeWeb => 'Web';
+
+	/// en: 'PC client'
+	String get quarkModePc => 'PC client';
+
+	/// en: 'TV'
+	String get quarkModeTv => 'TV';
+
+	/// en: 'The sign-in mode is fixed per mount; changing it means scanning the QR code again. TV is not supported yet.'
+	String get quarkModeHelp => 'The sign-in mode is fixed per mount; changing it means scanning the QR code again. TV is not supported yet.';
+
 	/// en: 'Unmatched'
 	String get unmatchedTitles => 'Unmatched';
 
@@ -6516,6 +6532,30 @@ class Translations$storage$en {
 
 	/// en: 'TMDB key, language and proxy for metadata'
 	String get scraperSettingsDescription => 'TMDB key, language and proxy for metadata';
+}
+
+// Path: streamQuality
+class Translations$streamQuality$en {
+	Translations$streamQuality$en.internal(this._root);
+
+	final Translations _root; // ignore: unused_field
+
+	// Translations
+
+	/// en: 'Original'
+	String get original => 'Original';
+
+	/// en: 'Full HD'
+	String get superHd => 'Full HD';
+
+	/// en: 'HD'
+	String get high => 'HD';
+
+	/// en: 'SD'
+	String get normal => 'SD';
+
+	/// en: 'Low'
+	String get low => 'Low';
 }
 
 // Path: appIcon.names
@@ -10961,6 +11001,11 @@ extension on Translations {
 			'storage.tmdbTestNoKey' => 'Enter a TMDB API key first',
 			'storage.tmdbTestFailed' => ({required Object message}) => 'Failed: ${message}',
 			'storage.reviewUnmatched' => 'Review unmatched',
+			'storage.quarkMode' => 'Sign in as',
+			'storage.quarkModeWeb' => 'Web',
+			'storage.quarkModePc' => 'PC client',
+			'storage.quarkModeTv' => 'TV',
+			'storage.quarkModeHelp' => 'The sign-in mode is fixed per mount; changing it means scanning the QR code again. TV is not supported yet.',
 			'storage.unmatchedTitles' => 'Unmatched',
 			'storage.category' => 'Category',
 			'storage.kindSeries' => 'Series',
@@ -10994,6 +11039,11 @@ extension on Translations {
 			'storage.noMatchResults' => 'No results',
 			'storage.mediaSources' => 'Media sources',
 			'storage.scraperSettingsDescription' => 'TMDB key, language and proxy for metadata',
+			'streamQuality.original' => 'Original',
+			'streamQuality.superHd' => 'Full HD',
+			'streamQuality.high' => 'HD',
+			'streamQuality.normal' => 'SD',
+			'streamQuality.low' => 'Low',
 			_ => null,
 		};
 	}

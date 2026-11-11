@@ -3,9 +3,12 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
+import 'package:flutter/foundation.dart' show visibleForTesting;
+
 import '../utils/app_logger.dart';
 import 'storage_driver.dart';
 import 'storage_path.dart';
+import 'stream_variant.dart';
 
 /// Serves mounted files to players over loopback HTTP.
 ///
@@ -21,8 +24,12 @@ class StreamProxy {
 
   final Random _random;
   final Map<String, _Source> _sources = {};
+  final Map<String, _VariantSource> _variants = {};
   final Map<String, String> _tokensByKey = {};
   HttpServer? _server;
+  HttpClient? _upstream;
+
+  HttpClient get _upstreamClient => _upstream ??= HttpClient()..connectionTimeout = const Duration(seconds: 15);
   Future<HttpServer>? _starting;
 
   bool get isRunning => _server != null;
@@ -99,13 +106,44 @@ class StreamProxy {
     );
   }
 
+  /// Returns a loopback URL for the [variant] rendition of [entry], served
+  /// from the backend's own transcode through [source].
+  ///
+  /// The origin's links expire and need headers players cannot send, so the
+  /// proxy forwards every request with those headers, renews the link when
+  /// the origin refuses it, and points the segments of an HLS playlist back
+  /// at itself.
+  Future<Uri> registerVariant({
+    required String mountId,
+    required StreamVariantSource source,
+    required StorageEntry entry,
+    required StreamVariant variant,
+  }) async {
+    final server = await _ensureServer();
+    final key = '$mountId\u0000${entry.path}\u0000${variant.id}';
+    final token = _tokensByKey.putIfAbsent(key, _newToken);
+    final registered = _variants[token] ??= _VariantSource(source, entry, variant.id);
+    registered.current = variant;
+    final stem = entry.name.contains('.') ? entry.name.substring(0, entry.name.lastIndexOf('.')) : entry.name;
+    return Uri(
+      scheme: 'http',
+      host: InternetAddress.loopbackIPv4.address,
+      port: server.port,
+      // The extension tells players that pick a demuxer by name (ExoPlayer)
+      // whether this is a playlist.
+      pathSegments: ['v', token, '$stem.${variant.isHls ? 'm3u8' : 'mp4'}'],
+    );
+  }
+
   /// Forgets every file registered for [mountId], e.g. when the mount is
   /// removed or its driver is rebuilt with new credentials.
   void unregisterMount(String mountId) {
     final prefix = '$mountId\u0000';
     final keys = _tokensByKey.keys.where((k) => k.startsWith(prefix)).toList();
     for (final key in keys) {
-      _sources.remove(_tokensByKey.remove(key));
+      final token = _tokensByKey.remove(key);
+      _sources.remove(token);
+      _variants.remove(token);
     }
   }
 
@@ -122,6 +160,11 @@ class StreamProxy {
         return await _finish(response, HttpStatus.methodNotAllowed);
       }
       final segments = request.uri.pathSegments;
+      if (segments.length >= 2 && segments[0] == 'v') {
+        final variant = _variants[segments[1]];
+        if (variant == null) return await _finish(response, HttpStatus.notFound);
+        return await _handleVariant(request, variant, segments);
+      }
       final source = segments.length >= 2 && segments[0] == 's' ? _sources[segments[1]] : null;
       if (source == null) return await _finish(response, HttpStatus.notFound);
 
@@ -179,6 +222,138 @@ class StreamProxy {
       appLogger.d('Stream proxy request ended early: $e');
       await _fail(response, HttpStatus.badGateway);
     }
+  }
+
+  /// Origin answers that mean the link or its cookie went stale. 412 is what
+  /// Quark's CDN sends once the play cookie has expired.
+  static const Set<int> _staleStatuses = {
+    HttpStatus.unauthorized,
+    HttpStatus.forbidden,
+    HttpStatus.notFound,
+    HttpStatus.gone,
+    HttpStatus.preconditionFailed,
+  };
+
+  /// Largest playlist the proxy reads into memory to rewrite.
+  static const int _maxPlaylistBytes = 8 * 1024 * 1024;
+
+  /// Serves `/v/<token>/<name>` (the rendition itself) and
+  /// `/v/<token>/r/<n>/<name>` (the n-th URL a playlist of it referred to).
+  Future<void> _handleVariant(HttpRequest request, _VariantSource source, List<String> segments) async {
+    final response = request.response;
+    Uri? resource;
+    if (segments.length >= 4 && segments[2] == 'r') {
+      final index = int.tryParse(segments[3]);
+      if (index == null || index < 0 || index >= source.resources.length) {
+        return _finish(response, HttpStatus.notFound);
+      }
+      resource = source.resources[index];
+    }
+
+    Future<(HttpClientResponse, Uri)> fetch({required bool refresh}) async {
+      final variant = await source.variant(forceRefresh: refresh);
+      final target = resource ?? variant.url;
+      try {
+        final upstream = await _upstreamClient.openUrl(request.method, target);
+        variant.headers.forEach(upstream.headers.set);
+        final range = request.headers.value(HttpHeaders.rangeHeader);
+        if (range != null) upstream.headers.set(HttpHeaders.rangeHeader, range);
+        upstream.headers.set(HttpHeaders.acceptEncodingHeader, 'identity');
+        final answer = await upstream.close().timeout(const Duration(seconds: 30));
+        final redirects = answer.redirects;
+        return (answer, redirects.isEmpty ? target : target.resolveUri(redirects.last.location));
+      } on SocketException catch (e) {
+        throw StorageException(StorageErrorKind.network, 'Cannot reach ${target.host}', cause: e);
+      } on TimeoutException catch (e) {
+        throw StorageException(StorageErrorKind.network, '${target.host} timed out', cause: e);
+      } on HttpException catch (e) {
+        throw StorageException(StorageErrorKind.network, e.message, cause: e);
+      }
+    }
+
+    var (upstream, finalUrl) = await fetch(refresh: false);
+    if (_staleStatuses.contains(upstream.statusCode)) {
+      await upstream.drain<void>().catchError((Object _) {});
+      (upstream, finalUrl) = await fetch(refresh: true);
+    }
+    final status = upstream.statusCode;
+    if (status >= 400) {
+      await upstream.drain<void>().catchError((Object _) {});
+      appLogger.w('Stream proxy: rendition ${source.variantId} answered HTTP $status');
+      return _finish(response, status == HttpStatus.notFound ? HttpStatus.notFound : HttpStatus.badGateway);
+    }
+
+    final contentType = upstream.headers.contentType?.mimeType.toLowerCase() ?? '';
+    final isPlaylist = contentType.contains('mpegurl') || finalUrl.path.toLowerCase().endsWith('.m3u8');
+    if (isPlaylist) {
+      final bytes = <int>[];
+      await for (final chunk in upstream) {
+        bytes.addAll(chunk);
+        if (bytes.length > _maxPlaylistBytes) {
+          throw const StorageException(StorageErrorKind.other, 'Playlist too large');
+        }
+      }
+      final server = _server!;
+      final token = segments[1];
+      final text = rewritePlaylist(utf8.decode(bytes, allowMalformed: true), finalUrl, (uri) {
+        final name = uri.pathSegments.isEmpty ? 'resource' : uri.pathSegments.last;
+        return Uri(
+          scheme: 'http',
+          host: InternetAddress.loopbackIPv4.address,
+          port: server.port,
+          pathSegments: ['v', token, 'r', '${source.indexOf(uri)}', if (name.isEmpty) 'resource' else name],
+        ).toString();
+      });
+      final body = utf8.encode(text);
+      response.headers
+        ..set(HttpHeaders.contentTypeHeader, 'application/vnd.apple.mpegurl')
+        ..set(HttpHeaders.cacheControlHeader, 'no-cache')
+        ..contentLength = body.length;
+      if (request.method == 'GET') response.add(body);
+      return response.close();
+    }
+
+    response.statusCode = status;
+    for (final name in [
+      HttpHeaders.contentTypeHeader,
+      HttpHeaders.contentRangeHeader,
+      HttpHeaders.acceptRangesHeader,
+    ]) {
+      final value = upstream.headers.value(name);
+      if (value != null) response.headers.set(name, value);
+    }
+    if (upstream.contentLength >= 0) response.headers.contentLength = upstream.contentLength;
+    if (request.method == 'GET') {
+      await response.addStream(upstream);
+    } else {
+      await upstream.drain<void>().catchError((Object _) {});
+    }
+    await response.close();
+  }
+
+  /// [playlist] with every URL it refers to — media lines and `URI="…"`
+  /// attributes alike — resolved against [base] and passed through [proxied].
+  /// Only http(s) URLs are rewritten; anything else is left as it is.
+  @visibleForTesting
+  static String rewritePlaylist(String playlist, Uri base, String Function(Uri url) proxied) {
+    String rewrite(String reference) {
+      final resolved = base.resolve(reference.trim());
+      return resolved.scheme == 'http' || resolved.scheme == 'https' ? proxied(resolved) : reference;
+    }
+
+    final attribute = RegExp(r'URI="([^"]*)"');
+    final out = StringBuffer();
+    for (final line in const LineSplitter().convert(playlist)) {
+      final trimmed = line.trim();
+      if (trimmed.isEmpty) {
+        out.writeln(line);
+      } else if (trimmed.startsWith('#')) {
+        out.writeln(line.replaceAllMapped(attribute, (m) => 'URI="${rewrite(m[1]!)}"'));
+      } else {
+        out.writeln(rewrite(trimmed));
+      }
+    }
+    return out.toString();
   }
 
   /// The chunk [chunks] is positioned on, followed by the rest of the stream.
@@ -277,9 +452,42 @@ class StreamProxy {
     final server = _server;
     _server = null;
     _sources.clear();
+    _variants.clear();
     _tokensByKey.clear();
+    _upstream?.close(force: true);
+    _upstream = null;
     await server?.close(force: true);
   }
+}
+
+/// A rendition registered with the proxy, and the URLs its playlists have
+/// referred to so far. Segments are addressed by their index in
+/// [resources], so a proxy URL can only ever reach what the origin's own
+/// playlist pointed at.
+class _VariantSource {
+  _VariantSource(this.source, this.entry, this.variantId);
+
+  final StreamVariantSource source;
+  final StorageEntry entry;
+  final String variantId;
+  StreamVariant? current;
+  final List<Uri> resources = [];
+  final Map<Uri, int> _indexes = {};
+
+  Future<StreamVariant> variant({required bool forceRefresh}) async {
+    final known = current;
+    if (!forceRefresh && known != null) return known;
+    final offered = await source.streamVariants(entry, forceRefresh: forceRefresh);
+    for (final variant in offered) {
+      if (variant.id == variantId) return current = variant;
+    }
+    throw StorageException(StorageErrorKind.notFound, 'Rendition $variantId is no longer offered');
+  }
+
+  int indexOf(Uri url) => _indexes.putIfAbsent(url, () {
+    resources.add(url);
+    return resources.length - 1;
+  });
 }
 
 class _Source {

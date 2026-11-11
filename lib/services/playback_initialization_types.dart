@@ -4,6 +4,7 @@ import '../media/media_item.dart';
 import '../media/media_part_timeline.dart';
 import '../media/media_source_info.dart';
 import '../media/media_version.dart';
+import '../media/stream_quality.dart';
 import '../models/audio_quality_preset.dart';
 import '../models/transcode_quality_preset.dart';
 import '../mpv/mpv.dart';
@@ -75,6 +76,12 @@ class PlaybackInitializationOptions {
   /// could only fail the same way.
   final bool forceTranscode;
 
+  /// A [StreamQuality.id] to play instead of the file itself, for backends
+  /// that serve renditions of their own. A backend without that rendition
+  /// for this file falls back to the nearest lower one it has, else to the
+  /// file.
+  final String streamQuality;
+
   const PlaybackInitializationOptions({
     required this.metadata,
     required this.selectedMediaIndex,
@@ -89,6 +96,7 @@ class PlaybackInitializationOptions {
     this.transcodeSessionId,
     this.startPosition,
     this.forceTranscode = false,
+    this.streamQuality = StreamQuality.original,
   });
 }
 
@@ -174,6 +182,13 @@ class PlaybackInitializationResult {
   /// null and the id is derived from [availableVersions] instead.
   final String? selectedMediaSourceId;
 
+  /// Renditions the backend serves for the selected version besides the file
+  /// itself, best first. Empty when it has none.
+  final List<StreamQuality> streamQualities;
+
+  /// The [StreamQuality.id] [videoUrl] plays, or [StreamQuality.original].
+  final String streamQuality;
+
   /// True when [videoUrl] points at a downloaded/local copy. This is a media
   /// source detail, not a statement about whether server reporting is possible.
   bool get usesLocalMedia => isOffline;
@@ -200,6 +215,8 @@ class PlaybackInitializationResult {
     this.playMethod,
     this.selectedMediaIndex = 0,
     this.selectedMediaSourceId,
+    this.streamQualities = const [],
+    this.streamQuality = StreamQuality.original,
   });
 }
 

@@ -95,6 +95,7 @@ class TranslationsZh extends Translations with BaseTranslations<AppLocale, Trans
 	@override late final Translations$addServer$zh addServer = Translations$addServer$zh.internal(_root);
 	@override late final Translations$deepLinks$zh deepLinks = Translations$deepLinks$zh.internal(_root);
 	@override late final Translations$storage$zh storage = Translations$storage$zh.internal(_root);
+	@override late final Translations$streamQuality$zh streamQuality = Translations$streamQuality$zh.internal(_root);
 }
 
 // Path: app
@@ -2564,6 +2565,11 @@ class Translations$storage$zh extends Translations$storage$en {
 	@override String get tmdbTestNoKey => '请先填写 TMDB API key';
 	@override String tmdbTestFailed({required Object message}) => '失败：${message}';
 	@override String get reviewUnmatched => '查看未匹配并手动匹配';
+	@override String get quarkMode => '登录方式';
+	@override String get quarkModeWeb => '网页版';
+	@override String get quarkModePc => 'PC 客户端';
+	@override String get quarkModeTv => 'TV 端';
+	@override String get quarkModeHelp => '登录方式按挂载固定，更换后需要重新扫码。TV 端暂未支持。';
 	@override String get unmatchedTitles => '未匹配';
 	@override String get category => '分类';
 	@override String get kindSeries => '剧集';
@@ -2597,6 +2603,20 @@ class Translations$storage$zh extends Translations$storage$en {
 	@override String get noMatchResults => '没有结果';
 	@override String get mediaSources => '媒体来源';
 	@override String get scraperSettingsDescription => 'TMDB key、语言与刮削代理';
+}
+
+// Path: streamQuality
+class Translations$streamQuality$zh extends Translations$streamQuality$en {
+	Translations$streamQuality$zh.internal(TranslationsZh root) : this._root = root, super.internal(root);
+
+	final TranslationsZh _root; // ignore: unused_field
+
+	// Translations
+	@override String get original => '原画';
+	@override String get superHd => '超清';
+	@override String get high => '高清';
+	@override String get normal => '标清';
+	@override String get low => '流畅';
 }
 
 // Path: appIcon.names
@@ -5996,6 +6016,11 @@ extension on TranslationsZh {
 			'storage.tmdbTestNoKey' => '请先填写 TMDB API key',
 			'storage.tmdbTestFailed' => ({required Object message}) => '失败：${message}',
 			'storage.reviewUnmatched' => '查看未匹配并手动匹配',
+			'storage.quarkMode' => '登录方式',
+			'storage.quarkModeWeb' => '网页版',
+			'storage.quarkModePc' => 'PC 客户端',
+			'storage.quarkModeTv' => 'TV 端',
+			'storage.quarkModeHelp' => '登录方式按挂载固定，更换后需要重新扫码。TV 端暂未支持。',
 			'storage.unmatchedTitles' => '未匹配',
 			'storage.category' => '分类',
 			'storage.kindSeries' => '剧集',
@@ -6029,6 +6054,11 @@ extension on TranslationsZh {
 			'storage.noMatchResults' => '没有结果',
 			'storage.mediaSources' => '媒体来源',
 			'storage.scraperSettingsDescription' => 'TMDB key、语言与刮削代理',
+			'streamQuality.original' => '原画',
+			'streamQuality.superHd' => '超清',
+			'streamQuality.high' => '高清',
+			'streamQuality.normal' => '标清',
+			'streamQuality.low' => '流畅',
 			_ => null,
 		};
 	}

@@ -4,46 +4,82 @@ import 'dart:io';
 
 import 'package:clock/clock.dart';
 
-import '../../utils/app_logger.dart';
 import '../http_range_reader.dart';
 import '../request_throttle.dart';
 import '../storage_driver.dart';
 import '../storage_mount.dart';
 import '../storage_path.dart';
+import '../stream_variant.dart';
+import 'quark_pc_session.dart';
+import 'quark_transport.dart';
+import 'quark_wsg.dart';
 
-/// Quark cloud drive, through the web client's private API.
+/// Which Quark client a mount signs in as. Each has its own login, its own
+/// credentials and its own API, so a mount keeps the mode it was set up with.
+enum QuarkMode {
+  web,
+  pc,
+  tv;
+
+  /// The modes a mount can be set up with today.
+  static const Set<QuarkMode> supported = {web, pc};
+
+  static QuarkMode parse(String? name) => values.firstWhere((m) => m.name == name, orElse: () => web);
+}
+
+/// Quark cloud drive, through one of its private clients.
 ///
-/// The account is identified by the browser cookie. Files are addressed by
-/// `fid`, so the driver keeps a path → fid map filled in as directories are
-/// listed. Every API call goes through a [RequestThrottle]: Quark flags
-/// accounts that list directories too quickly.
-class QuarkStorageDriver implements StorageDriver {
+/// The account is addressed by `fid`, so the driver keeps a path → fid map
+/// filled in as directories are listed, and every call goes through a
+/// [RequestThrottle] — Quark flags accounts that list too quickly. How a
+/// request is signed and where play info comes from is the only thing that
+/// differs between the web and desktop clients; a [QuarkTransport] owns that,
+/// leaving the directory, listing, read and caching logic here mode-agnostic.
+///
+/// Besides the original file, Quark serves the renditions it transcoded
+/// itself; see [streamVariants].
+class QuarkStorageDriver implements StorageDriver, StreamVariantSource {
   QuarkStorageDriver({
     required String cookie,
+    QuarkMode mode = QuarkMode.web,
     String rootFolderId = defaultRootFolderId,
     Duration requestInterval = defaultRequestInterval,
-    this.onCookieChanged,
+    void Function(String cookie)? onCookieChanged,
     HttpClient? httpClient,
     Uri? apiBase,
-  }) : _cookie = cookie.trim(),
-       _apiBase = apiBase ?? Uri.parse('https://drive-pc.quark.cn/1/clouddrive'),
+    Uri? playApiBase,
+  }) : _apiBase = apiBase ?? Uri.parse('https://drive-pc.quark.cn/1/clouddrive'),
        _client = httpClient ?? HttpClient(),
        _throttle = RequestThrottle(requestInterval) {
+    _transport = mode == QuarkMode.pc
+        ? QuarkPcTransport(session: QuarkPcSession.parse(cookie.trim()), wsg: QuarkWsg(), playInfoBase: _apiBase)
+        : QuarkWebTransport(
+            cookie: cookie,
+            // The web client reads play info from drive.quark.cn, not the
+            // desktop host the rest of the API is reached on.
+            playApiBase: playApiBase ?? apiBase ?? Uri.parse('https://drive.quark.cn/1/clouddrive'),
+            onCookieChanged: onCookieChanged,
+          );
     _client
       ..connectionTimeout = const Duration(seconds: 15)
-      ..userAgent = _userAgent;
+      ..userAgent = _transport.userAgent;
     _reader = HttpRangeReader(_client);
     _folderIds[StoragePath.root] = rootFolderId.isEmpty ? defaultRootFolderId : rootFolderId;
   }
 
   factory QuarkStorageDriver.fromMount(StorageMount mount, {void Function(String cookie)? onCookieChanged}) {
+    final mode = QuarkMode.parse(mount.configString(MountKeys.quarkMode));
+    if (!QuarkMode.supported.contains(mode)) {
+      throw StorageException(StorageErrorKind.unsupported, 'Quark ${mode.name} sign-in is not supported yet');
+    }
     final cookie = mount.secret(MountKeys.secretCookie);
     if (cookie == null) {
-      throw const StorageException(StorageErrorKind.unauthorized, 'Quark mount has no cookie');
+      throw const StorageException(StorageErrorKind.unauthorized, 'Quark mount has no credentials');
     }
     final intervalMs = mount.configInt(MountKeys.requestIntervalMs);
     return QuarkStorageDriver(
       cookie: cookie,
+      mode: mode,
       rootFolderId: mount.configString(MountKeys.rootFolderId) ?? defaultRootFolderId,
       requestInterval: intervalMs == null
           ? defaultRequestInterval
@@ -58,35 +94,70 @@ class QuarkStorageDriver implements StorageDriver {
 
   static const int _pageSize = 100;
   static const Duration _linkLifetime = Duration(minutes: 30);
-  static const String _referer = 'https://pan.quark.cn';
-  static const String _userAgent =
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) '
-      'quark-cloud-drive/2.5.20 Chrome/100.0.4896.160 Electron/18.3.5.4-b478491100 '
-      'Safari/537.36 Channel/pckk_other_ch';
 
-  /// Session cookies the API rotates through `Set-Cookie`.
-  static const Set<String> _rotatingCookies = {'__puus', '__pus'};
-
-  /// Called with the full cookie string whenever Quark rotates a session
-  /// cookie, so the owner can persist it.
-  final void Function(String cookie)? onCookieChanged;
-
+  late final QuarkTransport _transport;
   final Uri _apiBase;
   final HttpClient _client;
   final RequestThrottle _throttle;
   late final HttpRangeReader _reader;
 
-  String _cookie;
   final Map<String, String> _folderIds = {};
   final Map<String, StorageLink> _links = {};
+  final Map<String, ({List<StreamVariant> variants, DateTime expiresAt})> _variants = {};
+
+  /// Quark's rendition names, best first.
+  static const List<String> renditions = ['4k', '2k', 'super', 'high', 'normal', 'low'];
+
+  @override
+  List<String> get variantOrder => renditions;
+  static const Duration _variantLifetime = Duration(minutes: 20);
 
   @override
   StorageKind get kind => StorageKind.quark;
 
   @override
-  Future<void> check() async {
-    await _api('GET', '/config');
+  Future<List<StreamVariant>> streamVariants(StorageEntry entry, {bool forceRefresh = false}) async {
+    final fid = entry.id ?? (await stat(entry.path)).id!;
+    final cached = _variants[fid];
+    if (!forceRefresh && cached != null && cached.expiresAt.isAfter(clock.now())) return cached.variants;
+
+    final (rows, headers) = await _transport.playInfo(fid, _api);
+
+    final variants = <StreamVariant>[];
+    for (final row in rows) {
+      if (row is! Map || row['accessable'] == false) continue;
+      final id = row['resolution'];
+      final info = row['video_info'];
+      final link = info is Map ? info['url'] : null;
+      final url = link is String ? Uri.tryParse(link) : null;
+      if (id is! String || url == null || !url.hasScheme) continue;
+      if (variants.any((v) => v.id == id)) continue;
+      final width = info['width'];
+      final height = info['height'];
+      final format = info['format'];
+      variants.add(
+        StreamVariant(
+          id: id,
+          url: url,
+          headers: headers,
+          width: width is num ? width.toInt() : null,
+          height: height is num ? height.toInt() : null,
+          isHls: url.path.toLowerCase().endsWith('.m3u8') || (format is String && format.contains('m3u8')),
+        ),
+      );
+    }
+    int rank(StreamVariant v) {
+      final index = renditions.indexOf(v.id);
+      return index < 0 ? renditions.length : index;
+    }
+
+    variants.sort((a, b) => rank(a).compareTo(rank(b)));
+    _variants[fid] = (variants: variants, expiresAt: clock.now().add(_variantLifetime));
+    return variants;
   }
+
+  @override
+  Future<void> check() => _transport.check(_api, _folderIds[StoragePath.root]!);
 
   @override
   Future<List<StorageEntry>> list(String path, {StorageEntry? parent}) async {
@@ -192,8 +263,8 @@ class QuarkStorageDriver implements StorageDriver {
     if (!forceRefresh) {
       final cached = _links[fid];
       if (cached != null && cached.expiresAt!.isAfter(clock.now())) {
-        // The cookie may have rotated since the link was cached.
-        return StorageLink(cached.url, headers: _downloadHeaders(), expiresAt: cached.expiresAt);
+        // The session may have rotated since the link was cached.
+        return StorageLink(cached.url, headers: _transport.downloadHeaders(), expiresAt: cached.expiresAt);
       }
     }
     final json = await _api(
@@ -210,48 +281,43 @@ class QuarkStorageDriver implements StorageDriver {
     if (uri == null || !uri.hasScheme) {
       throw const StorageException(StorageErrorKind.other, 'Quark returned no download link');
     }
-    final link = StorageLink(uri, headers: _downloadHeaders(), expiresAt: clock.now().add(_linkLifetime));
+    final link = StorageLink(uri, headers: _transport.downloadHeaders(), expiresAt: clock.now().add(_linkLifetime));
     _links[fid] = link;
     return link;
   }
-
-  Map<String, String> _downloadHeaders() => {
-    HttpHeaders.cookieHeader: _cookie,
-    HttpHeaders.refererHeader: _referer,
-    HttpHeaders.userAgentHeader: _userAgent,
-  };
 
   Future<Map<String, dynamic>> _api(
     String method,
     String path, {
     Map<String, String> query = const {},
     Map<String, Object?>? body,
+    Uri? base,
+    List<String>? setCookies,
+    // PC mode: WSG-encrypt the JSON body (play info needs this); send [cookie]
+    // as the request's Cookie header (the play-scoped `__kuus`).
+    bool wsgBody = false,
+    String? cookie,
   }) {
+    final apiBase = base ?? _apiBase;
     return _throttle.run(() async {
-      final url = _apiBase.replace(
-        path: '${_apiBase.path}$path',
-        queryParameters: {'pr': 'ucpro', 'fr': 'pc', ...query},
+      final url = apiBase.replace(
+        path: '${apiBase.path}$path',
+        queryParameters: {...await _transport.baseQuery(), ...query},
       );
       final int status;
       final String text;
       try {
         final request = await _client.openUrl(method, url);
         request.headers
-          ..set(HttpHeaders.cookieHeader, _cookie)
-          ..set(HttpHeaders.refererHeader, _referer)
+          ..set(HttpHeaders.refererHeader, quarkReferer)
           ..set(HttpHeaders.acceptHeader, 'application/json, text/plain, */*');
-        if (body != null) {
-          request.headers.contentType = ContentType.json;
-          request.add(utf8.encode(jsonEncode(body)));
-        }
+        await _transport.authorize(request, cookie: cookie);
+        if (body != null) await _transport.writeBody(request, body, wsgBody: wsgBody);
         final response = await request.close().timeout(const Duration(seconds: 30));
         status = response.statusCode;
-        try {
-          _absorbCookies(response.cookies);
-        } on Exception catch (e) {
-          // dart:io rejects Set-Cookie values it considers malformed.
-          appLogger.d('Ignoring unparsable Quark Set-Cookie header: $e');
-        }
+        // Raw, because dart:io refuses to parse some of the values Quark sends.
+        setCookies?.addAll(response.headers[HttpHeaders.setCookieHeader] ?? const []);
+        _transport.absorbResponse(response);
         text = await utf8.decodeStream(response).timeout(const Duration(seconds: 30));
       } on SocketException catch (e) {
         throw StorageException(StorageErrorKind.network, 'Cannot reach Quark', cause: e);
@@ -289,29 +355,6 @@ class QuarkStorageDriver implements StorageDriver {
     if (effective == HttpStatus.tooManyRequests) return StorageErrorKind.rateLimited;
     if (effective == HttpStatus.notFound) return StorageErrorKind.notFound;
     return StorageErrorKind.other;
-  }
-
-  void _absorbCookies(List<Cookie> received) {
-    var updated = _cookie;
-    for (final cookie in received) {
-      if (!_rotatingCookies.contains(cookie.name) || cookie.value.isEmpty) continue;
-      updated = _replaceCookie(updated, cookie.name, cookie.value);
-    }
-    if (updated == _cookie) return;
-    _cookie = updated;
-    appLogger.d('Quark rotated a session cookie');
-    onCookieChanged?.call(updated);
-  }
-
-  static String _replaceCookie(String cookieHeader, String name, String value) {
-    final parts = cookieHeader.split(';').map((p) => p.trim()).where((p) => p.isNotEmpty).toList();
-    final index = parts.indexWhere((p) => p.startsWith('$name='));
-    if (index >= 0) {
-      parts[index] = '$name=$value';
-    } else {
-      parts.add('$name=$value');
-    }
-    return parts.join('; ');
   }
 
   @override

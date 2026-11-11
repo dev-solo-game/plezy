@@ -9,6 +9,7 @@ import 'mount_registry.dart';
 import 'storage_driver.dart';
 import 'storage_mount.dart';
 import 'stream_proxy.dart';
+import 'stream_variant.dart';
 
 /// Owns the live [StorageDriver] of every mount and the [StreamProxy] that
 /// serves their files. The scanner, the player and the downloader all reach
@@ -42,6 +43,37 @@ class MountManager {
   /// A loopback URL players can open for [entry].
   Future<Uri> streamUrl(StorageMount mount, StorageEntry entry) {
     return proxy.register(mountId: mount.id, driver: driverFor(mount), entry: entry);
+  }
+
+  /// The transcoded renditions [mount]'s backend offers for [entry], best
+  /// first. Empty for backends that transcode nothing.
+  Future<List<StreamVariant>> streamVariants(StorageMount mount, StorageEntry entry) async {
+    return switch (driverFor(mount)) {
+      final StreamVariantSource source => source.streamVariants(entry),
+      _ => const [],
+    };
+  }
+
+  /// The rendition names [mount]'s backend uses, best first.
+  List<String> variantOrder(StorageMount mount) {
+    return switch (driverFor(mount)) {
+      final StreamVariantSource source => source.variantOrder,
+      _ => const [],
+    };
+  }
+
+  /// A loopback URL players can open for the [variant] rendition of [entry].
+  Future<Uri> variantUrl(StorageMount mount, StorageEntry entry, StreamVariant variant) {
+    final driver = driverFor(mount);
+    if (driver is! StreamVariantSource) {
+      throw const StorageException(StorageErrorKind.unsupported, 'This storage offers no renditions');
+    }
+    return proxy.registerVariant(
+      mountId: mount.id,
+      source: driver as StreamVariantSource,
+      entry: entry,
+      variant: variant,
+    );
   }
 
   /// Saves [mount] and discards its current driver so the next use picks up

@@ -758,6 +758,7 @@ class _VideoSettingsSheetState extends State<VideoSettingsSheet> {
   }
 
   bool get _hasVersionQuality {
+    if (_state.hasStreamQualities) return true;
     return (_state.availableVersions.length > 1 || _state.serverSupportsTranscoding) &&
         (_state.onSwitchVersion != null || _state.onSwitchQualityPreset != null);
   }
@@ -765,7 +766,7 @@ class _VideoSettingsSheetState extends State<VideoSettingsSheet> {
   String _versionQualityTitle() {
     return versionQualityPickerTitle(
       showVersions: _state.availableVersions.length > 1,
-      showQuality: _state.serverSupportsTranscoding,
+      showQuality: _state.showsQuality,
     );
   }
 
@@ -773,7 +774,9 @@ class _VideoSettingsSheetState extends State<VideoSettingsSheet> {
     final showVersions = _state.availableVersions.length > 1;
     final values = <String>[];
     if (showVersions) values.add(_selectedVersionLabel());
-    if (_state.serverSupportsTranscoding) {
+    if (_state.hasStreamQualities) {
+      values.add(streamQualityName(_state.selectedStreamQuality));
+    } else if (_state.serverSupportsTranscoding) {
       values.add(
         qualityPresetLabel(
           _state.selectedQualityPreset,
@@ -1237,6 +1240,9 @@ class _VideoSettingsSheetState extends State<VideoSettingsSheet> {
       sourceDurationMs: _state.sourceDurationMs,
       onVersionSelected: (index) => _state.onSwitchVersion?.call(index),
       onQualitySelected: (preset) => _state.onSwitchQualityPreset?.call(preset),
+      streamQualities: _state.hasStreamQualities ? _state.streamQualities : const [],
+      selectedStreamQuality: _state.selectedStreamQuality,
+      onStreamQualitySelected: (id) => _state.onSwitchStreamQuality?.call(id),
     );
   }
 

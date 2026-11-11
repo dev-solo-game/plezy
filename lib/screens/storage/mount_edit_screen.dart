@@ -58,6 +58,7 @@ class _MountEditScreenState extends State<MountEditScreen> {
   /// Quark's mount root: the folder id the API needs and the path shown for it.
   late String _quarkFolderId;
   late String _quarkFolderPath;
+  late QuarkMode _quarkMode;
   late final TextEditingController _requestInterval;
   late final TextEditingController _host;
   late final TextEditingController _share;
@@ -91,6 +92,7 @@ class _MountEditScreenState extends State<MountEditScreen> {
     );
     _quarkFolderId = mount?.configString(MountKeys.rootFolderId) ?? QuarkStorageDriver.defaultRootFolderId;
     _quarkFolderPath = mount?.configString(MountKeys.rootFolderPath) ?? StoragePath.root;
+    _quarkMode = QuarkMode.parse(mount?.configString(MountKeys.quarkMode));
     _requestInterval = TextEditingController(
       text:
           '${mount?.configInt(MountKeys.requestIntervalMs) ?? QuarkStorageDriver.defaultRequestInterval.inMilliseconds}',
@@ -130,6 +132,7 @@ class _MountEditScreenState extends State<MountEditScreen> {
       ),
       StorageKind.quark => (
         {
+          MountKeys.quarkMode: _quarkMode.name,
           MountKeys.rootFolderId: _quarkFolderId,
           MountKeys.rootFolderPath: _quarkFolderPath,
           MountKeys.requestIntervalMs:
@@ -209,7 +212,7 @@ class _MountEditScreenState extends State<MountEditScreen> {
   }
 
   Future<void> _scanQuark() async {
-    final cookie = await showQuarkQrLoginDialog(context);
+    final cookie = await showQuarkQrLoginDialog(context, mode: _quarkMode);
     if (cookie != null && mounted) {
       setState(() {
         _cookie.text = cookie;
@@ -226,7 +229,11 @@ class _MountEditScreenState extends State<MountEditScreen> {
     }
     // Browses the whole drive, whatever root is currently selected. A short
     // gap keeps a person clicking through folders from waiting on the throttle.
-    final driver = QuarkStorageDriver(cookie: cookie, requestInterval: const Duration(milliseconds: 300));
+    final driver = QuarkStorageDriver(
+      cookie: cookie,
+      mode: _quarkMode,
+      requestInterval: const Duration(milliseconds: 300),
+    );
     try {
       final picked = await showStorageFolderPicker(context, driver: driver);
       if (picked == null || !mounted) return;
@@ -359,6 +366,18 @@ class _MountEditScreenState extends State<MountEditScreen> {
         ];
       case StorageKind.quark:
         return [
+          _QuarkModePicker(
+            mode: _quarkMode,
+            onChanged: _saving
+                ? null
+                : (mode) => setState(() {
+                    if (mode == _quarkMode) return;
+                    // Each mode signs in its own way; the old login is of no use.
+                    _quarkMode = mode;
+                    _cookie.clear();
+                  }),
+          ),
+          const SizedBox(height: _fieldGap),
           _QuarkLoginTile(signedIn: _cookie.text.trim().isNotEmpty, onScan: _saving ? null : _scanQuark),
           const SizedBox(height: _fieldGap),
           _FolderTile(path: _quarkFolderPath, onChoose: _saving ? null : _pickQuarkFolder),
@@ -638,6 +657,46 @@ class _FolderTile extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// Which Quark client the mount signs in as. Modes not supported yet are
+/// shown but cannot be picked.
+class _QuarkModePicker extends StatelessWidget {
+  const _QuarkModePicker({required this.mode, required this.onChanged});
+
+  final QuarkMode mode;
+  final ValueChanged<QuarkMode>? onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    String label(QuarkMode mode) => switch (mode) {
+      QuarkMode.web => t.storage.quarkModeWeb,
+      QuarkMode.pc => t.storage.quarkModePc,
+      QuarkMode.tv => t.storage.quarkModeTv,
+    };
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(t.storage.quarkMode, style: theme.textTheme.titleSmall),
+        const SizedBox(height: 8),
+        SegmentedButton<QuarkMode>(
+          segments: [
+            for (final value in QuarkMode.values)
+              ButtonSegment(value: value, label: Text(label(value)), enabled: QuarkMode.supported.contains(value)),
+          ],
+          selected: {mode},
+          showSelectedIcon: false,
+          onSelectionChanged: onChanged == null ? null : (selected) => onChanged!(selected.first),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          t.storage.quarkModeHelp,
+          style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+        ),
+      ],
     );
   }
 }

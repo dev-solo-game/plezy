@@ -96,6 +96,7 @@ class TranslationsZhHant extends TranslationsZh with BaseTranslations<AppLocale,
 	@override late final _Translations$addServer$zh_Hant addServer = _Translations$addServer$zh_Hant._(_root);
 	@override late final _Translations$deepLinks$zh_Hant deepLinks = _Translations$deepLinks$zh_Hant._(_root);
 	@override late final _Translations$storage$zh_Hant storage = _Translations$storage$zh_Hant._(_root);
+	@override late final _Translations$streamQuality$zh_Hant streamQuality = _Translations$streamQuality$zh_Hant._(_root);
 }
 
 // Path: app
@@ -2565,6 +2566,11 @@ class _Translations$storage$zh_Hant extends Translations$storage$zh {
 	@override String get tmdbTestNoKey => '請先填寫 TMDB API key';
 	@override String tmdbTestFailed({required Object message}) => '失敗：${message}';
 	@override String get reviewUnmatched => '查看未匹配並手動匹配';
+	@override String get quarkMode => '登入方式';
+	@override String get quarkModeWeb => '網頁版';
+	@override String get quarkModePc => 'PC 客戶端';
+	@override String get quarkModeTv => 'TV 端';
+	@override String get quarkModeHelp => '登入方式按掛載固定，更換後需要重新掃碼。TV 端尚未支援。';
 	@override String get unmatchedTitles => '未匹配';
 	@override String get category => '分類';
 	@override String get kindSeries => '影集';
@@ -2598,6 +2604,20 @@ class _Translations$storage$zh_Hant extends Translations$storage$zh {
 	@override String get noMatchResults => '沒有結果';
 	@override String get mediaSources => '媒體來源';
 	@override String get scraperSettingsDescription => 'TMDB key、語言與刮削代理';
+}
+
+// Path: streamQuality
+class _Translations$streamQuality$zh_Hant extends Translations$streamQuality$zh {
+	_Translations$streamQuality$zh_Hant._(TranslationsZhHant root) : this._root = root, super.internal(root);
+
+	final TranslationsZhHant _root; // ignore: unused_field
+
+	// Translations
+	@override String get original => '原畫';
+	@override String get superHd => '超清';
+	@override String get high => '高清';
+	@override String get normal => '標清';
+	@override String get low => '流暢';
 }
 
 // Path: appIcon.names
@@ -5997,6 +6017,11 @@ extension on TranslationsZhHant {
 			'storage.tmdbTestNoKey' => '請先填寫 TMDB API key',
 			'storage.tmdbTestFailed' => ({required Object message}) => '失敗：${message}',
 			'storage.reviewUnmatched' => '查看未匹配並手動匹配',
+			'storage.quarkMode' => '登入方式',
+			'storage.quarkModeWeb' => '網頁版',
+			'storage.quarkModePc' => 'PC 客戶端',
+			'storage.quarkModeTv' => 'TV 端',
+			'storage.quarkModeHelp' => '登入方式按掛載固定，更換後需要重新掃碼。TV 端尚未支援。',
 			'storage.unmatchedTitles' => '未匹配',
 			'storage.category' => '分類',
 			'storage.kindSeries' => '影集',
@@ -6030,6 +6055,11 @@ extension on TranslationsZhHant {
 			'storage.noMatchResults' => '沒有結果',
 			'storage.mediaSources' => '媒體來源',
 			'storage.scraperSettingsDescription' => 'TMDB key、語言與刮削代理',
+			'streamQuality.original' => '原畫',
+			'streamQuality.superHd' => '超清',
+			'streamQuality.high' => '高清',
+			'streamQuality.normal' => '標清',
+			'streamQuality.low' => '流暢',
 			_ => null,
 		};
 	}

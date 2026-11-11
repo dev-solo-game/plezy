@@ -46,6 +46,48 @@ bool _sameSubtitleSource({
 /// instead of pushing a new route. Shared by episode navigation, lifecycle
 /// restore, spurious-EOF recovery, Watch Together, and the companion remote.
 extension _VideoPlayerReloadMethods on VideoPlayerScreenState {
+  /// Plays the [streamQuality] rendition of the current version from where
+  /// playback is now. Kept for later episodes once it opens; a failed switch
+  /// leaves the previous rendition playing and selected.
+  Future<PlaybackSourceChangeOutcome> _switchStreamQuality(String streamQuality) async {
+    final currentPlayer = player;
+    if (!mounted || currentPlayer == null || widget.isLive) return PlaybackSourceChangeOutcome.unavailable;
+    final playing = _playbackSession?.context.result.streamQuality ?? StreamQuality.original;
+    if (streamQuality == playing && streamQuality == _selectedStreamQuality) {
+      return PlaybackSourceChangeOutcome.unchanged;
+    }
+    final transitionLease = _transitionGate.tryAcquire(PlaybackTransition.switchingSource);
+    if (transitionLease == null) return PlaybackSourceChangeOutcome.busy;
+    final previous = _selectedStreamQuality;
+    try {
+      _selectedStreamQuality = streamQuality;
+      final outcome = await _reloadMediaInPlace(
+        metadata: _currentMetadata.copyWith(viewOffsetMs: currentPlayer.state.position.inMilliseconds),
+        selectedMediaIndex: _effectiveSelectedMediaIndex,
+        selectedMediaSourceId: _requestedMediaSourceId,
+        resumePosition: currentPlayer.state.position,
+        // Same file, so its audio and subtitle choices still apply.
+        preserveCurrentTrackSelection: true,
+        transitionLease: transitionLease,
+        reason: 'stream quality switch',
+      );
+      if (outcome != MediaReloadOutcome.opened && mounted) _selectedStreamQuality = previous;
+      return switch (outcome) {
+        MediaReloadOutcome.opened => PlaybackSourceChangeOutcome.applied,
+        MediaReloadOutcome.rejected => PlaybackSourceChangeOutcome.busy,
+        MediaReloadOutcome.superseded => PlaybackSourceChangeOutcome.superseded,
+        MediaReloadOutcome.failed => PlaybackSourceChangeOutcome.failed,
+      };
+    } catch (e) {
+      _selectedStreamQuality = previous;
+      if (transitionLease.wasSuperseded) return PlaybackSourceChangeOutcome.superseded;
+      if (mounted) showErrorSnackBar(context, t.messages.errorLoading(error: localizedErrorReason(e)));
+      return PlaybackSourceChangeOutcome.failed;
+    } finally {
+      _transitionGate.release(transitionLease);
+    }
+  }
+
   Future<PlaybackSourceChangeOutcome> _switchPlaybackSource({
     int? newMediaIndex,
     TranscodeQualityPreset? newPreset,
@@ -588,6 +630,7 @@ extension _VideoPlayerReloadMethods on VideoPlayerScreenState {
             selectedMediaSourceId: selectedMediaSourceId,
             preferredVersionSignature: preferredVersionSignature,
             qualityPreset: targetQualityPreset,
+            streamQuality: _selectedStreamQuality,
             selectedAudioStreamId: targetAudioStreamId,
             preferredAudioTrack: initializationAudioTrack,
             preferredSubtitleTrack: initializationSubtitleTrack,

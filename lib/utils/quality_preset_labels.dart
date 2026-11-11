@@ -1,11 +1,28 @@
 import 'package:flutter/widgets.dart';
 
 import '../i18n/strings.g.dart';
+import '../media/stream_quality.dart';
 import '../models/transcode_quality_preset.dart';
 import 'dialogs.dart';
 import 'formatters.dart';
 
 const int _audioBitrateEstimateKbps = 192;
+
+/// The tier name a [StreamQuality.id] goes by: 原画, 4K, 2K, 超清, 高清, 标清, 流畅.
+String streamQualityName(String id) => switch (id) {
+  StreamQuality.original => t.streamQuality.original,
+  '4k' => '4K',
+  '2k' => '2K',
+  'super' => t.streamQuality.superHd,
+  'high' => t.streamQuality.high,
+  'normal' => t.streamQuality.normal,
+  'low' => t.streamQuality.low,
+  _ => id,
+};
+
+/// A rendition's size as `1440×810`, or null when the source did not say.
+String? streamQualityResolution(int? width, int? height) =>
+    width != null && width > 0 && height != null && height > 0 ? '$width×$height' : null;
 
 /// User-facing label for a quality preset.
 ///

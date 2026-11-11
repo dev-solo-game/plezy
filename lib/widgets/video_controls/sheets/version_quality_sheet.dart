@@ -5,6 +5,7 @@ import 'package:plezy/widgets/app_icon.dart';
 
 import '../../../i18n/strings.g.dart';
 import '../../../media/media_version.dart';
+import '../../../media/stream_quality.dart';
 import '../../../models/transcode_quality_preset.dart';
 import '../../../utils/quality_preset_labels.dart';
 import '../../../widgets/focusable_list_tile.dart';
@@ -22,6 +23,10 @@ String versionQualityPickerTitle({required bool showVersions, required bool show
 /// [quality] preset (right). The version column is hidden when there is only
 /// one version so the quality list gets the full width. If the server doesn't
 /// support video transcoding, the quality column is hidden entirely.
+///
+/// When the source serves renditions of its own ([streamQualities]), the
+/// quality column lists those, with the original file first, instead of the
+/// transcode presets.
 class VersionQualityPicker extends StatelessWidget {
   final List<MediaVersion> availableVersions;
   final int selectedMediaIndex;
@@ -30,6 +35,9 @@ class VersionQualityPicker extends StatelessWidget {
   final int? sourceDurationMs;
   final ValueChanged<int> onVersionSelected;
   final ValueChanged<TranscodeQualityPreset> onQualitySelected;
+  final List<StreamQuality> streamQualities;
+  final String selectedStreamQuality;
+  final ValueChanged<String>? onStreamQualitySelected;
 
   const VersionQualityPicker({
     super.key,
@@ -40,26 +48,43 @@ class VersionQualityPicker extends StatelessWidget {
     required this.onVersionSelected,
     required this.onQualitySelected,
     this.sourceDurationMs,
+    this.streamQualities = const [],
+    this.selectedStreamQuality = StreamQuality.original,
+    this.onStreamQualitySelected,
   });
 
   @override
   Widget build(BuildContext context) {
     final showVersions = availableVersions.length > 1;
-    final showQuality = serverSupportsTranscoding;
+    final ownRenditions = streamQualities.isNotEmpty && onStreamQualitySelected != null;
+    final showQuality = ownRenditions || serverSupportsTranscoding;
 
     final qualityColumn = FocusTraversalGroup(
-      child: _QualityColumn(
-        selected: selectedQualityPreset,
-        enabledForTranscoding: serverSupportsTranscoding,
-        sourceBitrateKbps: _sourceBitrateKbps(),
-        sourceDurationMs: sourceDurationMs,
-        sourceSizeBytes: _sourceSizeBytes(),
-        onSelected: (preset) {
-          OverlaySheetController.of(context).close();
-          onQualitySelected(preset);
-        },
-        showHeader: showVersions,
-      ),
+      child: ownRenditions
+          ? _StreamQualityColumn(
+              qualities: streamQualities,
+              selected: selectedStreamQuality,
+              source: selectedMediaIndex >= 0 && selectedMediaIndex < availableVersions.length
+                  ? availableVersions[selectedMediaIndex]
+                  : null,
+              onSelected: (id) {
+                OverlaySheetController.of(context).close();
+                onStreamQualitySelected!(id);
+              },
+              showHeader: showVersions,
+            )
+          : _QualityColumn(
+              selected: selectedQualityPreset,
+              enabledForTranscoding: serverSupportsTranscoding,
+              sourceBitrateKbps: _sourceBitrateKbps(),
+              sourceDurationMs: sourceDurationMs,
+              sourceSizeBytes: _sourceSizeBytes(),
+              onSelected: (preset) {
+                OverlaySheetController.of(context).close();
+                onQualitySelected(preset);
+              },
+              showHeader: showVersions,
+            ),
     );
 
     final versionColumn = FocusTraversalGroup(
@@ -189,6 +214,47 @@ class _QualityColumn extends StatelessWidget {
           isSelected: isSelected,
           enabled: enabled,
           onTap: enabled ? () => onSelected(preset) : null,
+        );
+      },
+    );
+  }
+}
+
+/// The original file, then the source's own renditions, best first.
+class _StreamQualityColumn extends StatelessWidget {
+  final List<StreamQuality> qualities;
+  final String selected;
+  final MediaVersion? source;
+  final ValueChanged<String> onSelected;
+  final bool showHeader;
+
+  const _StreamQualityColumn({
+    required this.qualities,
+    required this.selected,
+    required this.source,
+    required this.onSelected,
+    required this.showHeader,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final options = [const StreamQuality(id: StreamQuality.original), ...qualities];
+    final selectedIndex = options.indexWhere((q) => q.id == selected);
+    return SheetSelectionColumn(
+      headerLabel: showHeader ? t.videoControls.qualityColumnHeader : null,
+      itemCount: options.length,
+      initialIndex: selectedIndex < 0 ? 0 : selectedIndex,
+      itemBuilder: (context, index, scope) {
+        final quality = options[index];
+        final original = quality.id == StreamQuality.original;
+        return _SelectionTile(
+          key: scope.keyFor(index),
+          label: streamQualityName(quality.id),
+          trailingText: original
+              ? streamQualityResolution(source?.width, source?.height)
+              : streamQualityResolution(quality.width, quality.height),
+          isSelected: quality.id == selected,
+          onTap: () => onSelected(quality.id),
         );
       },
     );

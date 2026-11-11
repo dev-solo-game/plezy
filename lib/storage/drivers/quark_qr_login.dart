@@ -29,17 +29,27 @@ class QuarkQrExpired extends QuarkQrStatus {
   const QuarkQrExpired();
 }
 
-/// Login confirmed. [cookie] is a `Cookie` header value for the drive API.
+/// Login confirmed. [cookie] is the secret the mount stores for the drive
+/// API: a `Cookie` header value in web mode, or the desktop session string in
+/// PC mode.
 class QuarkQrSuccess extends QuarkQrStatus {
   const QuarkQrSuccess(this.cookie);
 
   final String cookie;
 }
 
+/// A QR sign-in flow the login dialog can drive, whichever Quark client it
+/// signs in as.
+abstract interface class QuarkQrAuthenticator {
+  Future<QuarkQrTicket> start();
+  Future<QuarkQrStatus> poll(QuarkQrTicket ticket);
+  void close();
+}
+
 /// Signs in to Quark the way pan.quark.cn does: show a QR code, wait for the
 /// mobile app to confirm it, then trade the resulting service ticket for the
 /// session cookies the drive API expects.
-class QuarkQrLogin {
+class QuarkQrLogin implements QuarkQrAuthenticator {
   QuarkQrLogin({HttpClient? httpClient, Uri? casBase, Uri? panBase, String allowedCookieHostSuffix = 'quark.cn'})
     : _client = httpClient ?? HttpClient(),
       _cookieHostSuffix = allowedCookieHostSuffix,
@@ -75,6 +85,7 @@ class QuarkQrLogin {
   /// sign-in servers set some when the code is issued and expect them back.
   final Map<String, String> _cookies = {};
 
+  @override
   Future<QuarkQrTicket> start() async {
     _cookies.clear();
     final json = await _getJson(
@@ -106,6 +117,7 @@ class QuarkQrLogin {
   }
 
   /// Checks once whether [ticket] has been confirmed.
+  @override
   Future<QuarkQrStatus> poll(QuarkQrTicket ticket) async {
     final json = await _getJson(
       _casBase.replace(
@@ -213,5 +225,6 @@ class QuarkQrLogin {
     return StorageException(StorageErrorKind.network, 'Cannot reach Quark', cause: error);
   }
 
+  @override
   void close() => _client.close(force: true);
 }

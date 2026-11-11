@@ -100,6 +100,10 @@ abstract final class MountKeys {
   /// Quark: minimum gap between two API calls, in milliseconds.
   static const String requestIntervalMs = 'requestIntervalMs';
 
+  /// Quark: which client's sign-in and API the mount uses; a
+  /// `QuarkMode` name. Absent means the web client.
+  static const String quarkMode = 'quarkMode';
+
   static const String secretPassword = 'password';
   static const String secretCookie = 'cookie';
 }
