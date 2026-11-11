@@ -881,7 +881,10 @@ class SettingsService extends BaseSharedPreferencesService {
   /// at all. UI-only: catalog sources stay connected so watchlist surfaces
   /// keep working while the tab is hidden.
   static const showExploreTab = BoolPref('show_explore_tab', defaultValue: true);
-  static const alwaysKeepSidebarOpen = BoolPref('always_keep_sidebar_open');
+  static const alwaysKeepSidebarOpen = BoolPref(
+    'always_keep_sidebar_open',
+    defaultValueProvider: PlatformDetector.isDesktopOS,
+  );
 
   /// Sidebar Libraries section expansion. Persisted so a collapsed section
   /// stays collapsed across launches instead of springing back open (#1896).
