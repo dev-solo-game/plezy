@@ -15,10 +15,13 @@ import 'quark_wsg.dart';
 /// ([QuarkPcSession]) serialized as the secret the mount stores — the driver
 /// turns that back into the per-request business headers.
 class QuarkPcQrLogin implements QuarkQrAuthenticator {
-  QuarkPcQrLogin({HttpClient? httpClient, QuarkWsg? wsg, Uri? gatewayBase})
+  QuarkPcQrLogin({HttpClient? httpClient, QuarkWsg? wsg, Uri? gatewayBase, QuarkPcDevice? device})
     : _client = httpClient ?? HttpClient(),
       _wsg = wsg ?? QuarkWsg(),
-      _gateway = gatewayBase ?? Uri.parse('https://access-open.quark.cn/wsg_access') {
+      _gateway = gatewayBase ?? Uri.parse('https://access-open.quark.cn/wsg_access'),
+      // Reuse the mount's stored device on a re-scan, so the account keeps
+      // seeing one machine; generate one on a first sign-in.
+      _device = device ?? QuarkPcDevice.generate() {
     _client
       ..connectionTimeout = const Duration(seconds: 15)
       ..userAgent = _userAgent;
@@ -38,11 +41,9 @@ class QuarkPcQrLogin implements QuarkQrAuthenticator {
   final QuarkWsg _wsg;
   final Uri _gateway;
 
-  /// The device identity a desktop install reports. Generated fresh per login,
-  /// as the client would on a new machine, and carried through every gateway
-  /// call of this attempt.
-  late final String _utdid = QuarkPcSession.newUtdid();
-  late final String _machine = 'DESKTOP-${const Uuid().v4().replaceAll('-', '').substring(0, 6).toUpperCase()}';
+  /// The device identity this sign-in reports, carried through every gateway
+  /// call and written into the resulting session so later requests match.
+  final QuarkPcDevice _device;
   late final String _clientInfo = _makeClientInfo();
 
   @override
@@ -89,7 +90,7 @@ class QuarkPcQrLogin implements QuarkQrAuthenticator {
     if (ticket is! String || ticket.isEmpty || uid == null || nickname is! String) {
       throw const StorageException(StorageErrorKind.other, 'Quark desktop sign-in returned no session');
     }
-    return QuarkPcSession(ticket: ticket, uid: '$uid', nickname: nickname);
+    return QuarkPcSession(ticket: ticket, uid: '$uid', nickname: nickname, device: _device);
   }
 
   String _qrContentFor(String token, String tid) {
@@ -153,14 +154,14 @@ class QuarkPcQrLogin implements QuarkQrAuthenticator {
     'imsi:',
     'ip:',
     'mac:',
-    'machine:$_machine',
+    'machine:${_device.machine}',
     'net_id:',
     'net_type:',
     'os:Windows',
     'port:9001',
     'sn:',
     'ssid:',
-    'utdid:$_utdid',
+    'utdid:${_device.utdid}',
     'version:$_clientVersion',
   ].join('`');
 

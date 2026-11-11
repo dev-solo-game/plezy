@@ -323,12 +323,24 @@ Quark 直鏈過期後播放不中斷。
 - **Quark 登入模式（已做 Web 與 PC）**：掛載時選擇網頁版或 PC 客戶端，模式按掛載固定，換模式要重新掃碼。
   - **Web**：以瀏覽器 cookie 認證，play-info 走 `drive.quark.cn/file/v2/play`。
   - **PC**：走 WSG 加密協議——閘道 `access-open.quark.cn/wsg_access` 掃碼登入，業務請求帶三個每次用毫秒時間戳重算的
-    WSG 頭（`x-u-vcode`/`x-u-kps-wg`/`x-u-sign-wg`），play-info 走 `drive-pc.quark.cn/batch/file/play/info`、
-    body 經 WSG 加密、帶 `__kuus` cookie，回應以 fid 為鍵。WSG 的兩個常量（`hmac_key`、`uopAccessSalt`）與選擇器
+    WSG 頭（`x-u-vcode`/`x-u-kps-wg`/`x-u-sign-wg`）。WSG 的兩個常量（`hmac_key`、`uopAccessSalt`）與選擇器
     `0x35e9` 寫死在 [`quark_wsg.dart`](../lib/storage/drivers/quark_wsg.dart)（實測版本 7.5.0.825、全局固定、不綁機器）；
     夸克日後換這組常量時，PC 登入會失效，需同步更新。
+  - **取播放 URL 的差異**（兩端都從回應頭 `Set-Cookie` 取 `Video-Auth`，CDN 讀取時帶 `Referer: pan.quark.cn/`）：
+    | | Web | PC |
+    | --- | --- | --- |
+    | 端點 | `drive.quark.cn/file/v2/play` | `drive-pc.quark.cn/batch/file/play/info` |
+    | 請求體 | `{fid, resolutions, supports}` 明文 | `{fids:[fid], resolutions, supports, …}` 經 WSG 加密，帶 `x-u-content-encoding: wg` |
+    | 回應結構 | `data.video_list[]` | `data.<fid>.video_list[]` |
+    | CDN Cookie | 會話 cookie + `Video-Auth` | `__kuus` + `Video-Auth` |
+    | 原畫 | 經 `/file/download` 讀原檔 `download_url` | play-info 的 `super`/`trans_status: raw`（實測 1920×1080 原檔直出）；`/file/download` 是否可用待實測 |
+  - **PC 設備信息（生成一次、持久化）**：設備身分 `QuarkPcDevice`（`utdid` + 機器名）在
+    [`quark_pc_session.dart`](../lib/storage/drivers/quark_pc_session.dart) 生成——`utdid` 為 18 位元組（4 位元組大端
+    時間前綴 + 隨機填充 + 兩個標記位元組）的 base64，機器名為 `DESKTOP-<6 位十六進位>`；登入的 `client_info` 以反引號依
+    固定欄位順序拼接、內含 `utdid`、機器名與版本 `7.5.0.825`。首次掃碼時生成一次，**連同票據/uid/暱稱一起以 JSON 存進掛載
+    secret**；之後登入與所有業務請求的 `ut` 都用這同一組，重開 app、重新掃碼（帶入既有設備）都不變，讓帳號始終看到同一台
+    機器，避免每次像新設備登入而觸發風控。`x-u-kps-wg` 的明文仍固定為 `token=…&uid=…&nickname=…`，與存儲格式分開。
   - 兩種模式的差異只集中在認證與 play-info，抽成 [`QuarkTransport`](../lib/storage/drivers/quark_transport.dart)
     的 Web/PC 兩個實作，driver 的目錄、列表、讀取、快取邏輯共用。
-  - **待驗**：PC 模式尚未在真機掃碼跑通整條鏈路（登入 → 列目錄 → play-info → CDN 讀取）；原檔直讀
-    （`/file/download`）在 PC 模式下是否需要額外鑑權頭待實測。
+  - **待驗**：PC 模式尚未在真機掃碼跑通整條鏈路（登入 → 列目錄 → play-info → CDN 讀取）；原畫來源見上表。
   - **TV 模式**暫不做：依賴第三方換令牌服務 `api.extscreen.com`。

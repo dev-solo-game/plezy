@@ -8,6 +8,7 @@ import 'package:provider/provider.dart';
 import '../../i18n/strings.g.dart';
 import '../../library/library_scan_service.dart';
 import '../../services/file_picker_service.dart';
+import '../../storage/drivers/quark_pc_session.dart';
 import '../../storage/drivers/quark_storage_driver.dart';
 import '../../storage/drivers/smb_storage_driver.dart';
 import '../../storage/mount_manager.dart';
@@ -212,7 +213,11 @@ class _MountEditScreenState extends State<MountEditScreen> {
   }
 
   Future<void> _scanQuark() async {
-    final cookie = await showQuarkQrLoginDialog(context, mode: _quarkMode);
+    // Carry the mount's existing desktop device into a re-scan, so the account
+    // keeps seeing one machine instead of a new one on every sign-in.
+    final existing = _cookie.text.trim();
+    final device = _quarkMode == QuarkMode.pc && existing.isNotEmpty ? QuarkPcSession.parse(existing).device : null;
+    final cookie = await showQuarkQrLoginDialog(context, mode: _quarkMode, device: device);
     if (cookie != null && mounted) {
       setState(() {
         _cookie.text = cookie;

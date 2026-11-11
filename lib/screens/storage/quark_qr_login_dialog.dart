@@ -5,21 +5,25 @@ import 'package:qr_flutter/qr_flutter.dart';
 
 import '../../i18n/strings.g.dart';
 import '../../storage/drivers/quark_pc_qr_login.dart';
+import '../../storage/drivers/quark_pc_session.dart';
 import '../../storage/drivers/quark_qr_login.dart';
 import '../../storage/drivers/quark_storage_driver.dart';
 import '../../storage/storage_driver.dart';
 
 /// Shows a Quark login QR code and resolves with the mount's stored secret
 /// once the user confirms on their phone — a cookie in web mode, the desktop
-/// session string in PC mode. Resolves with null when dismissed.
-Future<String?> showQuarkQrLoginDialog(BuildContext context, {QuarkMode mode = QuarkMode.web}) {
-  return showDialog<String>(context: context, builder: (_) => _QuarkQrLoginDialog(mode: mode));
+/// session string in PC mode. In PC mode [device], when given, is reused so a
+/// re-scan keeps the mount's existing machine identity. Resolves with null
+/// when dismissed.
+Future<String?> showQuarkQrLoginDialog(BuildContext context, {QuarkMode mode = QuarkMode.web, QuarkPcDevice? device}) {
+  return showDialog<String>(context: context, builder: (_) => _QuarkQrLoginDialog(mode: mode, device: device));
 }
 
 class _QuarkQrLoginDialog extends StatefulWidget {
-  const _QuarkQrLoginDialog({required this.mode});
+  const _QuarkQrLoginDialog({required this.mode, this.device});
 
   final QuarkMode mode;
+  final QuarkPcDevice? device;
 
   @override
   State<_QuarkQrLoginDialog> createState() => _QuarkQrLoginDialogState();
@@ -29,7 +33,9 @@ class _QuarkQrLoginDialogState extends State<_QuarkQrLoginDialog> {
   static const Duration _pollInterval = Duration(seconds: 2);
   static const double _qrSize = 220;
 
-  late final QuarkQrAuthenticator _login = widget.mode == QuarkMode.pc ? QuarkPcQrLogin() : QuarkQrLogin();
+  late final QuarkQrAuthenticator _login = widget.mode == QuarkMode.pc
+      ? QuarkPcQrLogin(device: widget.device)
+      : QuarkQrLogin();
   QuarkQrTicket? _ticket;
   bool _expired = false;
   String? _error;
