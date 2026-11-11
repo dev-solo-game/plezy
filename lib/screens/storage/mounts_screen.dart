@@ -460,6 +460,20 @@ class _LibraryStatusCard extends StatelessWidget {
                 ),
                 const SizedBox(height: 8),
                 line,
+                if (!status.running && unmatched > 0)
+                  Align(
+                    alignment: AlignmentDirectional.centerStart,
+                    child: TextButton.icon(
+                      style: TextButton.styleFrom(padding: EdgeInsets.zero, visualDensity: VisualDensity.compact),
+                      onPressed: () => Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (_) => LibraryPreviewScreen(initialTab: LibraryPreviewScreen.unmatchedTab),
+                        ),
+                      ),
+                      icon: const AppIcon(Symbols.manage_search_rounded),
+                      label: Text(t.storage.reviewUnmatched),
+                    ),
+                  ),
                 const SizedBox(height: 4),
                 Text(
                   t.storage.scrapeHint,

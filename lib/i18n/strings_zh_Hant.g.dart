@@ -94,6 +94,7 @@ class TranslationsZhHant extends TranslationsZh with BaseTranslations<AppLocale,
 	@override late final _Translations$seerr$zh_Hant seerr = _Translations$seerr$zh_Hant._(_root);
 	@override late final _Translations$services$zh_Hant services = _Translations$services$zh_Hant._(_root);
 	@override late final _Translations$addServer$zh_Hant addServer = _Translations$addServer$zh_Hant._(_root);
+	@override late final _Translations$deepLinks$zh_Hant deepLinks = _Translations$deepLinks$zh_Hant._(_root);
 	@override late final _Translations$storage$zh_Hant storage = _Translations$storage$zh_Hant._(_root);
 }
 
@@ -2451,6 +2452,32 @@ class _Translations$addServer$zh_Hant extends Translations$addServer$zh {
 	@override String redirectUnsupportedEnterFinal({required Object product}) => '伺服器重新導向至不支援的 URL。請直接輸入最終的 ${product} URL。';
 }
 
+// Path: deepLinks
+class _Translations$deepLinks$zh_Hant extends Translations$deepLinks$zh {
+	_Translations$deepLinks$zh_Hant._(TranslationsZhHant root) : this._root = root, super.internal(root);
+
+	final TranslationsZhHant _root; // ignore: unused_field
+
+	// Translations
+	@override String get invalid => '這個 Plezy 連結無效。';
+	@override String profileNotFound({required Object profile}) => '沒有與「${profile}」相符的使用者。';
+	@override String get serverUnavailable => '無法連線到這個連結對應的伺服器。';
+	@override String get notFound => '在媒體庫中找不到這個項目。';
+	@override String get unsupportedItem => '這個連結無法播放。';
+	@override String get noLiveTv => '沒有可用於這個連結的直播電視伺服器。';
+	@override String channelNotFound({required Object channel}) => '找不到頻道「${channel}」。';
+	@override String get showLink => '顯示連結';
+	@override String get showProfileLink => '顯示使用者連結';
+	@override String get dialogTitle => '連結';
+	@override String get showHint => '開啟這個連結會播放下一集。加上 &mode=shuffle 可隨機播放整部劇。';
+	@override String get movieHint => '開啟這個連結會播放這部電影。';
+	@override String get episodeHint => '開啟這個連結會播放這一集。';
+	@override String get profileHint => '開啟這個連結會切換到這個使用者。';
+	@override String openAsProfile({required Object name}) => '以 ${name} 開啟';
+	@override String get copy => '複製';
+	@override String get copied => '連結已複製';
+}
+
 // Path: storage
 class _Translations$storage$zh_Hant extends Translations$storage$zh {
 	_Translations$storage$zh_Hant._(TranslationsZhHant root) : this._root = root, super.internal(root);
@@ -2537,6 +2564,7 @@ class _Translations$storage$zh_Hant extends Translations$storage$zh {
 	@override String get tmdbTestOk => '已連上 TMDB';
 	@override String get tmdbTestNoKey => '請先填寫 TMDB API key';
 	@override String tmdbTestFailed({required Object message}) => '失敗：${message}';
+	@override String get reviewUnmatched => '查看未匹配並手動匹配';
 	@override String get unmatchedTitles => '未匹配';
 	@override String get category => '分類';
 	@override String get kindSeries => '影集';
@@ -5861,6 +5889,23 @@ extension on TranslationsZhHant {
 			'addServer.redirectDifferentHost' => ({required Object product}) => '伺服器重新導向至不同的主機。請直接輸入最終的 ${product} URL。',
 			'addServer.redirectInsecure' => '伺服器從 HTTPS 重新導向至不安全的 URL',
 			'addServer.redirectUnsupportedEnterFinal' => ({required Object product}) => '伺服器重新導向至不支援的 URL。請直接輸入最終的 ${product} URL。',
+			'deepLinks.invalid' => '這個 Plezy 連結無效。',
+			'deepLinks.profileNotFound' => ({required Object profile}) => '沒有與「${profile}」相符的使用者。',
+			'deepLinks.serverUnavailable' => '無法連線到這個連結對應的伺服器。',
+			'deepLinks.notFound' => '在媒體庫中找不到這個項目。',
+			'deepLinks.unsupportedItem' => '這個連結無法播放。',
+			'deepLinks.noLiveTv' => '沒有可用於這個連結的直播電視伺服器。',
+			'deepLinks.channelNotFound' => ({required Object channel}) => '找不到頻道「${channel}」。',
+			'deepLinks.showLink' => '顯示連結',
+			'deepLinks.showProfileLink' => '顯示使用者連結',
+			'deepLinks.dialogTitle' => '連結',
+			'deepLinks.showHint' => '開啟這個連結會播放下一集。加上 &mode=shuffle 可隨機播放整部劇。',
+			'deepLinks.movieHint' => '開啟這個連結會播放這部電影。',
+			'deepLinks.episodeHint' => '開啟這個連結會播放這一集。',
+			'deepLinks.profileHint' => '開啟這個連結會切換到這個使用者。',
+			'deepLinks.openAsProfile' => ({required Object name}) => '以 ${name} 開啟',
+			'deepLinks.copy' => '複製',
+			'deepLinks.copied' => '連結已複製',
 			'storage.title' => '儲存掛載',
 			'storage.description' => '掛載本機資料夾、WebDAV 伺服器和網盤',
 			'storage.addMount' => '新增掛載',
@@ -5951,6 +5996,7 @@ extension on TranslationsZhHant {
 			'storage.tmdbTestOk' => '已連上 TMDB',
 			'storage.tmdbTestNoKey' => '請先填寫 TMDB API key',
 			'storage.tmdbTestFailed' => ({required Object message}) => '失敗：${message}',
+			'storage.reviewUnmatched' => '查看未匹配並手動匹配',
 			'storage.unmatchedTitles' => '未匹配',
 			'storage.category' => '分類',
 			'storage.kindSeries' => '影集',

@@ -41,6 +41,12 @@ class MediaVersion {
   /// names differ across sources.
   final String? name;
 
+  /// A second line for pickers, telling versions apart where the label
+  /// cannot: the local library puts the file's path on its mount here.
+  /// Display only; not persisted.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  final String? description;
+
   const MediaVersion({
     required this.id,
     this.width,
@@ -51,6 +57,7 @@ class MediaVersion {
     this.container,
     this.parts = const [],
     this.name,
+    this.description,
   });
 
   factory MediaVersion.fromJson(Map<String, dynamic> json) => _$MediaVersionFromJson(json);

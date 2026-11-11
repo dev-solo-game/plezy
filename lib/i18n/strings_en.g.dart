@@ -6415,6 +6415,9 @@ class Translations$storage$en {
 	/// en: 'Failed: ${message}'
 	String tmdbTestFailed({required Object message}) => 'Failed: ${message}';
 
+	/// en: 'Review unmatched'
+	String get reviewUnmatched => 'Review unmatched';
+
 	/// en: 'Unmatched'
 	String get unmatchedTitles => 'Unmatched';
 
@@ -10957,6 +10960,7 @@ extension on Translations {
 			'storage.tmdbTestOk' => 'Connected to TMDB',
 			'storage.tmdbTestNoKey' => 'Enter a TMDB API key first',
 			'storage.tmdbTestFailed' => ({required Object message}) => 'Failed: ${message}',
+			'storage.reviewUnmatched' => 'Review unmatched',
 			'storage.unmatchedTitles' => 'Unmatched',
 			'storage.category' => 'Category',
 			'storage.kindSeries' => 'Series',

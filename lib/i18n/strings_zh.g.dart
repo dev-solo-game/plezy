@@ -93,6 +93,7 @@ class TranslationsZh extends Translations with BaseTranslations<AppLocale, Trans
 	@override late final Translations$seerr$zh seerr = Translations$seerr$zh.internal(_root);
 	@override late final Translations$services$zh services = Translations$services$zh.internal(_root);
 	@override late final Translations$addServer$zh addServer = Translations$addServer$zh.internal(_root);
+	@override late final Translations$deepLinks$zh deepLinks = Translations$deepLinks$zh.internal(_root);
 	@override late final Translations$storage$zh storage = Translations$storage$zh.internal(_root);
 }
 
@@ -2450,6 +2451,32 @@ class Translations$addServer$zh extends Translations$addServer$en {
 	@override String redirectUnsupportedEnterFinal({required Object product}) => '服务器重定向到了不受支持的 URL。请直接输入最终的 ${product} URL。';
 }
 
+// Path: deepLinks
+class Translations$deepLinks$zh extends Translations$deepLinks$en {
+	Translations$deepLinks$zh.internal(TranslationsZh root) : this._root = root, super.internal(root);
+
+	final TranslationsZh _root; // ignore: unused_field
+
+	// Translations
+	@override String get invalid => '这个 Plezy 链接无效。';
+	@override String profileNotFound({required Object profile}) => '没有与“${profile}”匹配的用户。';
+	@override String get serverUnavailable => '无法连接到这个链接对应的服务器。';
+	@override String get notFound => '在媒体库中找不到这个条目。';
+	@override String get unsupportedItem => '这个链接无法播放。';
+	@override String get noLiveTv => '没有可用于这个链接的直播电视服务器。';
+	@override String channelNotFound({required Object channel}) => '找不到频道“${channel}”。';
+	@override String get showLink => '显示链接';
+	@override String get showProfileLink => '显示用户链接';
+	@override String get dialogTitle => '链接';
+	@override String get showHint => '打开这个链接会播放下一集。加上 &mode=shuffle 可随机播放整部剧。';
+	@override String get movieHint => '打开这个链接会播放这部电影。';
+	@override String get episodeHint => '打开这个链接会播放这一集。';
+	@override String get profileHint => '打开这个链接会切换到这个用户。';
+	@override String openAsProfile({required Object name}) => '以 ${name} 打开';
+	@override String get copy => '复制';
+	@override String get copied => '链接已复制';
+}
+
 // Path: storage
 class Translations$storage$zh extends Translations$storage$en {
 	Translations$storage$zh.internal(TranslationsZh root) : this._root = root, super.internal(root);
@@ -2536,6 +2563,7 @@ class Translations$storage$zh extends Translations$storage$en {
 	@override String get tmdbTestOk => '已连上 TMDB';
 	@override String get tmdbTestNoKey => '请先填写 TMDB API key';
 	@override String tmdbTestFailed({required Object message}) => '失败：${message}';
+	@override String get reviewUnmatched => '查看未匹配并手动匹配';
 	@override String get unmatchedTitles => '未匹配';
 	@override String get category => '分类';
 	@override String get kindSeries => '剧集';
@@ -5860,6 +5888,23 @@ extension on TranslationsZh {
 			'addServer.redirectDifferentHost' => ({required Object product}) => '服务器重定向到了其他主机。请直接输入最终的 ${product} URL。',
 			'addServer.redirectInsecure' => '服务器从 HTTPS 重定向到了不安全的 URL',
 			'addServer.redirectUnsupportedEnterFinal' => ({required Object product}) => '服务器重定向到了不受支持的 URL。请直接输入最终的 ${product} URL。',
+			'deepLinks.invalid' => '这个 Plezy 链接无效。',
+			'deepLinks.profileNotFound' => ({required Object profile}) => '没有与“${profile}”匹配的用户。',
+			'deepLinks.serverUnavailable' => '无法连接到这个链接对应的服务器。',
+			'deepLinks.notFound' => '在媒体库中找不到这个条目。',
+			'deepLinks.unsupportedItem' => '这个链接无法播放。',
+			'deepLinks.noLiveTv' => '没有可用于这个链接的直播电视服务器。',
+			'deepLinks.channelNotFound' => ({required Object channel}) => '找不到频道“${channel}”。',
+			'deepLinks.showLink' => '显示链接',
+			'deepLinks.showProfileLink' => '显示用户链接',
+			'deepLinks.dialogTitle' => '链接',
+			'deepLinks.showHint' => '打开这个链接会播放下一集。加上 &mode=shuffle 可随机播放整部剧。',
+			'deepLinks.movieHint' => '打开这个链接会播放这部电影。',
+			'deepLinks.episodeHint' => '打开这个链接会播放这一集。',
+			'deepLinks.profileHint' => '打开这个链接会切换到这个用户。',
+			'deepLinks.openAsProfile' => ({required Object name}) => '以 ${name} 打开',
+			'deepLinks.copy' => '复制',
+			'deepLinks.copied' => '链接已复制',
 			'storage.title' => '存储挂载',
 			'storage.description' => '挂载本地文件夹、WebDAV 服务器和网盘',
 			'storage.addMount' => '添加挂载',
@@ -5950,6 +5995,7 @@ extension on TranslationsZh {
 			'storage.tmdbTestOk' => '已连上 TMDB',
 			'storage.tmdbTestNoKey' => '请先填写 TMDB API key',
 			'storage.tmdbTestFailed' => ({required Object message}) => '失败：${message}',
+			'storage.reviewUnmatched' => '查看未匹配并手动匹配',
 			'storage.unmatchedTitles' => '未匹配',
 			'storage.category' => '分类',
 			'storage.kindSeries' => '剧集',

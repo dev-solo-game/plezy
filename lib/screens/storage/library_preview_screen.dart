@@ -14,7 +14,13 @@ import 'manual_match_dialog.dart';
 import 'mounts_screen.dart';
 
 class LibraryPreviewScreen extends StatelessWidget {
-  const LibraryPreviewScreen({super.key});
+  const LibraryPreviewScreen({super.key, this.initialTab = 0});
+
+  /// Index of the tab to open on; [unmatchedTab] for the titles waiting
+  /// for a manual match.
+  final int initialTab;
+
+  static final int unmatchedTab = LibraryTypes.shelves.length;
 
   static String _shelfLabel(String shelf) => switch (shelf) {
     LibraryTypes.movie => t.storage.content.movie,
@@ -30,6 +36,7 @@ class LibraryPreviewScreen extends StatelessWidget {
     final repo = context.read<LibraryRepository>();
     return DefaultTabController(
       length: LibraryTypes.shelves.length + 2,
+      initialIndex: initialTab,
       child: Scaffold(
         appBar: AppBar(
           title: Text(t.storage.scanResults),
@@ -86,7 +93,11 @@ class _TitleList extends StatelessWidget {
               if (await showManualMatchDialog(context, item)) {
                 // Simplest way to show the new state of every tab.
                 unawaited(
-                  navigator.pushReplacement(MaterialPageRoute<void>(builder: (_) => const LibraryPreviewScreen())),
+                  navigator.pushReplacement(
+                    MaterialPageRoute<void>(
+                      builder: (_) => LibraryPreviewScreen(initialTab: DefaultTabController.of(context).index),
+                    ),
+                  ),
                 );
               }
             },

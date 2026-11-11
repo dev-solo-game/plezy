@@ -379,6 +379,12 @@ class LibraryScanner {
         matchState: const Value(LibraryMatchStates.pending),
       ),
     );
+    // The last file leaving a title takes its progress along; the emptied
+    // title is pruned afterwards.
+    final oldItem = previous?.itemId;
+    if (oldItem != null && oldItem != itemId && await _repo.videoCount(oldItem) == 0) {
+      await _repo.mergeUserState(oldItem, itemId);
+    }
   }
 
   static String? _keyOf(String? parsedJson) {

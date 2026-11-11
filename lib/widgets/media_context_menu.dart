@@ -45,6 +45,9 @@ import '../utils/dialogs.dart';
 import '../utils/downloads_folder_actions.dart';
 import '../services/external_player_service.dart';
 import 'collection_picker_dialog.dart';
+import '../library/library_repository.dart';
+import '../library/local_library_client.dart';
+import '../screens/storage/manual_match_dialog.dart';
 import '../screens/plex_match_screen.dart';
 import '../screens/media_detail_screen.dart';
 import '../screens/metadata_edit_screen.dart';
@@ -668,6 +671,9 @@ class MediaContextMenuState extends State<MediaContextMenu> {
         ),
         if (!isUnmatched) _MenuAction(value: 'unmatch', icon: Symbols.link_off_rounded, label: t.matchScreen.unmatch),
       ],
+      // The local library's own matching: search TMDB / Bangumi and pick.
+      if (isMovieOrShow && mediaItem.serverId == LocalLibraryClient.localServerId)
+        _MenuAction(value: 'local_match', icon: Symbols.manage_search_rounded, label: t.storage.manualMatch),
       // Remove from Collection (only when viewing items within a collection).
       // Every backend implements `removeFromCollection`.
       if (widget.collectionId != null && menu.canManageCollections)
@@ -923,6 +929,9 @@ class MediaContextMenuState extends State<MediaContextMenu> {
       case 'unmatch':
         await _handleUnmatch(context, mediaItem);
         break;
+      case 'local_match':
+        if (context.mounted) await _handleLocalMatch(context, mediaItem);
+        break;
       case 'remove_from_collection':
         await _handleRemoveFromCollection(context, mediaItem);
         break;
@@ -1170,6 +1179,14 @@ class MediaContextMenuState extends State<MediaContextMenu> {
   bool _isUnmatched(MediaItem item) {
     final g = item.guid;
     return g == null || g.isEmpty || g.contains('agents.none://');
+  }
+
+  Future<void> _handleLocalMatch(BuildContext context, MediaItem item) async {
+    final id = int.tryParse(item.id);
+    if (id == null) return;
+    final view = await context.read<LibraryRepository>().getItem(id);
+    if (view == null || !context.mounted) return;
+    if (await showManualMatchDialog(context, view.item)) _notifyRefresh(item);
   }
 
   Future<void> _handleUnmatch(BuildContext context, MediaItem item) async {

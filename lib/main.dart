@@ -2229,6 +2229,7 @@ class _SetupScreenState extends State<SetupScreen> with MountedSetStateMixin {
         'anime': t.storage.content.anime,
         'variety': t.storage.content.variety,
         'documentary': t.storage.content.documentary,
+        'pending': t.storage.unmatchedTitles,
       }
       ..sortTitles = {
         'title': t.storage.sortTitle,

@@ -1,3 +1,4 @@
+import '../../path_text.dart';
 import 'package:flutter/material.dart';
 import 'package:material_symbols_icons/symbols.dart';
 import 'package:plezy/widgets/app_icon.dart';
@@ -132,6 +133,7 @@ class _VersionColumn extends StatelessWidget {
         return _SelectionTile(
           key: scope.keyFor(index),
           label: version.displayLabel,
+          subtitle: version.description,
           isSelected: isSelected,
           onTap: () => onSelected(index),
         );
@@ -195,6 +197,7 @@ class _QualityColumn extends StatelessWidget {
 
 class _SelectionTile extends StatelessWidget {
   final String label;
+  final String? subtitle;
   final String? trailingText;
   final bool isSelected;
   final bool enabled;
@@ -203,6 +206,7 @@ class _SelectionTile extends StatelessWidget {
   const _SelectionTile({
     super.key,
     required this.label,
+    this.subtitle,
     this.trailingText,
     required this.isSelected,
     this.enabled = true,
@@ -231,6 +235,7 @@ class _SelectionTile extends StatelessWidget {
 
     return FocusableListTile(
       title: Text(label, style: TextStyle(color: titleColor)),
+      subtitle: subtitle == null || subtitle!.isEmpty ? null : PathText(subtitle!),
       trailing: trailing,
       enabled: enabled,
       onTap: onTap,

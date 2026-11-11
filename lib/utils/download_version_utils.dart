@@ -89,6 +89,7 @@ Future<int?> showVersionPickerDialog(BuildContext context, List<MediaVersion> ve
       versions.length,
       (index) => (icon: Symbols.video_file_rounded, label: versions[index].displayLabel, value: index),
     ),
+    subtitleOf: (index) => versions[index].description,
   );
 }
 

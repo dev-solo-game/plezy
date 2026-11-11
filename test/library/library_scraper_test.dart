@@ -434,16 +434,62 @@ void main() {
     expect((await repo.versionsOf(episode.item.id)).single.path, '/Docs/Chernobyl.mkv');
   });
 
-  test('unmatched titles stay off every shelf', () async {
+  test('unmatched titles have a shelf of their own, and can be found and resumed', () async {
     driver.files.add('/Movies/Home Video 2019.mkv');
     await scan();
     await scraper.scrapePending();
-    expect((await repo.pendingTitles()).single.item.title, 'Home Video');
+    final title = (await repo.pendingTitles()).single.item;
+    expect(title.title, 'Home Video');
     for (final shelf in LibraryTypes.shelves) {
       expect((await repo.queryTitles(LibraryQuery(libraryType: shelf))).total, 0);
     }
-    expect(await repo.search('home'), isEmpty);
-    expect(await repo.recentlyAdded(), isEmpty);
+    expect(
+      (await repo.queryTitles(const LibraryQuery(libraryType: LibraryTypes.pending))).items.single.item.id,
+      title.id,
+    );
+    expect((await repo.search('home')).single.item.id, title.id, reason: 'found by the name its file gives');
+    expect(await repo.recentlyAdded(), isEmpty, reason: 'no row of blank posters on the home screen');
+
+    await repo.setProgress(title.id, positionMs: 60000, durationMs: 3600000);
+    expect((await repo.continueWatching()).single.item.id, title.id);
+  });
+
+  test('progress survives a title being merged into another', () async {
+    driver.files
+      ..add('/A/流浪地球2 (2023).mkv')
+      ..add('/B/The.Wandering.Earth.II.2023.2160p.mkv');
+    await scan();
+    final english = (await items(LibraryKinds.movie)).firstWhere((m) => m.title.startsWith('The'));
+    await repo.setProgress(english.id, positionMs: 600000, durationMs: 7200000);
+
+    final hit = tmdb.hit('842675', '流浪地球2', year: 2023, original: 'The Wandering Earth II');
+    tmdb.results['流浪地球2'] = [hit];
+    tmdb.results['the wandering earth ii'] = [hit];
+    tmdb.details['842675'] = const ScrapedTitle(source: 'tmdb', tmdbId: '842675', title: '流浪地球2', year: 2023);
+    await scraper.scrapePending();
+
+    final movie = (await items(LibraryKinds.movie)).single;
+    final resumed = (await repo.continueWatching()).single;
+    expect((resumed.item.id, resumed.state?.positionMs), (movie.id, 600000));
+  });
+
+  test('progress follows a movie that turns into a show', () async {
+    driver.files.add('/Docs/Chernobyl.mkv');
+    await scan();
+    final movie = (await items(LibraryKinds.movie)).single;
+    await repo.setProgress(movie.id, positionMs: 120000, durationMs: 3600000);
+    tmdb.details['87108'] = const ScrapedTitle(source: 'tmdb', tmdbId: '87108', title: '切尔诺贝利');
+    scraper = LibraryScraper(
+      db,
+      repo,
+      providers: [
+        _ShowOnly(tmdb, {'chernobyl': tmdb.hit('87108', 'Chernobyl')}),
+      ],
+    );
+
+    await scraper.scrapePending();
+    final episode = (await repo.episodesOfShow(movie.id)).single;
+    expect(episode.state?.positionMs, 120000, reason: 'the episode is what plays now');
   });
 
   test('NfoReader ignores documents that are not titles', () {

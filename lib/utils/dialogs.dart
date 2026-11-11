@@ -1,3 +1,4 @@
+import '../widgets/path_text.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -567,6 +568,7 @@ Future<T?> showOptionPickerDialog<T>(
   required List<({IconData? icon, String label, T value})> options,
   Future<T?> Function(T value)? onBeforeClose,
   OptionPickerToggle? toggle,
+  String? Function(T value)? subtitleOf,
 }) {
   final focusFirstItem = InputModeTracker.isKeyboardMode(context, listen: false);
   return showScopedDialog<T>(
@@ -577,6 +579,7 @@ Future<T?> showOptionPickerDialog<T>(
       focusFirstItem: focusFirstItem,
       onBeforeClose: onBeforeClose,
       toggle: toggle,
+      subtitleOf: subtitleOf,
     ),
   );
 }
@@ -588,12 +591,16 @@ class _OptionPickerDialog<T> extends StatefulWidget {
   final Future<T?> Function(T value)? onBeforeClose;
   final OptionPickerToggle? toggle;
 
+  /// A muted second line under an option, when it returns text.
+  final String? Function(T value)? subtitleOf;
+
   const _OptionPickerDialog({
     required this.title,
     required this.options,
     this.focusFirstItem = false,
     this.onBeforeClose,
     this.toggle,
+    this.subtitleOf,
   });
 
   @override
@@ -673,10 +680,12 @@ class _OptionPickerDialogState<T> extends State<_OptionPickerDialog<T>> {
               ...List.generate(widget.options.length, (index) {
                 final option = widget.options[index];
                 final icon = option.icon;
+                final subtitle = widget.subtitleOf?.call(option.value);
                 return FocusableListTile(
                   focusNode: index == 0 && widget.focusFirstItem ? _initialFocusNode : null,
                   leading: icon != null ? AppIcon(icon, fill: 1, size: 24) : null,
                   title: Text(option.label, style: Theme.of(context).textTheme.bodyLarge),
+                  subtitle: subtitle == null || subtitle.isEmpty ? null : PathText(subtitle),
                   contentPadding: rowPadding,
                   horizontalTitleGap: rowHorizontalTitleGap,
                   minLeadingWidth: rowMinLeadingWidth,

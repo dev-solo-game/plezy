@@ -276,10 +276,13 @@ class LibraryScraper {
         final season = await child(LibraryKinds.season, 'Season 1', item.id);
         final episode = await child(LibraryKinds.episode, 'Episode 1', season, episode: 1);
         await _moveFiles(item.id, episode);
+        // Progress belongs to what is played: now the episode.
+        await _repo.mergeUserState(item.id, episode);
         await _repo.updateItem(item.id, const LibraryItemsCompanion(kind: Value(LibraryKinds.show)));
       } else {
         for (final episode in await _repo.episodesOfShow(item.id)) {
           await _moveFiles(episode.item.id, item.id);
+          await _repo.mergeUserState(episode.item.id, item.id);
         }
         await (_db.delete(items)..where((t) => t.showId.equals(item.id))).go();
         await _repo.updateItem(item.id, const LibraryItemsCompanion(kind: Value(LibraryKinds.movie)));
@@ -633,7 +636,9 @@ class LibraryScraper {
     await _db.transaction(() async {
       if (duplicate.kind == LibraryKinds.movie) {
         await _moveFiles(duplicate.id, target.id);
+        await _repo.mergeUserState(duplicate.id, target.id);
       } else {
+        await _repo.mergeUserState(duplicate.id, target.id);
         for (final seasonView in await _repo.children(duplicate.id)) {
           final season = seasonView.item;
           final targetSeason = await _repo.findChild(target.id, seasonNumber: season.seasonNumber);
@@ -655,6 +660,7 @@ class LibraryScraper {
               );
             } else {
               await _moveFiles(episode.id, targetEpisode.id);
+              await _repo.mergeUserState(episode.id, targetEpisode.id);
             }
           }
         }

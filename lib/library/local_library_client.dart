@@ -72,6 +72,7 @@ class LocalLibraryClient implements MediaServerClient {
     'anime': 'Anime',
     'variety': 'Variety',
     'documentary': 'Documentaries',
+    'pending': 'Unmatched',
   };
 
   @override
@@ -258,7 +259,10 @@ class LocalLibraryClient implements MediaServerClient {
       height: file.height,
       videoCodec: file.videoCodec,
       container: file.container ?? (extension.isEmpty ? null : extension),
-      name: file.versionLabel ?? StoragePath.name(file.path),
+      // The mount leads, so copies of one film on different sources read
+      // apart at a glance; the path below says exactly which file it is.
+      name: [?_mountsById[file.mountId]?.displayName, ?file.versionLabel].join(' · '),
+      description: file.path,
       parts: [
         MediaPart(
           id: '${file.id}',
@@ -295,7 +299,9 @@ class LocalLibraryClient implements MediaServerClient {
   @override
   Future<List<MediaLibrary>> fetchLibraries() async {
     final libraries = <MediaLibrary>[];
-    for (final shelf in shelves) {
+    // Titles no source recognised (or not looked up yet) get a shelf of
+    // their own, last, so they can be watched before they are matched.
+    for (final shelf in [...shelves, lib.LibraryTypes.pending]) {
       final page = await _repo.queryTitles(lib.LibraryQuery(libraryType: shelf, limit: 1));
       // An empty shelf is not worth a tab.
       if (page.total == 0) continue;

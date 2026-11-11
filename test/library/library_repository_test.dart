@@ -502,4 +502,23 @@ void main() {
       await tempDir.delete(recursive: true);
     }
   });
+
+  test('mergeUserState moves state, or combines it with what the target has', () async {
+    final a = await addTitle('A');
+    final b = await addTitle('B');
+    final c = await addTitle('C');
+    await repo.setProgress(a, positionMs: 1000, durationMs: 10000);
+    await repo.mergeUserState(a, b);
+    expect((await repo.getItem(b))?.state?.positionMs, 1000);
+    expect((await repo.getItem(a))?.state, isNull);
+
+    await repo.markWatched(c, watched: true);
+    await repo.setFavorite(c, favorite: true);
+    await repo.mergeUserState(c, b);
+    final merged = (await repo.getItem(b))!.state!;
+    expect((merged.watched, merged.favorite), (true, true));
+
+    await repo.mergeUserState(b, b);
+    expect((await repo.getItem(b))?.state, isNotNull, reason: 'merging into itself changes nothing');
+  });
 }

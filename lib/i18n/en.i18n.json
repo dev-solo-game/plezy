@@ -2666,6 +2666,7 @@
     "tmdbTestOk": "Connected to TMDB",
     "tmdbTestNoKey": "Enter a TMDB API key first",
     "tmdbTestFailed": "Failed: ${message}",
+    "reviewUnmatched": "Review unmatched",
     "unmatchedTitles": "Unmatched",
     "category": "Category",
     "kindSeries": "Series",

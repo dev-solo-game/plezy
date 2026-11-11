@@ -202,6 +202,52 @@ class LibraryRepository {
     )..where((t) => t.id.equals(id))).write(changes.copyWith(updatedAt: Value(_now())));
   }
 
+  /// Moves the watch state of [fromId] onto [toId], for when one title is
+  /// folded into another or a file moves to a different title. When both
+  /// have state they are combined: the more recent progress, watched if
+  /// either was, plays added up, favourite if either was.
+  Future<void> mergeUserState(int fromId, int toId) async {
+    if (fromId == toId) return;
+    final states = _db.libraryUserStates;
+    await _db.transaction(() async {
+      final from = await (_db.select(states)..where((t) => t.itemId.equals(fromId))).getSingleOrNull();
+      if (from == null) return;
+      final to = await (_db.select(states)..where((t) => t.itemId.equals(toId))).getSingleOrNull();
+      if (to == null) {
+        await (_db.update(
+          states,
+        )..where((t) => t.itemId.equals(fromId))).write(LibraryUserStatesCompanion(itemId: Value(toId)));
+        return;
+      }
+      final fromNewer = (from.lastPlayedAt ?? 0) > (to.lastPlayedAt ?? 0);
+      final newer = fromNewer ? from : to;
+      await (_db.update(states)..where((t) => t.itemId.equals(toId))).write(
+        LibraryUserStatesCompanion(
+          positionMs: Value(newer.positionMs),
+          durationMs: Value(newer.durationMs ?? from.durationMs ?? to.durationMs),
+          watched: Value(from.watched || to.watched),
+          playCount: Value(from.playCount + to.playCount),
+          lastPlayedAt: Value(newer.lastPlayedAt),
+          favorite: Value(from.favorite || to.favorite),
+          hiddenFromContinue: Value(newer.hiddenFromContinue),
+          updatedAt: Value(_now()),
+        ),
+      );
+      await (_db.delete(states)..where((t) => t.itemId.equals(fromId))).go();
+    });
+  }
+
+  /// How many videos are filed under [itemId].
+  Future<int> videoCount(int itemId) async {
+    final files = _db.libraryFiles;
+    final count = files.id.count();
+    return (_db.selectOnly(files)
+          ..addColumns([count])
+          ..where(files.itemId.equals(itemId) & files.role.equals(LibraryFileRoles.video)))
+        .map((row) => row.read(count) ?? 0)
+        .getSingle();
+  }
+
   Future<void> deleteItem(int id) async {
     await (_db.delete(_db.libraryItems)..where((t) => t.id.equals(id))).go();
   }
@@ -429,13 +475,14 @@ class LibraryRepository {
     );
   }
 
-  /// Movies and shows across every shelf whose names contain [text].
+  /// Movies and shows whose names contain [text], unmatched ones included:
+  /// their file name is the only thing to find them by.
   Future<List<LibraryItemView>> search(String text, {int limit = 50}) async {
     if (text.trim().isEmpty) return const [];
     final items = _db.libraryItems;
     final rows =
         await (_viewSelect()
-              ..where(items.kind.isIn([LibraryKinds.movie, LibraryKinds.show]) & _onAShelf & _matchesText(text))
+              ..where(items.kind.isIn([LibraryKinds.movie, LibraryKinds.show]) & _matchesText(text))
               ..orderBy([OrderingTerm.asc(items.sortTitle)])
               ..limit(limit))
             .get();
@@ -463,7 +510,6 @@ class LibraryRepository {
         await (_viewSelect()
               ..where(
                 items.kind.isIn([LibraryKinds.movie, LibraryKinds.episode]) &
-                    _onAShelf &
                     states.positionMs.isBiggerThanValue(0) &
                     states.watched.equals(false) &
                     states.hiddenFromContinue.equals(false),
