@@ -39,7 +39,7 @@ enum QuarkMode {
 ///
 /// Besides the original file, Quark serves the renditions it transcoded
 /// itself; see [streamVariants].
-class QuarkStorageDriver implements StorageDriver, StreamVariantSource {
+class QuarkStorageDriver implements StorageDriver, StreamVariantSource, ParallelReadSource {
   QuarkStorageDriver({
     required String cookie,
     QuarkMode mode = QuarkMode.web,
@@ -218,6 +218,23 @@ class QuarkStorageDriver implements StorageDriver, StreamVariantSource {
       ({required bool forceRefresh}) => _linkFor(entry, forceRefresh: forceRefresh),
       start: start,
       end: end,
+    );
+  }
+
+  @override
+  Stream<List<int>> openReadParallel(
+    StorageEntry entry, {
+    int start = 0,
+    required int end,
+    required int connections,
+    required int chunkSize,
+  }) {
+    return _reader.read(
+      ({required bool forceRefresh}) => _linkFor(entry, forceRefresh: forceRefresh),
+      start: start,
+      end: end,
+      connections: connections,
+      chunkSize: chunkSize,
     );
   }
 

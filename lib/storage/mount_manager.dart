@@ -7,6 +7,7 @@ import 'drivers/quark_pc_session.dart';
 import 'drivers/quark_storage_driver.dart';
 import 'drivers/smb_storage_driver.dart';
 import 'drivers/webdav_storage_driver.dart';
+import 'http_range_reader.dart';
 import 'mount_registry.dart';
 import 'storage_driver.dart';
 import 'storage_mount.dart';
@@ -18,7 +19,8 @@ import 'stream_variant.dart';
 /// storage through here so each mount has exactly one driver instance — and
 /// therefore one request throttle and one link cache.
 class MountManager {
-  MountManager(this.registry, {StreamProxy? proxy}) : proxy = proxy ?? StreamProxy();
+  MountManager(this.registry, {StreamProxy? proxy, BulkReadOptions Function()? bulkOptions})
+    : proxy = proxy ?? StreamProxy(bulkOptions: bulkOptions);
 
   final MountRegistry registry;
   final StreamProxy proxy;
@@ -53,9 +55,10 @@ class MountManager {
   /// The shared driver for [mount], created on first use.
   StorageDriver driverFor(StorageMount mount) => _drivers[mount.id] ??= createDriver(mount);
 
-  /// A loopback URL players can open for [entry].
-  Future<Uri> streamUrl(StorageMount mount, StorageEntry entry) {
-    return proxy.register(mountId: mount.id, driver: driverFor(mount), entry: entry);
+  /// A loopback URL players can open for [entry]. A [bulk] URL is for
+  /// downloading the whole file and may be read over several connections.
+  Future<Uri> streamUrl(StorageMount mount, StorageEntry entry, {bool bulk = false}) {
+    return proxy.register(mountId: mount.id, driver: driverFor(mount), entry: entry, bulk: bulk);
   }
 
   /// The transcoded renditions [mount]'s backend offers for [entry], best

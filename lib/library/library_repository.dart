@@ -2,6 +2,7 @@ import 'package:clock/clock.dart';
 import 'package:drift/drift.dart';
 
 import '../database/app_database.dart';
+import 'media_probe.dart';
 
 /// String ids persisted in the library tables.
 abstract final class LibraryKinds {
@@ -865,6 +866,25 @@ class LibraryRepository {
         itemId: Value(itemId),
         matchState: const Value(LibraryMatchStates.matched),
         matchLocked: locked ? const Value(true) : const Value.absent(),
+      ),
+    );
+  }
+
+  /// Records what probing [fileId]'s header found. A file the probe cannot
+  /// read still gets its container and a timestamp, so it is not re-probed
+  /// on every look; a rescan that sees the file change clears it all.
+  Future<void> saveProbe(int fileId, ProbedMedia media) async {
+    final video = media.firstVideo;
+    await (_db.update(_db.libraryFiles)..where((t) => t.id.equals(fileId))).write(
+      LibraryFilesCompanion(
+        durationMs: Value(media.durationMs),
+        container: Value(media.container),
+        videoCodec: Value(video?.codec),
+        width: Value(video?.width),
+        height: Value(video?.height),
+        hdrFormat: Value(video?.hdr),
+        streams: Value(media.encodeStreams()),
+        probedAt: Value(clock.now().millisecondsSinceEpoch),
       ),
     );
   }

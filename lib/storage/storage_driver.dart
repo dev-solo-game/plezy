@@ -89,3 +89,18 @@ abstract class StorageDriver {
   /// Releases connections and caches. The driver is unusable afterwards.
   Future<void> close();
 }
+
+/// A driver that can fetch one read over several connections at once, for
+/// bulk transfers from origins that cap each connection's speed.
+abstract interface class ParallelReadSource {
+  /// Like [StorageDriver.openRead], but fetched over up to [connections]
+  /// connections, [chunkSize] bytes per request. [end] is inclusive and
+  /// required.
+  Stream<List<int>> openReadParallel(
+    StorageEntry entry, {
+    int start = 0,
+    required int end,
+    required int connections,
+    required int chunkSize,
+  });
+}

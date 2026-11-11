@@ -6,6 +6,7 @@ import 'dart:math';
 import 'package:flutter/foundation.dart' show visibleForTesting;
 
 import '../utils/app_logger.dart';
+import 'http_range_reader.dart';
 import 'storage_driver.dart';
 import 'storage_path.dart';
 import 'stream_variant.dart';
@@ -20,9 +21,14 @@ import 'stream_variant.dart';
 /// It binds to loopback only, and each URL carries an unguessable token, so
 /// other devices cannot reach it and other local processes cannot enumerate it.
 class StreamProxy {
-  StreamProxy({Random? random}) : _random = random ?? Random.secure();
+  StreamProxy({Random? random, BulkReadOptions Function()? bulkOptions})
+    : _random = random ?? Random.secure(),
+      _bulkOptions = bulkOptions ?? (() => BulkReadOptions.defaults);
 
   final Random _random;
+
+  /// Read per bulk request, so a changed setting applies to the next one.
+  final BulkReadOptions Function() _bulkOptions;
   final Map<String, _Source> _sources = {};
   final Map<String, _VariantSource> _variants = {};
   final Map<String, String> _tokensByKey = {};
@@ -66,7 +72,16 @@ class StreamProxy {
   /// same URL, so a resumed playback keeps hitting one address.
   ///
   /// [mountId] only namespaces the registration; it never appears in the URL.
-  Future<Uri> register({required String mountId, required StorageDriver driver, required StorageEntry entry}) async {
+  ///
+  /// A [bulk] URL is for whole-file transfers (the downloader): drivers that
+  /// can are read over several connections at once (see `bulkOptions`). Players get the
+  /// plain URL, which keeps one connection and wastes nothing on a seek.
+  Future<Uri> register({
+    required String mountId,
+    required StorageDriver driver,
+    required StorageEntry entry,
+    bool bulk = false,
+  }) async {
     if (entry.isDirectory) {
       throw const StorageException(StorageErrorKind.unsupported, 'Cannot stream a directory');
     }
@@ -80,7 +95,7 @@ class StreamProxy {
       port: server.port,
       // The file name is cosmetic: it lets players sniff the container from
       // the extension and show a sensible title.
-      pathSegments: ['s', token, entry.name],
+      pathSegments: [bulk ? 'd' : 's', token, entry.name],
     );
   }
 
@@ -165,7 +180,8 @@ class StreamProxy {
         if (variant == null) return await _finish(response, HttpStatus.notFound);
         return await _handleVariant(request, variant, segments);
       }
-      final source = segments.length >= 2 && segments[0] == 's' ? _sources[segments[1]] : null;
+      final bulk = segments.isNotEmpty && segments[0] == 'd';
+      final source = segments.length >= 2 && (segments[0] == 's' || bulk) ? _sources[segments[1]] : null;
       if (source == null) return await _finish(response, HttpStatus.notFound);
 
       var entry = source.entry;
@@ -191,9 +207,21 @@ class StreamProxy {
       // Pull the first chunk before committing the status line, so a failure
       // to open the file at all (expired cookie, deleted file) reaches the
       // player as an HTTP error instead of a truncated 200.
-      final chunks = wantsBody
-          ? StreamIterator(source.driver.openRead(entry, start: start, end: range == null ? null : end))
-          : null;
+      final driver = source.driver;
+      final bulkOptions = bulk ? _bulkOptions() : null;
+      final chunks = !wantsBody
+          ? null
+          : StreamIterator(
+              bulkOptions != null && driver is ParallelReadSource
+                  ? (driver as ParallelReadSource).openReadParallel(
+                      entry,
+                      start: start,
+                      end: end,
+                      connections: bulkOptions.connections,
+                      chunkSize: bulkOptions.chunkSize,
+                    )
+                  : driver.openRead(entry, start: start, end: range == null ? null : end),
+            );
       try {
         final hasFirst = chunks != null && await chunks.moveNext();
 

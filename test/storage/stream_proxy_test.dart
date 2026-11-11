@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:plezy/storage/http_range_reader.dart';
 import 'package:plezy/storage/storage_driver.dart';
 import 'package:plezy/storage/storage_mount.dart';
 import 'package:plezy/storage/stream_proxy.dart';
@@ -35,6 +36,24 @@ class _MemoryDriver implements StorageDriver {
 
   @override
   Future<void> close() async {}
+}
+
+class _ParallelDriver extends _MemoryDriver implements ParallelReadSource {
+  _ParallelDriver(super.bytes);
+
+  final List<({int start, int end, int connections, int chunkSize})> parallelReads = [];
+
+  @override
+  Stream<List<int>> openReadParallel(
+    StorageEntry entry, {
+    int start = 0,
+    required int end,
+    required int connections,
+    required int chunkSize,
+  }) async* {
+    parallelReads.add((start: start, end: end, connections: connections, chunkSize: chunkSize));
+    yield bytes.sublist(start, end + 1);
+  }
 }
 
 void main() {
@@ -154,5 +173,41 @@ void main() {
 
     driver.failWith = const StorageException(StorageErrorKind.notFound, 'deleted');
     expect((await fetch(url)).status, 404);
+  });
+
+  test('a bulk URL reads over several connections; the plain URL does not', () async {
+    var options = const BulkReadOptions(connections: 3, chunkSize: 4096);
+    await proxy.stop();
+    proxy = StreamProxy(bulkOptions: () => options);
+    final parallel = _ParallelDriver(content);
+    final entry = StorageEntry(path: '/file.mkv', name: 'file.mkv', isDirectory: false, size: 1000);
+    final plain = await proxy.register(mountId: 'm1', driver: parallel, entry: entry);
+    final bulk = await proxy.register(mountId: 'm1', driver: parallel, entry: entry, bulk: true);
+    expect(bulk.pathSegments[1], plain.pathSegments[1]);
+    expect(bulk.pathSegments.first, 'd');
+
+    final whole = await fetch(bulk);
+    expect(whole.body, content);
+    // A changed setting applies to the next request.
+    options = const BulkReadOptions(connections: 6, chunkSize: 8192);
+    final resumed = await fetch(bulk, range: 'bytes=400-');
+    expect(resumed.status, 206);
+    expect(resumed.body, content.sublist(400));
+    expect(parallel.parallelReads, [
+      (start: 0, end: 999, connections: 3, chunkSize: 4096),
+      (start: 400, end: 999, connections: 6, chunkSize: 8192),
+    ]);
+
+    await fetch(plain, range: 'bytes=0-9');
+    expect(parallel.parallelReads, hasLength(2));
+    expect(parallel.reads, [(start: 0, end: 9)]);
+  });
+
+  test('a bulk URL falls back to a plain read for drivers without parallel reads', () async {
+    final url = await register();
+    final bulk = url.replace(pathSegments: ['d', ...url.pathSegments.skip(1)]);
+    final result = await fetch(bulk);
+    expect(result.body, content);
+    expect(driver.reads, [(start: 0, end: null)]);
   });
 }

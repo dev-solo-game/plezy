@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import '../database/app_database.dart';
 import '../media/artist_discography.dart';
@@ -42,6 +43,7 @@ import '../utils/app_logger.dart';
 import '../utils/external_ids.dart';
 import '../utils/media_server_http_client.dart' show AbortController;
 import 'library_repository.dart' as lib;
+import 'media_probe.dart';
 import 'scrapers/bangumi_provider.dart';
 
 /// The local media library, presented to the app as a media server.
@@ -1089,7 +1091,13 @@ class LocalLibraryClient implements MediaServerClient {
     if (picked == null) return const DownloadResolution(videoUrl: null);
     final subtitles = await _repo.subtitlesOf(picked.file.id);
     return DownloadResolution(
-      videoUrl: (await _streamUrl(picked.file)).toString(),
+      // Bulk: cloud drives cap each connection, so the downloader's URL is
+      // fetched over several at once.
+      videoUrl: (await _mountManager.streamUrl(
+        await _mountOf(picked.file),
+        _entryOf(picked.file),
+        bulk: true,
+      )).toString(),
       mediaSourceId: '${picked.file.id}',
       externalSubtitles: [
         for (final subtitle in subtitles)
@@ -1110,8 +1118,146 @@ class LocalLibraryClient implements MediaServerClient {
       if (thumbnailUrl(path) case final String url when url.isNotEmpty) DownloadArtworkSpec(localKey: key, url: url),
   ];
 
+  /// How long looking at file info waits for one file's header.
+  static const Duration _probeTimeout = Duration(seconds: 20);
+
+  /// Every version of [item], each probed once on first look: the header is
+  /// read over ranged requests (a few kilobytes, plus an MP4's index), and the
+  /// result is kept until a rescan sees the file change.
   @override
-  Future<MediaFileInfo?> getFileInfo(MediaItem item) async => null;
+  Future<MediaFileInfo?> getFileInfo(MediaItem item) async {
+    final files = await _versions(item.id);
+    if (files.isEmpty) return null;
+    return MediaFileInfo(versions: [for (final file in files) await _fileVersion(await _probedOnce(file))]);
+  }
+
+  Future<LibraryFileRow> _probedOnce(LibraryFileRow file) async {
+    if (file.probedAt != null) return file;
+    try {
+      final mount = await _mountOf(file);
+      final driver = _mountManager.driverFor(mount);
+      final entry = _entryOf(file);
+      final size = file.size ?? (await driver.stat(file.path)).size;
+      if (size == null) return file;
+      final media = await MediaProbe.probe(
+        extension: StoragePath.extension(file.path),
+        size: size,
+        read: (start, length) async {
+          final bytes = BytesBuilder(copy: false);
+          await for (final chunk in driver.openRead(entry, start: start, end: start + length - 1)) {
+            bytes.add(chunk);
+          }
+          return bytes.takeBytes();
+        },
+      ).timeout(_probeTimeout);
+      await _repo.saveProbe(file.id, media);
+      return await _repo.getFile(file.id) ?? file;
+    } catch (e) {
+      // Shown without the probe's details; the next look tries again.
+      appLogger.w('Could not probe ${file.path}: $e');
+      return file;
+    }
+  }
+
+  Future<MediaFileVersion> _fileVersion(LibraryFileRow file) async {
+    final extension = StoragePath.extension(file.path);
+    final container = file.container ?? (extension.isEmpty ? null : extension);
+    final probed = ProbedMedia.decodeStreams(file.streams);
+    final video = probed.streams.where((s) => s.kind == 'video').firstOrNull;
+    final audio = probed.streams.where((s) => s.kind == 'audio').firstOrNull;
+    final mountName = _mountsById[file.mountId]?.displayName;
+
+    final ordinals = <MediaStreamKind, int>{};
+    MediaStreamDetails details(MediaStreamKind kind, MediaStreamDetails Function(int ordinal) build) {
+      final ordinal = (ordinals[kind] ?? 0) + 1;
+      ordinals[kind] = ordinal;
+      return build(ordinal);
+    }
+
+    final streams = [
+      for (final s in probed.streams)
+        if (_streamKind(s.kind) case final kind?)
+          details(
+            kind,
+            (ordinal) => MediaStreamDetails(
+              kind: kind,
+              ordinal: ordinal,
+              index: s.index,
+              codec: s.codec,
+              title: s.title,
+              language: s.language,
+              languageCode: s.language,
+              isDefault: s.isDefault,
+              isForced: s.isForced,
+              isExternal: false,
+              width: s.width,
+              height: s.height,
+              frameRate: s.frameRate,
+              videoRange: switch (s.hdr) {
+                'hdr10' => MediaVideoRange.hdr10,
+                'hlg' => MediaVideoRange.hlg,
+                'dolbyVision' => MediaVideoRange.dolbyVision,
+                _ => kind == MediaStreamKind.video ? MediaVideoRange.sdr : MediaVideoRange.unknown,
+              },
+              channels: s.channels,
+              sampleRate: s.sampleRate,
+              bitDepth: s.bitDepth,
+              isTextSubtitle: kind == MediaStreamKind.subtitle ? _isTextSubtitle(s.codec) : null,
+            ),
+          ),
+      for (final subtitle in await _repo.subtitlesOf(file.id))
+        details(
+          MediaStreamKind.subtitle,
+          (ordinal) => MediaStreamDetails(
+            kind: MediaStreamKind.subtitle,
+            ordinal: ordinal,
+            title: StoragePath.name(subtitle.path),
+            codec: StoragePath.extension(subtitle.path),
+            language: subtitle.language,
+            languageCode: subtitle.language,
+            isExternal: true,
+            isTextSubtitle: _isTextSubtitle(StoragePath.extension(subtitle.path)),
+            filePath: subtitle.path,
+          ),
+        ),
+    ];
+
+    return MediaFileVersion(
+      id: '${file.id}',
+      title: [?mountName, ?file.versionLabel].join(' · '),
+      container: container,
+      bitrateKbps: probed.bitrateKbps,
+      durationMs: file.durationMs,
+      width: file.width,
+      height: file.height,
+      videoCodec: file.videoCodec,
+      audioCodec: audio?.codec,
+      audioChannels: audio?.channels,
+      videoFrameRateLabel: video?.frameRate == null ? null : '${video!.frameRate} fps',
+      parts: [
+        MediaFilePart(
+          id: '${file.id}',
+          filePath: mountName == null ? file.path : '$mountName:${file.path}',
+          fileSize: file.size,
+          container: container,
+          durationMs: file.durationMs,
+          exists: true,
+          accessible: true,
+          streams: streams,
+        ),
+      ],
+    );
+  }
+
+  static MediaStreamKind? _streamKind(String kind) => switch (kind) {
+    'video' => MediaStreamKind.video,
+    'audio' => MediaStreamKind.audio,
+    'subtitle' => MediaStreamKind.subtitle,
+    _ => null,
+  };
+
+  static bool _isTextSubtitle(String? codec) =>
+      const {'subrip', 'srt', 'ass', 'ssa', 'webvtt', 'vtt', 'mov_text', 'txt'}.contains(codec);
 
   @override
   Future<PlaybackExtras> fetchPlaybackExtras(

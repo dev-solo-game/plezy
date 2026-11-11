@@ -40,6 +40,7 @@ import '../navigation/navigation_tabs.dart';
 import '../utils/platform_detector.dart';
 import 'trackers/tracker_constants.dart';
 import '../profiles/profile.dart';
+import '../storage/http_range_reader.dart' show BulkReadOptions;
 import '../theme/mono_theme.dart' show MonoPalette;
 import '../watch_together/services/watch_party_relays.dart';
 
@@ -726,6 +727,18 @@ class SettingsService extends BaseSharedPreferencesService {
   static const customDownloadPathType = NullableStringPref('custom_download_path_type');
   static const downloadOnWifiOnly = BoolPref('download_on_wifi_only');
   static const autoRemoveWatchedDownloads = BoolPref('auto_remove_watched_downloads');
+
+  /// Cloud-drive downloads: connections per file, and megabytes per request.
+  static const downloadConnections = IntPref('download_connections', defaultValue: BulkReadOptions.defaultConnections);
+  static const downloadChunkSizeMb = IntPref(
+    'download_chunk_size_mb',
+    defaultValue: BulkReadOptions.defaultChunkSize ~/ (1024 * 1024),
+  );
+
+  /// [downloadConnections] and [downloadChunkSizeMb] as the stream proxy
+  /// reads them.
+  BulkReadOptions get bulkReadOptions =>
+      BulkReadOptions(connections: read(downloadConnections), chunkSize: read(downloadChunkSizeMb) * 1024 * 1024);
 
   /// Set once the user has seen the pre-flight "background downloads are
   /// blocked" dialog. The persistent Downloads-screen banner covers repeat
@@ -1623,6 +1636,8 @@ class SettingsService extends BaseSharedPreferencesService {
     introPattern,
     creditsPattern,
     autoRemoveWatchedDownloads,
+    downloadConnections,
+    downloadChunkSizeMb,
     defaultQualityPreset,
     streamQuality,
     cellularQualityPreset,
@@ -1684,6 +1699,8 @@ class SettingsService extends BaseSharedPreferencesService {
     'sleep_timer_duration' => (5, 240),
     'play_next_countdown' => (0, 30),
     'auto_skip_delay' => (1, 30),
+    'download_connections' => (1, 16),
+    'download_chunk_size_mb' => (1, 64),
     'subtitle_font_size' => (10, 80),
     'subtitle_border_size' => (0, 5),
     'subtitle_position' => (0, 150),

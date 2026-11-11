@@ -484,6 +484,13 @@ class _Translations$settings$zh_Hant extends Translations$settings$zh {
 	@override String get downloadOnWifiOnlyDescription => '使用行動網路時不會下載';
 	@override String get autoRemoveWatchedDownloads => '自動移除已觀看的下載內容';
 	@override String get autoRemoveWatchedDownloadsDescription => '自動刪除已觀看的下載影片';
+	@override String get downloadConnections => '下載執行緒數';
+	@override String downloadConnectionsDescription({required Object count}) => '雲端硬碟：每個檔案同時用 ${count} 個連線下載';
+	@override String get downloadConnectionsLabel => '執行緒數';
+	@override String get downloadChunkSize => '下載分塊大小';
+	@override String downloadChunkSizeDescription({required Object size}) => '雲端硬碟：每次請求 ${size} MB';
+	@override String get megabytesLabel => 'MB';
+	@override String get megabytesShort => 'MB';
 	@override String get cellularDownloadBlocked => '使用行動網路時無法下載。請改用 Wi-Fi 或變更設定。';
 	@override String get maxVolume => '最大音量';
 	@override String get maxVolumeDescription => '允許音量調大至 100% 以上，以適應聲音過小的媒體';
@@ -3964,6 +3971,13 @@ extension on TranslationsZhHant {
 			'settings.downloadOnWifiOnlyDescription' => '使用行動網路時不會下載',
 			'settings.autoRemoveWatchedDownloads' => '自動移除已觀看的下載內容',
 			'settings.autoRemoveWatchedDownloadsDescription' => '自動刪除已觀看的下載影片',
+			'settings.downloadConnections' => '下載執行緒數',
+			'settings.downloadConnectionsDescription' => ({required Object count}) => '雲端硬碟：每個檔案同時用 ${count} 個連線下載',
+			'settings.downloadConnectionsLabel' => '執行緒數',
+			'settings.downloadChunkSize' => '下載分塊大小',
+			'settings.downloadChunkSizeDescription' => ({required Object size}) => '雲端硬碟：每次請求 ${size} MB',
+			'settings.megabytesLabel' => 'MB',
+			'settings.megabytesShort' => 'MB',
 			'settings.cellularDownloadBlocked' => '使用行動網路時無法下載。請改用 Wi-Fi 或變更設定。',
 			'settings.maxVolume' => '最大音量',
 			'settings.maxVolumeDescription' => '允許音量調大至 100% 以上，以適應聲音過小的媒體',
@@ -4104,6 +4118,8 @@ extension on TranslationsZhHant {
 			'themeEditor.title' => '自訂主題',
 			'themeEditor.startFrom' => '從現有主題開始',
 			'themeEditor.startFromDescription' => '從其他主題複製所有顏色',
+			_ => null,
+		} ?? switch (path) {
 			'themeEditor.colors' => '顏色',
 			'themeEditor.preview' => '預覽',
 			'themeEditor.slots.bg' => '背景',
@@ -4111,8 +4127,6 @@ extension on TranslationsZhHant {
 			'themeEditor.slots.outline' => '外框',
 			'themeEditor.slots.text' => '文字',
 			'themeEditor.slots.textMuted' => '次要文字',
-			_ => null,
-		} ?? switch (path) {
 			'themeEditor.slots.accent' => '強調色',
 			'themeEditor.opacity' => '不透明度',
 			'themeEditor.hexHint' => '#RRGGBB 或 #AARRGGBB',
@@ -4618,6 +4632,8 @@ extension on TranslationsZhHant {
 			'profiles.failedToLoadHomeUsers' => '無法載入您的 Plex Home 使用者。請檢查網路連線後重試。',
 			'profiles.failedToVerifyPin' => '無法驗證 PIN 碼。',
 			'profiles.newProfile' => '建立使用者設定檔',
+			_ => null,
+		} ?? switch (path) {
 			'profiles.profileNameHint' => '例如：訪客、兒童、客廳',
 			'profiles.pinProtectionOptional' => 'PIN 碼保護（選填）',
 			'profiles.pinExplain' => '切換至此使用者設定檔時需要 4 位數 PIN 碼。',
@@ -4625,8 +4641,6 @@ extension on TranslationsZhHant {
 			'profiles.pinsDontMatch' => 'PIN 碼不符合',
 			'profiles.tokenIdentityMismatch' => 'Plex 使用者設定檔權杖解析到非預期的伺服器',
 			'connections.sectionTitle' => '連線',
-			_ => null,
-		} ?? switch (path) {
 			'connections.addConnection' => '新增連線',
 			'connections.addConnectionSubtitleNoProfile' => '使用 Plex 登入或連線至 Jellyfin 或 Emby 伺服器',
 			'connections.addConnectionSubtitleScoped' => ({required Object displayName}) => '新增至 ${displayName}：Plex、Jellyfin、Emby 或其他設定檔連線',
@@ -5132,6 +5146,8 @@ extension on TranslationsZhHant {
 			'liveTv.rulesProcessRequested' => '已要求重新評估規則',
 			'liveTv.rulesProcessFailed' => '無法重新評估錄影規則',
 			'liveTv.recordShow' => '錄製節目',
+			_ => null,
+		} ?? switch (path) {
 			'liveTv.recordSettings.startEarly' => '提早開始（秒）',
 			'liveTv.recordSettings.endLate' => '延後結束（秒）',
 			'liveTv.recordSettings.newOnly' => '僅新劇集',
@@ -5139,8 +5155,6 @@ extension on TranslationsZhHant {
 			'liveTv.recordSettings.anyTime' => '在任何時間錄影',
 			'liveTv.recordSettings.skipInLibrary' => '略過媒體庫中已有的劇集',
 			'liveTv.recordSettings.keepUpTo' => '要保留的劇集數',
-			_ => null,
-		} ?? switch (path) {
 			'liveTv.recordSettings.keepUpToHint' => '0 表示保留所有劇集',
 			'liveTv.startingInMinutes' => ({required Object minutes}) => '${minutes} 分鐘後開始',
 			'liveTv.dayAtTime' => ({required Object day, required Object time}) => '${day} ${time}',
@@ -5646,6 +5660,8 @@ extension on TranslationsZhHant {
 			'performanceOverlay.player' => '播放器',
 			'performanceOverlay.memory' => '記憶體',
 			'performanceOverlay.uiFps' => '介面 FPS',
+			_ => null,
+		} ?? switch (path) {
 			'performanceOverlay.fps' => 'FPS',
 			'performanceOverlay.decoderAndroidHw' => 'Android 硬體',
 			'performanceOverlay.decoderNvidiaHw' => 'NVIDIA 硬體',
@@ -5653,8 +5669,6 @@ extension on TranslationsZhHant {
 			'performanceOverlay.decoderMediatekHw' => 'MediaTek 硬體',
 			'performanceOverlay.decoderExynosHw' => 'Exynos 硬體',
 			'performanceOverlay.decoderSoftware' => '軟體',
-			_ => null,
-		} ?? switch (path) {
 			'performanceOverlay.decoderHardware' => '硬體',
 			'performanceOverlay.tunnelingActive' => '已啟用',
 			'performanceOverlay.dvRpuFailed' => ({required Object converted, required Object failures}) => '${converted}（${failures} 個失敗）',
