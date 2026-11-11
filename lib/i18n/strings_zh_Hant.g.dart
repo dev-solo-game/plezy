@@ -2613,6 +2613,7 @@ class _Translations$streamQuality$zh_Hant extends Translations$streamQuality$zh 
 	final TranslationsZhHant _root; // ignore: unused_field
 
 	// Translations
+	@override String get noneForFile => '這個檔案暫時沒有轉碼畫質，會播放原畫';
 	@override String get original => '原畫';
 	@override String get superHd => '超清';
 	@override String get high => '高清';
@@ -6055,6 +6056,7 @@ extension on TranslationsZhHant {
 			'storage.noMatchResults' => '沒有結果',
 			'storage.mediaSources' => '媒體來源',
 			'storage.scraperSettingsDescription' => 'TMDB key、語言與刮削代理',
+			'streamQuality.noneForFile' => '這個檔案暫時沒有轉碼畫質，會播放原畫',
 			'streamQuality.original' => '原畫',
 			'streamQuality.superHd' => '超清',
 			'streamQuality.high' => '高清',

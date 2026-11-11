@@ -2612,6 +2612,7 @@ class Translations$streamQuality$zh extends Translations$streamQuality$en {
 	final TranslationsZh _root; // ignore: unused_field
 
 	// Translations
+	@override String get noneForFile => '这个文件暂时没有转码画质，会播放原画';
 	@override String get original => '原画';
 	@override String get superHd => '超清';
 	@override String get high => '高清';
@@ -6054,6 +6055,7 @@ extension on TranslationsZh {
 			'storage.noMatchResults' => '没有结果',
 			'storage.mediaSources' => '媒体来源',
 			'storage.scraperSettingsDescription' => 'TMDB key、语言与刮削代理',
+			'streamQuality.noneForFile' => '这个文件暂时没有转码画质，会播放原画',
 			'streamQuality.original' => '原画',
 			'streamQuality.superHd' => '超清',
 			'streamQuality.high' => '高清',

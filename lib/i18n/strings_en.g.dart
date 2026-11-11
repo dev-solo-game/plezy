@@ -6542,6 +6542,9 @@ class Translations$streamQuality$en {
 
 	// Translations
 
+	/// en: 'This file has no transcoded qualities yet; it plays the original'
+	String get noneForFile => 'This file has no transcoded qualities yet; it plays the original';
+
 	/// en: 'Original'
 	String get original => 'Original';
 
@@ -11039,6 +11042,7 @@ extension on Translations {
 			'storage.noMatchResults' => 'No results',
 			'storage.mediaSources' => 'Media sources',
 			'storage.scraperSettingsDescription' => 'TMDB key, language and proxy for metadata',
+			'streamQuality.noneForFile' => 'This file has no transcoded qualities yet; it plays the original',
 			'streamQuality.original' => 'Original',
 			'streamQuality.superHd' => 'Full HD',
 			'streamQuality.high' => 'HD',

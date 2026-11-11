@@ -46,9 +46,19 @@ bool _sameSubtitleSource({
 /// instead of pushing a new route. Shared by episode navigation, lifecycle
 /// restore, spurious-EOF recovery, Watch Together, and the companion remote.
 extension _VideoPlayerReloadMethods on VideoPlayerScreenState {
+  static Future<void> _saveStreamQuality(String streamQuality) async {
+    try {
+      final settings = await SettingsService.getInstance();
+      await settings.write(SettingsService.streamQuality, streamQuality);
+    } catch (e) {
+      appLogger.w('Failed to save the stream quality: $e');
+    }
+  }
+
   /// Plays the [streamQuality] rendition of the current version from where
-  /// playback is now. Kept for later episodes once it opens; a failed switch
-  /// leaves the previous rendition playing and selected.
+  /// playback is now. Once it opens it is saved as the global choice, so
+  /// later titles and later launches start in it; a failed switch leaves the
+  /// previous rendition playing and selected.
   Future<PlaybackSourceChangeOutcome> _switchStreamQuality(String streamQuality) async {
     final currentPlayer = player;
     if (!mounted || currentPlayer == null || widget.isLive) return PlaybackSourceChangeOutcome.unavailable;
@@ -71,7 +81,12 @@ extension _VideoPlayerReloadMethods on VideoPlayerScreenState {
         transitionLease: transitionLease,
         reason: 'stream quality switch',
       );
-      if (outcome != MediaReloadOutcome.opened && mounted) _selectedStreamQuality = previous;
+      if (outcome == MediaReloadOutcome.opened) {
+        // An explicit pick becomes the global choice for every title.
+        unawaited(_saveStreamQuality(streamQuality));
+      } else if (mounted) {
+        _selectedStreamQuality = previous;
+      }
       return switch (outcome) {
         MediaReloadOutcome.opened => PlaybackSourceChangeOutcome.applied,
         MediaReloadOutcome.rejected => PlaybackSourceChangeOutcome.busy,

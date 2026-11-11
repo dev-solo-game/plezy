@@ -966,6 +966,29 @@ class LocalLibraryClient implements MediaServerClient {
     return const [];
   }
 
+  /// Whether [item]'s first video sits on a source that transcodes renditions
+  /// of its own (a Quark mount). Local only: reads the library and the mount,
+  /// never the network.
+  Future<bool> offersStreamQualities(MediaItem item) async {
+    final picked = _pickVersion(await _versions(item.id), 0, null);
+    if (picked == null) return false;
+    final mount = _mountsById[picked.file.mountId] ?? await _mountManager.registry.get(picked.file.mountId);
+    return mount != null && _mountManager.variantOrder(mount).isNotEmpty;
+  }
+
+  /// The renditions [item]'s first video can play in, best first, asked of
+  /// its source. Empty when the source serves none or cannot be reached.
+  Future<List<StreamQuality>> streamQualitiesOf(MediaItem item) async {
+    final picked = _pickVersion(await _versions(item.id), 0, null);
+    if (picked == null) return const [];
+    try {
+      final variants = await _streamVariants(await _mountOf(picked.file), picked.file);
+      return [for (final v in variants) StreamQuality(id: v.id, width: v.width, height: v.height)];
+    } on PlaybackException {
+      return const [];
+    }
+  }
+
   Future<List<LibraryFileRow>> _versions(String itemId) async {
     final id = _id(itemId);
     return id == null ? const [] : _repo.versionsOf(id);

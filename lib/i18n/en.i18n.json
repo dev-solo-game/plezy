@@ -2707,6 +2707,7 @@
     "scraperSettingsDescription": "TMDB key, language and proxy for metadata"
   },
   "streamQuality": {
+    "noneForFile": "This file has no transcoded qualities yet; it plays the original",
     "original": "Original",
     "superHd": "Full HD",
     "high": "HD",

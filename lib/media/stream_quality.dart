@@ -8,6 +8,10 @@ class StreamQuality {
   /// Plays the file itself.
   static const String original = 'original';
 
+  /// Every rendition tier id, best first. Portable across files and sources
+  /// that use these names (Quark's), so a choice made once applies anywhere.
+  static const List<String> renditionOrder = ['4k', '2k', 'super', 'high', 'normal', 'low'];
+
   /// The backend's name for the rendition, the same on every file, so a pick
   /// carries over to the next episode.
   final String id;

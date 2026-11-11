@@ -49,6 +49,10 @@ import '../widgets/cycling_media_backdrop.dart';
 import '../widgets/optimized_media_image.dart';
 import '../utils/media_image_helper.dart';
 import '../utils/media_quality_labels.dart';
+import '../utils/quality_preset_labels.dart';
+import '../library/local_library_client.dart';
+import '../media/stream_quality.dart';
+import '../storage/stream_variant.dart';
 import '../services/plex_client.dart';
 import '../media/media_server_client.dart';
 import '../services/media_list_playback_launcher.dart';
@@ -410,6 +414,16 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
   final Map<String, Object> _playbackProbeRequests = {};
   int _playbackProbeGeneration = 0;
   final ValueNotifier<int> _playbackStatusRevision = ValueNotifier(0);
+
+  /// The Play target whose source serves renditions of its own (a Quark
+  /// mount), which is what shows the quality button; null otherwise.
+  final ValueNotifier<String?> _streamQualityTargetKey = ValueNotifier(null);
+
+  /// The target last checked for renditions, so the check runs once each.
+  String? _streamQualityCheckedKey;
+
+  /// True while the quality button is asking the source for renditions.
+  final ValueNotifier<bool> _streamQualityLoading = ValueNotifier(false);
   String? _playbackStatusTarget;
   Timer? _playbackProbeTimer;
 
@@ -1141,6 +1155,8 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
     _focusedEpisodeRatingsRevision.dispose();
     _playbackProbeTimer?.cancel();
     _playbackStatusRevision.dispose();
+    _streamQualityTargetKey.dispose();
+    _streamQualityLoading.dispose();
     _extrasScrollController.dispose();
     _extrasFocusNode.removeListener(_handleExtrasFocusChange);
     _extrasFocusNode.dispose();

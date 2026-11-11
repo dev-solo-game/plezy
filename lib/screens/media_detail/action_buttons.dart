@@ -17,7 +17,10 @@ extension _MediaDetailActionButtons on _MediaDetailScreenState {
   Widget _buildActionButtons(MediaItem metadata) {
     // Tie asynchronous playback prompts to the actionable subtree, not the
     // route's State: a deleted first-route detail intentionally stays mounted.
-    return Builder(builder: (context) => _buildAvailableActionButtons(context, metadata));
+    return ValueListenableBuilder<String?>(
+      valueListenable: _streamQualityTargetKey,
+      builder: (context, _, _) => _buildAvailableActionButtons(context, metadata),
+    );
   }
 
   Widget _buildAvailableActionButtons(BuildContext context, MediaItem metadata) {
@@ -113,6 +116,27 @@ extension _MediaDetailActionButtons on _MediaDetailScreenState {
     }
 
     final primaryTrailer = _getPrimaryTrailer();
+
+    // Quality for sources that transcode renditions of their own (Quark):
+    // a global choice, shown beside Play for the title Play would start.
+    final qualityTarget = _playbackTargetItem(metadata);
+    final qualityClient = widget.isOffline ? null : _getMediaClientForMetadata(context);
+    if (qualityTarget != null && qualityClient is LocalLibraryClient) {
+      _checkStreamQualityOffer(qualityClient, qualityTarget);
+    }
+    final showQuality =
+        qualityTarget != null &&
+        qualityClient is LocalLibraryClient &&
+        _streamQualityTargetKey.value == qualityTarget.globalKey;
+    final qualityTextStyle = TextStyle(fontSize: isTv ? 15 * tvScale : 14, fontWeight: .w600);
+    String qualityLabel() => streamQualityName(SettingsService.instance.read(SettingsService.streamQuality));
+
+    Future<void> onQualityPressed() async {
+      final target = _playbackTargetItem(metadata);
+      final client = qualityClient;
+      if (!_canUseDetail || target == null || client is! LocalLibraryClient) return;
+      await _pickStreamQuality(context, client, target);
+    }
 
     final isKeyboardMode = InputModeTracker.isKeyboardMode(context);
     final colorScheme = Theme.of(context).colorScheme;
@@ -229,6 +253,49 @@ extension _MediaDetailActionButtons on _MediaDetailScreenState {
       );
     }
 
+    Widget qualityButton(FocusableActionBuildState state) {
+      return SettingsBuilder(
+        prefs: const [SettingsService.streamQuality],
+        builder: (context) => ValueListenableBuilder<bool>(
+          valueListenable: _streamQualityLoading,
+          builder: (context, loading, _) {
+            final label = qualityLabel();
+            return Semantics(
+              label: t.videoControls.qualityColumnHeader,
+              value: label,
+              button: true,
+              onTap: loading ? null : onQualityPressed,
+              excludeSemantics: true,
+              child: Tooltip(
+                message: t.videoControls.qualityColumnHeader,
+                child: SizedBox(
+                  height: actionSize,
+                  child: FilledButton.tonal(
+                    onPressed: loading ? null : onQualityPressed,
+                    style: actionButtonStyle(
+                      showFocus: state.showFocus,
+                      padding: .symmetric(horizontal: isTv ? 15 * tvScale : 14),
+                    ),
+                    child: Row(
+                      mainAxisSize: .min,
+                      children: [
+                        if (loading)
+                          LoadingIndicatorBox(size: playIconSize)
+                        else
+                          AppIcon(Symbols.high_quality_rounded, fill: 1, size: playIconSize),
+                        SizedBox(width: isTv ? 6 * tvScale : 6),
+                        Text(label, style: qualityTextStyle),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            );
+          },
+        ),
+      );
+    }
+
     Widget iconActionButton(
       FocusableActionBuildState state, {
       required Widget icon,
@@ -259,6 +326,14 @@ extension _MediaDetailActionButtons on _MediaDetailScreenState {
             spacingBefore: splitGap,
             onPressed: onPlayVersionPressed,
             builder: (context, state) => versionButton(state),
+          )
+        : null;
+
+    final qualityAction = showQuality
+        ? FocusableAction(
+            debugLabel: 'detail_stream_quality',
+            onPressed: () => unawaited(onQualityPressed()),
+            builder: (context, state) => qualityButton(state),
           )
         : null;
 
@@ -360,6 +435,7 @@ extension _MediaDetailActionButtons on _MediaDetailScreenState {
     final allActions = <FocusableAction>[
       playAction,
       ?versionAction,
+      ?qualityAction,
       ?trailerAction,
       ?shuffleAction,
       ?downloadAction,
@@ -383,11 +459,28 @@ extension _MediaDetailActionButtons on _MediaDetailScreenState {
     }
 
     final estimatedPlayWidth = playButtonWidthEstimate();
+
+    double qualityButtonWidthEstimate() {
+      final textPainter = TextPainter(
+        text: TextSpan(text: qualityLabel(), style: qualityTextStyle),
+        maxLines: 1,
+        textDirection: Directionality.of(context),
+      )..layout();
+      final textWidth = textPainter.width;
+      textPainter.dispose();
+      return (isTv ? 30.0 * tvScale : 28.0) + playIconSize + (isTv ? 6 * tvScale : 6) + textWidth;
+    }
+
+    final estimatedQualityWidth = qualityAction == null ? 0.0 : qualityButtonWidthEstimate();
     double estimatedRowWidth(List<FocusableAction> actions) {
       if (actions.isEmpty) return 0;
       var width = estimatedPlayWidth;
       for (var i = 1; i < actions.length; i++) {
-        final actionWidth = identical(actions[i], versionAction) ? versionSegmentWidth : actionSize;
+        final actionWidth = identical(actions[i], versionAction)
+            ? versionSegmentWidth
+            : identical(actions[i], qualityAction)
+            ? estimatedQualityWidth
+            : actionSize;
         width += (actions[i].spacingBefore ?? gap) + actionWidth;
       }
       return width;
@@ -400,7 +493,14 @@ extension _MediaDetailActionButtons on _MediaDetailScreenState {
         return compact;
       }
 
-      final medium = <FocusableAction>[playAction, ?versionAction, ?downloadAction, watchedAction, ?moreActionsAction];
+      final medium = <FocusableAction>[
+        playAction,
+        ?versionAction,
+        ?qualityAction,
+        ?downloadAction,
+        watchedAction,
+        ?moreActionsAction,
+      ];
       if (!maxWidth.isFinite || estimatedRowWidth(medium) <= maxWidth) return medium;
 
       final compact = <FocusableAction>[playAction, ?versionAction, watchedAction, ?moreActionsAction];
@@ -454,6 +554,72 @@ extension _MediaDetailActionButtons on _MediaDetailScreenState {
         );
       },
     );
+  }
+
+  /// Learns, once per Play target, whether its source serves renditions of
+  /// its own. A local check (library and mount, no network); the button
+  /// appears when it answers yes.
+  void _checkStreamQualityOffer(LocalLibraryClient client, MediaItem target) {
+    final key = target.globalKey;
+    if (_streamQualityCheckedKey == key) return;
+    _streamQualityCheckedKey = key;
+    unawaited(
+      client.offersStreamQualities(target).then(
+        (offered) {
+          if (!mounted || _streamQualityCheckedKey != key) return;
+          _streamQualityTargetKey.value = offered ? key : null;
+        },
+        onError: (Object e) => appLogger.w('Could not check renditions for ${target.title}: $e'),
+      ),
+    );
+  }
+
+  /// Asks the source which renditions [target] has, then lets the user pick
+  /// the global quality. The list marks the tier this file would play in
+  /// under the current choice, by the same rule playback uses.
+  Future<void> _pickStreamQuality(BuildContext context, LocalLibraryClient client, MediaItem target) async {
+    if (_streamQualityLoading.value) return;
+    _streamQualityLoading.value = true;
+    final List<StreamQuality> qualities;
+    try {
+      qualities = await client.streamQualitiesOf(target);
+    } finally {
+      if (mounted) _streamQualityLoading.value = false;
+    }
+    if (!_canUseDetail || !context.mounted) return;
+    if (qualities.isEmpty) {
+      showAppSnackBar(context, t.streamQuality.noneForFile);
+      return;
+    }
+
+    final settings = SettingsService.instance;
+    final wanted = settings.read(SettingsService.streamQuality);
+    final playing =
+        StreamVariant.pickBy(qualities, (q) => q.id, wanted, StreamQuality.renditionOrder)?.id ??
+        StreamQuality.original;
+    final source = target.mediaVersions?.firstOrNull;
+    final options = [
+      StreamQuality(id: StreamQuality.original, width: source?.width, height: source?.height),
+      ...qualities,
+    ];
+    final picked = await showOptionPickerDialog<String>(
+      context,
+      title: t.videoControls.qualityColumnHeader,
+      options: [
+        for (final quality in options)
+          (
+            icon: quality.id == playing ? Symbols.check_rounded : null,
+            label: streamQualityName(quality.id),
+            value: quality.id,
+          ),
+      ],
+      subtitleOf: (id) {
+        final quality = options.firstWhere((q) => q.id == id);
+        return streamQualityResolution(quality.width, quality.height);
+      },
+    );
+    if (picked == null || !_canUseDetail) return;
+    await settings.write(SettingsService.streamQuality, picked);
   }
 
   Future<void> _handleWatchlistTogglePressed(MediaItem metadata) async {

@@ -30,15 +30,20 @@ class StreamVariant {
   /// [offered] has it, else the best one ranked below it in [order], else
   /// the lowest offered. Null for the original file or nothing offered.
   /// [offered] is best first.
-  static StreamVariant? pick(List<StreamVariant> offered, String wanted, List<String> order) {
+  static StreamVariant? pick(List<StreamVariant> offered, String wanted, List<String> order) =>
+      pickBy(offered, (v) => v.id, wanted, order);
+
+  /// [pick] over anything that names a rendition, so a list of qualities can
+  /// be resolved the way playback will resolve it.
+  static T? pickBy<T>(List<T> offered, String Function(T) idOf, String wanted, List<String> order) {
     if (offered.isEmpty) return null;
-    for (final variant in offered) {
-      if (variant.id == wanted) return variant;
+    for (final item in offered) {
+      if (idOf(item) == wanted) return item;
     }
     final wantedRank = order.indexOf(wanted);
     if (wantedRank < 0) return null;
-    for (final variant in offered) {
-      if (order.indexOf(variant.id) > wantedRank) return variant;
+    for (final item in offered) {
+      if (order.indexOf(idOf(item)) > wantedRank) return item;
     }
     return offered.last;
   }

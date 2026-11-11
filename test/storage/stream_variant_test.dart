@@ -95,6 +95,16 @@ void main() {
     test('takes the lowest offered when every one is above the one asked for', () {
       expect(StreamVariant.pick([_variant('super'), _variant('high')], 'low', _order)?.id, 'high');
     });
+
+    test('pickBy resolves bare rendition names the way playback does', () {
+      const offered = ['super', 'high', 'low'];
+      String? resolve(String wanted) => StreamVariant.pickBy(offered, (id) => id, wanted, _order);
+      expect(resolve('original'), isNull);
+      expect(resolve('high'), 'high');
+      expect(resolve('4k'), 'super');
+      expect(resolve('normal'), 'low');
+      expect(StreamVariant.pickBy(const <String>[], (id) => id, 'high', _order), isNull);
+    });
   });
 
   test('rewritePlaylist points media lines and URI attributes at the proxy', () {

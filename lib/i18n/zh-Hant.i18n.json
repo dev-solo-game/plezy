@@ -2695,6 +2695,7 @@
     "scraperSettingsDescription": "TMDB key、語言與刮削代理"
   },
   "streamQuality": {
+    "noneForFile": "這個檔案暫時沒有轉碼畫質，會播放原畫",
     "original": "原畫",
     "superHd": "超清",
     "high": "高清",

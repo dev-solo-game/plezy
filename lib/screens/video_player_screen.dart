@@ -1811,6 +1811,9 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen>
               cellularDefault: settingsService.read(SettingsService.cellularQualityPreset),
               generalDefault: settingsService.read(SettingsService.defaultQualityPreset),
             );
+        // The cloud-drive rendition follows the global choice, so each
+        // title opens in the quality last picked anywhere.
+        _selectedStreamQuality = settingsService.read(SettingsService.streamQuality);
         final playbackResolver = PlaybackSourceResolver(
           serverManager: context.read<MultiServerProvider>().serverManager,
           database: context.read<AppDatabase>(),

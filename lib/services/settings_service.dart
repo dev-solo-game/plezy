@@ -766,6 +766,13 @@ class SettingsService extends BaseSharedPreferencesService {
     defaultValue: TranscodeQualityPreset.original,
   );
 
+  /// The rendition a cloud drive's own transcodes play in, as a portable tier
+  /// id (`original`, `4k`, `2k`, `super`, `high`, `normal`, `low`). Global:
+  /// set from the detail page or the player, it applies to every title. A
+  /// file without that tier plays the nearest lower one; one with no
+  /// renditions at all plays the original.
+  static const streamQuality = StringPref('stream_quality', defaultValue: 'original');
+
   /// Startup quality cap applied instead of [defaultQualityPreset] when the
   /// device is on a cellular-only connection. Null = follow
   /// [defaultQualityPreset].
@@ -1614,6 +1621,7 @@ class SettingsService extends BaseSharedPreferencesService {
     creditsPattern,
     autoRemoveWatchedDownloads,
     defaultQualityPreset,
+    streamQuality,
     cellularQualityPreset,
     musicQualityPreset,
     liveTvDefaultFavorites,
