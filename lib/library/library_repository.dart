@@ -908,10 +908,12 @@ class LibraryRepository {
   }
 
   /// Deletes movies and episodes that no video points at any more, then the
-  /// seasons and shows left without children. Titles the user locked stay.
+  /// seasons and shows left without children. A lock only keeps a re-scrape
+  /// from overwriting the user's match; a locked title whose files are all
+  /// gone has nothing left to play and goes too.
   Future<void> pruneEmptyTitles() async {
     await _db.customUpdate(
-      "DELETE FROM library_items WHERE kind IN ('movie', 'episode') AND locked = 0 AND NOT EXISTS "
+      "DELETE FROM library_items WHERE kind IN ('movie', 'episode') AND NOT EXISTS "
       "(SELECT 1 FROM library_files f WHERE f.item_id = library_items.id AND f.role = 'video')",
       updates: {_db.libraryItems},
       updateKind: UpdateKind.delete,
@@ -919,7 +921,7 @@ class LibraryRepository {
     // Seasons first, so a show whose last season just went is caught too.
     for (final kind in const ['season', 'show']) {
       await _db.customUpdate(
-        'DELETE FROM library_items WHERE kind = ? AND locked = 0 AND NOT EXISTS '
+        'DELETE FROM library_items WHERE kind = ? AND NOT EXISTS '
         '(SELECT 1 FROM library_items c WHERE c.parent_id = library_items.id)',
         variables: [Variable.withString(kind)],
         updates: {_db.libraryItems},

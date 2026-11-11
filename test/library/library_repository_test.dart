@@ -380,12 +380,15 @@ void main() {
       expect(removed, 6);
 
       final titles = (await db.select(db.libraryItems).get()).map((i) => i.title).toSet();
-      expect(titles, {'Kept', 'Pinned', 'The Expanse', 'Season 2', 'S2E2'});
+      // A manual match does not keep a title whose file is gone.
+      expect(titles, {'Kept', 'The Expanse', 'Season 2', 'S2E2'});
     });
 
     test('removing a mount removes its files but leaves titles for pruning', () async {
       final film = await addTitle('Film');
+      final matched = await addTitle('Matched by hand', locked: true);
       await addVideo('/Movies/film.mkv', itemId: film);
+      await addVideo('/Movies/matched.mkv', itemId: matched);
       await (db.delete(db.mounts)..where((t) => t.id.equals('m1'))).go();
       expect(await db.select(db.libraryFiles).get(), isEmpty);
 

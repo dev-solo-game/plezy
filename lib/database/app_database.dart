@@ -381,7 +381,7 @@ class AppDatabase extends _$AppDatabase {
   static const FormatException _invalidRecoveryImage = FormatException('Invalid tvOS database recovery image');
 
   @override
-  int get schemaVersion => 30;
+  int get schemaVersion => 31;
 
   @override
   MigrationStrategy get migration {
@@ -844,6 +844,22 @@ class AppDatabase extends _$AppDatabase {
             "WHERE locked = 0 AND kind IN ('movie', 'show') AND "
             "((kind = 'movie' AND metadata_source = 'bangumi') OR library_type = 'pending')",
           );
+        }
+        if (from < 31) {
+          // Pruning used to spare titles the user matched by hand, so removing
+          // a mount or a file left them behind with nothing to play. Clear
+          // what that left: titles without videos, then empty seasons and shows.
+          appLogger.i('Removing library titles left without files (v31 migration)');
+          await customStatement(
+            "DELETE FROM library_items WHERE kind IN ('movie', 'episode') AND NOT EXISTS "
+            "(SELECT 1 FROM library_files f WHERE f.item_id = library_items.id AND f.role = 'video')",
+          );
+          for (final kind in const ['season', 'show']) {
+            await customStatement(
+              "DELETE FROM library_items WHERE kind = '$kind' AND NOT EXISTS "
+              '(SELECT 1 FROM library_items c WHERE c.parent_id = library_items.id)',
+            );
+          }
         }
       },
     );
