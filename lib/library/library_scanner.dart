@@ -301,7 +301,7 @@ class LibraryScanner {
 
   /// Bumped whenever parsing or classification changes in a way that files
   /// already in the library should be re-filed under.
-  static const int namingVersion = 1;
+  static const int namingVersion = 2;
 
   /// Re-files every video of [mountId] from the paths already in the
   /// database, without listing the mount: for when the naming rules changed.

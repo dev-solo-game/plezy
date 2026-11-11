@@ -4,6 +4,7 @@ import 'package:plezy/database/app_database.dart';
 import 'package:plezy/library/library_repository.dart';
 import 'package:plezy/library/library_scanner.dart';
 import 'package:plezy/library/library_scraper.dart';
+import 'package:plezy/library/scrapers/bangumi_provider.dart';
 import 'package:plezy/library/scrapers/nfo_reader.dart';
 import 'package:plezy/library/scrapers/scraped_metadata.dart';
 import 'package:plezy/storage/storage_driver.dart';
@@ -120,6 +121,15 @@ void main() {
 
   Future<List<LibraryItemRow>> items(String kind) async =>
       (await db.select(db.libraryItems).get()).where((i) => i.kind == kind).toList();
+
+  test('Bangumi tags that are dates, formats or sources are not genres', () {
+    for (final noise in ['2016', '2018年7月', '2023年', 'TV', 'WEB', '漫画改', '剧场版', 'OVA', '日本', '']) {
+      expect(BangumiProvider.isNoiseTag(noise), isTrue, reason: noise);
+    }
+    for (final genre in ['科幻', '治愈', '战斗', 'BL', '恋爱', 'Sci-Fi & Fantasy', '3年B组']) {
+      expect(BangumiProvider.isNoiseTag(genre), isFalse, reason: genre);
+    }
+  });
 
   test('matchScore rewards the right year and vetoes a distant one', () {
     final same = ScrapedCandidate(source: 'tmdb', id: '1', title: 'Dune', year: 2021);

@@ -142,6 +142,19 @@ abstract final class MediaNameParser {
   );
 
   static final RegExp _year = RegExp(r'(?<![0-9A-Za-z])(19[0-9]{2}|20[0-9]{2})(?![0-9A-Za-z])');
+
+  /// A year at the very start, alone or bracketed, then a separator, then a
+  /// CJK character. Only CJK titles qualify: "2001.A.Space.Odyssey" and
+  /// "2046" are titles that start with a number, and with Latin letters the
+  /// two cannot be told apart, while "年份.中文片名" is a common release name.
+  ///
+  /// Not when an episode or season marker follows: in "1922.第03集" the
+  /// number is the show's title.
+  static final RegExp _leadingYear = RegExp(
+    r'^\s*[\[(【（]?((?:19|20)\d{2})[\])】）]?[\s._\-]+'
+    r'(?!第\s*[0-9零〇一二三四五六七八九十百两兩]+\s*[集话話回期季部])'
+    r'(?=[\u3400-\u9fff\uf900-\ufaff])',
+  );
   static final RegExp _brackets = RegExp(r'[\[【]([^\]】]*)[\]】]');
   static final RegExp _checksum = RegExp(r'^[0-9A-Fa-f]{8}$');
   static final RegExp _trailingGroup = RegExp(r'-\s*([A-Za-z0-9][A-Za-z0-9@.]{1,24})\s*$');
@@ -164,6 +177,11 @@ abstract final class MediaNameParser {
 
     final standard = _parseStandard(name);
     if (standard != null) return standard;
+
+    // "2023.超级马里奥兄弟大电影": a release year in front of a Chinese title.
+    final lead = _leadingYear.firstMatch(name);
+    final leadingYear = lead == null ? null : int.parse(lead.group(1)!);
+    if (lead != null) name = name.substring(lead.end);
 
     // ─── Fansub brackets ────────────────────────────────────────────────
     String? group;
@@ -337,7 +355,8 @@ abstract final class MediaNameParser {
     final resolution = _resolutionOf(details);
     return ParsedName(
       title: title.isEmpty ? null : title,
-      year: year,
+      // A year later in the name is more specific than one in front.
+      year: year ?? leadingYear,
       season: season,
       episode: episode,
       episodeEnd: episodeEnd != null && episode != null && episodeEnd > episode ? episodeEnd : null,

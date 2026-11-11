@@ -78,11 +78,70 @@ class BangumiProvider implements MetadataProvider {
       summary: decoded.str('summary'),
       rating: score == null || score <= 0 ? null : score,
       genres: [
-        // Tags are user-made and noisy; the few most-used ones read as genres.
-        for (final tag in decoded.objs('tags').take(6)) ?tag.str('name'),
-      ],
+        // Tags are user-made and noisy; the most-used ones that describe the
+        // content (not its air date, format or source) read as genres.
+        for (final tag in decoded.objs('tags'))
+          if (tag.str('name') case final String name when !isNoiseTag(name)) name,
+      ].take(6).toList(),
       posterSource: images?.str('large') ?? images?.str('common'),
     );
+  }
+
+  static final RegExp _datedTag = RegExp(r'^\d{2,4}(?:年|\s|$)|\d{1,2}月|^\d+$');
+  static const Set<String> _formatTags = {
+    'tv',
+    'web',
+    'ova',
+    'oad',
+    'bd',
+    'dvd',
+    'sp',
+    '剧场版',
+    '劇場版',
+    '电影',
+    '電影',
+    '动画',
+    '動畫',
+    '动画电影',
+    'anime',
+    'tv动画',
+    'tv動畫',
+    '原创',
+    '原創',
+    '日本',
+    '中国',
+    '中國',
+    '国产',
+    '國產',
+    '日漫',
+    '国漫',
+    '國漫',
+    '漫画改',
+    '漫改',
+    '轻小说改',
+    '輕小說改',
+    '小说改',
+    '小說改',
+    '游戏改',
+    '遊戲改',
+    '续作',
+    '續作',
+    '短片',
+    '泡面番',
+    '未上映',
+    '季番',
+    '新番',
+    '3d',
+    '2d',
+    'cg',
+  };
+
+  /// Bangumi tags that say when or how a title aired, or where it came
+  /// from, rather than what it is: "2023", "2018年7月", "TV", "漫画改".
+  static bool isNoiseTag(String tag) {
+    final name = tag.trim().toLowerCase();
+    if (name.isEmpty) return true;
+    return _datedTag.hasMatch(name) || _formatTags.contains(name);
   }
 
   static List<String> _aliases(Map<dynamic, dynamic> subject) {

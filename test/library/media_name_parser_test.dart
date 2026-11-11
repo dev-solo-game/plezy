@@ -213,4 +213,30 @@ void main() {
       expect(a.looseEpisode ?? a.episode, 5);
     });
   });
+
+  group('a year in front of the title', () {
+    test('is the release year when a Chinese title follows', () {
+      final a = MediaNameParser.parseFile('2023.超级马里奥兄弟大电影.mp4');
+      expect((a.title, a.year), ('超级马里奥兄弟大电影', 2023));
+      final b = MediaNameParser.parseFile('2019 流浪地球 1080p.mkv');
+      expect((b.title, b.year, b.resolution), ('流浪地球', 2019, '1080p'));
+      final c = MediaNameParser.parseFile('[2021] 你好，李焕英.mkv');
+      expect((c.title, c.year), ('你好，李焕英', 2021));
+      final d = MediaNameParser.parseFile('(2008)-非诚勿扰.mkv');
+      expect((d.title, d.year), ('非诚勿扰', 2008));
+    });
+
+    test('is part of the title otherwise', () {
+      expect(MediaNameParser.parseFile('2001.A.Space.Odyssey.mkv').title, '2001 A Space Odyssey');
+      final e = MediaNameParser.parseFile('2046.2004.mkv');
+      expect((e.title, e.year), ('2046', 2004));
+      expect(MediaNameParser.parseFile('1917.mkv').title, '1917');
+      expect(MediaNameParser.parseFile('1921.mkv').title, '1921');
+    });
+
+    test('a later year wins over the one in front', () {
+      final f = MediaNameParser.parseFile('2023.流浪地球2.2023.2160p.mkv');
+      expect((f.title, f.year), ('流浪地球2', 2023));
+    });
+  });
 }

@@ -39,6 +39,7 @@ import '../storage/storage_path.dart';
 import '../utils/external_ids.dart';
 import '../utils/media_server_http_client.dart' show AbortController;
 import 'library_repository.dart' as lib;
+import 'scrapers/bangumi_provider.dart';
 
 /// The local media library, presented to the app as a media server.
 ///
@@ -185,7 +186,12 @@ class LocalLibraryClient implements MediaServerClient {
     if (withDetails) {
       // Episodes and seasons show their series' genres and cast.
       final detailId = show?.id ?? row.id;
-      genres = [for (final genre in await _repo.genresOf(detailId)) genre.name];
+      // Titles scraped before Bangumi's tags were cleaned still carry air
+      // dates and formats ("2023", "TV") as genres.
+      genres = [
+        for (final genre in await _repo.genresOf(detailId))
+          if (!BangumiProvider.isNoiseTag(genre.name)) genre.name,
+      ];
       final credits = await _repo.creditsOf(detailId);
       roles = [
         for (final credit in credits.where((c) => c.job == 'actor'))
