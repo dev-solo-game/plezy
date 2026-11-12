@@ -2734,5 +2734,27 @@
     "high": "HD",
     "normal": "SD",
     "low": "Low"
+  },
+  "workSkip": {
+    "title": "Skip intro and credits",
+    "scopeShow": "Applies to every episode in this series, within this media source.",
+    "scopeMovie": "Applies to every file version of this movie, within this media source.",
+    "intro": "Skip intro",
+    "introStart": "Intro starts at",
+    "introEnd": "Intro ends at",
+    "credits": "Skip credits",
+    "creditsDuration": "Credits length",
+    "resumeBeforeEnd": "Keep the final scene",
+    "resumeHint": "Time remaining after the jump. 00:00 finishes playback.",
+    "timeHint": "Minutes:seconds",
+    "behavior": "Intro skips immediately. Credits use the delay in playback settings (5 seconds by default).",
+    "invalid": "Check the time ranges: end must follow start, credits must fit, and ranges cannot overlap.",
+    "unavailable": "Match this movie or series to TMDB or IMDb before saving skip settings.",
+    "loadFailed": "Unable to load skip settings. Please try again.",
+    "saveFailed": "Unable to save. Your changes have not been applied.",
+    "delay": "Skip credits delay",
+    "delayDescription": "Wait $seconds seconds before skipping credits. Intro skips immediately.",
+    "cancelVisit": "Cancel this skip",
+    "legend": "Blue: intro · Amber: credits"
   }
 }

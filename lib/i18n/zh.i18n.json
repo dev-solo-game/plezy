@@ -2722,5 +2722,27 @@
     "high": "高清",
     "normal": "标清",
     "low": "流畅"
+  },
+  "workSkip": {
+    "title": "跳过片头片尾",
+    "scopeShow": "对当前媒体来源中的整部剧生效，所有集数共用。",
+    "scopeMovie": "对当前媒体来源中的这部电影生效，所有文件版本共用。",
+    "intro": "跳过片头",
+    "introStart": "片头开始时间",
+    "introEnd": "片头结束时间",
+    "credits": "跳过片尾",
+    "creditsDuration": "片尾时长",
+    "resumeBeforeEnd": "保留结尾彩蛋",
+    "resumeHint": "跳转后剩余的时长。00:00 表示结束播放。",
+    "timeHint": "分:秒",
+    "behavior": "片头直接跳过；片尾使用播放设置中的延迟，默认 5 秒。",
+    "invalid": "请检查时间：片头结束需晚于开始，片尾不能超出视频，区间不能重叠。",
+    "unavailable": "请先为这部电影或剧集匹配 TMDB 或 IMDb 信息，再设置跳过。",
+    "loadFailed": "无法读取跳过设置，请重试。",
+    "saveFailed": "保存失败，修改尚未生效，请重试。",
+    "delay": "跳过片尾延迟时间",
+    "delayDescription": "进入片尾后等待 $seconds 秒再跳过；片头直接跳过。",
+    "cancelVisit": "取消本次跳过",
+    "legend": "蓝色：片头 · 金色：片尾"
   }
 }

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../media/work_skip_settings.dart';
 import 'package:material_symbols_icons/symbols.dart';
 
 import '../../media/media_item.dart';
@@ -32,6 +33,8 @@ import 'widgets/video_timeline_bar.dart';
 class MobileVideoControls extends StatefulWidget {
   final Player player;
   final MediaItem metadata;
+  final WorkSkipSettings skipSettings;
+  final ValueChanged<Duration>? onEditSkipAt;
   final List<MediaChapter> chapters;
   final bool chaptersLoaded;
   final bool showChapterMarkersOnTimeline;
@@ -91,6 +94,8 @@ class MobileVideoControls extends StatefulWidget {
     super.key,
     required this.player,
     required this.metadata,
+    this.skipSettings = const WorkSkipSettings(),
+    this.onEditSkipAt,
     required this.chapters,
     required this.chaptersLoaded,
     this.showChapterMarkersOnTimeline = true,
@@ -437,6 +442,8 @@ class _MobileVideoControlsState extends State<MobileVideoControls> with SingleTi
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: VideoTimelineBar(
+          skipSettings: widget.skipSettings,
+          onEditSkipAt: widget.onEditSkipAt,
           player: widget.player,
           chapters: widget.chapters,
           chaptersLoaded: widget.chaptersLoaded,

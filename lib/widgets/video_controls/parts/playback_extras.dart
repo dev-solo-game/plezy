@@ -11,6 +11,7 @@ extension _PlexVideoControlsPlaybackExtrasMethods on _PlexVideoControlsState {
     _isLoadingExtras = true;
     _extrasLoadKey = loadKey;
 
+    unawaited(_loadManualSkipSettings());
     final metadata = widget.metadata;
     final serverId = metadata.serverId;
     // Read providers before any await — `context` after an async gap is
@@ -37,7 +38,7 @@ extension _PlexVideoControlsPlaybackExtrasMethods on _PlexVideoControlsState {
     if (!mounted) return;
     _setControlsState(() {
       _chapters = extras.chapters;
-      _markers = extras.markers;
+
       _chaptersLoaded = true;
       _markersLoaded = true;
     });

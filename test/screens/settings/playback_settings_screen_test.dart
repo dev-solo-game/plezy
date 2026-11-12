@@ -99,6 +99,29 @@ void main() {
     expect(find.descendant(of: tile, matching: find.text('Play immediately')), findsOneWidget);
   });
 
+  testWidgets('credits delay defaults to five and accepts zero; old marker settings are gone', (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(1000, 1400);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+    await tester.pumpWidget(MaterialApp(theme: monoTheme(MonoPalette.dark), home: const PlaybackSettingsScreen()));
+    await tester.pumpAndSettle();
+    final title = find.text(t.workSkip.delay);
+    await tester.scrollUntilVisible(title, 500, scrollable: find.byType(Scrollable).first);
+    await tester.ensureVisible(title);
+    await tester.pumpAndSettle();
+    expect(SettingsService.instance.read(SettingsService.autoSkipDelay), 5);
+    expect(find.text(t.settings.skipIntroMode), findsNothing);
+    expect(find.text(t.settings.skipCreditsMode), findsNothing);
+    expect(find.text(t.settings.forceSkipMarkerFallback), findsNothing);
+    await tester.tap(title);
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), '0');
+    await tester.tap(find.text(t.common.save));
+    await tester.pumpAndSettle();
+    expect(SettingsService.instance.read(SettingsService.autoSkipDelay), 0);
+  });
+
   testWidgets('picks inverse telecine on the mpv path', (tester) async {
     tester.view.devicePixelRatio = 1;
     tester.view.physicalSize = const Size(1000, 1400);

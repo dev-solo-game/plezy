@@ -339,68 +339,16 @@ class PlaybackSettingsScreen extends StatelessWidget {
         labelText: t.settings.secondsLabel,
         suffixText: t.settings.secondsShort,
       ),
-      SettingSelectionTile<SkipMarkerMode>(
-        pref: SettingsService.skipIntroMode,
-        icon: Symbols.fast_forward_rounded,
-        title: t.settings.skipIntroMode,
-        subtitleBuilder: (mode) => '${_skipMarkerModeLabel(mode)} · ${_skipIntroModeDescription(mode)}',
-        options: SkipMarkerMode.values.map((m) => DialogOption(value: m, title: _skipMarkerModeLabel(m))).toList(),
-      ),
-      SettingSelectionTile<SkipMarkerMode>(
-        pref: SettingsService.skipCreditsMode,
-        icon: Symbols.skip_next_rounded,
-        title: t.settings.skipCreditsMode,
-        subtitleBuilder: (mode) => '${_skipMarkerModeLabel(mode)} · ${_skipCreditsModeDescription(mode)}',
-        options: SkipMarkerMode.values.map((m) => DialogOption(value: m, title: _skipMarkerModeLabel(m))).toList(),
-      ),
-      SettingSwitchTile(
-        pref: SettingsService.forceSkipMarkerFallback,
-        icon: Symbols.tune_rounded,
-        title: t.settings.forceSkipMarkerFallback,
-        subtitle: t.settings.forceSkipMarkerFallbackDescription,
-      ),
       SettingNumberTile(
         pref: SettingsService.autoSkipDelay,
         icon: Symbols.timer_rounded,
-        title: t.settings.autoSkipDelay,
-        subtitleBuilder: (v) => t.settings.autoSkipDelayDescription(seconds: v.toString()),
+        title: t.workSkip.delay,
+        subtitleBuilder: (v) => t.workSkip.delayDescription(seconds: v.toString()),
         labelText: t.settings.secondsLabel,
         suffixText: t.settings.secondsShort,
       ),
-      SettingRegexTile(
-        pref: SettingsService.introPattern,
-        icon: Symbols.match_case_rounded,
-        title: t.settings.introPattern,
-        subtitle: t.settings.introPatternDescription,
-        defaultValue: SettingsService.defaultIntroPattern,
-      ),
-      SettingRegexTile(
-        pref: SettingsService.creditsPattern,
-        icon: Symbols.match_case_rounded,
-        title: t.settings.creditsPattern,
-        subtitle: t.settings.creditsPatternDescription,
-        defaultValue: SettingsService.defaultCreditsPattern,
-      ),
     ],
   );
-
-  String _skipMarkerModeLabel(SkipMarkerMode mode) => switch (mode) {
-    SkipMarkerMode.off => t.settings.skipMarkerModeOff,
-    SkipMarkerMode.button => t.settings.skipMarkerModeButton,
-    SkipMarkerMode.auto => t.settings.skipMarkerModeAuto,
-  };
-
-  String _skipIntroModeDescription(SkipMarkerMode mode) => switch (mode) {
-    SkipMarkerMode.off => t.settings.skipIntroModeOffDescription,
-    SkipMarkerMode.button => t.settings.skipIntroModeButtonDescription,
-    SkipMarkerMode.auto => t.settings.skipIntroModeAutoDescription,
-  };
-
-  String _skipCreditsModeDescription(SkipMarkerMode mode) => switch (mode) {
-    SkipMarkerMode.off => t.settings.skipCreditsModeOffDescription,
-    SkipMarkerMode.button => t.settings.skipCreditsModeButtonDescription,
-    SkipMarkerMode.auto => t.settings.skipCreditsModeAutoDescription,
-  };
 
   /// Optional touch gestures on the player surface (#1810); the group only
   /// renders on mobile, matching where the gestures exist.

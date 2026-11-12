@@ -18,6 +18,10 @@ extension _PlexVideoControlsNavigationMethods on _PlexVideoControlsState {
         onNext: _abandoningBurst(widget.onNext),
         onPrevious: _abandoningBurst(widget.onPrevious),
         onPlayPause: () => unawaited(_playOrPause()),
+        skipSettings: _manualSkipRules,
+        onEditSkipAt: !widget.isLive && widget.canControl
+            ? (time) => unawaited(_editWorkSkipSettings(clicked: time))
+            : null,
         chapters: _chapters,
         chaptersLoaded: _chaptersLoaded,
         showChapterMarkersOnTimeline: _showChapterMarkersOnTimeline,
@@ -30,7 +34,7 @@ extension _PlexVideoControlsNavigationMethods on _PlexVideoControlsState {
         onSeekEnd: _finalizeSeek,
         onScrubStart: _holdTimelineScrub,
         onScrubEnd: _releaseTimelineScrub,
-        onSeekRequested: widget.onSeekRequested,
+        onSeekRequested: _seekToPosition,
         getReplayIcon: getReplayIcon,
         getForwardIcon: getForwardIcon,
         onFocusActivity: _restartHideTimerForCurrentPlaybackState,

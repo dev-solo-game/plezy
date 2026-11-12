@@ -170,9 +170,18 @@ extension _PlexVideoControlsPlaybackInputMethods on _PlexVideoControlsState {
     unawaited(_applyChapterSeek(resolved, forward: forward));
   }
 
-  Future<void> _seekToPosition(Duration position, {bool notifyCompletion = true}) async {
+  Future<void> _seekToPosition(Duration position, {bool notifyCompletion = true, bool automatic = false}) async {
     final clamped = clampSeekPosition(widget.player, position);
-    await (widget.onSeekRequested ?? widget.player.seek)(clamped);
+    if (!automatic) _suppressSkipForSeek(clamped);
+    final generation = _manualSeekGeneration;
+    try {
+      await (widget.onSeekRequested ?? widget.player.seek)(clamped);
+    } finally {
+      if (!automatic && mounted && generation == _manualSeekGeneration) {
+        _pendingSkipSeekMarkerId = null;
+        _syncCurrentMarkerForCurrentPosition();
+      }
+    }
     if (notifyCompletion && mounted) {
       widget.onSeekCompleted?.call(clamped);
     }
@@ -186,12 +195,7 @@ extension _PlexVideoControlsPlaybackInputMethods on _PlexVideoControlsState {
       widget.onLiveSeekBy!(delta.inSeconds);
       return;
     }
-    final target = widget.player.state.position + delta;
-    final clamped = clampSeekPosition(widget.player, target);
-    await (widget.onSeekRequested ?? widget.player.seek)(clamped);
-    if (notifyCompletion && mounted) {
-      widget.onSeekCompleted?.call(clamped);
-    }
+    await _seekToPosition(widget.player.state.position + delta, notifyCompletion: notifyCompletion);
   }
 
   Future<void> _seekToTimelinePosition(Duration position) {

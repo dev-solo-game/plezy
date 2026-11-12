@@ -854,6 +854,14 @@ class _VideoSettingsSheetState extends State<VideoSettingsSheet> {
             onTap: () => _navigateTo(_SettingsView.versionQuality),
           ),
 
+        if (_state.onEditSkipSettings != null)
+          _SettingsMenuItem(
+            icon: Symbols.fast_forward_rounded,
+            title: t.workSkip.title,
+            valueText: '',
+            onTap: _state.onEditSkipSettings!,
+          ),
+
         // Sleep Timer
         ListenableBuilder(
           listenable: sleepTimer,

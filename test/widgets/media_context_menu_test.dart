@@ -1,5 +1,9 @@
 import '../test_helpers/paged_fakes.dart';
 import 'dart:async';
+import 'dart:io';
+import 'dart:ui' as ui;
+import 'package:flutter/rendering.dart';
+import 'package:plezy/widgets/work_skip_settings_dialog.dart';
 import 'dart:convert';
 
 import 'package:plezy/services/playback_launch_observer.dart';
@@ -69,6 +73,83 @@ import '../test_helpers/profile_stack.dart';
 import '../test_helpers/stub_music_playback_service.dart';
 
 void main() {
+  testWidgets('movie detail menu opens per-work skip settings', (tester) async {
+    const directory = String.fromEnvironment('SKIP_SCREENSHOTS');
+    final capture = GlobalKey();
+    if (directory.isNotEmpty) {
+      tester.view.physicalSize = const Size(1100, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(() {
+        tester.view.resetPhysicalSize();
+        tester.view.resetDevicePixelRatio();
+      });
+      await tester.runAsync(() async {
+        await LocaleSettings.setLocale(AppLocale.zh);
+        for (final (family, asset) in [
+          ('MaterialIcons', 'fonts/MaterialIcons-Regular.otf'),
+          ('Go Noto Current', 'assets/go-noto-current-regular.ttf'),
+          (
+            'packages/material_symbols_icons/MaterialSymbolsRounded',
+            'packages/material_symbols_icons/lib/fonts/MaterialSymbolsRounded.ttf',
+          ),
+        ]) {
+          await (FontLoader(family)..addFont(rootBundle.load(asset))).load();
+        }
+      });
+    }
+    final menuKey = await _pumpJellyfinItemMenu(
+      tester,
+      isAdministrator: false,
+      captureKey: directory.isEmpty ? null : capture,
+      locale: directory.isEmpty ? AppLocale.en : AppLocale.zh,
+      item: testMediaItem(
+        id: 'movie-1',
+        backend: MediaBackend.jellyfin,
+        kind: MediaKind.movie,
+        title: '示例电影 A',
+        serverId: 'srv-1',
+      ),
+      handler: (request) async {
+        final dto = {
+          'Id': 'movie-1',
+          'Type': 'Movie',
+          'Name': '示例电影 A',
+          'ProviderIds': {'Tmdb': '100'},
+          'CanDelete': false,
+        };
+        return jsonResponse(
+          request.url.path.contains('/Users/')
+              ? dto
+              : {
+                  'Items': [dto],
+                },
+        );
+      },
+    );
+    await _openMenu(tester, menuKey);
+    expect(find.text(t.workSkip.title), findsOneWidget);
+    if (directory.isNotEmpty) {
+      await tester.runAsync(() async {
+        final render = capture.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+        final image = await render.toImage();
+        final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
+        await File('$directory/detail-menu-entry.png').writeAsBytes(bytes!.buffer.asUint8List());
+        image.dispose();
+      });
+    }
+    await tester.tap(find.text(t.workSkip.title));
+    await tester.pumpAndSettle();
+    for (var i = 0; i < 5; i++) {
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 20)));
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    expect(find.byType(WorkSkipSettingsDialog), findsOneWidget);
+    expect(find.text(t.common.save), findsOneWidget, reason: 'server external ID resolves to a work');
+    await tester.tap(find.text(t.common.cancel));
+    await tester.pumpAndSettle();
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   testWidgets('cancelled media menu restores its live captured item', (tester) async {
     final destination = FocusNode();
     addTearDown(destination.dispose);
@@ -399,6 +480,7 @@ void main() {
       );
 
       await _openMenu(tester, menuKey);
+      await tester.ensureVisible(find.text(t.common.addTo));
       await tester.tap(find.text(t.common.addTo));
       await tester.pumpAndSettle();
 
@@ -425,6 +507,7 @@ void main() {
       );
 
       await _openMenu(tester, menuKey);
+      await tester.ensureVisible(find.text(t.common.addTo));
       await tester.tap(find.text(t.common.addTo));
       await tester.pumpAndSettle();
 
@@ -1946,8 +2029,10 @@ Future<GlobalKey<MediaContextMenuState>> _pumpJellyfinItemMenu(
   /// Push the menu onto a route above a home screen, so the navigator has
   /// something below the menu that a stray pop could reach.
   bool onPushedRoute = false,
+  AppLocale locale = AppLocale.en,
+  GlobalKey? captureKey,
 }) async {
-  LocaleSettings.setLocaleSync(AppLocale.en);
+  LocaleSettings.setLocaleSync(locale);
   TvDetectionService.debugSetAppleTVOverride(true);
   addTearDown(() => TvDetectionService.debugSetAppleTVOverride(null));
 
@@ -1984,13 +2069,19 @@ Future<GlobalKey<MediaContextMenuState>> _pumpJellyfinItemMenu(
     TranslationProvider(
       child: MultiProvider(
         providers: [
+          Provider<AppDatabase>.value(value: stack.db),
           ChangeNotifierProvider<MultiServerProvider>.value(value: multiServerProvider),
           ChangeNotifierProvider<ActiveProfileProvider>.value(value: stack.active),
           ChangeNotifierProvider<OfflineModeProvider>.value(value: offlineMode),
         ],
         child: MaterialApp(
           navigatorKey: navigatorKey,
-          theme: monoTheme(MonoPalette.dark),
+          theme: monoTheme(MonoPalette.dark).copyWith(
+            textTheme: monoTheme(
+              MonoPalette.dark,
+            ).textTheme.apply(fontFamily: captureKey == null ? null : 'Go Noto Current'),
+          ),
+          builder: captureKey == null ? null : (context, child) => RepaintBoundary(key: captureKey, child: child!),
           home: onPushedRoute ? const Scaffold(body: Center(child: Text('home screen'))) : menuScreen,
         ),
       ),

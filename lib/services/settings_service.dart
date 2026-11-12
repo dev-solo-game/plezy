@@ -1707,7 +1707,7 @@ class SettingsService extends BaseSharedPreferencesService {
     'rewind_on_resume' || 'display_switch_delay' => (0, 10),
     'sleep_timer_duration' => (5, 240),
     'play_next_countdown' => (0, 30),
-    'auto_skip_delay' => (1, 30),
+    'auto_skip_delay' => (0, 30),
     'download_connections' => (1, 16),
     'download_chunk_size_mb' => (1, BulkReadOptions.maxConfiguredChunkMiB),
     'subtitle_font_size' => (10, 80),

@@ -12,6 +12,27 @@ class LibraryWatchStateStore {
 
   final AppDatabase db;
 
+  Future<WorkIdentity?> resolveWork(int itemId) async {
+    final item = await _item(itemId);
+    if (item == null) return null;
+    var work = item;
+    if (item.kind == 'episode' || item.kind == 'season') {
+      final parent = item.parentId == null ? null : await _item(item.parentId!);
+      final showId = item.showId ?? (item.kind == 'season' ? item.parentId : parent?.parentId);
+      final show = showId == null ? null : await _item(showId);
+      if (show == null || show.kind != 'show') return null;
+      work = show;
+    }
+    if (work.scrapedAt == null || work.libraryType == 'pending') return null;
+    // Work-wide settings need a matched series, not a numbered episode.
+    return WorkIdentity.resolve(
+      source: WorkIdentity.localSource,
+      kind: work.kind,
+      tmdbId: work.tmdbId,
+      imdbId: work.imdbId,
+    );
+  }
+
   Future<LibraryItemRow?> _item(int id) =>
       (db.select(db.libraryItems)..where((t) => t.id.equals(id))).getSingleOrNull();
 

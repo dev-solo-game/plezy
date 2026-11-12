@@ -65,6 +65,7 @@ class TrackControlsState {
   /// player surface so a Watch Together room hears about it; the sheet falls
   /// back to [Player.setRate] when absent.
   final Future<void> Function(double rate)? onRateRequested;
+  final VoidCallback? onEditSkipSettings;
   final VoidCallback? onCancelAutoHide;
   final VoidCallback? onStartAutoHide;
   final String? serverId;
@@ -132,6 +133,7 @@ class TrackControlsState {
     this.onSubtitleTrackChanged,
     this.onSecondarySubtitleTrackChanged,
     this.onRateRequested,
+    this.onEditSkipSettings,
     this.onCancelAutoHide,
     this.onStartAutoHide,
     this.serverId,

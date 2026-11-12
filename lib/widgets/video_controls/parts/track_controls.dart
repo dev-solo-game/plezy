@@ -200,6 +200,9 @@ extension _PlexVideoControlsTrackMethods on _PlexVideoControlsState {
       onAudioTrackChanged: widget.onAudioTrackChanged,
       onSubtitleTrackChanged: _onSubtitleTrackChanged,
       onSecondarySubtitleTrackChanged: widget.onSecondarySubtitleTrackChanged,
+      onEditSkipSettings: !widget.isLive && widget.canControl && WorkSkipSettingsStore.supports(widget.metadata)
+          ? () => unawaited(_editWorkSkipSettings())
+          : null,
       onRateRequested: widget.onRateRequested,
       onCancelAutoHide: widget.chromeController.cancelAutoHide,
       onStartAutoHide: _startHideTimer,

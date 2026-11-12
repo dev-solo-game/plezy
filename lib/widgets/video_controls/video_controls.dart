@@ -2,6 +2,9 @@ import 'dart:async' show StreamSubscription, Timer, unawaited;
 import 'dart:io' show Platform;
 
 import '../../media/ids.dart';
+import '../../media/work_skip_settings.dart';
+import '../../services/work_skip_settings_store.dart';
+import '../work_skip_settings_dialog.dart';
 
 import 'package:flutter/gestures.dart'
     show
@@ -699,10 +702,11 @@ class PlexVideoControls extends StatefulWidget {
   final List<MediaChapter>? initialChapters;
 
   /// Seeds the marker list so widget tests can exercise skip-marker behaviour
-  /// without a media-server client. Production always loads through
-  /// [VideoControlsPlaybackExtrasLoader].
+  /// without a database. Production uses only WorkSkipSettingsStore ranges.
   @visibleForTesting
   final List<MediaMarker>? initialMarkers;
+  @visibleForTesting
+  final WorkSkipSettings? initialSkipSettings;
 
   const PlexVideoControls({
     super.key,
@@ -712,6 +716,7 @@ class PlexVideoControls extends StatefulWidget {
     required this.toastController,
     this.initialChapters,
     this.initialMarkers,
+    this.initialSkipSettings,
     this.onNext,
     this.onPrevious,
     this.availableVersions = const [],
@@ -874,6 +879,14 @@ class _PlexVideoControlsState extends State<PlexVideoControls>
   bool _skipMarkerOwnsBackPress = false;
   late List<MediaMarker> _markers = widget.initialMarkers ?? [];
   late bool _markersLoaded = widget.initialMarkers != null;
+  late WorkSkipSettings _manualSkipRules = widget.initialSkipSettings ?? const WorkSkipSettings();
+  int _manualDurationMs = -1;
+  int? _suppressedMarkerId;
+  bool _editingSkipSettings = false;
+  bool _skipInFlight = false;
+  int _manualSeekGeneration = 0;
+  int? _pendingSkipSeekMarkerId;
+  StreamSubscription<Duration>? _skipDurationSubscription;
   // Playback state subscription for auto-hide timer
   StreamSubscription<bool>? _playingSubscription;
   // Completed subscription to show controls when video ends
@@ -881,9 +894,7 @@ class _PlexVideoControlsState extends State<PlexVideoControls>
   // Position subscription for marker tracking
   StreamSubscription<Duration>? _positionSubscription;
   // Skip-marker state
-  SkipMarkerMode _skipModeFor(MediaMarker marker) =>
-      _settings.read(marker.isCredits ? SettingsService.skipCreditsMode : SettingsService.skipIntroMode);
-  int get _autoSkipDelay => _settings.read(SettingsService.autoSkipDelay);
+  int get _autoSkipDelay => _settings.read(SettingsService.autoSkipDelay).clamp(0, 30);
   Timer? _autoSkipTimer;
   final ValueNotifier<double> _autoSkipProgress = ValueNotifier<double>(0.0);
   final ValueNotifier<bool> _autoSkipActive = ValueNotifier<bool>(false);
@@ -972,8 +983,6 @@ class _PlexVideoControlsState extends State<PlexVideoControls>
       SettingsService.seekTimeSmall,
       SettingsService.rewindOnResume,
       SettingsService.rotationLocked,
-      SettingsService.skipIntroMode,
-      SettingsService.skipCreditsMode,
       SettingsService.autoSkipDelay,
       SettingsService.videoPlayerNavigationEnabled,
       SettingsService.showPerformanceOverlay,
@@ -981,10 +990,6 @@ class _PlexVideoControlsState extends State<PlexVideoControls>
       SettingsService.clickVideoTogglesPlayback,
       SettingsService.showChapterMarkersOnTimeline,
     ]);
-    // A marker kind switched Off while inside one of its markers must drop the
-    // prompt now, not on the next position tick (paused playback never ticks).
-    bindEffect(SettingsService.skipIntroMode, (_) => _syncCurrentMarkerForCurrentPosition(), fireImmediately: false);
-    bindEffect(SettingsService.skipCreditsMode, (_) => _syncCurrentMarkerForCurrentPosition(), fireImmediately: false);
     _releaseChromeListener = bindListenable(widget.chromeController, _onChromeChanged);
     _releaseSyncOffsetsListener = bindListenable(PlayerSyncOffsets.of(widget.player), _onSyncOffsetsChanged);
     _configureChromeController();
@@ -1063,6 +1068,20 @@ class _PlexVideoControlsState extends State<PlexVideoControls>
     super.didUpdateWidget(oldWidget);
     if (oldWidget.player != widget.player) {
       ++_subtitleVisibilityWriteGeneration;
+      _clearCurrentMarker();
+      _manualDurationMs = -1;
+      _suppressedMarkerId = null;
+      _pendingSkipSeekMarkerId = null;
+      _positionSubscription?.cancel();
+      _skipDurationSubscription?.cancel();
+      _playingSubscription?.cancel();
+      _completedSubscription?.cancel();
+      _listenToPosition();
+      _listenToPlayingState();
+      _listenToCompleted();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _syncCurrentMarkerForCurrentPosition();
+      });
       // Otherwise the accumulator keeps listening to the retired player and
       // never hears the new one move.
       _hiddenSeek.attachPlayheadJumps(widget.player.streams.playheadJump);
@@ -1093,6 +1112,10 @@ class _PlexVideoControlsState extends State<PlexVideoControls>
       _setControlsState(() {
         _chapters = [];
         _chaptersLoaded = false;
+        _manualSkipRules = const WorkSkipSettings();
+        _manualDurationMs = -1;
+        _suppressedMarkerId = null;
+        _pendingSkipSeekMarkerId = null;
         _markers = [];
         _markersLoaded = false;
       });
@@ -1131,6 +1154,7 @@ class _PlexVideoControlsState extends State<PlexVideoControls>
     _playingSubscription?.cancel();
     _completedSubscription?.cancel();
     _positionSubscription?.cancel();
+    _skipDurationSubscription?.cancel();
     _rateSubscription?.cancel();
     _focusNode.dispose();
     _skipMarkerFocusNode.dispose();
@@ -1338,6 +1362,7 @@ class _PlexVideoControlsState extends State<PlexVideoControls>
                                                         playbackState.isQueueActive && widget.canNavigateMediaItems;
                                                     final hasStripContent = _chapters.isNotEmpty || canShowQueue;
                                                     return MobileVideoControls(
+                                                      skipSettings: _manualSkipRules,
                                                       player: widget.player,
                                                       metadata: widget.metadata,
                                                       chapters: _chapters,
@@ -1351,7 +1376,7 @@ class _PlexVideoControlsState extends State<PlexVideoControls>
                                                       onSeekEnd: _finalizeSeek,
                                                       onScrubStart: _holdTimelineScrub,
                                                       onScrubEnd: _releaseTimelineScrub,
-                                                      onSeekRequested: widget.onSeekRequested,
+                                                      onSeekRequested: _seekToPosition,
                                                       onSeekCompleted: widget.onSeekCompleted,
                                                       onPlayPause: () => unawaited(_playOrPause()),
                                                       onCancelAutoHide: widget.chromeController.cancelAutoHide,

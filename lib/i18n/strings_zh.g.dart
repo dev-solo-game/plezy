@@ -96,6 +96,7 @@ class TranslationsZh extends Translations with BaseTranslations<AppLocale, Trans
 	@override late final Translations$deepLinks$zh deepLinks = Translations$deepLinks$zh.internal(_root);
 	@override late final Translations$storage$zh storage = Translations$storage$zh.internal(_root);
 	@override late final Translations$streamQuality$zh streamQuality = Translations$streamQuality$zh.internal(_root);
+	@override late final Translations$workSkip$zh workSkip = Translations$workSkip$zh.internal(_root);
 }
 
 // Path: app
@@ -2640,6 +2641,35 @@ class Translations$streamQuality$zh extends Translations$streamQuality$en {
 	@override String get high => '高清';
 	@override String get normal => '标清';
 	@override String get low => '流畅';
+}
+
+// Path: workSkip
+class Translations$workSkip$zh extends Translations$workSkip$en {
+	Translations$workSkip$zh.internal(TranslationsZh root) : this._root = root, super.internal(root);
+
+	final TranslationsZh _root; // ignore: unused_field
+
+	// Translations
+	@override String get title => '跳过片头片尾';
+	@override String get scopeShow => '对当前媒体来源中的整部剧生效，所有集数共用。';
+	@override String get scopeMovie => '对当前媒体来源中的这部电影生效，所有文件版本共用。';
+	@override String get intro => '跳过片头';
+	@override String get introStart => '片头开始时间';
+	@override String get introEnd => '片头结束时间';
+	@override String get credits => '跳过片尾';
+	@override String get creditsDuration => '片尾时长';
+	@override String get resumeBeforeEnd => '保留结尾彩蛋';
+	@override String get resumeHint => '跳转后剩余的时长。00:00 表示结束播放。';
+	@override String get timeHint => '分:秒';
+	@override String get behavior => '片头直接跳过；片尾使用播放设置中的延迟，默认 5 秒。';
+	@override String get invalid => '请检查时间：片头结束需晚于开始，片尾不能超出视频，区间不能重叠。';
+	@override String get unavailable => '请先为这部电影或剧集匹配 TMDB 或 IMDb 信息，再设置跳过。';
+	@override String get loadFailed => '无法读取跳过设置，请重试。';
+	@override String get saveFailed => '保存失败，修改尚未生效，请重试。';
+	@override String get delay => '跳过片尾延迟时间';
+	@override String delayDescription({required Object seconds}) => '进入片尾后等待 ${seconds} 秒再跳过；片头直接跳过。';
+	@override String get cancelVisit => '取消本次跳过';
+	@override String get legend => '蓝色：片头 · 金色：片尾';
 }
 
 // Path: appIcon.names
@@ -6105,6 +6135,26 @@ extension on TranslationsZh {
 			'streamQuality.high' => '高清',
 			'streamQuality.normal' => '标清',
 			'streamQuality.low' => '流畅',
+			'workSkip.title' => '跳过片头片尾',
+			'workSkip.scopeShow' => '对当前媒体来源中的整部剧生效，所有集数共用。',
+			'workSkip.scopeMovie' => '对当前媒体来源中的这部电影生效，所有文件版本共用。',
+			'workSkip.intro' => '跳过片头',
+			'workSkip.introStart' => '片头开始时间',
+			'workSkip.introEnd' => '片头结束时间',
+			'workSkip.credits' => '跳过片尾',
+			'workSkip.creditsDuration' => '片尾时长',
+			'workSkip.resumeBeforeEnd' => '保留结尾彩蛋',
+			'workSkip.resumeHint' => '跳转后剩余的时长。00:00 表示结束播放。',
+			'workSkip.timeHint' => '分:秒',
+			'workSkip.behavior' => '片头直接跳过；片尾使用播放设置中的延迟，默认 5 秒。',
+			'workSkip.invalid' => '请检查时间：片头结束需晚于开始，片尾不能超出视频，区间不能重叠。',
+			'workSkip.unavailable' => '请先为这部电影或剧集匹配 TMDB 或 IMDb 信息，再设置跳过。',
+			'workSkip.loadFailed' => '无法读取跳过设置，请重试。',
+			'workSkip.saveFailed' => '保存失败，修改尚未生效，请重试。',
+			'workSkip.delay' => '跳过片尾延迟时间',
+			'workSkip.delayDescription' => ({required Object seconds}) => '进入片尾后等待 ${seconds} 秒再跳过；片头直接跳过。',
+			'workSkip.cancelVisit' => '取消本次跳过',
+			'workSkip.legend' => '蓝色：片头 · 金色：片尾',
 			_ => null,
 		};
 	}

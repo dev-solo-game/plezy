@@ -21,6 +21,7 @@ import 'package:plezy/services/video_volume_controller.dart';
 import 'package:plezy/utils/platform_detector.dart';
 import 'package:plezy/watch_together/providers/watch_together_provider.dart';
 import 'package:plezy/widgets/video_controls/desktop_video_controls.dart';
+import 'package:plezy/widgets/video_controls/mobile_video_controls.dart';
 import 'package:plezy/widgets/video_controls/player_chrome_controller.dart';
 import 'package:plezy/widgets/video_controls/video_controls.dart';
 import 'package:plezy/widgets/video_controls/widgets/player_toast_indicator.dart';
@@ -182,6 +183,14 @@ void main() {
         ),
       ),
     );
+    await tester.pumpAndSettle();
+    chrome.show();
+    await tester.pumpAndSettle();
+    final desktop = find.byType(DesktopVideoControls);
+    player.manualSeek = desktop.evaluate().isNotEmpty
+        ? tester.widget<DesktopVideoControls>(desktop).onSeekRequested
+        : tester.widget<MobileVideoControls>(find.byType(MobileVideoControls)).onSeekRequested;
+    chrome.hide();
     await tester.pumpAndSettle();
   }
 
@@ -495,55 +504,27 @@ void main() {
     });
 
     // The gesture the feature exists for: "no thanks" while the countdown runs.
-    playerTest('declining stops a running auto-skip countdown', markers: [introMarker], (tester) async {
-      await settings.write(SettingsService.skipIntroMode, SkipMarkerMode.auto);
-      await showPrompt(tester);
-
-      await press(tester, LogicalKeyboardKey.gameButtonB);
-      await tester.pump(const Duration(seconds: 10));
-
-      expect(player.state.position, const Duration(seconds: 15), reason: 'a declined countdown must not fire');
-      expect(screenBackDispositions, isEmpty);
-    });
-
-    // #2138: Off means the marker is invisible — no prompt, no countdown, and
-    // Back goes straight to the screen because there is nothing to decline.
-    playerTest('an Off marker kind plays through without a prompt', markers: [introMarker], (tester) async {
-      await settings.write(SettingsService.skipIntroMode, SkipMarkerMode.off);
-      player.emitPosition(const Duration(seconds: 15));
-      await tester.pump(const Duration(seconds: 10));
-
-      expect(find.byType(SkipMarkerButton), findsNothing);
-      expect(player.state.position, const Duration(seconds: 15));
-
-      await press(tester, LogicalKeyboardKey.gameButtonB);
-      expect(screenBackDispositions, [PlayerBackDisposition.exitPlayer], reason: 'nothing to decline');
-    });
-
-    playerTest('switching a marker kind Off drops a prompt already up', markers: [introMarker], (tester) async {
-      await showPrompt(tester);
-
-      await settings.write(SettingsService.skipIntroMode, SkipMarkerMode.off);
-      await tester.pumpAndSettle();
-
-      expect(find.byType(SkipMarkerButton), findsNothing);
-      expect(player.state.position, const Duration(seconds: 15));
-    });
-
     playerTest(
-      'an Off intro does not silence a credits prompt',
-      markers: [
-        introMarker,
-        MediaMarker(id: 2, type: 'credits', startTimeOffset: 100000, endTimeOffset: 120000),
-      ],
+      'declining stops a running auto-skip countdown',
+      markers: [MediaMarker(id: 2, type: 'credits', startTimeOffset: 10000, endTimeOffset: 45000)],
       (tester) async {
-        await settings.write(SettingsService.skipIntroMode, SkipMarkerMode.off);
-        player.emitPosition(const Duration(seconds: 110));
+        player.emitNaturalPosition(const Duration(seconds: 15));
         await tester.pumpAndSettle();
 
-        expect(find.byType(SkipMarkerButton), findsOneWidget);
+        await press(tester, LogicalKeyboardKey.gameButtonB);
+        await tester.pump(const Duration(seconds: 10));
+
+        expect(player.state.position, const Duration(seconds: 15), reason: 'a declined countdown must not fire');
+        expect(screenBackDispositions, isEmpty);
       },
     );
+
+    playerTest('old global skip mode does not disable a work range', markers: [introMarker], (tester) async {
+      await settings.write(SettingsService.skipIntroMode, SkipMarkerMode.off);
+      player.emitNaturalPosition(const Duration(seconds: 15));
+      await tester.pumpAndSettle();
+      expect(player.state.position, const Duration(seconds: 45));
+    });
 
     // The latch covers the button vanishing mid-press, not the chrome rising.
     // With the OSD up Back belongs to the chrome, so a press that starts under
@@ -722,7 +703,16 @@ class _TogglePlayer implements Player {
 
   /// Moves the playhead and announces it on the position stream, the way a
   /// real player drives marker detection.
+  Future<void> Function(Duration)? manualSeek;
   void emitPosition(Duration position) {
+    if (manualSeek != null) {
+      unawaited(manualSeek!(position));
+      return;
+    }
+    emitNaturalPosition(position);
+  }
+
+  void emitNaturalPosition(Duration position) {
     _position = position;
     _positionController.add(position);
   }
@@ -739,7 +729,7 @@ class _TogglePlayer implements Player {
   /// A real player announces the new playhead right after a seek; marker
   /// detection (and its focus handling) rides on that event.
   @override
-  Future<void> seek(Duration position) async => emitPosition(position);
+  Future<void> seek(Duration position) async => emitNaturalPosition(position);
 
   @override
   PlayerStreams get streams => PlayerStreams(

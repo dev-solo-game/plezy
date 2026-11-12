@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io' show Platform;
 
 import 'package:flutter/material.dart';
+import '../../media/work_skip_settings.dart';
 import 'package:material_symbols_icons/symbols.dart';
 import 'package:flutter/services.dart';
 
@@ -41,6 +42,8 @@ class DesktopVideoControls extends StatefulWidget {
   final VoidCallback? onNext;
   final VoidCallback? onPrevious;
   final VoidCallback onPlayPause;
+  final WorkSkipSettings skipSettings;
+  final ValueChanged<Duration>? onEditSkipAt;
   final List<MediaChapter> chapters;
   final bool chaptersLoaded;
   final bool showChapterMarkersOnTimeline;
@@ -120,6 +123,8 @@ class DesktopVideoControls extends StatefulWidget {
     this.onNext,
     this.onPrevious,
     required this.onPlayPause,
+    this.skipSettings = const WorkSkipSettings(),
+    this.onEditSkipAt,
     required this.chapters,
     required this.chaptersLoaded,
     this.showChapterMarkersOnTimeline = true,
@@ -742,6 +747,8 @@ class DesktopVideoControlsState extends State<DesktopVideoControls> {
             ),
           ] else if (!_isLive) ...[
             VideoTimelineBar(
+              skipSettings: widget.skipSettings,
+              onEditSkipAt: widget.onEditSkipAt,
               player: widget.player,
               chapters: widget.chapters,
               chaptersLoaded: widget.chaptersLoaded,

@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'work_skip_settings_dialog.dart';
+import '../services/work_skip_settings_store.dart';
 import '../media/ids.dart';
 import 'package:flutter/material.dart';
 import 'package:material_symbols_icons/symbols.dart';
@@ -746,6 +748,8 @@ class MediaContextMenuState extends State<MediaContextMenu> {
     // offering versions that can't play (issue #1440).
     final hasVersionChoice = (mediaItem.mediaVersions ?? const []).length > 1;
     return [
+      if (WorkSkipSettingsStore.supports(mediaItem))
+        _MenuAction(value: 'work_skip', icon: Symbols.fast_forward_rounded, label: t.workSkip.title),
       if (isMovieOrEpisode && (hasVersionChoice || menu.canTranscode) && menu.itemServerOnline)
         _MenuAction(value: 'play_version', icon: Symbols.video_file_rounded, label: t.mediaMenu.playVersion),
       // File Info — every file-backed leaf kind (movies, episodes, tracks,
@@ -947,6 +951,17 @@ class MediaContextMenuState extends State<MediaContextMenu> {
         break;
       case 'play_version':
         outcome.didNavigate = await promptAndPlayVersion(context, _mediaItem!);
+        break;
+      case 'work_skip':
+        if (context.mounted) {
+          await showWorkSkipSettingsDialog(
+            context,
+            mediaItem,
+            duration: mediaItem.kind.isVideo && mediaItem.durationMs != null
+                ? Duration(milliseconds: mediaItem.durationMs!)
+                : null,
+          );
+        }
         break;
       case 'fileinfo':
         await _showFileInfo(context);

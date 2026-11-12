@@ -265,7 +265,7 @@ extension _PlexVideoControlsVisibilityMethods on _PlexVideoControlsState {
 
     if (visibilityChanged && !controlsVisible) {
       _desktopControlsKey.currentState?.hideContentStrip();
-      _cancelSkipButtonDismissTimer();
+      // A range prompt owns its own lifetime, independent of auto-hiding chrome.
       // When the chrome never reached full opacity, hide() already retired the
       // presented flag — no fade-out will run, so AnimatedOpacity.onEnd never
       // fires. Drop the subtree here instead of waiting for it.
@@ -273,7 +273,6 @@ extension _PlexVideoControlsVisibilityMethods on _PlexVideoControlsState {
       _setControlsState(() {
         _controlsOpaque = false;
         if (controlsDismissed) _controlsMounted = false;
-        if (_currentMarker != null) _skipButtonDismissed = true;
       });
       _claimPlayerSurfaceFocus();
     } else if (visibilityChanged) {

@@ -4,7 +4,6 @@ import '../../media/media_item.dart';
 import '../../media/media_server_client.dart';
 import '../../media/media_source_info.dart';
 import '../../services/cached_playback_metadata_service.dart';
-import '../../services/settings_service.dart';
 import '../../utils/app_logger.dart';
 import '../../utils/global_key_utils.dart';
 
@@ -22,26 +21,13 @@ class VideoControlsPlaybackExtrasLoader {
 
     try {
       appLogger.d('_loadPlaybackExtras: starting for ${metadata.id} (forceRefresh=$forceRefresh)');
-      final settings = await SettingsService.getInstance();
-      final extras = await client!.fetchPlaybackExtras(
-        metadata.id,
-        introPattern: settings.read(SettingsService.introPattern),
-        creditsPattern: settings.read(SettingsService.creditsPattern),
-        forceChapterFallback: settings.read(SettingsService.forceSkipMarkerFallback),
-        forceRefresh: forceRefresh,
-      );
+      final extras = await client!.fetchPlaybackExtras(metadata.id, forceRefresh: forceRefresh);
       appLogger.d('_loadPlaybackExtras: got ${_describe(extras)}');
       return extras;
     } catch (e, stack) {
       appLogger.d('_loadPlaybackExtras: network path failed, trying cache fallback');
       try {
-        final settings = await SettingsService.getInstance();
-        final extras = await client!.fetchPlaybackExtrasFromCacheOnly(
-          metadata.id,
-          introPattern: settings.read(SettingsService.introPattern),
-          creditsPattern: settings.read(SettingsService.creditsPattern),
-          forceChapterFallback: settings.read(SettingsService.forceSkipMarkerFallback),
-        );
+        final extras = await client!.fetchPlaybackExtrasFromCacheOnly(metadata.id);
         if (extras != null) {
           appLogger.d('_loadPlaybackExtras: loaded ${_describe(extras)} from cache');
           return extras;
@@ -60,14 +46,10 @@ class VideoControlsPlaybackExtrasLoader {
       return null;
     }
     try {
-      final settings = await SettingsService.getInstance();
       final extras = await CachedPlaybackMetadataService.fetchPlaybackExtras(
         backend: metadata.backend,
         cacheServerId: cacheServerId,
         itemId: metadata.id,
-        introPattern: settings.read(SettingsService.introPattern),
-        creditsPattern: settings.read(SettingsService.creditsPattern),
-        forceChapterFallback: settings.read(SettingsService.forceSkipMarkerFallback),
       );
       appLogger.d(
         extras == null

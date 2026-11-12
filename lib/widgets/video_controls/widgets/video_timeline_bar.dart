@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../../media/work_skip_settings.dart';
 
 import '../../../mpv/mpv.dart';
 import '../../../media/media_source_info.dart';
@@ -14,6 +15,8 @@ import 'timeline_slider.dart';
 /// layout (timestamps beside slider) and vertical layout (timestamps below slider).
 class VideoTimelineBar extends StatelessWidget {
   final Player player;
+  final WorkSkipSettings skipSettings;
+  final ValueChanged<Duration>? onEditSkipAt;
   final List<MediaChapter> chapters;
   final bool chaptersLoaded;
   final bool showChapterMarkersOnTimeline;
@@ -53,6 +56,8 @@ class VideoTimelineBar extends StatelessWidget {
   const VideoTimelineBar({
     super.key,
     required this.player,
+    this.skipSettings = const WorkSkipSettings(),
+    this.onEditSkipAt,
     required this.chapters,
     required this.chaptersLoaded,
     this.showChapterMarkersOnTimeline = true,
@@ -171,6 +176,8 @@ class VideoTimelineBar extends StatelessWidget {
 
   Widget _buildSlider(Duration position, Duration duration, List<BufferRange> bufferRanges) {
     return TimelineSlider(
+      skipMarkers: skipSettings.markersFor(duration),
+      onEditSkipAt: onEditSkipAt,
       position: position,
       duration: duration,
       bufferRanges: bufferRanges,

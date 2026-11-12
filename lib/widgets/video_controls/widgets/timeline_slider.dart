@@ -1,4 +1,4 @@
-import 'package:flutter/gestures.dart' show DragStartBehavior;
+import 'package:flutter/gestures.dart' show DragStartBehavior, TapGestureRecognizer;
 import 'package:flutter/material.dart';
 import '../../../media/media_source_info.dart';
 import '../../../mpv/models.dart';
@@ -10,6 +10,7 @@ import '../../../utils/formatters.dart';
 import '../helpers/eager_horizontal_drag_recognizer.dart';
 import '../helpers/render_geometry.dart';
 import '../painters/buffer_range_painter.dart';
+import '../painters/skip_range_painter.dart';
 import 'player_focus_disc.dart';
 
 /// Timeline slider with chapter markers for video playback
@@ -17,6 +18,8 @@ import 'player_focus_disc.dart';
 /// Displays a horizontal slider showing playback position and duration,
 /// with optional chapter markers overlaid at their respective positions.
 class TimelineSlider extends StatefulWidget {
+  final List<MediaMarker> skipMarkers;
+  final ValueChanged<Duration>? onEditSkipAt;
   final Duration position;
   final Duration duration;
   final List<BufferRange> bufferRanges;
@@ -52,6 +55,8 @@ class TimelineSlider extends StatefulWidget {
 
   const TimelineSlider({
     super.key,
+    this.skipMarkers = const [],
+    this.onEditSkipAt,
     required this.position,
     required this.duration,
     this.bufferRanges = const [],
@@ -315,6 +320,20 @@ class _TimelineSliderState extends State<TimelineSlider> {
         excludeFromSemantics: true,
         gestures: widget.enabled
             ? <Type, GestureRecognizerFactory>{
+                if (widget.onEditSkipAt != null && widget.duration > Duration.zero)
+                  TapGestureRecognizer: GestureRecognizerFactoryWithHandlers<TapGestureRecognizer>(
+                    () => TapGestureRecognizer(),
+                    (instance) => instance.onSecondaryTapUp = (details) {
+                      final width = renderBoxSizeOf(sliderContext).width;
+                      if (width <= 0) return;
+                      widget.onEditSkipAt!(
+                        Duration(
+                          milliseconds:
+                              (widget.duration.inMilliseconds * (details.localPosition.dx / width).clamp(0, 1)).round(),
+                        ),
+                      );
+                    },
+                  ),
                 EagerHorizontalDragGestureRecognizer:
                     GestureRecognizerFactoryWithHandlers<EagerHorizontalDragGestureRecognizer>(
                       () =>
@@ -389,6 +408,13 @@ class _TimelineSliderState extends State<TimelineSlider> {
                       inactiveColor: Colors.transparent,
                     ),
                   ),
+                ),
+              ),
+            ),
+            Positioned.fill(
+              child: IgnorePointer(
+                child: CustomPaint(
+                  painter: SkipRangePainter(markers: widget.skipMarkers, duration: widget.duration),
                 ),
               ),
             ),

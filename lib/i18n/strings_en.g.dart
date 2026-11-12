@@ -97,6 +97,7 @@ class Translations with BaseTranslations<AppLocale, Translations> {
 	late final Translations$deepLinks$en deepLinks = Translations$deepLinks$en.internal(_root);
 	late final Translations$storage$en storage = Translations$storage$en.internal(_root);
 	late final Translations$streamQuality$en streamQuality = Translations$streamQuality$en.internal(_root);
+	late final Translations$workSkip$en workSkip = Translations$workSkip$en.internal(_root);
 }
 
 // Path: app
@@ -6624,6 +6625,75 @@ class Translations$streamQuality$en {
 	String get low => 'Low';
 }
 
+// Path: workSkip
+class Translations$workSkip$en {
+	Translations$workSkip$en.internal(this._root);
+
+	final Translations _root; // ignore: unused_field
+
+	// Translations
+
+	/// en: 'Skip intro and credits'
+	String get title => 'Skip intro and credits';
+
+	/// en: 'Applies to every episode in this series, within this media source.'
+	String get scopeShow => 'Applies to every episode in this series, within this media source.';
+
+	/// en: 'Applies to every file version of this movie, within this media source.'
+	String get scopeMovie => 'Applies to every file version of this movie, within this media source.';
+
+	/// en: 'Skip intro'
+	String get intro => 'Skip intro';
+
+	/// en: 'Intro starts at'
+	String get introStart => 'Intro starts at';
+
+	/// en: 'Intro ends at'
+	String get introEnd => 'Intro ends at';
+
+	/// en: 'Skip credits'
+	String get credits => 'Skip credits';
+
+	/// en: 'Credits length'
+	String get creditsDuration => 'Credits length';
+
+	/// en: 'Keep the final scene'
+	String get resumeBeforeEnd => 'Keep the final scene';
+
+	/// en: 'Time remaining after the jump. 00:00 finishes playback.'
+	String get resumeHint => 'Time remaining after the jump. 00:00 finishes playback.';
+
+	/// en: 'Minutes:seconds'
+	String get timeHint => 'Minutes:seconds';
+
+	/// en: 'Intro skips immediately. Credits use the delay in playback settings (5 seconds by default).'
+	String get behavior => 'Intro skips immediately. Credits use the delay in playback settings (5 seconds by default).';
+
+	/// en: 'Check the time ranges: end must follow start, credits must fit, and ranges cannot overlap.'
+	String get invalid => 'Check the time ranges: end must follow start, credits must fit, and ranges cannot overlap.';
+
+	/// en: 'Match this movie or series to TMDB or IMDb before saving skip settings.'
+	String get unavailable => 'Match this movie or series to TMDB or IMDb before saving skip settings.';
+
+	/// en: 'Unable to load skip settings. Please try again.'
+	String get loadFailed => 'Unable to load skip settings. Please try again.';
+
+	/// en: 'Unable to save. Your changes have not been applied.'
+	String get saveFailed => 'Unable to save. Your changes have not been applied.';
+
+	/// en: 'Skip credits delay'
+	String get delay => 'Skip credits delay';
+
+	/// en: 'Wait $seconds seconds before skipping credits. Intro skips immediately.'
+	String delayDescription({required Object seconds}) => 'Wait ${seconds} seconds before skipping credits. Intro skips immediately.';
+
+	/// en: 'Cancel this skip'
+	String get cancelVisit => 'Cancel this skip';
+
+	/// en: 'Blue: intro · Amber: credits'
+	String get legend => 'Blue: intro · Amber: credits';
+}
+
 // Path: appIcon.names
 class Translations$appIcon$names$en {
 	Translations$appIcon$names$en.internal(this._root);
@@ -11132,6 +11202,26 @@ extension on Translations {
 			'streamQuality.high' => 'HD',
 			'streamQuality.normal' => 'SD',
 			'streamQuality.low' => 'Low',
+			'workSkip.title' => 'Skip intro and credits',
+			'workSkip.scopeShow' => 'Applies to every episode in this series, within this media source.',
+			'workSkip.scopeMovie' => 'Applies to every file version of this movie, within this media source.',
+			'workSkip.intro' => 'Skip intro',
+			'workSkip.introStart' => 'Intro starts at',
+			'workSkip.introEnd' => 'Intro ends at',
+			'workSkip.credits' => 'Skip credits',
+			'workSkip.creditsDuration' => 'Credits length',
+			'workSkip.resumeBeforeEnd' => 'Keep the final scene',
+			'workSkip.resumeHint' => 'Time remaining after the jump. 00:00 finishes playback.',
+			'workSkip.timeHint' => 'Minutes:seconds',
+			'workSkip.behavior' => 'Intro skips immediately. Credits use the delay in playback settings (5 seconds by default).',
+			'workSkip.invalid' => 'Check the time ranges: end must follow start, credits must fit, and ranges cannot overlap.',
+			'workSkip.unavailable' => 'Match this movie or series to TMDB or IMDb before saving skip settings.',
+			'workSkip.loadFailed' => 'Unable to load skip settings. Please try again.',
+			'workSkip.saveFailed' => 'Unable to save. Your changes have not been applied.',
+			'workSkip.delay' => 'Skip credits delay',
+			'workSkip.delayDescription' => ({required Object seconds}) => 'Wait ${seconds} seconds before skipping credits. Intro skips immediately.',
+			'workSkip.cancelVisit' => 'Cancel this skip',
+			'workSkip.legend' => 'Blue: intro · Amber: credits',
 			_ => null,
 		};
 	}
