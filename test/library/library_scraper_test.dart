@@ -444,7 +444,7 @@ void main() {
     expect((await repo.versionsOf(episode.item.id)).single.path, '/Docs/Chernobyl.mkv');
   });
 
-  test('unmatched titles have a shelf of their own, and can be found and resumed', () async {
+  test('unmatched titles can be found without saving watch state', () async {
     driver.files.add('/Movies/Home Video 2019.mkv');
     await scan();
     await scraper.scrapePending();
@@ -461,10 +461,35 @@ void main() {
     expect(await repo.recentlyAdded(), isEmpty, reason: 'no row of blank posters on the home screen');
 
     await repo.setProgress(title.id, positionMs: 60000, durationMs: 3600000);
-    expect((await repo.continueWatching()).single.item.id, title.id);
+    expect(await repo.continueWatching(), isEmpty);
+    expect(await db.select(db.workWatchStates).get(), isEmpty);
   });
 
-  test('progress survives a title being merged into another', () async {
+  test('scan removal and re-scraping recover a matched movie progress on its new id', () async {
+    const path = '/Movies/The.Wandering.Earth.II.2023.mkv';
+    driver.files.add(path);
+    final hit = tmdb.hit('842675', '流浪地球2', year: 2023, original: 'The Wandering Earth II');
+    tmdb.results['the wandering earth ii'] = [hit];
+    tmdb.details['842675'] = const ScrapedTitle(source: 'tmdb', tmdbId: '842675', title: '流浪地球2', year: 2023);
+    await scan();
+    await scraper.scrapePending();
+    final old = (await items(LibraryKinds.movie)).single;
+    await repo.setProgress(old.id, positionMs: 600000, durationMs: 7200000);
+    driver.files.clear();
+    await scan();
+    expect(await items(LibraryKinds.movie), isEmpty);
+    expect(await db.select(db.workWatchStates).get(), hasLength(1));
+    driver.files.add(path);
+    await scan();
+    expect(await repo.continueWatching(), isEmpty, reason: 'wait for a confirmed scraped identity');
+    await scraper.scrapePending();
+    final restored = (await repo.continueWatching()).single;
+    expect(restored.item.id, isNot(old.id));
+    expect(restored.state!.positionMs, 600000);
+    expect(restored.state!.durationMs, 7200000);
+  });
+
+  test('unmatched progress is ignored when titles are merged', () async {
     driver.files
       ..add('/A/流浪地球2 (2023).mkv')
       ..add('/B/The.Wandering.Earth.II.2023.2160p.mkv');
@@ -479,11 +504,11 @@ void main() {
     await scraper.scrapePending();
 
     final movie = (await items(LibraryKinds.movie)).single;
-    final resumed = (await repo.continueWatching()).single;
-    expect((resumed.item.id, resumed.state?.positionMs), (movie.id, 600000));
+    expect(movie.tmdbId, '842675');
+    expect(await repo.continueWatching(), isEmpty);
   });
 
-  test('progress follows a movie that turns into a show', () async {
+  test('unmatched progress is ignored when a movie turns into a show', () async {
     driver.files.add('/Docs/Chernobyl.mkv');
     await scan();
     final movie = (await items(LibraryKinds.movie)).single;
@@ -499,7 +524,8 @@ void main() {
 
     await scraper.scrapePending();
     final episode = (await repo.episodesOfShow(movie.id)).single;
-    expect(episode.state?.positionMs, 120000, reason: 'the episode is what plays now');
+    expect(episode.state, isNull);
+    expect(await db.select(db.workWatchStates).get(), isEmpty);
   });
 
   test('NfoReader ignores documents that are not titles', () {

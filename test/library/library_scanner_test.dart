@@ -227,11 +227,7 @@ void main() {
 
       driver.files.clear(); // Nothing may be listed.
       final moved = await scanner.refileFromNames('m1');
-      expect(
-        (await repo.continueWatching()).single.state?.positionMs,
-        5000,
-        reason: 'the emptied title hands its progress on before it is pruned',
-      );
+      expect(await repo.continueWatching(), isEmpty, reason: 'unmatched titles have no saved watch state');
       expect(moved, 2);
       final movies = await items(LibraryKinds.movie);
       expect(movies.map((m) => '${m.title}|${m.year}|${m.libraryType}').toSet(), {

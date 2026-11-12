@@ -3,6 +3,7 @@ import 'package:drift/drift.dart';
 
 import '../database/app_database.dart';
 import 'media_probe.dart';
+import 'library_watch_state_store.dart';
 
 /// String ids persisted in the library tables.
 abstract final class LibraryKinds {
@@ -125,6 +126,8 @@ class LibraryRepository {
 
   final AppDatabase _db;
 
+  late final LibraryWatchStateStore _watchStates = LibraryWatchStateStore(_db);
+
   /// A playback this far in counts as finished.
   static const double watchedThreshold = 0.9;
 
@@ -195,47 +198,29 @@ class LibraryRepository {
 
   // ─── Titles ────────────────────────────────────────────────────────────
 
-  Future<int> insertItem(LibraryItemsCompanion item) => _db.into(_db.libraryItems).insert(item);
+  Future<int> insertItem(LibraryItemsCompanion item) => _db.transaction(() async {
+    final id = await _db.into(_db.libraryItems).insert(item);
+    await _watchStates.restoreItemAndChildren(id);
+    return id;
+  });
 
   Future<void> updateItem(int id, LibraryItemsCompanion changes) async {
-    await (_db.update(
-      _db.libraryItems,
-    )..where((t) => t.id.equals(id))).write(changes.copyWith(updatedAt: Value(_now())));
+    await _db.transaction(() async {
+      final previous = await (_db.select(_db.libraryItems)..where((t) => t.id.equals(id))).getSingleOrNull();
+      await (_db.update(
+        _db.libraryItems,
+      )..where((t) => t.id.equals(id))).write(changes.copyWith(updatedAt: Value(_now())));
+      final current = await (_db.select(_db.libraryItems)..where((t) => t.id.equals(id))).getSingleOrNull();
+      if (previous != null && current != null) await _watchStates.addTmdbIdentity(previous, current);
+      await _watchStates.restoreItemAndChildren(id);
+    });
   }
 
-  /// Moves the watch state of [fromId] onto [toId], for when one title is
-  /// folded into another or a file moves to a different title. When both
-  /// have state they are combined: the more recent progress, watched if
-  /// either was, plays added up, favourite if either was.
+  /// Rebinds the surviving index item after a scraper merge. The work key
+  /// already owns the state; merging two index rows must not count plays twice.
   Future<void> mergeUserState(int fromId, int toId) async {
     if (fromId == toId) return;
-    final states = _db.libraryUserStates;
-    await _db.transaction(() async {
-      final from = await (_db.select(states)..where((t) => t.itemId.equals(fromId))).getSingleOrNull();
-      if (from == null) return;
-      final to = await (_db.select(states)..where((t) => t.itemId.equals(toId))).getSingleOrNull();
-      if (to == null) {
-        await (_db.update(
-          states,
-        )..where((t) => t.itemId.equals(fromId))).write(LibraryUserStatesCompanion(itemId: Value(toId)));
-        return;
-      }
-      final fromNewer = (from.lastPlayedAt ?? 0) > (to.lastPlayedAt ?? 0);
-      final newer = fromNewer ? from : to;
-      await (_db.update(states)..where((t) => t.itemId.equals(toId))).write(
-        LibraryUserStatesCompanion(
-          positionMs: Value(newer.positionMs),
-          durationMs: Value(newer.durationMs ?? from.durationMs ?? to.durationMs),
-          watched: Value(from.watched || to.watched),
-          playCount: Value(from.playCount + to.playCount),
-          lastPlayedAt: Value(newer.lastPlayedAt),
-          favorite: Value(from.favorite || to.favorite),
-          hiddenFromContinue: Value(newer.hiddenFromContinue),
-          updatedAt: Value(_now()),
-        ),
-      );
-      await (_db.delete(states)..where((t) => t.itemId.equals(fromId))).go();
-    });
+    await _watchStates.restoreItemAndChildren(toId);
   }
 
   /// How many videos are filed under [itemId].
@@ -471,9 +456,12 @@ class LibraryRepository {
 
   /// Moves a movie or show, with its seasons and episodes, to [libraryType].
   Future<void> setLibraryType(int itemId, String libraryType) async {
-    await (_db.update(_db.libraryItems)..where((t) => t.id.equals(itemId) | t.showId.equals(itemId))).write(
-      LibraryItemsCompanion(libraryType: Value(libraryType)),
-    );
+    await _db.transaction(() async {
+      await (_db.update(_db.libraryItems)..where((t) => t.id.equals(itemId) | t.showId.equals(itemId))).write(
+        LibraryItemsCompanion(libraryType: Value(libraryType)),
+      );
+      await _watchStates.restoreItemAndChildren(itemId);
+    });
   }
 
   /// Movies and shows whose names contain [text], unmatched ones included:
@@ -534,13 +522,17 @@ class LibraryRepository {
   // ─── User state ────────────────────────────────────────────────────────
 
   Future<void> _writeState(int itemId, LibraryUserStatesCompanion changes) async {
-    final now = _now();
-    final updated = await (_db.update(
-      _db.libraryUserStates,
-    )..where((t) => t.itemId.equals(itemId))).write(changes.copyWith(updatedAt: Value(now)));
-    if (updated == 0) {
-      await _db.into(_db.libraryUserStates).insert(changes.copyWith(itemId: Value(itemId), updatedAt: Value(now)));
-    }
+    await _db.transaction(() async {
+      if (!await _watchStates.prepareWrite(itemId)) return;
+      final now = _now();
+      final updated = await (_db.update(
+        _db.libraryUserStates,
+      )..where((t) => t.itemId.equals(itemId))).write(changes.copyWith(updatedAt: Value(now)));
+      if (updated == 0) {
+        await _db.into(_db.libraryUserStates).insert(changes.copyWith(itemId: Value(itemId), updatedAt: Value(now)));
+      }
+      await _watchStates.saveProjectedState(itemId);
+    });
   }
 
   /// Records where playback of a movie or episode is. Reaching
@@ -549,7 +541,10 @@ class LibraryRepository {
   Future<void> setProgress(int itemId, {required int positionMs, int? durationMs}) async {
     final finished = durationMs != null && durationMs > 0 && positionMs >= durationMs * watchedThreshold;
     if (finished) {
-      await markWatched(itemId, watched: true);
+      await _db.transaction(() async {
+        await _writeState(itemId, LibraryUserStatesCompanion(durationMs: Value(durationMs)));
+        await markWatched(itemId, watched: true);
+      });
       return;
     }
     await _writeState(

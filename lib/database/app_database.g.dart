@@ -11430,6 +11430,1086 @@ class LibraryUserStatesCompanion extends UpdateCompanion<LibraryUserStateRow> {
   }
 }
 
+class $WorkWatchStatesTable extends WorkWatchStates
+    with TableInfo<$WorkWatchStatesTable, WorkWatchStateRow> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $WorkWatchStatesTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _stateKeyMeta = const VerificationMeta(
+    'stateKey',
+  );
+  @override
+  late final GeneratedColumn<String> stateKey = GeneratedColumn<String>(
+    'state_key',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _sourceMeta = const VerificationMeta('source');
+  @override
+  late final GeneratedColumn<String> source = GeneratedColumn<String>(
+    'source',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _kindMeta = const VerificationMeta('kind');
+  @override
+  late final GeneratedColumn<String> kind = GeneratedColumn<String>(
+    'kind',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _providerMeta = const VerificationMeta(
+    'provider',
+  );
+  @override
+  late final GeneratedColumn<String> provider = GeneratedColumn<String>(
+    'provider',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _externalIdMeta = const VerificationMeta(
+    'externalId',
+  );
+  @override
+  late final GeneratedColumn<String> externalId = GeneratedColumn<String>(
+    'external_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _seasonNumberMeta = const VerificationMeta(
+    'seasonNumber',
+  );
+  @override
+  late final GeneratedColumn<int> seasonNumber = GeneratedColumn<int>(
+    'season_number',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(-1),
+  );
+  static const VerificationMeta _episodeNumberMeta = const VerificationMeta(
+    'episodeNumber',
+  );
+  @override
+  late final GeneratedColumn<int> episodeNumber = GeneratedColumn<int>(
+    'episode_number',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(-1),
+  );
+  static const VerificationMeta _positionMsMeta = const VerificationMeta(
+    'positionMs',
+  );
+  @override
+  late final GeneratedColumn<int> positionMs = GeneratedColumn<int>(
+    'position_ms',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(0),
+  );
+  static const VerificationMeta _durationMsMeta = const VerificationMeta(
+    'durationMs',
+  );
+  @override
+  late final GeneratedColumn<int> durationMs = GeneratedColumn<int>(
+    'duration_ms',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _watchedMeta = const VerificationMeta(
+    'watched',
+  );
+  @override
+  late final GeneratedColumn<bool> watched = GeneratedColumn<bool>(
+    'watched',
+    aliasedName,
+    false,
+    type: DriftSqlType.bool,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("watched" IN (0, 1))',
+    ),
+    defaultValue: const Constant(false),
+  );
+  static const VerificationMeta _playCountMeta = const VerificationMeta(
+    'playCount',
+  );
+  @override
+  late final GeneratedColumn<int> playCount = GeneratedColumn<int>(
+    'play_count',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(0),
+  );
+  static const VerificationMeta _lastPlayedAtMeta = const VerificationMeta(
+    'lastPlayedAt',
+  );
+  @override
+  late final GeneratedColumn<int> lastPlayedAt = GeneratedColumn<int>(
+    'last_played_at',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _favoriteMeta = const VerificationMeta(
+    'favorite',
+  );
+  @override
+  late final GeneratedColumn<bool> favorite = GeneratedColumn<bool>(
+    'favorite',
+    aliasedName,
+    false,
+    type: DriftSqlType.bool,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("favorite" IN (0, 1))',
+    ),
+    defaultValue: const Constant(false),
+  );
+  static const VerificationMeta _hiddenFromContinueMeta =
+      const VerificationMeta('hiddenFromContinue');
+  @override
+  late final GeneratedColumn<bool> hiddenFromContinue = GeneratedColumn<bool>(
+    'hidden_from_continue',
+    aliasedName,
+    false,
+    type: DriftSqlType.bool,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("hidden_from_continue" IN (0, 1))',
+    ),
+    defaultValue: const Constant(false),
+  );
+  static const VerificationMeta _updatedAtMeta = const VerificationMeta(
+    'updatedAt',
+  );
+  @override
+  late final GeneratedColumn<int> updatedAt = GeneratedColumn<int>(
+    'updated_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    stateKey,
+    source,
+    kind,
+    provider,
+    externalId,
+    seasonNumber,
+    episodeNumber,
+    positionMs,
+    durationMs,
+    watched,
+    playCount,
+    lastPlayedAt,
+    favorite,
+    hiddenFromContinue,
+    updatedAt,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'work_watch_states';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<WorkWatchStateRow> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('state_key')) {
+      context.handle(
+        _stateKeyMeta,
+        stateKey.isAcceptableOrUnknown(data['state_key']!, _stateKeyMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_stateKeyMeta);
+    }
+    if (data.containsKey('source')) {
+      context.handle(
+        _sourceMeta,
+        source.isAcceptableOrUnknown(data['source']!, _sourceMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_sourceMeta);
+    }
+    if (data.containsKey('kind')) {
+      context.handle(
+        _kindMeta,
+        kind.isAcceptableOrUnknown(data['kind']!, _kindMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_kindMeta);
+    }
+    if (data.containsKey('provider')) {
+      context.handle(
+        _providerMeta,
+        provider.isAcceptableOrUnknown(data['provider']!, _providerMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_providerMeta);
+    }
+    if (data.containsKey('external_id')) {
+      context.handle(
+        _externalIdMeta,
+        externalId.isAcceptableOrUnknown(data['external_id']!, _externalIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_externalIdMeta);
+    }
+    if (data.containsKey('season_number')) {
+      context.handle(
+        _seasonNumberMeta,
+        seasonNumber.isAcceptableOrUnknown(
+          data['season_number']!,
+          _seasonNumberMeta,
+        ),
+      );
+    }
+    if (data.containsKey('episode_number')) {
+      context.handle(
+        _episodeNumberMeta,
+        episodeNumber.isAcceptableOrUnknown(
+          data['episode_number']!,
+          _episodeNumberMeta,
+        ),
+      );
+    }
+    if (data.containsKey('position_ms')) {
+      context.handle(
+        _positionMsMeta,
+        positionMs.isAcceptableOrUnknown(data['position_ms']!, _positionMsMeta),
+      );
+    }
+    if (data.containsKey('duration_ms')) {
+      context.handle(
+        _durationMsMeta,
+        durationMs.isAcceptableOrUnknown(data['duration_ms']!, _durationMsMeta),
+      );
+    }
+    if (data.containsKey('watched')) {
+      context.handle(
+        _watchedMeta,
+        watched.isAcceptableOrUnknown(data['watched']!, _watchedMeta),
+      );
+    }
+    if (data.containsKey('play_count')) {
+      context.handle(
+        _playCountMeta,
+        playCount.isAcceptableOrUnknown(data['play_count']!, _playCountMeta),
+      );
+    }
+    if (data.containsKey('last_played_at')) {
+      context.handle(
+        _lastPlayedAtMeta,
+        lastPlayedAt.isAcceptableOrUnknown(
+          data['last_played_at']!,
+          _lastPlayedAtMeta,
+        ),
+      );
+    }
+    if (data.containsKey('favorite')) {
+      context.handle(
+        _favoriteMeta,
+        favorite.isAcceptableOrUnknown(data['favorite']!, _favoriteMeta),
+      );
+    }
+    if (data.containsKey('hidden_from_continue')) {
+      context.handle(
+        _hiddenFromContinueMeta,
+        hiddenFromContinue.isAcceptableOrUnknown(
+          data['hidden_from_continue']!,
+          _hiddenFromContinueMeta,
+        ),
+      );
+    }
+    if (data.containsKey('updated_at')) {
+      context.handle(
+        _updatedAtMeta,
+        updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_updatedAtMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {stateKey};
+  @override
+  WorkWatchStateRow map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return WorkWatchStateRow(
+      stateKey: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}state_key'],
+      )!,
+      source: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}source'],
+      )!,
+      kind: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}kind'],
+      )!,
+      provider: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}provider'],
+      )!,
+      externalId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}external_id'],
+      )!,
+      seasonNumber: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}season_number'],
+      )!,
+      episodeNumber: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}episode_number'],
+      )!,
+      positionMs: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}position_ms'],
+      )!,
+      durationMs: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}duration_ms'],
+      ),
+      watched: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}watched'],
+      )!,
+      playCount: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}play_count'],
+      )!,
+      lastPlayedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}last_played_at'],
+      ),
+      favorite: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}favorite'],
+      )!,
+      hiddenFromContinue: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}hidden_from_continue'],
+      )!,
+      updatedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}updated_at'],
+      )!,
+    );
+  }
+
+  @override
+  $WorkWatchStatesTable createAlias(String alias) {
+    return $WorkWatchStatesTable(attachedDatabase, alias);
+  }
+}
+
+class WorkWatchStateRow extends DataClass
+    implements Insertable<WorkWatchStateRow> {
+  final String stateKey;
+  final String source;
+  final String kind;
+  final String provider;
+  final String externalId;
+  final int seasonNumber;
+  final int episodeNumber;
+  final int positionMs;
+  final int? durationMs;
+  final bool watched;
+  final int playCount;
+  final int? lastPlayedAt;
+  final bool favorite;
+  final bool hiddenFromContinue;
+  final int updatedAt;
+  const WorkWatchStateRow({
+    required this.stateKey,
+    required this.source,
+    required this.kind,
+    required this.provider,
+    required this.externalId,
+    required this.seasonNumber,
+    required this.episodeNumber,
+    required this.positionMs,
+    this.durationMs,
+    required this.watched,
+    required this.playCount,
+    this.lastPlayedAt,
+    required this.favorite,
+    required this.hiddenFromContinue,
+    required this.updatedAt,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['state_key'] = Variable<String>(stateKey);
+    map['source'] = Variable<String>(source);
+    map['kind'] = Variable<String>(kind);
+    map['provider'] = Variable<String>(provider);
+    map['external_id'] = Variable<String>(externalId);
+    map['season_number'] = Variable<int>(seasonNumber);
+    map['episode_number'] = Variable<int>(episodeNumber);
+    map['position_ms'] = Variable<int>(positionMs);
+    if (!nullToAbsent || durationMs != null) {
+      map['duration_ms'] = Variable<int>(durationMs);
+    }
+    map['watched'] = Variable<bool>(watched);
+    map['play_count'] = Variable<int>(playCount);
+    if (!nullToAbsent || lastPlayedAt != null) {
+      map['last_played_at'] = Variable<int>(lastPlayedAt);
+    }
+    map['favorite'] = Variable<bool>(favorite);
+    map['hidden_from_continue'] = Variable<bool>(hiddenFromContinue);
+    map['updated_at'] = Variable<int>(updatedAt);
+    return map;
+  }
+
+  WorkWatchStatesCompanion toCompanion(bool nullToAbsent) {
+    return WorkWatchStatesCompanion(
+      stateKey: Value(stateKey),
+      source: Value(source),
+      kind: Value(kind),
+      provider: Value(provider),
+      externalId: Value(externalId),
+      seasonNumber: Value(seasonNumber),
+      episodeNumber: Value(episodeNumber),
+      positionMs: Value(positionMs),
+      durationMs: durationMs == null && nullToAbsent
+          ? const Value.absent()
+          : Value(durationMs),
+      watched: Value(watched),
+      playCount: Value(playCount),
+      lastPlayedAt: lastPlayedAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(lastPlayedAt),
+      favorite: Value(favorite),
+      hiddenFromContinue: Value(hiddenFromContinue),
+      updatedAt: Value(updatedAt),
+    );
+  }
+
+  factory WorkWatchStateRow.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return WorkWatchStateRow(
+      stateKey: serializer.fromJson<String>(json['stateKey']),
+      source: serializer.fromJson<String>(json['source']),
+      kind: serializer.fromJson<String>(json['kind']),
+      provider: serializer.fromJson<String>(json['provider']),
+      externalId: serializer.fromJson<String>(json['externalId']),
+      seasonNumber: serializer.fromJson<int>(json['seasonNumber']),
+      episodeNumber: serializer.fromJson<int>(json['episodeNumber']),
+      positionMs: serializer.fromJson<int>(json['positionMs']),
+      durationMs: serializer.fromJson<int?>(json['durationMs']),
+      watched: serializer.fromJson<bool>(json['watched']),
+      playCount: serializer.fromJson<int>(json['playCount']),
+      lastPlayedAt: serializer.fromJson<int?>(json['lastPlayedAt']),
+      favorite: serializer.fromJson<bool>(json['favorite']),
+      hiddenFromContinue: serializer.fromJson<bool>(json['hiddenFromContinue']),
+      updatedAt: serializer.fromJson<int>(json['updatedAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'stateKey': serializer.toJson<String>(stateKey),
+      'source': serializer.toJson<String>(source),
+      'kind': serializer.toJson<String>(kind),
+      'provider': serializer.toJson<String>(provider),
+      'externalId': serializer.toJson<String>(externalId),
+      'seasonNumber': serializer.toJson<int>(seasonNumber),
+      'episodeNumber': serializer.toJson<int>(episodeNumber),
+      'positionMs': serializer.toJson<int>(positionMs),
+      'durationMs': serializer.toJson<int?>(durationMs),
+      'watched': serializer.toJson<bool>(watched),
+      'playCount': serializer.toJson<int>(playCount),
+      'lastPlayedAt': serializer.toJson<int?>(lastPlayedAt),
+      'favorite': serializer.toJson<bool>(favorite),
+      'hiddenFromContinue': serializer.toJson<bool>(hiddenFromContinue),
+      'updatedAt': serializer.toJson<int>(updatedAt),
+    };
+  }
+
+  WorkWatchStateRow copyWith({
+    String? stateKey,
+    String? source,
+    String? kind,
+    String? provider,
+    String? externalId,
+    int? seasonNumber,
+    int? episodeNumber,
+    int? positionMs,
+    Value<int?> durationMs = const Value.absent(),
+    bool? watched,
+    int? playCount,
+    Value<int?> lastPlayedAt = const Value.absent(),
+    bool? favorite,
+    bool? hiddenFromContinue,
+    int? updatedAt,
+  }) => WorkWatchStateRow(
+    stateKey: stateKey ?? this.stateKey,
+    source: source ?? this.source,
+    kind: kind ?? this.kind,
+    provider: provider ?? this.provider,
+    externalId: externalId ?? this.externalId,
+    seasonNumber: seasonNumber ?? this.seasonNumber,
+    episodeNumber: episodeNumber ?? this.episodeNumber,
+    positionMs: positionMs ?? this.positionMs,
+    durationMs: durationMs.present ? durationMs.value : this.durationMs,
+    watched: watched ?? this.watched,
+    playCount: playCount ?? this.playCount,
+    lastPlayedAt: lastPlayedAt.present ? lastPlayedAt.value : this.lastPlayedAt,
+    favorite: favorite ?? this.favorite,
+    hiddenFromContinue: hiddenFromContinue ?? this.hiddenFromContinue,
+    updatedAt: updatedAt ?? this.updatedAt,
+  );
+  WorkWatchStateRow copyWithCompanion(WorkWatchStatesCompanion data) {
+    return WorkWatchStateRow(
+      stateKey: data.stateKey.present ? data.stateKey.value : this.stateKey,
+      source: data.source.present ? data.source.value : this.source,
+      kind: data.kind.present ? data.kind.value : this.kind,
+      provider: data.provider.present ? data.provider.value : this.provider,
+      externalId: data.externalId.present
+          ? data.externalId.value
+          : this.externalId,
+      seasonNumber: data.seasonNumber.present
+          ? data.seasonNumber.value
+          : this.seasonNumber,
+      episodeNumber: data.episodeNumber.present
+          ? data.episodeNumber.value
+          : this.episodeNumber,
+      positionMs: data.positionMs.present
+          ? data.positionMs.value
+          : this.positionMs,
+      durationMs: data.durationMs.present
+          ? data.durationMs.value
+          : this.durationMs,
+      watched: data.watched.present ? data.watched.value : this.watched,
+      playCount: data.playCount.present ? data.playCount.value : this.playCount,
+      lastPlayedAt: data.lastPlayedAt.present
+          ? data.lastPlayedAt.value
+          : this.lastPlayedAt,
+      favorite: data.favorite.present ? data.favorite.value : this.favorite,
+      hiddenFromContinue: data.hiddenFromContinue.present
+          ? data.hiddenFromContinue.value
+          : this.hiddenFromContinue,
+      updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('WorkWatchStateRow(')
+          ..write('stateKey: $stateKey, ')
+          ..write('source: $source, ')
+          ..write('kind: $kind, ')
+          ..write('provider: $provider, ')
+          ..write('externalId: $externalId, ')
+          ..write('seasonNumber: $seasonNumber, ')
+          ..write('episodeNumber: $episodeNumber, ')
+          ..write('positionMs: $positionMs, ')
+          ..write('durationMs: $durationMs, ')
+          ..write('watched: $watched, ')
+          ..write('playCount: $playCount, ')
+          ..write('lastPlayedAt: $lastPlayedAt, ')
+          ..write('favorite: $favorite, ')
+          ..write('hiddenFromContinue: $hiddenFromContinue, ')
+          ..write('updatedAt: $updatedAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    stateKey,
+    source,
+    kind,
+    provider,
+    externalId,
+    seasonNumber,
+    episodeNumber,
+    positionMs,
+    durationMs,
+    watched,
+    playCount,
+    lastPlayedAt,
+    favorite,
+    hiddenFromContinue,
+    updatedAt,
+  );
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is WorkWatchStateRow &&
+          other.stateKey == this.stateKey &&
+          other.source == this.source &&
+          other.kind == this.kind &&
+          other.provider == this.provider &&
+          other.externalId == this.externalId &&
+          other.seasonNumber == this.seasonNumber &&
+          other.episodeNumber == this.episodeNumber &&
+          other.positionMs == this.positionMs &&
+          other.durationMs == this.durationMs &&
+          other.watched == this.watched &&
+          other.playCount == this.playCount &&
+          other.lastPlayedAt == this.lastPlayedAt &&
+          other.favorite == this.favorite &&
+          other.hiddenFromContinue == this.hiddenFromContinue &&
+          other.updatedAt == this.updatedAt);
+}
+
+class WorkWatchStatesCompanion extends UpdateCompanion<WorkWatchStateRow> {
+  final Value<String> stateKey;
+  final Value<String> source;
+  final Value<String> kind;
+  final Value<String> provider;
+  final Value<String> externalId;
+  final Value<int> seasonNumber;
+  final Value<int> episodeNumber;
+  final Value<int> positionMs;
+  final Value<int?> durationMs;
+  final Value<bool> watched;
+  final Value<int> playCount;
+  final Value<int?> lastPlayedAt;
+  final Value<bool> favorite;
+  final Value<bool> hiddenFromContinue;
+  final Value<int> updatedAt;
+  final Value<int> rowid;
+  const WorkWatchStatesCompanion({
+    this.stateKey = const Value.absent(),
+    this.source = const Value.absent(),
+    this.kind = const Value.absent(),
+    this.provider = const Value.absent(),
+    this.externalId = const Value.absent(),
+    this.seasonNumber = const Value.absent(),
+    this.episodeNumber = const Value.absent(),
+    this.positionMs = const Value.absent(),
+    this.durationMs = const Value.absent(),
+    this.watched = const Value.absent(),
+    this.playCount = const Value.absent(),
+    this.lastPlayedAt = const Value.absent(),
+    this.favorite = const Value.absent(),
+    this.hiddenFromContinue = const Value.absent(),
+    this.updatedAt = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  WorkWatchStatesCompanion.insert({
+    required String stateKey,
+    required String source,
+    required String kind,
+    required String provider,
+    required String externalId,
+    this.seasonNumber = const Value.absent(),
+    this.episodeNumber = const Value.absent(),
+    this.positionMs = const Value.absent(),
+    this.durationMs = const Value.absent(),
+    this.watched = const Value.absent(),
+    this.playCount = const Value.absent(),
+    this.lastPlayedAt = const Value.absent(),
+    this.favorite = const Value.absent(),
+    this.hiddenFromContinue = const Value.absent(),
+    required int updatedAt,
+    this.rowid = const Value.absent(),
+  }) : stateKey = Value(stateKey),
+       source = Value(source),
+       kind = Value(kind),
+       provider = Value(provider),
+       externalId = Value(externalId),
+       updatedAt = Value(updatedAt);
+  static Insertable<WorkWatchStateRow> custom({
+    Expression<String>? stateKey,
+    Expression<String>? source,
+    Expression<String>? kind,
+    Expression<String>? provider,
+    Expression<String>? externalId,
+    Expression<int>? seasonNumber,
+    Expression<int>? episodeNumber,
+    Expression<int>? positionMs,
+    Expression<int>? durationMs,
+    Expression<bool>? watched,
+    Expression<int>? playCount,
+    Expression<int>? lastPlayedAt,
+    Expression<bool>? favorite,
+    Expression<bool>? hiddenFromContinue,
+    Expression<int>? updatedAt,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (stateKey != null) 'state_key': stateKey,
+      if (source != null) 'source': source,
+      if (kind != null) 'kind': kind,
+      if (provider != null) 'provider': provider,
+      if (externalId != null) 'external_id': externalId,
+      if (seasonNumber != null) 'season_number': seasonNumber,
+      if (episodeNumber != null) 'episode_number': episodeNumber,
+      if (positionMs != null) 'position_ms': positionMs,
+      if (durationMs != null) 'duration_ms': durationMs,
+      if (watched != null) 'watched': watched,
+      if (playCount != null) 'play_count': playCount,
+      if (lastPlayedAt != null) 'last_played_at': lastPlayedAt,
+      if (favorite != null) 'favorite': favorite,
+      if (hiddenFromContinue != null)
+        'hidden_from_continue': hiddenFromContinue,
+      if (updatedAt != null) 'updated_at': updatedAt,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  WorkWatchStatesCompanion copyWith({
+    Value<String>? stateKey,
+    Value<String>? source,
+    Value<String>? kind,
+    Value<String>? provider,
+    Value<String>? externalId,
+    Value<int>? seasonNumber,
+    Value<int>? episodeNumber,
+    Value<int>? positionMs,
+    Value<int?>? durationMs,
+    Value<bool>? watched,
+    Value<int>? playCount,
+    Value<int?>? lastPlayedAt,
+    Value<bool>? favorite,
+    Value<bool>? hiddenFromContinue,
+    Value<int>? updatedAt,
+    Value<int>? rowid,
+  }) {
+    return WorkWatchStatesCompanion(
+      stateKey: stateKey ?? this.stateKey,
+      source: source ?? this.source,
+      kind: kind ?? this.kind,
+      provider: provider ?? this.provider,
+      externalId: externalId ?? this.externalId,
+      seasonNumber: seasonNumber ?? this.seasonNumber,
+      episodeNumber: episodeNumber ?? this.episodeNumber,
+      positionMs: positionMs ?? this.positionMs,
+      durationMs: durationMs ?? this.durationMs,
+      watched: watched ?? this.watched,
+      playCount: playCount ?? this.playCount,
+      lastPlayedAt: lastPlayedAt ?? this.lastPlayedAt,
+      favorite: favorite ?? this.favorite,
+      hiddenFromContinue: hiddenFromContinue ?? this.hiddenFromContinue,
+      updatedAt: updatedAt ?? this.updatedAt,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (stateKey.present) {
+      map['state_key'] = Variable<String>(stateKey.value);
+    }
+    if (source.present) {
+      map['source'] = Variable<String>(source.value);
+    }
+    if (kind.present) {
+      map['kind'] = Variable<String>(kind.value);
+    }
+    if (provider.present) {
+      map['provider'] = Variable<String>(provider.value);
+    }
+    if (externalId.present) {
+      map['external_id'] = Variable<String>(externalId.value);
+    }
+    if (seasonNumber.present) {
+      map['season_number'] = Variable<int>(seasonNumber.value);
+    }
+    if (episodeNumber.present) {
+      map['episode_number'] = Variable<int>(episodeNumber.value);
+    }
+    if (positionMs.present) {
+      map['position_ms'] = Variable<int>(positionMs.value);
+    }
+    if (durationMs.present) {
+      map['duration_ms'] = Variable<int>(durationMs.value);
+    }
+    if (watched.present) {
+      map['watched'] = Variable<bool>(watched.value);
+    }
+    if (playCount.present) {
+      map['play_count'] = Variable<int>(playCount.value);
+    }
+    if (lastPlayedAt.present) {
+      map['last_played_at'] = Variable<int>(lastPlayedAt.value);
+    }
+    if (favorite.present) {
+      map['favorite'] = Variable<bool>(favorite.value);
+    }
+    if (hiddenFromContinue.present) {
+      map['hidden_from_continue'] = Variable<bool>(hiddenFromContinue.value);
+    }
+    if (updatedAt.present) {
+      map['updated_at'] = Variable<int>(updatedAt.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('WorkWatchStatesCompanion(')
+          ..write('stateKey: $stateKey, ')
+          ..write('source: $source, ')
+          ..write('kind: $kind, ')
+          ..write('provider: $provider, ')
+          ..write('externalId: $externalId, ')
+          ..write('seasonNumber: $seasonNumber, ')
+          ..write('episodeNumber: $episodeNumber, ')
+          ..write('positionMs: $positionMs, ')
+          ..write('durationMs: $durationMs, ')
+          ..write('watched: $watched, ')
+          ..write('playCount: $playCount, ')
+          ..write('lastPlayedAt: $lastPlayedAt, ')
+          ..write('favorite: $favorite, ')
+          ..write('hiddenFromContinue: $hiddenFromContinue, ')
+          ..write('updatedAt: $updatedAt, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class $LibraryWorkBindingsTable extends LibraryWorkBindings
+    with TableInfo<$LibraryWorkBindingsTable, LibraryWorkBindingRow> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $LibraryWorkBindingsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _itemIdMeta = const VerificationMeta('itemId');
+  @override
+  late final GeneratedColumn<int> itemId = GeneratedColumn<int>(
+    'item_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'REFERENCES library_items (id) ON DELETE CASCADE',
+    ),
+  );
+  static const VerificationMeta _stateKeyMeta = const VerificationMeta(
+    'stateKey',
+  );
+  @override
+  late final GeneratedColumn<String> stateKey = GeneratedColumn<String>(
+    'state_key',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [itemId, stateKey];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'library_work_bindings';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<LibraryWorkBindingRow> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('item_id')) {
+      context.handle(
+        _itemIdMeta,
+        itemId.isAcceptableOrUnknown(data['item_id']!, _itemIdMeta),
+      );
+    }
+    if (data.containsKey('state_key')) {
+      context.handle(
+        _stateKeyMeta,
+        stateKey.isAcceptableOrUnknown(data['state_key']!, _stateKeyMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_stateKeyMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {itemId};
+  @override
+  LibraryWorkBindingRow map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return LibraryWorkBindingRow(
+      itemId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}item_id'],
+      )!,
+      stateKey: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}state_key'],
+      )!,
+    );
+  }
+
+  @override
+  $LibraryWorkBindingsTable createAlias(String alias) {
+    return $LibraryWorkBindingsTable(attachedDatabase, alias);
+  }
+}
+
+class LibraryWorkBindingRow extends DataClass
+    implements Insertable<LibraryWorkBindingRow> {
+  final int itemId;
+  final String stateKey;
+  const LibraryWorkBindingRow({required this.itemId, required this.stateKey});
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['item_id'] = Variable<int>(itemId);
+    map['state_key'] = Variable<String>(stateKey);
+    return map;
+  }
+
+  LibraryWorkBindingsCompanion toCompanion(bool nullToAbsent) {
+    return LibraryWorkBindingsCompanion(
+      itemId: Value(itemId),
+      stateKey: Value(stateKey),
+    );
+  }
+
+  factory LibraryWorkBindingRow.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return LibraryWorkBindingRow(
+      itemId: serializer.fromJson<int>(json['itemId']),
+      stateKey: serializer.fromJson<String>(json['stateKey']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'itemId': serializer.toJson<int>(itemId),
+      'stateKey': serializer.toJson<String>(stateKey),
+    };
+  }
+
+  LibraryWorkBindingRow copyWith({int? itemId, String? stateKey}) =>
+      LibraryWorkBindingRow(
+        itemId: itemId ?? this.itemId,
+        stateKey: stateKey ?? this.stateKey,
+      );
+  LibraryWorkBindingRow copyWithCompanion(LibraryWorkBindingsCompanion data) {
+    return LibraryWorkBindingRow(
+      itemId: data.itemId.present ? data.itemId.value : this.itemId,
+      stateKey: data.stateKey.present ? data.stateKey.value : this.stateKey,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('LibraryWorkBindingRow(')
+          ..write('itemId: $itemId, ')
+          ..write('stateKey: $stateKey')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(itemId, stateKey);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is LibraryWorkBindingRow &&
+          other.itemId == this.itemId &&
+          other.stateKey == this.stateKey);
+}
+
+class LibraryWorkBindingsCompanion
+    extends UpdateCompanion<LibraryWorkBindingRow> {
+  final Value<int> itemId;
+  final Value<String> stateKey;
+  const LibraryWorkBindingsCompanion({
+    this.itemId = const Value.absent(),
+    this.stateKey = const Value.absent(),
+  });
+  LibraryWorkBindingsCompanion.insert({
+    this.itemId = const Value.absent(),
+    required String stateKey,
+  }) : stateKey = Value(stateKey);
+  static Insertable<LibraryWorkBindingRow> custom({
+    Expression<int>? itemId,
+    Expression<String>? stateKey,
+  }) {
+    return RawValuesInsertable({
+      if (itemId != null) 'item_id': itemId,
+      if (stateKey != null) 'state_key': stateKey,
+    });
+  }
+
+  LibraryWorkBindingsCompanion copyWith({
+    Value<int>? itemId,
+    Value<String>? stateKey,
+  }) {
+    return LibraryWorkBindingsCompanion(
+      itemId: itemId ?? this.itemId,
+      stateKey: stateKey ?? this.stateKey,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (itemId.present) {
+      map['item_id'] = Variable<int>(itemId.value);
+    }
+    if (stateKey.present) {
+      map['state_key'] = Variable<String>(stateKey.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('LibraryWorkBindingsCompanion(')
+          ..write('itemId: $itemId, ')
+          ..write('stateKey: $stateKey')
+          ..write(')'))
+        .toString();
+  }
+}
+
 class $LibraryGenresTable extends LibraryGenres
     with TableInfo<$LibraryGenresTable, LibraryGenreRow> {
   @override
@@ -14009,6 +15089,11 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   late final $LibraryFilesTable libraryFiles = $LibraryFilesTable(this);
   late final $LibraryUserStatesTable libraryUserStates =
       $LibraryUserStatesTable(this);
+  late final $WorkWatchStatesTable workWatchStates = $WorkWatchStatesTable(
+    this,
+  );
+  late final $LibraryWorkBindingsTable libraryWorkBindings =
+      $LibraryWorkBindingsTable(this);
   late final $LibraryGenresTable libraryGenres = $LibraryGenresTable(this);
   late final $LibraryItemGenresTable libraryItemGenres =
       $LibraryItemGenresTable(this);
@@ -14157,6 +15242,8 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     libraryItems,
     libraryFiles,
     libraryUserStates,
+    workWatchStates,
+    libraryWorkBindings,
     libraryGenres,
     libraryItemGenres,
     libraryPeople,
@@ -14251,6 +15338,13 @@ abstract class _$AppDatabase extends GeneratedDatabase {
         limitUpdateKind: UpdateKind.delete,
       ),
       result: [TableUpdate('library_user_states', kind: UpdateKind.delete)],
+    ),
+    WritePropagation(
+      on: TableUpdateQuery.onTableName(
+        'library_items',
+        limitUpdateKind: UpdateKind.delete,
+      ),
+      result: [TableUpdate('library_work_bindings', kind: UpdateKind.delete)],
     ),
     WritePropagation(
       on: TableUpdateQuery.onTableName(
@@ -18965,6 +20059,30 @@ final class $$LibraryItemsTableReferences
     );
   }
 
+  static MultiTypedResultKey<
+    $LibraryWorkBindingsTable,
+    List<LibraryWorkBindingRow>
+  >
+  _libraryWorkBindingsRefsTable(_$AppDatabase db) =>
+      MultiTypedResultKey.fromTable(
+        db.libraryWorkBindings,
+        aliasName: 'library_items__id__library_work_bindings__item_id',
+      );
+
+  $$LibraryWorkBindingsTableProcessedTableManager get libraryWorkBindingsRefs {
+    final manager = $$LibraryWorkBindingsTableTableManager(
+      $_db,
+      $_db.libraryWorkBindings,
+    ).filter((f) => f.itemId.id.sqlEquals($_itemColumn<int>('id')!));
+
+    final cache = $_typedResult.readTableOrNull(
+      _libraryWorkBindingsRefsTable($_db),
+    );
+    return ProcessedTableManager(
+      manager.$state.copyWith(prefetchedData: cache),
+    );
+  }
+
   static MultiTypedResultKey<$LibraryItemGenresTable, List<LibraryItemGenreRow>>
   _libraryItemGenresRefsTable(_$AppDatabase db) =>
       MultiTypedResultKey.fromTable(
@@ -19276,6 +20394,31 @@ class $$LibraryItemsTableFilterComposer
           }) => $$LibraryUserStatesTableFilterComposer(
             $db: $db,
             $table: $db.libraryUserStates,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return f(composer);
+  }
+
+  Expression<bool> libraryWorkBindingsRefs(
+    Expression<bool> Function($$LibraryWorkBindingsTableFilterComposer f) f,
+  ) {
+    final $$LibraryWorkBindingsTableFilterComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.id,
+      referencedTable: $db.libraryWorkBindings,
+      getReferencedColumn: (t) => t.itemId,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$LibraryWorkBindingsTableFilterComposer(
+            $db: $db,
+            $table: $db.libraryWorkBindings,
             $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
             joinBuilder: joinBuilder,
             $removeJoinBuilderFromRootComposer:
@@ -19793,6 +20936,32 @@ class $$LibraryItemsTableAnnotationComposer
     return f(composer);
   }
 
+  Expression<T> libraryWorkBindingsRefs<T extends Object>(
+    Expression<T> Function($$LibraryWorkBindingsTableAnnotationComposer a) f,
+  ) {
+    final $$LibraryWorkBindingsTableAnnotationComposer composer =
+        $composerBuilder(
+          composer: this,
+          getCurrentColumn: (t) => t.id,
+          referencedTable: $db.libraryWorkBindings,
+          getReferencedColumn: (t) => t.itemId,
+          builder:
+              (
+                joinBuilder, {
+                $addJoinBuilderToRootComposer,
+                $removeJoinBuilderFromRootComposer,
+              }) => $$LibraryWorkBindingsTableAnnotationComposer(
+                $db: $db,
+                $table: $db.libraryWorkBindings,
+                $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+                joinBuilder: joinBuilder,
+                $removeJoinBuilderFromRootComposer:
+                    $removeJoinBuilderFromRootComposer,
+              ),
+        );
+    return f(composer);
+  }
+
   Expression<T> libraryItemGenresRefs<T extends Object>(
     Expression<T> Function($$LibraryItemGenresTableAnnotationComposer a) f,
   ) {
@@ -19888,6 +21057,7 @@ class $$LibraryItemsTableTableManager
             bool showId,
             bool libraryFilesRefs,
             bool libraryUserStatesRefs,
+            bool libraryWorkBindingsRefs,
             bool libraryItemGenresRefs,
             bool libraryCreditsRefs,
             bool libraryListItemsRefs,
@@ -20058,6 +21228,7 @@ class $$LibraryItemsTableTableManager
                 showId = false,
                 libraryFilesRefs = false,
                 libraryUserStatesRefs = false,
+                libraryWorkBindingsRefs = false,
                 libraryItemGenresRefs = false,
                 libraryCreditsRefs = false,
                 libraryListItemsRefs = false,
@@ -20067,6 +21238,7 @@ class $$LibraryItemsTableTableManager
                   explicitlyWatchedTables: [
                     if (libraryFilesRefs) db.libraryFiles,
                     if (libraryUserStatesRefs) db.libraryUserStates,
+                    if (libraryWorkBindingsRefs) db.libraryWorkBindings,
                     if (libraryItemGenresRefs) db.libraryItemGenres,
                     if (libraryCreditsRefs) db.libraryCredits,
                     if (libraryListItemsRefs) db.libraryListItems,
@@ -20164,6 +21336,27 @@ class $$LibraryItemsTableTableManager
                               ),
                           typedResults: items,
                         ),
+                      if (libraryWorkBindingsRefs)
+                        await $_getPrefetchedData<
+                          LibraryItemRow,
+                          $LibraryItemsTable,
+                          LibraryWorkBindingRow
+                        >(
+                          currentTable: table,
+                          referencedTable: $$LibraryItemsTableReferences
+                              ._libraryWorkBindingsRefsTable(db),
+                          managerFromTypedResult: (p0) =>
+                              $$LibraryItemsTableReferences(
+                                db,
+                                table,
+                                p0,
+                              ).libraryWorkBindingsRefs,
+                          referencedItemsForCurrentItem:
+                              (item, referencedItems) => referencedItems.where(
+                                (e) => e.itemId == item.id,
+                              ),
+                          typedResults: items,
+                        ),
                       if (libraryItemGenresRefs)
                         await $_getPrefetchedData<
                           LibraryItemRow,
@@ -20252,6 +21445,7 @@ typedef $$LibraryItemsTableProcessedTableManager =
         bool showId,
         bool libraryFilesRefs,
         bool libraryUserStatesRefs,
+        bool libraryWorkBindingsRefs,
         bool libraryItemGenresRefs,
         bool libraryCreditsRefs,
         bool libraryListItemsRefs,
@@ -21532,6 +22726,689 @@ typedef $$LibraryUserStatesTableProcessedTableManager =
       $$LibraryUserStatesTableUpdateCompanionBuilder,
       (LibraryUserStateRow, $$LibraryUserStatesTableReferences),
       LibraryUserStateRow,
+      PrefetchHooks Function({bool itemId})
+    >;
+typedef $$WorkWatchStatesTableCreateCompanionBuilder =
+    WorkWatchStatesCompanion Function({
+      required String stateKey,
+      required String source,
+      required String kind,
+      required String provider,
+      required String externalId,
+      Value<int> seasonNumber,
+      Value<int> episodeNumber,
+      Value<int> positionMs,
+      Value<int?> durationMs,
+      Value<bool> watched,
+      Value<int> playCount,
+      Value<int?> lastPlayedAt,
+      Value<bool> favorite,
+      Value<bool> hiddenFromContinue,
+      required int updatedAt,
+      Value<int> rowid,
+    });
+typedef $$WorkWatchStatesTableUpdateCompanionBuilder =
+    WorkWatchStatesCompanion Function({
+      Value<String> stateKey,
+      Value<String> source,
+      Value<String> kind,
+      Value<String> provider,
+      Value<String> externalId,
+      Value<int> seasonNumber,
+      Value<int> episodeNumber,
+      Value<int> positionMs,
+      Value<int?> durationMs,
+      Value<bool> watched,
+      Value<int> playCount,
+      Value<int?> lastPlayedAt,
+      Value<bool> favorite,
+      Value<bool> hiddenFromContinue,
+      Value<int> updatedAt,
+      Value<int> rowid,
+    });
+
+class $$WorkWatchStatesTableFilterComposer
+    extends Composer<_$AppDatabase, $WorkWatchStatesTable> {
+  $$WorkWatchStatesTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get stateKey => $composableBuilder(
+    column: $table.stateKey,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get source => $composableBuilder(
+    column: $table.source,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get kind => $composableBuilder(
+    column: $table.kind,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get provider => $composableBuilder(
+    column: $table.provider,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get externalId => $composableBuilder(
+    column: $table.externalId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get seasonNumber => $composableBuilder(
+    column: $table.seasonNumber,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get episodeNumber => $composableBuilder(
+    column: $table.episodeNumber,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get positionMs => $composableBuilder(
+    column: $table.positionMs,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get durationMs => $composableBuilder(
+    column: $table.durationMs,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<bool> get watched => $composableBuilder(
+    column: $table.watched,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get playCount => $composableBuilder(
+    column: $table.playCount,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get lastPlayedAt => $composableBuilder(
+    column: $table.lastPlayedAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<bool> get favorite => $composableBuilder(
+    column: $table.favorite,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<bool> get hiddenFromContinue => $composableBuilder(
+    column: $table.hiddenFromContinue,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get updatedAt => $composableBuilder(
+    column: $table.updatedAt,
+    builder: (column) => ColumnFilters(column),
+  );
+}
+
+class $$WorkWatchStatesTableOrderingComposer
+    extends Composer<_$AppDatabase, $WorkWatchStatesTable> {
+  $$WorkWatchStatesTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get stateKey => $composableBuilder(
+    column: $table.stateKey,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get source => $composableBuilder(
+    column: $table.source,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get kind => $composableBuilder(
+    column: $table.kind,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get provider => $composableBuilder(
+    column: $table.provider,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get externalId => $composableBuilder(
+    column: $table.externalId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get seasonNumber => $composableBuilder(
+    column: $table.seasonNumber,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get episodeNumber => $composableBuilder(
+    column: $table.episodeNumber,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get positionMs => $composableBuilder(
+    column: $table.positionMs,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get durationMs => $composableBuilder(
+    column: $table.durationMs,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<bool> get watched => $composableBuilder(
+    column: $table.watched,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get playCount => $composableBuilder(
+    column: $table.playCount,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get lastPlayedAt => $composableBuilder(
+    column: $table.lastPlayedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<bool> get favorite => $composableBuilder(
+    column: $table.favorite,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<bool> get hiddenFromContinue => $composableBuilder(
+    column: $table.hiddenFromContinue,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get updatedAt => $composableBuilder(
+    column: $table.updatedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$WorkWatchStatesTableAnnotationComposer
+    extends Composer<_$AppDatabase, $WorkWatchStatesTable> {
+  $$WorkWatchStatesTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get stateKey =>
+      $composableBuilder(column: $table.stateKey, builder: (column) => column);
+
+  GeneratedColumn<String> get source =>
+      $composableBuilder(column: $table.source, builder: (column) => column);
+
+  GeneratedColumn<String> get kind =>
+      $composableBuilder(column: $table.kind, builder: (column) => column);
+
+  GeneratedColumn<String> get provider =>
+      $composableBuilder(column: $table.provider, builder: (column) => column);
+
+  GeneratedColumn<String> get externalId => $composableBuilder(
+    column: $table.externalId,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get seasonNumber => $composableBuilder(
+    column: $table.seasonNumber,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get episodeNumber => $composableBuilder(
+    column: $table.episodeNumber,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get positionMs => $composableBuilder(
+    column: $table.positionMs,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get durationMs => $composableBuilder(
+    column: $table.durationMs,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<bool> get watched =>
+      $composableBuilder(column: $table.watched, builder: (column) => column);
+
+  GeneratedColumn<int> get playCount =>
+      $composableBuilder(column: $table.playCount, builder: (column) => column);
+
+  GeneratedColumn<int> get lastPlayedAt => $composableBuilder(
+    column: $table.lastPlayedAt,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<bool> get favorite =>
+      $composableBuilder(column: $table.favorite, builder: (column) => column);
+
+  GeneratedColumn<bool> get hiddenFromContinue => $composableBuilder(
+    column: $table.hiddenFromContinue,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get updatedAt =>
+      $composableBuilder(column: $table.updatedAt, builder: (column) => column);
+}
+
+class $$WorkWatchStatesTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $WorkWatchStatesTable,
+          WorkWatchStateRow,
+          $$WorkWatchStatesTableFilterComposer,
+          $$WorkWatchStatesTableOrderingComposer,
+          $$WorkWatchStatesTableAnnotationComposer,
+          $$WorkWatchStatesTableCreateCompanionBuilder,
+          $$WorkWatchStatesTableUpdateCompanionBuilder,
+          (
+            WorkWatchStateRow,
+            BaseReferences<
+              _$AppDatabase,
+              $WorkWatchStatesTable,
+              WorkWatchStateRow
+            >,
+          ),
+          WorkWatchStateRow,
+          PrefetchHooks Function()
+        > {
+  $$WorkWatchStatesTableTableManager(
+    _$AppDatabase db,
+    $WorkWatchStatesTable table,
+  ) : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$WorkWatchStatesTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$WorkWatchStatesTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$WorkWatchStatesTableAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback:
+              ({
+                Value<String> stateKey = const Value.absent(),
+                Value<String> source = const Value.absent(),
+                Value<String> kind = const Value.absent(),
+                Value<String> provider = const Value.absent(),
+                Value<String> externalId = const Value.absent(),
+                Value<int> seasonNumber = const Value.absent(),
+                Value<int> episodeNumber = const Value.absent(),
+                Value<int> positionMs = const Value.absent(),
+                Value<int?> durationMs = const Value.absent(),
+                Value<bool> watched = const Value.absent(),
+                Value<int> playCount = const Value.absent(),
+                Value<int?> lastPlayedAt = const Value.absent(),
+                Value<bool> favorite = const Value.absent(),
+                Value<bool> hiddenFromContinue = const Value.absent(),
+                Value<int> updatedAt = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => WorkWatchStatesCompanion(
+                stateKey: stateKey,
+                source: source,
+                kind: kind,
+                provider: provider,
+                externalId: externalId,
+                seasonNumber: seasonNumber,
+                episodeNumber: episodeNumber,
+                positionMs: positionMs,
+                durationMs: durationMs,
+                watched: watched,
+                playCount: playCount,
+                lastPlayedAt: lastPlayedAt,
+                favorite: favorite,
+                hiddenFromContinue: hiddenFromContinue,
+                updatedAt: updatedAt,
+                rowid: rowid,
+              ),
+          createCompanionCallback:
+              ({
+                required String stateKey,
+                required String source,
+                required String kind,
+                required String provider,
+                required String externalId,
+                Value<int> seasonNumber = const Value.absent(),
+                Value<int> episodeNumber = const Value.absent(),
+                Value<int> positionMs = const Value.absent(),
+                Value<int?> durationMs = const Value.absent(),
+                Value<bool> watched = const Value.absent(),
+                Value<int> playCount = const Value.absent(),
+                Value<int?> lastPlayedAt = const Value.absent(),
+                Value<bool> favorite = const Value.absent(),
+                Value<bool> hiddenFromContinue = const Value.absent(),
+                required int updatedAt,
+                Value<int> rowid = const Value.absent(),
+              }) => WorkWatchStatesCompanion.insert(
+                stateKey: stateKey,
+                source: source,
+                kind: kind,
+                provider: provider,
+                externalId: externalId,
+                seasonNumber: seasonNumber,
+                episodeNumber: episodeNumber,
+                positionMs: positionMs,
+                durationMs: durationMs,
+                watched: watched,
+                playCount: playCount,
+                lastPlayedAt: lastPlayedAt,
+                favorite: favorite,
+                hiddenFromContinue: hiddenFromContinue,
+                updatedAt: updatedAt,
+                rowid: rowid,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$WorkWatchStatesTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $WorkWatchStatesTable,
+      WorkWatchStateRow,
+      $$WorkWatchStatesTableFilterComposer,
+      $$WorkWatchStatesTableOrderingComposer,
+      $$WorkWatchStatesTableAnnotationComposer,
+      $$WorkWatchStatesTableCreateCompanionBuilder,
+      $$WorkWatchStatesTableUpdateCompanionBuilder,
+      (
+        WorkWatchStateRow,
+        BaseReferences<_$AppDatabase, $WorkWatchStatesTable, WorkWatchStateRow>,
+      ),
+      WorkWatchStateRow,
+      PrefetchHooks Function()
+    >;
+typedef $$LibraryWorkBindingsTableCreateCompanionBuilder =
+    LibraryWorkBindingsCompanion Function({
+      Value<int> itemId,
+      required String stateKey,
+    });
+typedef $$LibraryWorkBindingsTableUpdateCompanionBuilder =
+    LibraryWorkBindingsCompanion Function({
+      Value<int> itemId,
+      Value<String> stateKey,
+    });
+
+final class $$LibraryWorkBindingsTableReferences
+    extends
+        BaseReferences<
+          _$AppDatabase,
+          $LibraryWorkBindingsTable,
+          LibraryWorkBindingRow
+        > {
+  $$LibraryWorkBindingsTableReferences(
+    super.$_db,
+    super.$_table,
+    super.$_typedResult,
+  );
+
+  static $LibraryItemsTable _itemIdTable(_$AppDatabase db) => db.libraryItems
+      .createAlias('library_work_bindings__item_id__library_items__id');
+
+  $$LibraryItemsTableProcessedTableManager get itemId {
+    final $_column = $_itemColumn<int>('item_id')!;
+
+    final manager = $$LibraryItemsTableTableManager(
+      $_db,
+      $_db.libraryItems,
+    ).filter((f) => f.id.sqlEquals($_column));
+    final item = $_typedResult.readTableOrNull(_itemIdTable($_db));
+    if (item == null) return manager;
+    return ProcessedTableManager(
+      manager.$state.copyWith(prefetchedData: [item]),
+    );
+  }
+}
+
+class $$LibraryWorkBindingsTableFilterComposer
+    extends Composer<_$AppDatabase, $LibraryWorkBindingsTable> {
+  $$LibraryWorkBindingsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get stateKey => $composableBuilder(
+    column: $table.stateKey,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  $$LibraryItemsTableFilterComposer get itemId {
+    final $$LibraryItemsTableFilterComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.itemId,
+      referencedTable: $db.libraryItems,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$LibraryItemsTableFilterComposer(
+            $db: $db,
+            $table: $db.libraryItems,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+}
+
+class $$LibraryWorkBindingsTableOrderingComposer
+    extends Composer<_$AppDatabase, $LibraryWorkBindingsTable> {
+  $$LibraryWorkBindingsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get stateKey => $composableBuilder(
+    column: $table.stateKey,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  $$LibraryItemsTableOrderingComposer get itemId {
+    final $$LibraryItemsTableOrderingComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.itemId,
+      referencedTable: $db.libraryItems,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$LibraryItemsTableOrderingComposer(
+            $db: $db,
+            $table: $db.libraryItems,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+}
+
+class $$LibraryWorkBindingsTableAnnotationComposer
+    extends Composer<_$AppDatabase, $LibraryWorkBindingsTable> {
+  $$LibraryWorkBindingsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get stateKey =>
+      $composableBuilder(column: $table.stateKey, builder: (column) => column);
+
+  $$LibraryItemsTableAnnotationComposer get itemId {
+    final $$LibraryItemsTableAnnotationComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.itemId,
+      referencedTable: $db.libraryItems,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$LibraryItemsTableAnnotationComposer(
+            $db: $db,
+            $table: $db.libraryItems,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+}
+
+class $$LibraryWorkBindingsTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $LibraryWorkBindingsTable,
+          LibraryWorkBindingRow,
+          $$LibraryWorkBindingsTableFilterComposer,
+          $$LibraryWorkBindingsTableOrderingComposer,
+          $$LibraryWorkBindingsTableAnnotationComposer,
+          $$LibraryWorkBindingsTableCreateCompanionBuilder,
+          $$LibraryWorkBindingsTableUpdateCompanionBuilder,
+          (LibraryWorkBindingRow, $$LibraryWorkBindingsTableReferences),
+          LibraryWorkBindingRow,
+          PrefetchHooks Function({bool itemId})
+        > {
+  $$LibraryWorkBindingsTableTableManager(
+    _$AppDatabase db,
+    $LibraryWorkBindingsTable table,
+  ) : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$LibraryWorkBindingsTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$LibraryWorkBindingsTableOrderingComposer(
+                $db: db,
+                $table: table,
+              ),
+          createComputedFieldComposer: () =>
+              $$LibraryWorkBindingsTableAnnotationComposer(
+                $db: db,
+                $table: table,
+              ),
+          updateCompanionCallback:
+              ({
+                Value<int> itemId = const Value.absent(),
+                Value<String> stateKey = const Value.absent(),
+              }) => LibraryWorkBindingsCompanion(
+                itemId: itemId,
+                stateKey: stateKey,
+              ),
+          createCompanionCallback:
+              ({
+                Value<int> itemId = const Value.absent(),
+                required String stateKey,
+              }) => LibraryWorkBindingsCompanion.insert(
+                itemId: itemId,
+                stateKey: stateKey,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map(
+                (e) => (
+                  e.readTable(table),
+                  $$LibraryWorkBindingsTableReferences(db, table, e),
+                ),
+              )
+              .toList(),
+          prefetchHooksCallback: ({itemId = false}) {
+            return PrefetchHooks(
+              db: db,
+              explicitlyWatchedTables: [],
+              addJoins:
+                  <
+                    T extends TableManagerState<
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic
+                    >
+                  >(state) {
+                    if (itemId) {
+                      state =
+                          state.withJoin(
+                                currentTable: table,
+                                currentColumn: table.itemId,
+                                referencedTable:
+                                    $$LibraryWorkBindingsTableReferences
+                                        ._itemIdTable(db),
+                                referencedColumn:
+                                    $$LibraryWorkBindingsTableReferences
+                                        ._itemIdTable(db)
+                                        .id,
+                              )
+                              as T;
+                    }
+
+                    return state;
+                  },
+              getPrefetchedDataCallback: (items) async {
+                return [];
+              },
+            );
+          },
+        ),
+      );
+}
+
+typedef $$LibraryWorkBindingsTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $LibraryWorkBindingsTable,
+      LibraryWorkBindingRow,
+      $$LibraryWorkBindingsTableFilterComposer,
+      $$LibraryWorkBindingsTableOrderingComposer,
+      $$LibraryWorkBindingsTableAnnotationComposer,
+      $$LibraryWorkBindingsTableCreateCompanionBuilder,
+      $$LibraryWorkBindingsTableUpdateCompanionBuilder,
+      (LibraryWorkBindingRow, $$LibraryWorkBindingsTableReferences),
+      LibraryWorkBindingRow,
       PrefetchHooks Function({bool itemId})
     >;
 typedef $$LibraryGenresTableCreateCompanionBuilder =
@@ -24132,6 +26009,10 @@ class $AppDatabaseManager {
       $$LibraryFilesTableTableManager(_db, _db.libraryFiles);
   $$LibraryUserStatesTableTableManager get libraryUserStates =>
       $$LibraryUserStatesTableTableManager(_db, _db.libraryUserStates);
+  $$WorkWatchStatesTableTableManager get workWatchStates =>
+      $$WorkWatchStatesTableTableManager(_db, _db.workWatchStates);
+  $$LibraryWorkBindingsTableTableManager get libraryWorkBindings =>
+      $$LibraryWorkBindingsTableTableManager(_db, _db.libraryWorkBindings);
   $$LibraryGenresTableTableManager get libraryGenres =>
       $$LibraryGenresTableTableManager(_db, _db.libraryGenres);
   $$LibraryItemGenresTableTableManager get libraryItemGenres =>

@@ -10,6 +10,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
 
 import 'library_tables.dart';
+import '../library/library_watch_state_store.dart';
 import 'tables.dart';
 import 'plex_metadata_recovery.dart';
 import 'tvos_database_recovery_store.dart';
@@ -66,6 +67,8 @@ final class AppDatabaseBootstrap {
     LibraryItems,
     LibraryFiles,
     LibraryUserStates,
+    WorkWatchStates,
+    LibraryWorkBindings,
     LibraryGenres,
     LibraryItemGenres,
     LibraryPeople,
@@ -381,7 +384,7 @@ class AppDatabase extends _$AppDatabase {
   static const FormatException _invalidRecoveryImage = FormatException('Invalid tvOS database recovery image');
 
   @override
-  int get schemaVersion => 31;
+  int get schemaVersion => 32;
 
   @override
   MigrationStrategy get migration {
@@ -394,6 +397,7 @@ class AppDatabase extends _$AppDatabase {
       // through `_openConnection`.
       beforeOpen: (details) async {
         await customStatement('PRAGMA foreign_keys = ON');
+        await LibraryWatchStateStore(this).restoreAll();
       },
       onCreate: (Migrator m) async {
         await m.createAll();
@@ -844,6 +848,10 @@ class AppDatabase extends _$AppDatabase {
             "WHERE locked = 0 AND kind IN ('movie', 'show') AND "
             "((kind = 'movie' AND metadata_source = 'bangumi') OR library_type = 'pending')",
           );
+        }
+        if (from < 32) {
+          await _ignoreAlreadyExists('WorkWatchStates table', () => m.createTable(workWatchStates));
+          await _ignoreAlreadyExists('LibraryWorkBindings table', () => m.createTable(libraryWorkBindings));
         }
         if (from < 31) {
           // Pruning used to spare titles the user matched by hand, so removing

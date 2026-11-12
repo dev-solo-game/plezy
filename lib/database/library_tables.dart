@@ -2,9 +2,8 @@ import 'package:drift/drift.dart';
 
 import 'tables.dart';
 
-// The local media library. Everything here is derived from scanning mounts
-// and scraping metadata, except [LibraryUserStates] and the rows flagged as
-// locked, which hold what the user did and must survive a rescan.
+// The local media library. WorkWatchStates survives index rebuilding;
+// LibraryUserStates projects it onto the current scanned item ids.
 
 /// Titles in the library: movies, shows, seasons and episodes in one table.
 ///
@@ -167,6 +166,40 @@ class LibraryUserStates extends Table {
   /// Hidden from Continue Watching without touching progress.
   BoolColumn get hiddenFromContinue => boolean().withDefault(const Constant(false))();
   IntColumn get updatedAt => integer()();
+
+  @override
+  Set<Column> get primaryKey => {itemId};
+}
+
+/// Durable watch state, independent of the disposable file/title index.
+@DataClassName('WorkWatchStateRow')
+class WorkWatchStates extends Table {
+  TextColumn get stateKey => text()();
+  TextColumn get source => text()();
+  TextColumn get kind => text()();
+  TextColumn get provider => text()();
+  TextColumn get externalId => text()();
+  IntColumn get seasonNumber => integer().withDefault(const Constant(-1))();
+  IntColumn get episodeNumber => integer().withDefault(const Constant(-1))();
+  IntColumn get positionMs => integer().withDefault(const Constant(0))();
+  IntColumn get durationMs => integer().nullable()();
+  BoolColumn get watched => boolean().withDefault(const Constant(false))();
+  IntColumn get playCount => integer().withDefault(const Constant(0))();
+  IntColumn get lastPlayedAt => integer().nullable()();
+  BoolColumn get favorite => boolean().withDefault(const Constant(false))();
+  BoolColumn get hiddenFromContinue => boolean().withDefault(const Constant(false))();
+  IntColumn get updatedAt => integer()();
+
+  @override
+  Set<Column> get primaryKey => {stateKey};
+}
+
+/// Remembers which work owns an item's projected state, including across
+/// metadata corrections. Deleting an index item only removes this binding.
+@DataClassName('LibraryWorkBindingRow')
+class LibraryWorkBindings extends Table {
+  IntColumn get itemId => integer().references(LibraryItems, #id, onDelete: KeyAction.cascade)();
+  TextColumn get stateKey => text()();
 
   @override
   Set<Column> get primaryKey => {itemId};
