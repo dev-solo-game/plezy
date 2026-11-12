@@ -89,6 +89,7 @@ import 'library/library_settings.dart';
 import 'library/local_library_client.dart';
 import 'library/library_scan_service.dart';
 import 'library/library_scanner.dart';
+import 'storage/http_range_reader.dart';
 import 'storage/mount_manager.dart';
 import 'storage/mount_registry.dart';
 import 'database/app_database.dart';
@@ -1761,7 +1762,10 @@ class _MainAppState extends State<MainApp> with WidgetsBindingObserver {
         Provider<StorageService>.value(value: widget.storage),
         Provider<AppDatabase>.value(value: _appDatabase),
         Provider<MountManager>(
-          create: (_) => MountManager(MountRegistry(_appDatabase)),
+          create: (_) => MountManager(
+            MountRegistry(_appDatabase),
+            bulkOptions: () => SettingsService.instanceOrNull?.bulkReadOptions ?? BulkReadOptions.defaults,
+          ),
           dispose: (_, manager) => unawaited(manager.dispose()),
         ),
         Provider<LibraryRepository>(create: (_) => LibraryRepository(_appDatabase)),

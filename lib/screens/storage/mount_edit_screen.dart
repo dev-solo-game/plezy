@@ -5,6 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:material_symbols_icons/symbols.dart';
 import 'package:provider/provider.dart';
 
+import '../../focus/focusable_button.dart';
+import '../../focus/focusable_text_field.dart';
 import '../../i18n/strings.g.dart';
 import '../../library/library_scan_service.dart';
 import '../../services/file_picker_service.dart';
@@ -17,7 +19,10 @@ import '../../storage/mount_registry.dart';
 import '../../storage/storage_driver.dart';
 import '../../storage/storage_mount.dart';
 import '../../storage/storage_path.dart';
+import '../../utils/dialogs.dart';
+import '../../utils/platform_detector.dart';
 import '../../widgets/app_icon.dart';
+import '../../widgets/focusable_list_tile.dart';
 import 'mounts_screen.dart';
 import 'quark_qr_login_dialog.dart';
 import 'storage_folder_picker.dart';
@@ -70,6 +75,12 @@ class _MountEditScreenState extends State<MountEditScreen> {
   bool _saving = false;
   String? _error;
 
+  /// The form's first control. On TV it takes focus whenever the form
+  /// appears: `autofocus` cannot, since the type picker's tile still holds
+  /// focus while the form builds, and a remote landing on the app bar's back
+  /// button has no reliable way down into the form.
+  final _firstFocus = FocusNode(debugLabel: 'mount-form-first');
+
   bool get _editing => widget.mount != null;
 
   @override
@@ -99,10 +110,24 @@ class _MountEditScreenState extends State<MountEditScreen> {
       text:
           '${mount?.configInt(MountKeys.requestIntervalMs) ?? QuarkStorageDriver.defaultRequestInterval.inMilliseconds}',
     );
+    if (_kind != null) _focusFormOnTv();
+  }
+
+  void _focusFormOnTv() {
+    if (!PlatformDetector.isTV()) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _firstFocus.context != null) _firstFocus.requestFocus();
+    });
+  }
+
+  void _chooseKind(StorageKind kind) {
+    setState(() => _kind = kind);
+    _focusFormOnTv();
   }
 
   @override
   void dispose() {
+    _firstFocus.dispose();
     for (final controller in [
       _name,
       _rootPath,
@@ -283,6 +308,9 @@ class _MountEditScreenState extends State<MountEditScreen> {
 
   static String? _required(String? value) => (value == null || value.trim().isEmpty) ? t.storage.required : null;
 
+  // Every field here sets TvTextInputAutoOpenBehavior.never: on Android TV
+  // the keyboard otherwise opens as the remote lands on a field and keeps
+  // its arrows, so the form could only be left with Back. OK starts typing.
   static InputDecoration _decoration(String label, {String? hint, String? helper, Widget? suffixIcon}) {
     return InputDecoration(
       labelText: label,
@@ -297,9 +325,15 @@ class _MountEditScreenState extends State<MountEditScreen> {
   Widget _credentials() {
     return Column(
       children: [
-        TextFormField(controller: _username, decoration: _decoration(t.storage.username), autocorrect: false),
+        FocusableTextFormField(
+          controller: _username,
+          tvTextInputAutoOpenBehavior: TvTextInputAutoOpenBehavior.never,
+          decoration: _decoration(t.storage.username),
+          autocorrect: false,
+        ),
         const SizedBox(height: _fieldGap),
-        TextFormField(
+        FocusableTextFormField(
+          tvTextInputAutoOpenBehavior: TvTextInputAutoOpenBehavior.never,
           controller: _password,
           decoration: _decoration(t.storage.password),
           obscureText: true,
@@ -317,8 +351,10 @@ class _MountEditScreenState extends State<MountEditScreen> {
         // has to be typed there until the SAF driver exists.
         final canBrowse = Platform.isWindows || Platform.isMacOS || Platform.isLinux;
         return [
-          TextFormField(
+          FocusableTextFormField(
+            tvTextInputAutoOpenBehavior: TvTextInputAutoOpenBehavior.never,
             controller: _rootPath,
+            focusNode: _firstFocus,
             decoration: _decoration(
               t.storage.folderPath,
               suffixIcon: canBrowse
@@ -334,8 +370,10 @@ class _MountEditScreenState extends State<MountEditScreen> {
         ];
       case StorageKind.webdav:
         return [
-          TextFormField(
+          FocusableTextFormField(
+            tvTextInputAutoOpenBehavior: TvTextInputAutoOpenBehavior.never,
             controller: _baseUrl,
+            focusNode: _firstFocus,
             decoration: _decoration(t.storage.url, hint: 'https://nas.example/dav/media'),
             keyboardType: TextInputType.url,
             autocorrect: false,
@@ -355,8 +393,10 @@ class _MountEditScreenState extends State<MountEditScreen> {
             children: [
               Expanded(
                 flex: 3,
-                child: TextFormField(
+                child: FocusableTextFormField(
+                  tvTextInputAutoOpenBehavior: TvTextInputAutoOpenBehavior.never,
                   controller: _host,
+                  focusNode: _firstFocus,
                   decoration: _decoration(t.storage.smbHost, hint: '192.168.1.10'),
                   autocorrect: false,
                   validator: _required,
@@ -365,7 +405,8 @@ class _MountEditScreenState extends State<MountEditScreen> {
               const SizedBox(width: 12),
               Expanded(
                 flex: 2,
-                child: TextFormField(
+                child: FocusableTextFormField(
+                  tvTextInputAutoOpenBehavior: TvTextInputAutoOpenBehavior.never,
                   controller: _share,
                   decoration: _decoration(t.storage.smbShare),
                   autocorrect: false,
@@ -383,6 +424,7 @@ class _MountEditScreenState extends State<MountEditScreen> {
         return [
           _QuarkModePicker(
             mode: _quarkMode,
+            focusNode: _firstFocus,
             onChanged: _saving
                 ? null
                 : (mode) => setState(() {
@@ -406,18 +448,27 @@ class _MountEditScreenState extends State<MountEditScreen> {
         return const [];
       case StorageKind.webdav:
         return [
-          SwitchListTile(
+          FocusableSwitchListTile(
             contentPadding: EdgeInsets.zero,
+            dense: false,
             title: Text(t.storage.allowSelfSigned),
             value: _allowInsecureTls,
             onChanged: (value) => setState(() => _allowInsecureTls = value),
           ),
         ];
       case StorageKind.smb:
-        return [TextFormField(controller: _domain, decoration: _decoration(t.storage.smbDomain), autocorrect: false)];
+        return [
+          FocusableTextFormField(
+            controller: _domain,
+            tvTextInputAutoOpenBehavior: TvTextInputAutoOpenBehavior.never,
+            decoration: _decoration(t.storage.smbDomain),
+            autocorrect: false,
+          ),
+        ];
       case StorageKind.quark:
         return [
-          TextFormField(
+          FocusableTextFormField(
+            tvTextInputAutoOpenBehavior: TvTextInputAutoOpenBehavior.never,
             controller: _requestInterval,
             decoration: _decoration(
               t.storage.requestInterval,
@@ -432,11 +483,14 @@ class _MountEditScreenState extends State<MountEditScreen> {
             },
           ),
           const SizedBox(height: _fieldGap),
-          TextFormField(
+          FocusableTextFormField(
+            tvTextInputAutoOpenBehavior: TvTextInputAutoOpenBehavior.never,
             controller: _cookie,
             decoration: _decoration(t.storage.quarkCookieManual),
             minLines: 1,
-            maxLines: 3,
+            // One line on TV, so the remote's up/down leave the field instead
+            // of moving the caret between lines.
+            maxLines: PlatformDetector.isTV() ? 1 : 3,
             autocorrect: false,
             enableSuggestions: false,
             // Keeps the sign-in tile's state in step with a pasted cookie.
@@ -460,20 +514,26 @@ class _MountEditScreenState extends State<MountEditScreen> {
             child: Card(
               margin: EdgeInsets.zero,
               clipBehavior: Clip.antiAlias,
-              child: ListTile(
+              child: FocusableListTile(
                 autofocus: index == 0,
+                dense: false,
                 contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                 leading: StorageKindBadge(kind: kind),
                 title: Text(storageKindLabel(kind)),
                 subtitle: Text(storageKindDescription(kind)),
                 trailing: const AppIcon(Symbols.chevron_right_rounded),
-                onTap: () => setState(() => _kind = kind),
+                onTap: () => _chooseKind(kind),
               ),
             ),
           ),
       ],
     );
   }
+
+  void _changeType() => setState(() {
+    _kind = null;
+    _error = null;
+  });
 
   Widget _form(StorageKind kind) {
     final theme = Theme.of(context);
@@ -502,25 +562,26 @@ class _MountEditScreenState extends State<MountEditScreen> {
               // The kind decides which driver owns the stored settings, so it
               // is fixed once the mount exists.
               if (!_editing)
-                TextButton(
-                  onPressed: _saving
-                      ? null
-                      : () => setState(() {
-                          _kind = null;
-                          _error = null;
-                        }),
-                  child: Text(t.storage.changeType),
+                FocusableButton(
+                  onPressed: _saving ? null : _changeType,
+                  child: TextButton(onPressed: _saving ? null : _changeType, child: Text(t.storage.changeType)),
                 ),
             ],
           ),
           _SectionTitle(t.storage.sectionConnection),
           ..._connectionFields(kind),
           _SectionTitle(t.storage.sectionLibrary),
-          TextFormField(
+          FocusableTextFormField(
+            tvTextInputAutoOpenBehavior: TvTextInputAutoOpenBehavior.never,
             controller: _name,
             decoration: _decoration(t.storage.fieldName, hint: storageKindLabel(kind), helper: t.storage.nameHint),
           ),
-          if (advanced.isNotEmpty)
+          // A remote cannot reach into a collapsed section, so TV lays the
+          // advanced settings out in the open.
+          if (advanced.isNotEmpty && PlatformDetector.isTV()) ...[
+            _SectionTitle(t.storage.sectionAdvanced),
+            ...advanced,
+          ] else if (advanced.isNotEmpty)
             Theme(
               // ExpansionTile draws its own dividers; the section spacing is enough.
               data: theme.copyWith(dividerColor: Colors.transparent),
@@ -587,22 +648,26 @@ class _MountEditScreenState extends State<MountEditScreen> {
                               ),
                             ),
                           ),
-                        FilledButton(
+                        FocusableButton(
+                          useBackgroundFocus: true,
                           onPressed: _saving ? null : _save,
-                          style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52)),
-                          child: _saving
-                              ? Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    const SizedBox.square(
-                                      dimension: 18,
-                                      child: CircularProgressIndicator(strokeWidth: 2),
-                                    ),
-                                    const SizedBox(width: 12),
-                                    Text(t.storage.connecting),
-                                  ],
-                                )
-                              : Text(t.storage.testAndSave),
+                          child: FilledButton(
+                            onPressed: _saving ? null : _save,
+                            style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52)),
+                            child: _saving
+                                ? Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      const SizedBox.square(
+                                        dimension: 18,
+                                        child: CircularProgressIndicator(strokeWidth: 2),
+                                      ),
+                                      const SizedBox(width: 12),
+                                      Text(t.storage.connecting),
+                                    ],
+                                  )
+                                : Text(t.storage.testAndSave),
+                          ),
                         ),
                       ],
                     ),
@@ -668,7 +733,10 @@ class _FolderTile extends StatelessWidget {
                 ],
               ),
             ),
-            OutlinedButton(onPressed: onChoose, child: Text(t.storage.choose)),
+            FocusableButton(
+              onPressed: onChoose,
+              child: OutlinedButton(onPressed: onChoose, child: Text(t.storage.choose)),
+            ),
           ],
         ),
       ),
@@ -679,9 +747,10 @@ class _FolderTile extends StatelessWidget {
 /// Which Quark client the mount signs in as. Modes not supported yet are
 /// shown but cannot be picked.
 class _QuarkModePicker extends StatelessWidget {
-  const _QuarkModePicker({required this.mode, required this.onChanged});
+  const _QuarkModePicker({required this.mode, required this.onChanged, this.focusNode});
 
   final QuarkMode mode;
+  final FocusNode? focusNode;
   final ValueChanged<QuarkMode>? onChanged;
 
   @override
@@ -692,6 +761,41 @@ class _QuarkModePicker extends StatelessWidget {
       QuarkMode.pc => t.storage.quarkModePc,
       QuarkMode.tv => t.storage.quarkModeTv,
     };
+    final help = Text(
+      t.storage.quarkModeHelp,
+      style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+    );
+    if (PlatformDetector.isTV()) {
+      // A row that opens a list: segmented buttons trap a remote's arrows.
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          FocusableListTile(
+            focusNode: focusNode,
+            contentPadding: EdgeInsets.zero,
+            dense: false,
+            enabled: onChanged != null,
+            leading: const AppIcon(Symbols.devices_rounded),
+            title: Text(t.storage.quarkMode),
+            subtitle: Text(label(mode)),
+            trailing: const AppIcon(Symbols.chevron_right_rounded),
+            onTap: () async {
+              final picked = await showOptionPickerDialog<QuarkMode>(
+                context,
+                title: t.storage.quarkMode,
+                options: [
+                  for (final value in QuarkMode.values)
+                    if (QuarkMode.supported.contains(value))
+                      (icon: value == mode ? Symbols.check_rounded : null, label: label(value), value: value),
+                ],
+              );
+              if (picked != null) onChanged?.call(picked);
+            },
+          ),
+          help,
+        ],
+      );
+    }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -707,10 +811,7 @@ class _QuarkModePicker extends StatelessWidget {
           onSelectionChanged: onChanged == null ? null : (selected) => onChanged!(selected.first),
         ),
         const SizedBox(height: 4),
-        Text(
-          t.storage.quarkModeHelp,
-          style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
-        ),
+        help,
       ],
     );
   }
@@ -748,19 +849,22 @@ class _QuarkLoginTile extends StatelessWidget {
                 style: theme.textTheme.titleSmall,
               ),
             ),
-            if (signedIn)
-              OutlinedButton.icon(
-                onPressed: onScan,
-                icon: const AppIcon(Symbols.qr_code_scanner_rounded, size: 18),
-                label: Text(t.storage.quarkRescan),
-              )
-            else
-              FilledButton.icon(
-                autofocus: true,
-                onPressed: onScan,
-                icon: const AppIcon(Symbols.qr_code_scanner_rounded, size: 18),
-                label: Text(t.storage.quarkScan),
-              ),
+            FocusableButton(
+              // On TV the form focuses its first row instead.
+              autofocus: !signedIn && !PlatformDetector.isTV(),
+              onPressed: onScan,
+              child: signedIn
+                  ? OutlinedButton.icon(
+                      onPressed: onScan,
+                      icon: const AppIcon(Symbols.qr_code_scanner_rounded, size: 18),
+                      label: Text(t.storage.quarkRescan),
+                    )
+                  : FilledButton.icon(
+                      onPressed: onScan,
+                      icon: const AppIcon(Symbols.qr_code_scanner_rounded, size: 18),
+                      label: Text(t.storage.quarkScan),
+                    ),
+            ),
           ],
         ),
       ),

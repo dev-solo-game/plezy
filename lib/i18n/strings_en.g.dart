@@ -1111,6 +1111,27 @@ class Translations$settings$en {
 	/// en: 'Delete watched downloads automatically'
 	String get autoRemoveWatchedDownloadsDescription => 'Delete watched downloads automatically';
 
+	/// en: 'Download connections'
+	String get downloadConnections => 'Download connections';
+
+	/// en: 'Cloud drives: fetch each file over ${count} connections at once'
+	String downloadConnectionsDescription({required Object count}) => 'Cloud drives: fetch each file over ${count} connections at once';
+
+	/// en: 'Connections'
+	String get downloadConnectionsLabel => 'Connections';
+
+	/// en: 'Download chunk size'
+	String get downloadChunkSize => 'Download chunk size';
+
+	/// en: 'Cloud drives: ${size} MB per request'
+	String downloadChunkSizeDescription({required Object size}) => 'Cloud drives: ${size} MB per request';
+
+	/// en: 'Megabytes'
+	String get megabytesLabel => 'Megabytes';
+
+	/// en: 'MB'
+	String get megabytesShort => 'MB';
+
 	/// en: 'Downloads are blocked on cellular. Use Wi-Fi or change the setting.'
 	String get cellularDownloadBlocked => 'Downloads are blocked on cellular. Use Wi-Fi or change the setting.';
 
@@ -8941,6 +8962,13 @@ extension on Translations {
 			'settings.downloadOnWifiOnlyDescription' => 'Prevent downloads when on cellular data',
 			'settings.autoRemoveWatchedDownloads' => 'Auto-remove watched downloads',
 			'settings.autoRemoveWatchedDownloadsDescription' => 'Delete watched downloads automatically',
+			'settings.downloadConnections' => 'Download connections',
+			'settings.downloadConnectionsDescription' => ({required Object count}) => 'Cloud drives: fetch each file over ${count} connections at once',
+			'settings.downloadConnectionsLabel' => 'Connections',
+			'settings.downloadChunkSize' => 'Download chunk size',
+			'settings.downloadChunkSizeDescription' => ({required Object size}) => 'Cloud drives: ${size} MB per request',
+			'settings.megabytesLabel' => 'Megabytes',
+			'settings.megabytesShort' => 'MB',
 			'settings.cellularDownloadBlocked' => 'Downloads are blocked on cellular. Use Wi-Fi or change the setting.',
 			'settings.maxVolume' => 'Maximum Volume',
 			'settings.maxVolumeDescription' => 'Allow volume boost above 100% for quiet media',
@@ -9081,6 +9109,8 @@ extension on Translations {
 			'themeEditor.title' => 'Custom Theme',
 			'themeEditor.startFrom' => 'Start from',
 			'themeEditor.startFromDescription' => 'Copy all colors from another theme',
+			_ => null,
+		} ?? switch (path) {
 			'themeEditor.colors' => 'Colors',
 			'themeEditor.preview' => 'Preview',
 			'themeEditor.slots.bg' => 'Background',
@@ -9088,8 +9118,6 @@ extension on Translations {
 			'themeEditor.slots.outline' => 'Outline',
 			'themeEditor.slots.text' => 'Text',
 			'themeEditor.slots.textMuted' => 'Secondary text',
-			_ => null,
-		} ?? switch (path) {
 			'themeEditor.slots.accent' => 'Accent',
 			'themeEditor.opacity' => 'Opacity',
 			'themeEditor.hexHint' => '#RRGGBB or #AARRGGBB',
@@ -9595,6 +9623,8 @@ extension on Translations {
 			'profiles.incorrectPin' => 'Incorrect PIN.',
 			'profiles.incorrectPinTryAgain' => 'Incorrect PIN. Please try again.',
 			'profiles.sourceProfileMissingParentAccount' => 'Source profile is missing its parent account.',
+			_ => null,
+		} ?? switch (path) {
 			'profiles.failedToLoadHomeUsers' => 'Could not load your Plex Home users. Check your connection and try again.',
 			'profiles.failedToVerifyPin' => 'Failed to verify PIN.',
 			'profiles.newProfile' => 'New profile',
@@ -9602,8 +9632,6 @@ extension on Translations {
 			'profiles.pinProtectionOptional' => 'PIN protection (optional)',
 			'profiles.pinExplain' => '4-digit PIN required to switch profiles.',
 			'profiles.continueButton' => 'Continue',
-			_ => null,
-		} ?? switch (path) {
 			'profiles.pinsDontMatch' => 'PINs don\'t match',
 			'profiles.tokenIdentityMismatch' => 'The Plex profile token resolved to an unexpected server',
 			'connections.sectionTitle' => 'Connections',
@@ -10109,6 +10137,8 @@ extension on Translations {
 			'liveTv.processRecordingRules' => 'Re-evaluate rules',
 			'liveTv.recordingInProgress' => 'Recording now',
 			'liveTv.recordingsCount' => ({required Object count}) => '${count} scheduled',
+			_ => null,
+		} ?? switch (path) {
 			'liveTv.editRule' => 'Edit rule',
 			'liveTv.editRuleAction' => 'Edit',
 			'liveTv.recordingRuleUpdated' => 'Recording rule updated',
@@ -10116,8 +10146,6 @@ extension on Translations {
 			'liveTv.guideReloadFailed' => 'Couldn\'t refresh the guide',
 			'liveTv.rulesProcessRequested' => 'Rule re-evaluation requested',
 			'liveTv.rulesProcessFailed' => 'Couldn\'t re-evaluate recording rules',
-			_ => null,
-		} ?? switch (path) {
 			'liveTv.recordShow' => 'Record show',
 			'liveTv.recordSettings.startEarly' => 'Start early (seconds)',
 			'liveTv.recordSettings.endLate' => 'End late (seconds)',
@@ -10623,6 +10651,8 @@ extension on Translations {
 			'performanceOverlay.dvSampleAverage' => 'DV Sample Avg',
 			'performanceOverlay.maxLuma' => 'Max Luma',
 			'performanceOverlay.minLuma' => 'Min Luma',
+			_ => null,
+		} ?? switch (path) {
 			'performanceOverlay.maxCll' => 'MaxCLL',
 			'performanceOverlay.maxFall' => 'MaxFALL',
 			'performanceOverlay.cacheUsed' => 'Cache Used',
@@ -10630,8 +10660,6 @@ extension on Translations {
 			'performanceOverlay.speed' => 'Speed',
 			'performanceOverlay.player' => 'Player',
 			'performanceOverlay.playMethod' => 'Play Method',
-			_ => null,
-		} ?? switch (path) {
 			'performanceOverlay.memory' => 'Memory',
 			'performanceOverlay.uiFps' => 'UI FPS',
 			'performanceOverlay.fps' => 'FPS',

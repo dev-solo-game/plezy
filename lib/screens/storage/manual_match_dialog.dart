@@ -11,6 +11,11 @@ import '../../library/library_repository.dart';
 import '../../library/library_scan_service.dart';
 import '../../library/library_scrape_runner.dart';
 import '../../library/scrapers/scraped_metadata.dart';
+import '../../focus/focusable_button.dart';
+import '../../focus/focusable_text_field.dart';
+import '../../utils/dialogs.dart';
+import '../../utils/platform_detector.dart';
+import '../../widgets/focusable_list_tile.dart';
 import '../../widgets/app_icon.dart';
 import '../../widgets/path_text.dart';
 
@@ -158,6 +163,48 @@ class _ManualMatchDialogState extends State<_ManualMatchDialog> {
     }
   }
 
+  static final bool _tv = PlatformDetector.isTV();
+
+  // The search fields set TvTextInputAutoOpenBehavior.never: on Android TV the
+  // keyboard otherwise opens as the remote lands on a field and keeps its
+  // arrows. OK starts typing.
+
+  static const List<String?> _shelves = [
+    null,
+    LibraryTypes.movie,
+    LibraryTypes.show,
+    LibraryTypes.anime,
+    LibraryTypes.variety,
+    LibraryTypes.documentary,
+  ];
+
+  static String _shelfLabel(String? shelf) => switch (shelf) {
+    LibraryTypes.movie => t.storage.content.movie,
+    LibraryTypes.show => t.storage.content.show,
+    LibraryTypes.anime => t.storage.content.anime,
+    LibraryTypes.variety => t.storage.content.variety,
+    LibraryTypes.documentary => t.storage.content.documentary,
+    _ => t.storage.content.auto,
+  };
+
+  void _setAsShow(bool asShow) {
+    setState(() => _asShow = asShow);
+    unawaited(_search());
+  }
+
+  Future<void> _pickShelf() async {
+    // Wrapped so the "automatic" choice (null) can be told from a dismissal.
+    final picked = await showOptionPickerDialog<({String? shelf})>(
+      context,
+      title: t.storage.category,
+      options: [
+        for (final shelf in _shelves)
+          (icon: shelf == _shelf ? Symbols.check_rounded : null, label: _shelfLabel(shelf), value: (shelf: shelf)),
+      ],
+    );
+    if (picked != null && mounted) setState(() => _shelf = picked.shelf);
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -181,7 +228,8 @@ class _ManualMatchDialogState extends State<_ManualMatchDialog> {
               children: [
                 Expanded(
                   flex: 4,
-                  child: TextField(
+                  child: FocusableTextField(
+                    tvTextInputAutoOpenBehavior: TvTextInputAutoOpenBehavior.never,
                     controller: _title,
                     decoration: InputDecoration(labelText: t.storage.sortTitle, border: const OutlineInputBorder()),
                     textInputAction: TextInputAction.search,
@@ -191,7 +239,8 @@ class _ManualMatchDialogState extends State<_ManualMatchDialog> {
                 const SizedBox(width: 8),
                 Expanded(
                   flex: 2,
-                  child: TextField(
+                  child: FocusableTextField(
+                    tvTextInputAutoOpenBehavior: TvTextInputAutoOpenBehavior.never,
                     controller: _year,
                     decoration: InputDecoration(labelText: t.storage.sortYear, border: const OutlineInputBorder()),
                     keyboardType: TextInputType.number,
@@ -199,45 +248,55 @@ class _ManualMatchDialogState extends State<_ManualMatchDialog> {
                   ),
                 ),
                 const SizedBox(width: 8),
-                IconButton.filledTonal(
-                  tooltip: t.common.search,
+                FocusableButton(
                   onPressed: _busy ? null : _search,
-                  icon: const AppIcon(Symbols.search_rounded),
+                  child: IconButton.filledTonal(
+                    tooltip: t.common.search,
+                    onPressed: _busy ? null : _search,
+                    icon: const AppIcon(Symbols.search_rounded),
+                  ),
                 ),
               ],
             ),
             const SizedBox(height: 8),
             Row(
               children: [
-                SegmentedButton<bool>(
-                  showSelectedIcon: false,
-                  segments: [
-                    ButtonSegment(value: false, label: Text(t.storage.content.movie)),
-                    ButtonSegment(value: true, label: Text(t.storage.kindSeries)),
-                  ],
-                  selected: {_asShow},
-                  onSelectionChanged: _busy || !_canChangeKind
-                      ? null
-                      : (selection) {
-                          setState(() => _asShow = selection.first);
-                          unawaited(_search());
-                        },
-                ),
+                if (_tv)
+                  // One button that flips the kind: segments trap a remote's arrows.
+                  FocusableButton(
+                    onPressed: _busy || !_canChangeKind ? null : () => _setAsShow(!_asShow),
+                    child: OutlinedButton.icon(
+                      onPressed: _busy || !_canChangeKind ? null : () => _setAsShow(!_asShow),
+                      icon: const AppIcon(Symbols.swap_horiz_rounded, size: 18),
+                      label: Text(_asShow ? t.storage.kindSeries : t.storage.content.movie),
+                    ),
+                  )
+                else
+                  SegmentedButton<bool>(
+                    showSelectedIcon: false,
+                    segments: [
+                      ButtonSegment(value: false, label: Text(t.storage.content.movie)),
+                      ButtonSegment(value: true, label: Text(t.storage.kindSeries)),
+                    ],
+                    selected: {_asShow},
+                    onSelectionChanged: _busy || !_canChangeKind ? null : (selection) => _setAsShow(selection.first),
+                  ),
                 const Spacer(),
                 Text(t.storage.category, style: theme.textTheme.labelLarge),
                 const SizedBox(width: 8),
-                DropdownButton<String?>(
-                  value: _shelf,
-                  onChanged: _busy ? null : (value) => setState(() => _shelf = value),
-                  items: [
-                    DropdownMenuItem(value: null, child: Text(t.storage.content.auto)),
-                    DropdownMenuItem(value: LibraryTypes.movie, child: Text(t.storage.content.movie)),
-                    DropdownMenuItem(value: LibraryTypes.show, child: Text(t.storage.content.show)),
-                    DropdownMenuItem(value: LibraryTypes.anime, child: Text(t.storage.content.anime)),
-                    DropdownMenuItem(value: LibraryTypes.variety, child: Text(t.storage.content.variety)),
-                    DropdownMenuItem(value: LibraryTypes.documentary, child: Text(t.storage.content.documentary)),
-                  ],
-                ),
+                if (_tv)
+                  FocusableButton(
+                    onPressed: _busy ? null : _pickShelf,
+                    child: OutlinedButton(onPressed: _busy ? null : _pickShelf, child: Text(_shelfLabel(_shelf))),
+                  )
+                else
+                  DropdownButton<String?>(
+                    value: _shelf,
+                    onChanged: _busy ? null : (value) => setState(() => _shelf = value),
+                    items: [
+                      for (final shelf in _shelves) DropdownMenuItem(value: shelf, child: Text(_shelfLabel(shelf))),
+                    ],
+                  ),
               ],
             ),
             const SizedBox(height: 8),
@@ -261,7 +320,8 @@ class _ManualMatchDialogState extends State<_ManualMatchDialog> {
                         final candidate = results[index];
                         final poster = candidate.posterUrl;
                         final original = candidate.originalTitle;
-                        return ListTile(
+                        return FocusableListTile(
+                          dense: false,
                           contentPadding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
                           leading: SizedBox(
                             width: 40,
@@ -296,7 +356,12 @@ class _ManualMatchDialogState extends State<_ManualMatchDialog> {
           ],
         ),
       ),
-      actions: [TextButton(onPressed: () => Navigator.of(context).pop(false), child: Text(t.common.cancel))],
+      actions: [
+        FocusableButton(
+          onPressed: () => Navigator.of(context).pop(false),
+          child: TextButton(onPressed: () => Navigator.of(context).pop(false), child: Text(t.common.cancel)),
+        ),
+      ],
     );
   }
 }

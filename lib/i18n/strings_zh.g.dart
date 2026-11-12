@@ -483,6 +483,13 @@ class Translations$settings$zh extends Translations$settings$en {
 	@override String get downloadOnWifiOnlyDescription => '使用移动数据时不允许下载';
 	@override String get autoRemoveWatchedDownloads => '自动移除已观看的下载';
 	@override String get autoRemoveWatchedDownloadsDescription => '自动删除已观看的下载';
+	@override String get downloadConnections => '下载线程数';
+	@override String downloadConnectionsDescription({required Object count}) => '云盘：每个文件同时用 ${count} 个连接下载';
+	@override String get downloadConnectionsLabel => '线程数';
+	@override String get downloadChunkSize => '下载分块大小';
+	@override String downloadChunkSizeDescription({required Object size}) => '云盘：每次请求 ${size} MB';
+	@override String get megabytesLabel => 'MB';
+	@override String get megabytesShort => 'MB';
 	@override String get cellularDownloadBlocked => '已阻止通过移动网络下载。请连接 Wi-Fi 或更改设置。';
 	@override String get maxVolume => '最大音量';
 	@override String get maxVolumeDescription => '允许音量超过 100%，以便播放音量较低的内容';
@@ -3963,6 +3970,13 @@ extension on TranslationsZh {
 			'settings.downloadOnWifiOnlyDescription' => '使用移动数据时不允许下载',
 			'settings.autoRemoveWatchedDownloads' => '自动移除已观看的下载',
 			'settings.autoRemoveWatchedDownloadsDescription' => '自动删除已观看的下载',
+			'settings.downloadConnections' => '下载线程数',
+			'settings.downloadConnectionsDescription' => ({required Object count}) => '云盘：每个文件同时用 ${count} 个连接下载',
+			'settings.downloadConnectionsLabel' => '线程数',
+			'settings.downloadChunkSize' => '下载分块大小',
+			'settings.downloadChunkSizeDescription' => ({required Object size}) => '云盘：每次请求 ${size} MB',
+			'settings.megabytesLabel' => 'MB',
+			'settings.megabytesShort' => 'MB',
 			'settings.cellularDownloadBlocked' => '已阻止通过移动网络下载。请连接 Wi-Fi 或更改设置。',
 			'settings.maxVolume' => '最大音量',
 			'settings.maxVolumeDescription' => '允许音量超过 100%，以便播放音量较低的内容',
@@ -4103,6 +4117,8 @@ extension on TranslationsZh {
 			'themeEditor.title' => '自定义主题',
 			'themeEditor.startFrom' => '从现有主题开始',
 			'themeEditor.startFromDescription' => '从其他主题复制所有颜色',
+			_ => null,
+		} ?? switch (path) {
 			'themeEditor.colors' => '颜色',
 			'themeEditor.preview' => '预览',
 			'themeEditor.slots.bg' => '背景',
@@ -4110,8 +4126,6 @@ extension on TranslationsZh {
 			'themeEditor.slots.outline' => '描边',
 			'themeEditor.slots.text' => '文字',
 			'themeEditor.slots.textMuted' => '次要文字',
-			_ => null,
-		} ?? switch (path) {
 			'themeEditor.slots.accent' => '强调色',
 			'themeEditor.opacity' => '不透明度',
 			'themeEditor.hexHint' => '#RRGGBB 或 #AARRGGBB',
@@ -4617,6 +4631,8 @@ extension on TranslationsZh {
 			'profiles.failedToLoadHomeUsers' => '无法加载您的 Plex Home 用户。请检查网络连接后重试。',
 			'profiles.failedToVerifyPin' => '无法验证 PIN。',
 			'profiles.newProfile' => '新建用户资料',
+			_ => null,
+		} ?? switch (path) {
 			'profiles.profileNameHint' => '例如：访客、儿童、客厅',
 			'profiles.pinProtectionOptional' => 'PIN 保护（可选）',
 			'profiles.pinExplain' => '切换用户资料时需要输入 4 位 PIN。',
@@ -4624,8 +4640,6 @@ extension on TranslationsZh {
 			'profiles.pinsDontMatch' => 'PIN 不匹配',
 			'profiles.tokenIdentityMismatch' => 'Plex 用户资料令牌解析到了非预期服务器',
 			'connections.sectionTitle' => '连接',
-			_ => null,
-		} ?? switch (path) {
 			'connections.addConnection' => '添加连接',
 			'connections.addConnectionSubtitleNoProfile' => '使用 Plex 登录，或连接 Jellyfin 或 Emby 服务器',
 			'connections.addConnectionSubtitleScoped' => ({required Object displayName}) => '添加到 ${displayName}：Plex、Jellyfin、Emby，或其他用户资料的连接',
@@ -5131,6 +5145,8 @@ extension on TranslationsZh {
 			'liveTv.rulesProcessRequested' => '已请求重新评估规则',
 			'liveTv.rulesProcessFailed' => '无法重新评估录制规则',
 			'liveTv.recordShow' => '录制节目',
+			_ => null,
+		} ?? switch (path) {
 			'liveTv.recordSettings.startEarly' => '提前开始（秒）',
 			'liveTv.recordSettings.endLate' => '延后结束（秒）',
 			'liveTv.recordSettings.newOnly' => '仅新剧集',
@@ -5138,8 +5154,6 @@ extension on TranslationsZh {
 			'liveTv.recordSettings.anyTime' => '在任意时间录制',
 			'liveTv.recordSettings.skipInLibrary' => '跳过媒体库中已有的剧集',
 			'liveTv.recordSettings.keepUpTo' => '保留的剧集数',
-			_ => null,
-		} ?? switch (path) {
 			'liveTv.recordSettings.keepUpToHint' => '0 表示保留全部剧集',
 			'liveTv.startingInMinutes' => ({required Object minutes}) => '${minutes} 分钟后开始',
 			'liveTv.dayAtTime' => ({required Object day, required Object time}) => '${day} ${time}',
@@ -5645,6 +5659,8 @@ extension on TranslationsZh {
 			'performanceOverlay.player' => '播放器',
 			'performanceOverlay.memory' => '内存',
 			'performanceOverlay.uiFps' => 'UI FPS',
+			_ => null,
+		} ?? switch (path) {
 			'performanceOverlay.fps' => 'FPS',
 			'performanceOverlay.decoderAndroidHw' => 'Android 硬件',
 			'performanceOverlay.decoderNvidiaHw' => 'NVIDIA 硬件',
@@ -5652,8 +5668,6 @@ extension on TranslationsZh {
 			'performanceOverlay.decoderMediatekHw' => 'MediaTek 硬件',
 			'performanceOverlay.decoderExynosHw' => 'Exynos 硬件',
 			'performanceOverlay.decoderSoftware' => '软件',
-			_ => null,
-		} ?? switch (path) {
 			'performanceOverlay.decoderHardware' => '硬件',
 			'performanceOverlay.tunnelingActive' => '已启用',
 			'performanceOverlay.dvRpuFailed' => ({required Object converted, required Object failures}) => '${converted}（${failures} 个失败）',
