@@ -1123,8 +1123,8 @@ class Translations$settings$en {
 	/// en: 'Download chunk size'
 	String get downloadChunkSize => 'Download chunk size';
 
-	/// en: 'Cloud drives: ${size} MiB per range request'
-	String downloadChunkSizeDescription({required Object size}) => 'Cloud drives: ${size} MiB per range request';
+	/// en: '$size MiB per chunk'
+	String downloadChunkSizeDescription({required Object size}) => '${size} MiB per chunk';
 
 	/// en: 'Megabytes'
 	String get megabytesLabel => 'Megabytes';
@@ -6326,6 +6326,33 @@ class Translations$storage$en {
 
 	late final Translations$storage$kindDescription$en kindDescription = Translations$storage$kindDescription$en.internal(_root);
 
+	/// en: 'Browse files'
+	String get browseFiles => 'Browse files';
+
+	/// en: 'Loading account details…'
+	String get quarkAccountLoading => 'Loading account details…';
+
+	/// en: 'Account details unavailable'
+	String get quarkAccountUnavailable => 'Account details unavailable';
+
+	/// en: 'Storage: $used / $total used'
+	String quarkAccountCapacity({required Object used, required Object total}) => 'Storage: ${used} / ${total} used';
+
+	/// en: 'Free account'
+	String get quarkMemberNormal => 'Free account';
+
+	/// en: 'Quark VIP'
+	String get quarkMemberVip => 'Quark VIP';
+
+	/// en: 'Quark Super VIP'
+	String get quarkMemberSuperVip => 'Quark Super VIP';
+
+	/// en: 'Download performance'
+	String get quarkDownloadPerformance => 'Download performance';
+
+	/// en: 'Up to $effective per file · Account range $min–$max'
+	String quarkDownloadConnectionsDescription({required Object effective, required Object min, required Object max}) => 'Up to ${effective} per file · Account range ${min}–${max}';
+
 	/// en: 'Signed in'
 	String get quarkSignedIn => 'Signed in';
 
@@ -8981,7 +9008,7 @@ extension on Translations {
 			'settings.downloadConnectionsDescription' => ({required Object count, required Object effective}) => 'Cloud drives: requested ${count}, effective maximum ${effective} connections per file',
 			'settings.downloadConnectionsLabel' => 'Connections',
 			'settings.downloadChunkSize' => 'Download chunk size',
-			'settings.downloadChunkSizeDescription' => ({required Object size}) => 'Cloud drives: ${size} MiB per range request',
+			'settings.downloadChunkSizeDescription' => ({required Object size}) => '${size} MiB per chunk',
 			'settings.megabytesLabel' => 'Megabytes',
 			'settings.megabytesShort' => 'MB',
 			'settings.cellularDownloadBlocked' => 'Downloads are blocked on cellular. Use Wi-Fi or change the setting.',
@@ -11009,6 +11036,15 @@ extension on Translations {
 			'storage.kindDescription.smb' => 'A NAS or Windows share on your network',
 			'storage.kindDescription.webdav' => 'A WebDAV server, including OpenList and AList',
 			'storage.kindDescription.quark' => 'Quark cloud drive, signed in by QR code',
+			'storage.browseFiles' => 'Browse files',
+			'storage.quarkAccountLoading' => 'Loading account details…',
+			'storage.quarkAccountUnavailable' => 'Account details unavailable',
+			'storage.quarkAccountCapacity' => ({required Object used, required Object total}) => 'Storage: ${used} / ${total} used',
+			'storage.quarkMemberNormal' => 'Free account',
+			'storage.quarkMemberVip' => 'Quark VIP',
+			'storage.quarkMemberSuperVip' => 'Quark Super VIP',
+			'storage.quarkDownloadPerformance' => 'Download performance',
+			'storage.quarkDownloadConnectionsDescription' => ({required Object effective, required Object min, required Object max}) => 'Up to ${effective} per file · Account range ${min}–${max}',
 			'storage.quarkSignedIn' => 'Signed in',
 			'storage.quarkSignedOut' => 'Not signed in',
 			'storage.quarkScan' => 'Sign in with QR code',

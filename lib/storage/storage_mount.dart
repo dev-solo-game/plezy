@@ -104,6 +104,9 @@ abstract final class MountKeys {
   /// `QuarkMode` name. Absent means the web client.
   static const String quarkMode = 'quarkMode';
 
+  static const String quarkDownloadConnections = 'downloadConnections';
+  static const String quarkDownloadChunkMiB = 'downloadChunkMiB';
+
   static const String secretPassword = 'password';
   static const String secretCookie = 'cookie';
 }

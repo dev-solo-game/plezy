@@ -488,7 +488,7 @@ class _Translations$settings$zh_Hant extends Translations$settings$zh {
 	@override String downloadConnectionsDescription({required Object count, required Object effective}) => '雲端硬碟影片：設定 ${count} 路，實際最多 ${effective} 路';
 	@override String get downloadConnectionsLabel => '執行緒數';
 	@override String get downloadChunkSize => '下載分塊大小';
-	@override String downloadChunkSizeDescription({required Object size}) => '雲端硬碟影片：每個 Range 請求 ${size} MiB';
+	@override String downloadChunkSizeDescription({required Object size}) => '每個分塊 ${size} MiB';
 	@override String get megabytesLabel => 'MB';
 	@override String get megabytesShort => 'MB';
 	@override String get cellularDownloadBlocked => '使用行動網路時無法下載。請改用 Wi-Fi 或變更設定。';
@@ -2536,6 +2536,15 @@ class _Translations$storage$zh_Hant extends Translations$storage$zh {
 	@override String get nameHint => '留空則使用預設名稱';
 	@override String get open => '瀏覽';
 	@override late final _Translations$storage$kindDescription$zh_Hant kindDescription = _Translations$storage$kindDescription$zh_Hant._(_root);
+	@override String get browseFiles => '瀏覽檔案';
+	@override String get quarkAccountLoading => '正在取得帳號資訊…';
+	@override String get quarkAccountUnavailable => '暫時無法取得帳號資訊';
+	@override String quarkAccountCapacity({required Object used, required Object total}) => '已用 ${used} / 總容量 ${total}';
+	@override String get quarkMemberNormal => '一般使用者';
+	@override String get quarkMemberVip => '夸克會員';
+	@override String get quarkMemberSuperVip => '夸克超級會員';
+	@override String get quarkDownloadPerformance => '下載效能';
+	@override String quarkDownloadConnectionsDescription({required Object effective, required Object min, required Object max}) => '單個檔案最多 ${effective} 路 · 帳號可選 ${min}–${max} 路';
 	@override String get quarkSignedIn => '已登入';
 	@override String get quarkSignedOut => '尚未登入';
 	@override String get quarkScan => '掃碼登入';
@@ -3981,7 +3990,7 @@ extension on TranslationsZhHant {
 			'settings.downloadConnectionsDescription' => ({required Object count, required Object effective}) => '雲端硬碟影片：設定 ${count} 路，實際最多 ${effective} 路',
 			'settings.downloadConnectionsLabel' => '執行緒數',
 			'settings.downloadChunkSize' => '下載分塊大小',
-			'settings.downloadChunkSizeDescription' => ({required Object size}) => '雲端硬碟影片：每個 Range 請求 ${size} MiB',
+			'settings.downloadChunkSizeDescription' => ({required Object size}) => '每個分塊 ${size} MiB',
 			'settings.megabytesLabel' => 'MB',
 			'settings.megabytesShort' => 'MB',
 			'settings.cellularDownloadBlocked' => '使用行動網路時無法下載。請改用 Wi-Fi 或變更設定。',
@@ -6001,6 +6010,15 @@ extension on TranslationsZhHant {
 			'storage.kindDescription.smb' => '區域網路中的 NAS 或 Windows 共用',
 			'storage.kindDescription.webdav' => 'WebDAV 伺服器，包括 OpenList 和 AList',
 			'storage.kindDescription.quark' => '夸克網盤，掃碼登入',
+			'storage.browseFiles' => '瀏覽檔案',
+			'storage.quarkAccountLoading' => '正在取得帳號資訊…',
+			'storage.quarkAccountUnavailable' => '暫時無法取得帳號資訊',
+			'storage.quarkAccountCapacity' => ({required Object used, required Object total}) => '已用 ${used} / 總容量 ${total}',
+			'storage.quarkMemberNormal' => '一般使用者',
+			'storage.quarkMemberVip' => '夸克會員',
+			'storage.quarkMemberSuperVip' => '夸克超級會員',
+			'storage.quarkDownloadPerformance' => '下載效能',
+			'storage.quarkDownloadConnectionsDescription' => ({required Object effective, required Object min, required Object max}) => '單個檔案最多 ${effective} 路 · 帳號可選 ${min}–${max} 路',
 			'storage.quarkSignedIn' => '已登入',
 			'storage.quarkSignedOut' => '尚未登入',
 			'storage.quarkScan' => '掃碼登入',

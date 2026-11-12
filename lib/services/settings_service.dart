@@ -728,13 +728,12 @@ class SettingsService extends BaseSharedPreferencesService {
   static const downloadOnWifiOnly = BoolPref('download_on_wifi_only');
   static const autoRemoveWatchedDownloads = BoolPref('auto_remove_watched_downloads');
 
-  /// Cloud-drive downloads: connections per file, and megabytes per request.
+  /// Legacy defaults for Quark mounts saved before per-mount download settings.
   static const downloadConnections = IntPref('download_connections', defaultValue: BulkReadOptions.defaultConnections);
   static const downloadChunkSizeMb = IntPref(
     'download_chunk_size_mb',
     defaultValue: BulkReadOptions.defaultChunkSize ~/ BulkReadOptions.bytesPerMiB,
   );
-  static const cloudDownloadTuningPrefs = <Pref<Object?>>[downloadConnections, downloadChunkSizeMb];
 
   /// [downloadConnections] and [downloadChunkSizeMb] as the stream proxy
   /// reads them.

@@ -28,6 +28,34 @@ enum QuarkMode {
   static QuarkMode parse(String? name) => values.firstWhere((m) => m.name == name, orElse: () => web);
 }
 
+class QuarkAccountInfo {
+  const QuarkAccountInfo({this.memberType, this.usedBytes, this.totalBytes});
+
+  final String? memberType;
+  final int? usedBytes;
+  final int? totalBytes;
+}
+
+enum QuarkDownloadTier {
+  standard(2, 4),
+  superVip(8, 16);
+
+  const QuarkDownloadTier(this.minConnections, this.maxConnections);
+
+  final int minConnections;
+  final int maxConnections;
+
+  static QuarkDownloadTier forAccount(QuarkAccountInfo? account) => switch (account?.memberType) {
+    'SUPER_VIP' || 'SVIP' => superVip,
+    _ => standard,
+  };
+
+  BulkReadOptions options({required int connections, required int chunkMiB}) => BulkReadOptions(
+    connections: connections.clamp(minConnections, maxConnections),
+    chunkSize: chunkMiB.clamp(1, BulkReadOptions.maxConfiguredChunkMiB) * BulkReadOptions.bytesPerMiB,
+  );
+}
+
 /// Quark cloud drive, through one of its private clients.
 ///
 /// The account is addressed by `fid`, so the driver keeps a path → fid map
@@ -50,6 +78,8 @@ class QuarkStorageDriver implements StorageDriver, StreamVariantSource, Parallel
     Uri? apiBase,
     Uri? playApiBase,
     QuarkPcDevice? fallbackDevice,
+    this._downloadConnections,
+    this._downloadChunkMiB,
   }) : _apiBase = apiBase ?? Uri.parse('https://drive-pc.quark.cn/1/clouddrive'),
        _client = httpClient ?? HttpClient(),
        _throttle = RequestThrottle(requestInterval) {
@@ -96,6 +126,8 @@ class QuarkStorageDriver implements StorageDriver, StreamVariantSource, Parallel
           : Duration(milliseconds: intervalMs.clamp(minRequestIntervalMs, 60000)),
       onCookieChanged: onCookieChanged,
       fallbackDevice: fallbackDevice ?? QuarkPcDeviceStore.cached,
+      downloadConnections: mount.configInt(MountKeys.quarkDownloadConnections),
+      downloadChunkMiB: mount.configInt(MountKeys.quarkDownloadChunkMiB),
     );
   }
 
@@ -110,12 +142,52 @@ class QuarkStorageDriver implements StorageDriver, StreamVariantSource, Parallel
   final Uri _apiBase;
   final HttpClient _client;
   final RequestThrottle _throttle;
+  int? _downloadConnections;
+  int? _downloadChunkMiB;
   late final HttpRangeReader _reader;
+
+  void updateDownloadOptions({required int connections, required int chunkMiB}) {
+    _downloadConnections = connections;
+    _downloadChunkMiB = chunkMiB;
+  }
 
   final Map<String, String> _folderIds = {};
   final Map<String, StorageLink> _links = {};
   final Map<String, StorageLink> _rawLinks = {};
   final Map<String, ({List<StreamVariant> variants, DateTime expiresAt})> _variants = {};
+  Future<QuarkAccountInfo>? _accountInfo;
+  DateTime? _accountInfoExpiresAt;
+
+  Future<QuarkAccountInfo> accountInfo() {
+    final pending = _accountInfo;
+    final expiresAt = _accountInfoExpiresAt;
+    if (pending != null && (expiresAt == null || clock.now().isBefore(expiresAt))) return pending;
+    _accountInfoExpiresAt = null;
+    return _accountInfo = _loadAccountInfo();
+  }
+
+  Future<QuarkAccountInfo> _loadAccountInfo() async {
+    try {
+      final response = await _api('GET', '/member');
+      final data = response['data'];
+      if (data is! Map<String, dynamic>) {
+        throw const StorageException(StorageErrorKind.other, 'Quark: invalid member response');
+      }
+
+      final member = data['member_type'];
+      final used = data['use_capacity'];
+      final total = data['total_capacity'];
+      _accountInfoExpiresAt = clock.now().add(const Duration(minutes: 2));
+      return QuarkAccountInfo(
+        memberType: member is String && member.trim().isNotEmpty ? member.trim() : null,
+        usedBytes: used is int && used >= 0 ? used : null,
+        totalBytes: total is int && total > 0 ? total : null,
+      );
+    } catch (_) {
+      _accountInfo = null;
+      rethrow;
+    }
+  }
 
   /// Quark's rendition names, best first.
   static const List<String> renditions = ['4k', '2k', 'super', 'high', 'normal', 'low'];
@@ -237,13 +309,24 @@ class QuarkStorageDriver implements StorageDriver, StreamVariantSource, Parallel
     required int end,
     required int connections,
     required int chunkSize,
-  }) {
-    return _reader.read(
+  }) async* {
+    QuarkAccountInfo? account;
+    try {
+      account = await accountInfo();
+    } on StorageException {
+      // Membership can be temporarily unavailable even if the file is readable.
+      // Use the standard range until the tier can be confirmed.
+    }
+    final options = QuarkDownloadTier.forAccount(account).options(
+      connections: _downloadConnections ?? connections,
+      chunkMiB: _downloadChunkMiB ?? chunkSize ~/ BulkReadOptions.bytesPerMiB,
+    );
+    yield* _reader.read(
       ({required bool forceRefresh}) => _linkFor(entry, forceRefresh: forceRefresh),
       start: start,
       end: end,
-      connections: connections,
-      chunkSize: chunkSize,
+      connections: options.effectiveConnections,
+      chunkSize: options.effectiveChunkSize,
       expectedSize: entry.size,
     );
   }

@@ -1,9 +1,12 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:plezy/storage/drivers/quark_storage_driver.dart';
+import 'package:plezy/storage/http_range_reader.dart';
 import 'package:plezy/storage/storage_driver.dart';
+import 'package:plezy/storage/stream_proxy.dart';
 
 /// A stand-in for the Quark API and its download host on one loopback server.
 class _FakeQuark {
@@ -16,7 +19,14 @@ class _FakeQuark {
   String? rotateCookieTo;
   bool addMalformedSetCookie = false;
   bool requireLogin = false;
+  Map<String, Object?> member = {
+    'member_type': 'SUPER_VIP',
+    'use_capacity': 0,
+    'total_capacity': 6 * 1024 * 1024 * 1024 * 1024,
+  };
 
+  List<int> bytes = fileBytes;
+  final ranges = <(int, int)>[];
   static final fileBytes = List<int>.generate(64, (i) => i);
 
   /// folder id → rows.
@@ -51,9 +61,13 @@ class _FakeQuark {
       }
       final match = RegExp(r'bytes=(\d+)-(\d*)').firstMatch(request.headers.value(HttpHeaders.rangeHeader) ?? '');
       final start = match == null ? 0 : int.parse(match.group(1)!);
-      final end = match == null || match.group(2)!.isEmpty ? fileBytes.length - 1 : int.parse(match.group(2)!);
+      final end = match == null || match.group(2)!.isEmpty ? bytes.length - 1 : int.parse(match.group(2)!);
       response.statusCode = match == null ? HttpStatus.ok : HttpStatus.partialContent;
-      response.add(fileBytes.sublist(start, end + 1));
+      if (match != null) {
+        ranges.add((start, end));
+        response.headers.set(HttpHeaders.contentRangeHeader, 'bytes $start-$end/${bytes.length}');
+      }
+      response.add(bytes.sublist(start, end + 1));
       return response.close();
     }
 
@@ -76,6 +90,8 @@ class _FakeQuark {
     Map<String, Object?> metadata = {};
     if (path.endsWith('/config')) {
       data = <String, Object?>{};
+    } else if (path.endsWith('/member')) {
+      data = member;
     } else if (path.endsWith('/file/sort')) {
       final query = request.uri.queryParameters;
       final all = folders[query['pdir_fid']] ?? const [];
@@ -130,6 +146,91 @@ void main() {
   });
 
   Future<List<int>> readAll(Stream<List<int>> stream) => stream.expand((c) => c).toList();
+
+  test('download limits follow membership and retain the 64 MiB ceiling', () {
+    final standard = QuarkDownloadTier.forAccount(const QuarkAccountInfo(memberType: 'VIP'));
+    final superVip = QuarkDownloadTier.forAccount(const QuarkAccountInfo(memberType: 'SUPER_VIP'));
+    expect(standard.options(connections: 16, chunkMiB: 2).effectiveConnections, 4);
+    expect(standard.options(connections: 1, chunkMiB: 2).effectiveConnections, 2);
+    expect(QuarkDownloadTier.forAccount(null), standard);
+    expect(superVip.options(connections: 4, chunkMiB: 2).effectiveConnections, 8);
+    final max = superVip.options(connections: 30, chunkMiB: 8);
+    expect(max.effectiveConnections, 16);
+    expect(max.effectiveChunkSize * max.effectiveConnections, BulkReadOptions.maxBufferedBytes);
+  });
+
+  test('resumed bulk URL uses mount chunk size while playback uses its own range', () async {
+    const mib = BulkReadOptions.bytesPerMiB;
+    const size = 3 * mib;
+    const offset = 512;
+    fake.bytes = Uint8List(size);
+    final tuned = QuarkStorageDriver(
+      cookie: '__pus=abc',
+      apiBase: fake.apiBase,
+      requestInterval: Duration.zero,
+      downloadConnections: 12,
+      downloadChunkMiB: 1,
+    );
+    addTearDown(tuned.close);
+    final proxy = StreamProxy();
+    addTearDown(proxy.stop);
+    final client = HttpClient();
+    addTearDown(() => client.close(force: true));
+    const entry = StorageEntry(path: '/film.mkv', name: 'film.mkv', isDirectory: false, id: 'fid', size: size);
+
+    final bulk = await proxy.register(
+      mountId: 'quark',
+      driver: tuned,
+      entry: entry,
+      bulk: true,
+      downloadETag: '"file"',
+    );
+    expect(bulk.pathSegments.first, 'd');
+    final request = await client.getUrl(bulk);
+    request.headers.set(HttpHeaders.rangeHeader, 'bytes=$offset-');
+    request.headers.set(StreamProxy.resumeRequestHeader, '1');
+    final response = await request.close();
+    expect(response.statusCode, HttpStatus.partialContent);
+    expect(response.headers.value(HttpHeaders.etagHeader), '"file"');
+    expect(await response.fold<int>(0, (length, chunk) => length + chunk.length), size - offset);
+    expect(
+      fake.ranges,
+      unorderedEquals([(offset, offset + mib - 1), (offset + mib, offset + 2 * mib - 1), (offset + 2 * mib, size - 1)]),
+    );
+    expect(fake.apiCalls.where((call) => call.startsWith('GET /member')), hasLength(1));
+
+    fake.ranges.clear();
+    final playback = await proxy.register(mountId: 'quark', driver: tuned, entry: entry);
+    final playRequest = await client.getUrl(playback);
+    playRequest.headers.set(HttpHeaders.rangeHeader, 'bytes=100-500');
+    expect((await readAll(await playRequest.close())).length, 401);
+    expect(fake.ranges, [(100, 500)]);
+    expect(fake.apiCalls.where((call) => call.startsWith('GET /member')), hasLength(1));
+  });
+
+  test('reads and shares member and quota data across requests', () async {
+    final pending = driver.accountInfo();
+    expect(driver.accountInfo(), same(pending));
+    final account = await pending;
+    expect(account.memberType, 'SUPER_VIP');
+    expect(account.usedBytes, 0);
+    expect(account.totalBytes, 6 * 1024 * 1024 * 1024 * 1024);
+    expect(await driver.accountInfo(), same(account));
+    expect(fake.apiCalls.single, startsWith('GET /member'));
+    expect(fake.cookiesSeen.single, contains('__pus=abc'));
+  });
+
+  test('failed member lookup can retry and missing quota is unknown', () async {
+    fake.requireLogin = true;
+    await expectLater(driver.accountInfo(), throwsA(isA<StorageException>()));
+
+    fake.requireLogin = false;
+    fake.member = {'member_type': 'NORMAL'};
+    final account = await driver.accountInfo();
+    expect(account.memberType, 'NORMAL');
+    expect(account.usedBytes, isNull);
+    expect(account.totalBytes, isNull);
+  });
 
   test('lists the root with ids, sizes and timestamps', () async {
     final entries = await driver.list('/');
@@ -221,7 +322,12 @@ void main() {
   });
 
   test('requests apollo and dolby_low capabilities in web play-info', () async {
-    const film = StorageEntry(path: '/Movies/Film (2020).mkv', name: 'Film (2020).mkv', isDirectory: false, id: 'f-film');
+    const film = StorageEntry(
+      path: '/Movies/Film (2020).mkv',
+      name: 'Film (2020).mkv',
+      isDirectory: false,
+      id: 'f-film',
+    );
     final variants = await driver.streamVariants(film);
     expect(variants.map((v) => v.id), ['super']);
     final supports = fake.playInfoBodies.single['supports'] as String;

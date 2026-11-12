@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show mapEquals;
 import 'package:flutter/material.dart';
 import 'package:material_symbols_icons/symbols.dart';
 import 'package:provider/provider.dart';
@@ -10,10 +11,12 @@ import '../../focus/focusable_text_field.dart';
 import '../../i18n/strings.g.dart';
 import '../../library/library_scan_service.dart';
 import '../../services/file_picker_service.dart';
+import '../../services/settings_service.dart';
 import '../../storage/drivers/quark_pc_device_store.dart';
 import '../../storage/drivers/quark_pc_session.dart';
 import '../../storage/drivers/quark_storage_driver.dart';
 import '../../storage/drivers/smb_storage_driver.dart';
+import '../../storage/http_range_reader.dart';
 import '../../storage/mount_manager.dart';
 import '../../storage/mount_registry.dart';
 import '../../storage/storage_driver.dart';
@@ -24,6 +27,7 @@ import '../../utils/platform_detector.dart';
 import '../../widgets/app_icon.dart';
 import '../../widgets/focusable_list_tile.dart';
 import 'mounts_screen.dart';
+import 'quark_account_details.dart';
 import 'quark_qr_login_dialog.dart';
 import 'storage_folder_picker.dart';
 
@@ -66,6 +70,9 @@ class _MountEditScreenState extends State<MountEditScreen> {
   late String _quarkFolderId;
   late String _quarkFolderPath;
   late QuarkMode _quarkMode;
+  late int _downloadConnections;
+  late int _downloadChunkMiB;
+  StorageMount? _initialQuarkMount;
   late final TextEditingController _requestInterval;
   late final TextEditingController _host;
   late final TextEditingController _share;
@@ -106,10 +113,17 @@ class _MountEditScreenState extends State<MountEditScreen> {
     _quarkFolderId = mount?.configString(MountKeys.rootFolderId) ?? QuarkStorageDriver.defaultRootFolderId;
     _quarkFolderPath = mount?.configString(MountKeys.rootFolderPath) ?? StoragePath.root;
     _quarkMode = QuarkMode.parse(mount?.configString(MountKeys.quarkMode));
+    final downloadDefaults =
+        (mount?.kind == StorageKind.quark ? SettingsService.instanceOrNull?.bulkReadOptions : null) ??
+        BulkReadOptions.defaults;
+    _downloadConnections = mount?.configInt(MountKeys.quarkDownloadConnections) ?? downloadDefaults.connections;
+    _downloadChunkMiB =
+        mount?.configInt(MountKeys.quarkDownloadChunkMiB) ?? downloadDefaults.chunkSize ~/ BulkReadOptions.bytesPerMiB;
     _requestInterval = TextEditingController(
       text:
           '${mount?.configInt(MountKeys.requestIntervalMs) ?? QuarkStorageDriver.defaultRequestInterval.inMilliseconds}',
     );
+    if (_kind == StorageKind.quark) _initialQuarkMount = _buildMount(StorageKind.quark);
     if (_kind != null) _focusFormOnTv();
   }
 
@@ -162,6 +176,8 @@ class _MountEditScreenState extends State<MountEditScreen> {
           MountKeys.quarkMode: _quarkMode.name,
           MountKeys.rootFolderId: _quarkFolderId,
           MountKeys.rootFolderPath: _quarkFolderPath,
+          MountKeys.quarkDownloadConnections: _downloadConnections,
+          MountKeys.quarkDownloadChunkMiB: _downloadChunkMiB,
           MountKeys.requestIntervalMs:
               int.tryParse(_requestInterval.text.trim()) ?? QuarkStorageDriver.defaultRequestInterval.inMilliseconds,
         },
@@ -207,15 +223,23 @@ class _MountEditScreenState extends State<MountEditScreen> {
     String? error;
     try {
       final mount = _buildMount(kind);
-      final probe = manager.createDriver(mount);
-      try {
-        await probe.check();
-      } finally {
-        await probe.close();
+      if (_onlyQuarkDownloadOptionsChanged(mount)) {
+        await manager.saveQuarkDownloadOptions(
+          mount.id,
+          connections: _downloadConnections,
+          chunkMiB: _downloadChunkMiB,
+        );
+      } else {
+        final probe = manager.createDriver(mount);
+        try {
+          await probe.check();
+        } finally {
+          await probe.close();
+        }
+        await manager.save(mount);
+        // A new or changed mount is scanned straight away; the list shows progress.
+        unawaited(scans.scan(mount));
       }
-      await manager.save(mount);
-      // A new or changed mount is scanned straight away; the list shows progress.
-      unawaited(scans.scan(mount));
     } on StorageException catch (e) {
       error = e.message;
     } catch (e) {
@@ -231,6 +255,20 @@ class _MountEditScreenState extends State<MountEditScreen> {
         _error = error;
       });
     }
+  }
+
+  bool _onlyQuarkDownloadOptionsChanged(StorageMount mount) {
+    final initial = _initialQuarkMount;
+    if (initial == null || mount.kind != StorageKind.quark) return false;
+    return initial.displayName == mount.displayName &&
+        mapEquals(initial.secrets, mount.secrets) &&
+        (initial.configInt(MountKeys.quarkDownloadConnections) != _downloadConnections ||
+            initial.configInt(MountKeys.quarkDownloadChunkMiB) != _downloadChunkMiB) &&
+        mapEquals(mount.config, {
+          ...initial.config,
+          MountKeys.quarkDownloadConnections: _downloadConnections,
+          MountKeys.quarkDownloadChunkMiB: _downloadChunkMiB,
+        });
   }
 
   Future<void> _pickFolder() async {
@@ -435,11 +473,107 @@ class _MountEditScreenState extends State<MountEditScreen> {
                   }),
           ),
           const SizedBox(height: _fieldGap),
-          _QuarkLoginTile(signedIn: _cookie.text.trim().isNotEmpty, onScan: _saving ? null : _scanQuark),
-          const SizedBox(height: _fieldGap),
-          _FolderTile(path: _quarkFolderPath, onChoose: _saving ? null : _pickQuarkFolder),
+          _quarkLoginFields(),
         ];
     }
+  }
+
+  Widget _quarkLoginFields() {
+    final cookie = _cookie.text.trim();
+    final saved = widget.mount;
+    final usesSavedLogin =
+        saved != null &&
+        cookie == saved.secret(MountKeys.secretCookie)?.trim() &&
+        _quarkMode == QuarkMode.parse(saved.configString(MountKeys.quarkMode));
+
+    Widget fields([AsyncSnapshot<QuarkAccountInfo?>? snapshot]) {
+      final account = snapshot?.connectionState == ConnectionState.done ? snapshot?.data : null;
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _QuarkLoginTile(
+            signedIn: cookie.isNotEmpty,
+            onScan: _saving ? null : _scanQuark,
+            account: snapshot == null ? null : QuarkAccountDetails(snapshot: snapshot),
+          ),
+          const SizedBox(height: _fieldGap),
+          _FolderTile(path: _quarkFolderPath, onChoose: _saving ? null : _pickQuarkFolder),
+          if (account != null) ..._quarkDownloadFields(QuarkDownloadTier.forAccount(account)),
+        ],
+      );
+    }
+
+    return cookie.isEmpty
+        ? fields()
+        : QuarkAccountLoader(
+            mount: usesSavedLogin ? saved : _buildMount(StorageKind.quark),
+            draft: !usesSavedLogin,
+            builder: (_, snapshot) => fields(snapshot),
+          );
+  }
+
+  List<Widget> _quarkDownloadFields(QuarkDownloadTier tier) {
+    final options = tier.options(connections: _downloadConnections, chunkMiB: _downloadChunkMiB);
+    final chunkMiB = options.effectiveChunkSize ~/ BulkReadOptions.bytesPerMiB;
+
+    Widget picker({
+      required String title,
+      required String subtitle,
+      required IconData icon,
+      required int selected,
+      required int min,
+      required int max,
+      required String Function(int) label,
+      required ValueChanged<int> onChanged,
+    }) {
+      return FocusableListTile(
+        contentPadding: EdgeInsets.zero,
+        enabled: !_saving,
+        leading: AppIcon(icon),
+        title: Text(title),
+        subtitle: Text(subtitle),
+        trailing: const AppIcon(Symbols.chevron_right_rounded),
+        onTap: () async {
+          final picked = await showOptionPickerDialog<int>(
+            context,
+            title: title,
+            options: [
+              for (var value = min; value <= max; value++)
+                (icon: value == selected ? Symbols.check_rounded : null, label: label(value), value: value),
+            ],
+          );
+          if (mounted && picked != null) setState(() => onChanged(picked));
+        },
+      );
+    }
+
+    return [
+      _SectionTitle(t.storage.quarkDownloadPerformance),
+      picker(
+        title: t.settings.downloadConnections,
+        subtitle: t.storage.quarkDownloadConnectionsDescription(
+          min: tier.minConnections,
+          max: tier.maxConnections,
+          effective: options.effectiveConnections,
+        ),
+        icon: Symbols.lan_rounded,
+        selected: options.connections,
+        min: tier.minConnections,
+        max: tier.maxConnections,
+        label: (value) => '$value',
+        onChanged: (value) => _downloadConnections = value,
+      ),
+      picker(
+        title: t.settings.downloadChunkSize,
+        subtitle: t.settings.downloadChunkSizeDescription(size: chunkMiB),
+        icon: Symbols.view_module_rounded,
+        selected: chunkMiB,
+        min: 1,
+        max: BulkReadOptions.maxConfiguredChunkMiB,
+        label: (value) => '$value MiB',
+        onChanged: (value) => _downloadChunkMiB = value,
+      ),
+    ];
   }
 
   List<Widget> _advancedFields(StorageKind kind) {
@@ -744,8 +878,7 @@ class _FolderTile extends StatelessWidget {
   }
 }
 
-/// Which Quark client the mount signs in as. Modes not supported yet are
-/// shown but cannot be picked.
+/// Which Quark client the mount signs in as.
 class _QuarkModePicker extends StatelessWidget {
   const _QuarkModePicker({required this.mode, required this.onChanged, this.focusNode});
 
@@ -765,8 +898,7 @@ class _QuarkModePicker extends StatelessWidget {
       t.storage.quarkModeHelp,
       style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
     );
-    if (PlatformDetector.isTV()) {
-      // A row that opens a list: segmented buttons trap a remote's arrows.
+    if (PlatformDetector.isDesktop(context)) {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -789,7 +921,7 @@ class _QuarkModePicker extends StatelessWidget {
                       (icon: value == mode ? Symbols.check_rounded : null, label: label(value), value: value),
                 ],
               );
-              if (picked != null) onChanged?.call(picked);
+              if (context.mounted && picked != null) onChanged?.call(picked);
             },
           ),
           help,
@@ -819,10 +951,11 @@ class _QuarkModePicker extends StatelessWidget {
 
 /// Sign-in state for a Quark mount with the button that starts a QR login.
 class _QuarkLoginTile extends StatelessWidget {
-  const _QuarkLoginTile({required this.signedIn, required this.onScan});
+  const _QuarkLoginTile({required this.signedIn, required this.onScan, this.account});
 
   final bool signedIn;
   final VoidCallback? onScan;
+  final Widget? account;
 
   @override
   Widget build(BuildContext context) {
@@ -844,9 +977,15 @@ class _QuarkLoginTile extends StatelessWidget {
             ),
             const SizedBox(width: 12),
             Expanded(
-              child: Text(
-                signedIn ? t.storage.quarkSignedIn : t.storage.quarkSignedOut,
-                style: theme.textTheme.titleSmall,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    signedIn ? t.storage.quarkSignedIn : t.storage.quarkSignedOut,
+                    style: theme.textTheme.titleSmall,
+                  ),
+                  if (account != null) ...[const SizedBox(height: 4), account!],
+                ],
               ),
             ),
             FocusableButton(

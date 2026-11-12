@@ -15,6 +15,7 @@ import '../../storage/storage_path.dart';
 import '../../widgets/app_icon.dart';
 import 'library_preview_screen.dart';
 import 'mount_edit_screen.dart';
+import 'quark_account_details.dart';
 import 'scraper_settings_screen.dart';
 import 'storage_browser_screen.dart';
 
@@ -83,7 +84,7 @@ class StorageKindBadge extends StatelessWidget {
   }
 }
 
-enum _MountAction { scan, edit, remove }
+enum _MountAction { browse, scan, remove }
 
 class MountsScreen extends StatelessWidget {
   const MountsScreen({super.key});
@@ -166,9 +167,10 @@ class MountsScreen extends StatelessWidget {
                   }
                   final mount = mounts[index];
                   return _MountCard(
+                    key: ValueKey(mount.id),
                     mount: mount,
                     autofocus: index == 0,
-                    onOpen: () => Navigator.of(context).push(
+                    onBrowse: () => Navigator.of(context).push(
                       MaterialPageRoute<void>(
                         builder: (_) => StorageBrowserScreen(mount: mount, path: StoragePath.root),
                       ),
@@ -237,8 +239,9 @@ class _EmptyState extends StatelessWidget {
 
 class _MountCard extends StatelessWidget {
   const _MountCard({
+    super.key,
     required this.mount,
-    required this.onOpen,
+    required this.onBrowse,
     required this.onScan,
     required this.onEdit,
     required this.onRemove,
@@ -246,7 +249,7 @@ class _MountCard extends StatelessWidget {
   });
 
   final StorageMount mount;
-  final VoidCallback onOpen;
+  final VoidCallback onBrowse;
   final VoidCallback onScan;
   final VoidCallback onEdit;
   final VoidCallback onRemove;
@@ -257,13 +260,16 @@ class _MountCard extends StatelessWidget {
     final theme = Theme.of(context);
     final muted = theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant);
     final location = mountLocationSummary(mount);
+    final kindLabel = storageKindLabel(mount.kind);
+    final showQuarkAccount =
+        mount.kind == StorageKind.quark && mount.secret(MountKeys.secretCookie)?.isNotEmpty == true;
     final status = context.watch<LibraryScanService>().statusOf(mount.id);
     return Card(
       margin: EdgeInsets.zero,
       clipBehavior: Clip.antiAlias,
       child: InkWell(
         autofocus: autofocus,
-        onTap: onOpen,
+        onTap: onEdit,
         child: Padding(
           padding: const EdgeInsets.fromLTRB(16, 14, 4, 14),
           child: Row(
@@ -281,7 +287,12 @@ class _MountCard extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                     ),
                     const SizedBox(height: 2),
-                    Text(storageKindLabel(mount.kind), style: muted),
+                    if (!showQuarkAccount || mount.displayName != kindLabel) Text(kindLabel, style: muted),
+                    if (showQuarkAccount)
+                      QuarkAccountLoader(
+                        mount: mount,
+                        builder: (_, snapshot) => QuarkAccountDetails(snapshot: snapshot),
+                      ),
                     if (location != null) Text(location, style: muted, maxLines: 1, overflow: TextOverflow.ellipsis),
                     const SizedBox(height: 6),
                     _ScanLine(mountId: mount.id, status: status),
@@ -292,16 +303,16 @@ class _MountCard extends StatelessWidget {
                 tooltip: t.common.options,
                 icon: const AppIcon(Symbols.more_vert_rounded),
                 onSelected: (action) => switch (action) {
+                  _MountAction.browse => onBrowse(),
                   _MountAction.scan => onScan(),
-                  _MountAction.edit => onEdit(),
                   _MountAction.remove => onRemove(),
                 },
                 itemBuilder: (context) => [
+                  PopupMenuItem(value: _MountAction.browse, child: Text(t.storage.browseFiles)),
                   PopupMenuItem(
                     value: _MountAction.scan,
                     child: Text(status.isRunning ? t.storage.scanStop : t.storage.scan),
                   ),
-                  PopupMenuItem(value: _MountAction.edit, child: Text(t.common.edit)),
                   PopupMenuItem(value: _MountAction.remove, child: Text(t.storage.remove)),
                 ],
               ),

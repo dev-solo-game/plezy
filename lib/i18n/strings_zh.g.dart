@@ -487,7 +487,7 @@ class Translations$settings$zh extends Translations$settings$en {
 	@override String downloadConnectionsDescription({required Object count, required Object effective}) => '云盘视频：设置 ${count} 路，实际最多 ${effective} 路';
 	@override String get downloadConnectionsLabel => '线程数';
 	@override String get downloadChunkSize => '下载分块大小';
-	@override String downloadChunkSizeDescription({required Object size}) => '云盘视频：每个 Range 请求 ${size} MiB';
+	@override String downloadChunkSizeDescription({required Object size}) => '每个分块 ${size} MiB';
 	@override String get megabytesLabel => 'MB';
 	@override String get megabytesShort => 'MB';
 	@override String get cellularDownloadBlocked => '已阻止通过移动网络下载。请连接 Wi-Fi 或更改设置。';
@@ -2535,6 +2535,15 @@ class Translations$storage$zh extends Translations$storage$en {
 	@override String get nameHint => '留空则使用默认名称';
 	@override String get open => '浏览';
 	@override late final Translations$storage$kindDescription$zh kindDescription = Translations$storage$kindDescription$zh.internal(_root);
+	@override String get browseFiles => '浏览文件';
+	@override String get quarkAccountLoading => '正在获取账号信息…';
+	@override String get quarkAccountUnavailable => '暂时无法获取账号信息';
+	@override String quarkAccountCapacity({required Object used, required Object total}) => '已用 ${used} / 总容量 ${total}';
+	@override String get quarkMemberNormal => '普通用户';
+	@override String get quarkMemberVip => '夸克会员';
+	@override String get quarkMemberSuperVip => '夸克超级会员';
+	@override String get quarkDownloadPerformance => '下载性能';
+	@override String quarkDownloadConnectionsDescription({required Object effective, required Object min, required Object max}) => '单个文件最多 ${effective} 路 · 账号可选 ${min}–${max} 路';
 	@override String get quarkSignedIn => '已登录';
 	@override String get quarkSignedOut => '尚未登录';
 	@override String get quarkScan => '扫码登录';
@@ -3980,7 +3989,7 @@ extension on TranslationsZh {
 			'settings.downloadConnectionsDescription' => ({required Object count, required Object effective}) => '云盘视频：设置 ${count} 路，实际最多 ${effective} 路',
 			'settings.downloadConnectionsLabel' => '线程数',
 			'settings.downloadChunkSize' => '下载分块大小',
-			'settings.downloadChunkSizeDescription' => ({required Object size}) => '云盘视频：每个 Range 请求 ${size} MiB',
+			'settings.downloadChunkSizeDescription' => ({required Object size}) => '每个分块 ${size} MiB',
 			'settings.megabytesLabel' => 'MB',
 			'settings.megabytesShort' => 'MB',
 			'settings.cellularDownloadBlocked' => '已阻止通过移动网络下载。请连接 Wi-Fi 或更改设置。',
@@ -6000,6 +6009,15 @@ extension on TranslationsZh {
 			'storage.kindDescription.smb' => '局域网中的 NAS 或 Windows 共享',
 			'storage.kindDescription.webdav' => 'WebDAV 服务器，包括 OpenList 和 AList',
 			'storage.kindDescription.quark' => '夸克网盘，扫码登录',
+			'storage.browseFiles' => '浏览文件',
+			'storage.quarkAccountLoading' => '正在获取账号信息…',
+			'storage.quarkAccountUnavailable' => '暂时无法获取账号信息',
+			'storage.quarkAccountCapacity' => ({required Object used, required Object total}) => '已用 ${used} / 总容量 ${total}',
+			'storage.quarkMemberNormal' => '普通用户',
+			'storage.quarkMemberVip' => '夸克会员',
+			'storage.quarkMemberSuperVip' => '夸克超级会员',
+			'storage.quarkDownloadPerformance' => '下载性能',
+			'storage.quarkDownloadConnectionsDescription' => ({required Object effective, required Object min, required Object max}) => '单个文件最多 ${effective} 路 · 账号可选 ${min}–${max} 路',
 			'storage.quarkSignedIn' => '已登录',
 			'storage.quarkSignedOut' => '尚未登录',
 			'storage.quarkScan' => '扫码登录',

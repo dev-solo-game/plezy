@@ -54,11 +54,25 @@ class MountRegistry {
 
   /// Replaces one secret without touching the rest of the row — used when a
   /// driver reports rotated credentials (Quark refreshes its session cookie).
-  Future<void> updateSecret(String id, String key, String value) async {
+  Future<void> updateSecret(String id, String key, String value) => _db.transaction(() async {
     final mount = await get(id);
     if (mount == null) return;
-    await upsert(mount.copyWith(secrets: {...mount.secrets, key: value}));
-  }
+    final secrets = await CredentialVault.protect(jsonEncode({...mount.secrets, key: value}));
+    await (_db.update(_db.mounts)..where((t) => t.id.equals(id))).write(MountsCompanion(secrets: Value(secrets)));
+  });
+
+  Future<bool> updateQuarkDownloadOptions(String id, {required int connections, required int chunkMiB}) =>
+      _db.transaction(() async {
+        final mount = await get(id);
+        if (mount == null || mount.kind != StorageKind.quark) return false;
+        final config = jsonEncode({
+          ...mount.config,
+          MountKeys.quarkDownloadConnections: connections,
+          MountKeys.quarkDownloadChunkMiB: chunkMiB,
+        });
+        await (_db.update(_db.mounts)..where((t) => t.id.equals(id))).write(MountsCompanion(configJson: Value(config)));
+        return true;
+      });
 
   Future<void> remove(String id) async {
     await (_db.delete(_db.mounts)..where((t) => t.id.equals(id))).go();
