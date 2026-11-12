@@ -236,7 +236,7 @@ class StreamProxy {
         if (chunks != null && hasFirst) {
           // From here a driver failure can only be signalled by dropping the
           // connection, which players answer by reconnecting with a new Range.
-          await response.addStream(_remaining(chunks));
+          await response.addStream(bulkOptions == null ? _remaining(chunks) : _remainingBulk(chunks));
         }
         await response.close();
       } finally {
@@ -389,6 +389,23 @@ class StreamProxy {
     do {
       yield chunks.current;
     } while (await chunks.moveNext());
+  }
+
+  static Stream<List<int>> _remainingBulk(StreamIterator<List<int>> chunks) {
+    late StreamSubscription<List<int>> subscription;
+    final controller = StreamController<List<int>>(sync: true);
+    controller.onListen = () {
+      subscription = _remaining(chunks).listen(controller.add, onError: controller.addError, onDone: controller.close);
+    };
+    controller.onPause = () => subscription.pause();
+    controller.onResume = () => subscription.resume();
+    // The HTTP sink may cancel while the iterator is waiting on an origin request.
+    controller.onCancel = () async {
+      final stopped = chunks.cancel();
+      await subscription.cancel();
+      await stopped;
+    };
+    return controller.stream;
   }
 
   static Future<void> _finish(HttpResponse response, int status) async {

@@ -17,6 +17,9 @@ class BulkReadOptions {
   static const int defaultConnections = 4;
   static const int defaultChunkSize = 16 * 1024 * 1024;
 
+  /// Maximum payload held in the ordered prefetch window for one download.
+  static const int maxBufferedBytes = defaultConnections * defaultChunkSize;
+
   static const BulkReadOptions defaults = BulkReadOptions();
 }
 
@@ -39,7 +42,7 @@ typedef StorageLinkResolver = Future<StorageLink> Function({required bool forceR
 /// A link the origin rejects is refreshed once and the request retried, which
 /// is what keeps playback alive across an expiring cloud-drive link.
 class HttpRangeReader {
-  HttpRangeReader(this._client, {this.chunkSize = defaultChunkSize});
+  HttpRangeReader(this._client, {this.chunkSize = defaultChunkSize, this.stallTimeout = const Duration(seconds: 30)});
 
   final HttpClient _client;
 
@@ -56,7 +59,7 @@ class HttpRangeReader {
   static const int _maxRefreshes = 2;
 
   /// How long a connection may wait for the origin's next bytes.
-  static const Duration _stallTimeout = Duration(seconds: 30);
+  final Duration stallTimeout;
 
   static const Set<int> _staleLinkStatuses = {
     HttpStatus.unauthorized,
@@ -68,16 +71,52 @@ class HttpRangeReader {
   /// Reads [start]..[end] (inclusive; [end] null for the rest of the file).
   ///
   /// With [connections] above 1 and a known [end], the span is fetched as
-  /// [chunkSize] (default: the reader's) pieces over that many connections at
-  /// once and delivered in order. Cloud drives cap each connection's speed, so bulk transfers (the
-  /// downloader) go much faster this way; players keep the single connection,
-  /// which wastes nothing when they seek.
-  Stream<List<int>> read(StorageLinkResolver resolve, {int start = 0, int? end, int connections = 1, int? chunkSize}) {
-    final piece = chunkSize ?? this.chunkSize;
-    if (connections > 1 && end != null && end - start + 1 > piece) {
-      return _readParallel(resolve, start, end, connections, piece);
+  /// [chunkSize] (default: the reader's) pieces and delivered in order.
+  /// The buffer budget can reduce the number of active connections.
+  /// [expectedSize] is the whole file size for a bulk read, even when the
+  /// caller requests only part of the file.
+  Stream<List<int>> read(
+    StorageLinkResolver resolve, {
+    int start = 0,
+    int? end,
+    int connections = 1,
+    int? chunkSize,
+    int? expectedSize,
+  }) {
+    final piece = (chunkSize ?? this.chunkSize).clamp(1, BulkReadOptions.maxBufferedBytes);
+    final slots = min(connections, BulkReadOptions.maxBufferedBytes ~/ piece);
+    if (end == null || (expectedSize == null && (connections <= 1 || end - start + 1 <= piece))) {
+      return _readSingle(resolve, start, end);
     }
-    return _readSingle(resolve, start, end);
+
+    final pending = Queue<_Chunk>();
+    late StreamSubscription<List<int>> subscription;
+    final controller = StreamController<List<int>>(sync: true);
+    controller
+      ..onListen = () {
+        subscription = _readBulk(
+          resolve,
+          start,
+          end,
+          slots,
+          piece,
+          expectedSize,
+          pending,
+        ).listen(controller.add, onError: controller.addError, onDone: controller.close);
+      }
+      ..onPause = () {
+        subscription.pause();
+      }
+      ..onResume = () {
+        subscription.resume();
+      }
+      ..onCancel = () {
+        for (final chunk in pending) {
+          chunk.cancel();
+        }
+        return subscription.cancel();
+      };
+    return controller.stream;
   }
 
   Stream<List<int>> _readSingle(StorageLinkResolver resolve, int start, int? end) async* {
@@ -100,130 +139,220 @@ class HttpRangeReader {
     }
   }
 
-  Stream<List<int>> _readParallel(
+  Stream<List<int>> _readBulk(
     StorageLinkResolver resolve,
     int start,
     int end,
     int connections,
     int chunkSize,
+    int? expectedSize,
+    Queue<_Chunk> pending,
   ) async* {
     final links = _Links(resolve, _maxRefreshes);
-
-    // The first piece goes out alone: its answer says whether the origin
-    // honours ranges at all, and any failure to open the file surfaces before
-    // a single byte is delivered.
-    final firstEnd = start + chunkSize - 1;
-    var link = await links.current();
-    var first = await _get(link, start, firstEnd);
-    if (_staleLinkStatuses.contains(first.statusCode)) {
-      await _discard(first);
-      link = await links.refresh(link);
-      first = await _get(link, start, firstEnd);
-    }
-    switch (first.statusCode) {
-      case HttpStatus.partialContent:
-        break;
-      case HttpStatus.ok:
-        // Ranges are ignored, so more connections would each pull the
-        // whole file. Stream this one instead.
-        yield* _slice(first, start, end);
-        return;
-      default:
-        final status = first.statusCode;
-        await _discard(first);
-        throw StorageException(_kindFor(status), 'Origin answered HTTP $status');
-    }
-
-    final pending = Queue<_Chunk>();
-    var next = start;
-    void launch(HttpClientResponse? opened) {
-      final chunk = _Chunk(next, min(end, next + chunkSize - 1));
-      next = chunk.to + 1;
-      chunk.bytes = _fetchChunk(chunk, links, opened)..ignore();
-      pending.add(chunk);
-    }
-
-    void fill() {
-      while (pending.length < connections && next <= end) {
-        launch(null);
-      }
-    }
-
+    final parallel = connections > 1 && end - start + 1 > chunkSize;
+    final first = _Chunk(start, parallel ? start + chunkSize - 1 : end);
+    pending.add(first);
     try {
-      launch(first);
-      fill();
-      while (pending.isNotEmpty) {
-        final bytes = await pending.first.bytes;
-        pending.removeFirst();
-        fill();
-        yield bytes;
+      // Probe with the first request before spending any other connections.
+      final response = await _retry(first, () => _openChunk(first, links, expectedSize, allowFull: true));
+      if (response.statusCode == HttpStatus.ok || !parallel) {
+        final body = first.readBody(response, stallTimeout);
+        final source = response.statusCode == HttpStatus.ok ? _slice(body, start, end) : body;
+        var remaining = end - start + 1;
+        await for (final bytes in source) {
+          remaining -= bytes.length;
+          if (remaining < 0) {
+            throw const StorageException(StorageErrorKind.network, 'Origin sent more bytes than requested');
+          }
+          yield bytes;
+        }
+        first.checkCancelled();
+        if (remaining != 0) {
+          throw const StorageException(StorageErrorKind.network, 'Origin sent fewer bytes than requested');
+        }
+        return;
       }
+
+      final size = expectedSize ?? _rangeSize(response, first);
+      first.bytes = _fetchChunk(first, links, size, opened: response)..ignore();
+      var next = first.to + 1;
+      while (pending.isNotEmpty) {
+        while (pending.length < connections && next <= end) {
+          final chunk = _Chunk(next, min(end, next + chunkSize - 1));
+          next = chunk.to + 1;
+          pending.add(chunk);
+          chunk.bytes = _fetchChunk(chunk, links, size)..ignore();
+        }
+        // Keep the emitted piece in the window until the consumer advances.
+        yield await pending.first.bytes!;
+        pending.removeFirst().bytes = null;
+      }
+    } on _Cancelled {
+      // Cancelling the subscription also interrupts the awaited request.
     } finally {
       for (final chunk in pending) {
         chunk.cancel();
       }
+      pending.clear();
     }
   }
 
-  /// Fetches all of [chunk], retrying transient failures and renewing the
-  /// link through [links] when the origin refuses it. [opened] is a response
-  /// already requested for this chunk.
-  Future<Uint8List> _fetchChunk(_Chunk chunk, _Links links, HttpClientResponse? opened) async {
-    var response = opened;
-    var attempt = 0;
-    while (true) {
-      if (chunk.cancelled) {
-        if (response != null) unawaited(_discard(response));
-        throw const _Cancelled();
+  Future<Uint8List> _fetchChunk(_Chunk chunk, _Links links, int size, {HttpClientResponse? opened}) {
+    return _retry(chunk, () async {
+      final response = opened ?? await _openChunk(chunk, links, size);
+      opened = null;
+      final bytes = Uint8List(chunk.length);
+      var offset = 0;
+      await for (final block in chunk.readBody(response, stallTimeout)) {
+        if (block.length > bytes.length - offset) {
+          throw const StorageException(StorageErrorKind.network, 'Origin sent more bytes than requested');
+        }
+        bytes.setRange(offset, offset + block.length, block);
+        offset += block.length;
       }
-      try {
-        if (response == null) {
-          final link = await links.current();
-          response = await _get(link, chunk.from, chunk.to).timeout(_stallTimeout);
-          if (_staleLinkStatuses.contains(response.statusCode)) {
-            await _discard(response);
-            response = null;
-            await links.refresh(link);
-            continue;
-          }
-        }
-        final status = response.statusCode;
-        if (status != HttpStatus.partialContent) {
-          await _discard(response);
-          throw StorageException(_kindFor(status), 'Origin answered HTTP $status');
-        }
-        final bytes = await chunk.collect(response);
-        if (bytes.length == chunk.length) return bytes;
+      chunk.checkCancelled();
+      if (offset != bytes.length) {
         throw StorageException(
           StorageErrorKind.network,
-          'Origin sent ${bytes.length} of ${chunk.length} bytes at ${chunk.from}',
+          'Origin sent $offset of ${chunk.length} bytes at ${chunk.from}',
         );
-      } on TimeoutException catch (e) {
-        response = null;
-        if (chunk.cancelled || ++attempt >= _chunkAttempts) {
-          throw StorageException(StorageErrorKind.network, 'Origin stopped answering', cause: e);
-        }
-      } on StorageException catch (e) {
-        response = null;
-        if (chunk.cancelled || !_retryable(e.kind) || ++attempt >= _chunkAttempts) rethrow;
       }
-      await Future<void>.delayed(Duration(milliseconds: 500 * attempt));
+      return bytes;
+    });
+  }
+
+  Future<HttpClientResponse> _openChunk(_Chunk chunk, _Links links, int? expectedSize, {bool allowFull = false}) async {
+    var link = await chunk.untilCancelled(links.current());
+    while (true) {
+      final response = await _getBulk(link, chunk);
+      final status = response.statusCode;
+      try {
+        chunk.checkCancelled();
+        if (status == HttpStatus.partialContent) {
+          final size = _rangeSize(response, chunk);
+          if (expectedSize != null && size != expectedSize) {
+            throw StorageException(StorageErrorKind.network, 'Origin reported size $size, expected $expectedSize');
+          }
+          return response;
+        }
+        if (allowFull && status == HttpStatus.ok) {
+          if (expectedSize != null && response.contentLength >= 0 && response.contentLength != expectedSize) {
+            throw const StorageException(StorageErrorKind.network, 'Origin reported a different file size');
+          }
+          return response;
+        }
+        if (!_staleLinkStatuses.contains(status)) {
+          throw StorageException(_kindFor(status), 'Origin answered HTTP $status');
+        }
+      } catch (_) {
+        await response.listen(null).cancel();
+        rethrow;
+      }
+      await response.listen(null).cancel();
+      link = await chunk.untilCancelled(links.refresh(link));
+    }
+  }
+
+  Future<HttpClientResponse> _getBulk(StorageLink link, _Chunk chunk) async {
+    // Keep each redirect request abortable as well as the initial one.
+    var uri = link.url;
+    var headers = link.headers;
+    for (var redirects = 0; ; redirects++) {
+      final response = await _get(StorageLink(uri, headers: headers), chunk.from, chunk.to, chunk: chunk);
+      final location = response.isRedirect ? response.headers.value(HttpHeaders.locationHeader) : null;
+      if (location == null) return response;
+      await response.listen(null).cancel();
+      final target = uri.resolve(location);
+      if (redirects >= 5 || !(target.isScheme('http') || target.isScheme('https'))) {
+        throw const StorageException(StorageErrorKind.network, 'Invalid origin redirect');
+      }
+      final canForwardCredentials =
+          target.isScheme(uri.scheme) &&
+          target.port == uri.port &&
+          (target.host == uri.host || target.host.endsWith('.${uri.host}'));
+      headers = Map.of(headers)
+        ..removeWhere((name, _) {
+          final lower = name.toLowerCase();
+          return lower == HttpHeaders.hostHeader || (!canForwardCredentials && _credentialHeaders.contains(lower));
+        });
+      uri = target;
+    }
+  }
+
+  static const _credentialHeaders = {
+    HttpHeaders.authorizationHeader,
+    HttpHeaders.proxyAuthorizationHeader,
+    HttpHeaders.wwwAuthenticateHeader,
+    HttpHeaders.cookieHeader,
+    'cookie2',
+  };
+
+  static final _rangePattern = RegExp(r'^bytes (\d+)-(\d+)/(\d+)$', caseSensitive: false);
+
+  static int _rangeSize(HttpClientResponse response, _Chunk chunk) {
+    final value = response.headers.value(HttpHeaders.contentRangeHeader);
+    final match = value == null ? null : _rangePattern.firstMatch(value);
+    final from = int.tryParse(match?.group(1) ?? '');
+    final to = int.tryParse(match?.group(2) ?? '');
+    final size = int.tryParse(match?.group(3) ?? '');
+    if (from != chunk.from || to != chunk.to || size == null || size <= chunk.to) {
+      throw StorageException(StorageErrorKind.network, 'Invalid Content-Range for ${chunk.from}-${chunk.to}: $value');
+    }
+    return size;
+  }
+
+  static Future<T> _retry<T>(_Chunk chunk, Future<T> Function() run) async {
+    while (true) {
+      chunk.checkCancelled();
+      try {
+        return await run();
+      } on StorageException catch (e) {
+        if (!_retryable(e.kind) || ++chunk.failures >= _chunkAttempts) rethrow;
+      }
+      await chunk.untilCancelled(Future<void>.delayed(Duration(milliseconds: 500 * chunk.failures)));
     }
   }
 
   static bool _retryable(StorageErrorKind kind) =>
       kind == StorageErrorKind.network || kind == StorageErrorKind.rateLimited || kind == StorageErrorKind.other;
 
-  Future<HttpClientResponse> _get(StorageLink link, int start, int? end) async {
+  Future<HttpClientResponse> _get(StorageLink link, int start, int? end, {_Chunk? chunk}) async {
     try {
-      final request = await _client.getUrl(link.url);
+      chunk?.checkCancelled();
+      final opening = _client.getUrl(link.url).then((request) {
+        if (chunk?.cancelled ?? false) {
+          request.abort();
+          throw const _Cancelled();
+        }
+        return request;
+      });
+      final request = await (chunk?.untilCancelled(opening) ?? opening);
+      if (chunk?.cancelled ?? false) {
+        request.abort();
+        throw const _Cancelled();
+      }
+      chunk?.request = request;
       link.headers.forEach(request.headers.set);
       if (start > 0 || end != null) {
         request.headers.set(HttpHeaders.rangeHeader, 'bytes=$start-${end ?? ''}');
       }
       // A ranged body must arrive byte-for-byte; never let the origin compress it.
       request.headers.set(HttpHeaders.acceptEncodingHeader, 'identity');
-      return await request.close();
+      if (chunk != null) request.followRedirects = false;
+      final response = request.close();
+      if (chunk == null) return await response;
+      try {
+        return await response.timeout(
+          stallTimeout,
+          onTimeout: () {
+            final error = TimeoutException('Origin did not send response headers', stallTimeout);
+            request.abort(error);
+            throw StorageException(StorageErrorKind.network, error.message!, cause: error);
+          },
+        );
+      } finally {
+        chunk.request = null;
+      }
     } on SocketException catch (e) {
       throw StorageException(StorageErrorKind.network, 'Cannot reach ${link.url.host}', cause: e);
     } on HandshakeException catch (e) {
@@ -297,44 +426,48 @@ class _Chunk {
 
   final int from;
   final int to;
-  late final Future<Uint8List> bytes;
-  bool cancelled = false;
-  StreamSubscription<List<int>>? _subscription;
-  Completer<Uint8List>? _done;
+  Future<Uint8List>? bytes;
+  int failures = 0;
+  final _cancelled = Completer<void>();
+  HttpClientRequest? request;
+  StreamIterator<List<int>>? _body;
 
+  bool get cancelled => _cancelled.isCompleted;
   int get length => to - from + 1;
 
-  Future<Uint8List> collect(Stream<List<int>> body) {
-    final builder = BytesBuilder(copy: false);
-    final done = _done = Completer<Uint8List>();
-    _subscription = body
-        .timeout(HttpRangeReader._stallTimeout)
-        .listen(
-          builder.add,
-          onError: (Object e, StackTrace st) {
-            if (done.isCompleted) return;
-            done.completeError(
-              e is StorageException
-                  ? e
-                  : StorageException(StorageErrorKind.network, 'Download interrupted at $from: $e', cause: e),
-              st,
-            );
-          },
-          onDone: () {
-            if (!done.isCompleted) done.complete(builder.takeBytes());
-          },
-          cancelOnError: true,
-        );
-    if (cancelled) cancel();
-    return done.future;
+  void checkCancelled() {
+    if (cancelled) throw const _Cancelled();
   }
 
-  /// Stops the transfer; the connection is dropped rather than drained.
+  Future<T> untilCancelled<T>(Future<T> future) =>
+      Future.any([future, _cancelled.future.then<T>((_) => throw const _Cancelled())]);
+
+  Stream<List<int>> readBody(HttpClientResponse response, Duration timeout) async* {
+    if (cancelled) {
+      await response.listen(null).cancel();
+      throw const _Cancelled();
+    }
+    final body = _body = StreamIterator(response.timeout(timeout));
+    try {
+      checkCancelled();
+      while (await body.moveNext()) {
+        yield body.current;
+      }
+      checkCancelled();
+    } on Exception catch (e) {
+      if (cancelled) return;
+      throw StorageException(StorageErrorKind.network, 'Download interrupted at $from: $e', cause: e);
+    } finally {
+      await body.cancel();
+      _body = null;
+    }
+  }
+
   void cancel() {
-    cancelled = true;
-    unawaited(_subscription?.cancel());
-    final done = _done;
-    if (done != null && !done.isCompleted) done.completeError(const _Cancelled());
+    if (cancelled) return;
+    _cancelled.complete();
+    request?.abort(const _Cancelled());
+    unawaited(_body?.cancel());
   }
 }
 

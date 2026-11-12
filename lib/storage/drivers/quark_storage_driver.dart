@@ -235,6 +235,7 @@ class QuarkStorageDriver implements StorageDriver, StreamVariantSource, Parallel
       end: end,
       connections: connections,
       chunkSize: chunkSize,
+      expectedSize: entry.size,
     );
   }
 

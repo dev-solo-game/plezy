@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:plezy/storage/http_range_reader.dart';
@@ -42,6 +44,7 @@ class _ParallelDriver extends _MemoryDriver implements ParallelReadSource {
   _ParallelDriver(super.bytes);
 
   final List<({int start, int end, int connections, int chunkSize})> parallelReads = [];
+  Stream<List<int>>? parallelBody;
 
   @override
   Stream<List<int>> openReadParallel(
@@ -52,6 +55,10 @@ class _ParallelDriver extends _MemoryDriver implements ParallelReadSource {
     required int chunkSize,
   }) async* {
     parallelReads.add((start: start, end: end, connections: connections, chunkSize: chunkSize));
+    if (parallelBody case final body?) {
+      yield* body;
+      return;
+    }
     yield bytes.sublist(start, end + 1);
   }
 }
@@ -201,6 +208,28 @@ void main() {
     await fetch(plain, range: 'bytes=0-9');
     expect(parallel.parallelReads, hasLength(2));
     expect(parallel.reads, [(start: 0, end: 9)]);
+  });
+
+  test('a disconnected bulk client cancels the upstream stream', () async {
+    final cancelled = Completer<void>();
+    final body = StreamController<List<int>>(onCancel: cancelled.complete);
+    addTearDown(body.close);
+    final driver = _ParallelDriver([])..parallelBody = body.stream;
+    const piece = BulkReadOptions.defaultChunkSize;
+    final url = await proxy.register(
+      mountId: 'm1',
+      driver: driver,
+      entry: const StorageEntry(path: '/file.mkv', name: 'file.mkv', isDirectory: false, size: 2 * piece),
+      bulk: true,
+    );
+    body.add(Uint8List(piece));
+
+    final request = await client.getUrl(url);
+    final response = await request.close();
+    expect(response.statusCode, HttpStatus.ok);
+    client.close(force: true);
+
+    await cancelled.future.timeout(const Duration(seconds: 3));
   });
 
   test('a bulk URL falls back to a plain read for drivers without parallel reads', () async {
