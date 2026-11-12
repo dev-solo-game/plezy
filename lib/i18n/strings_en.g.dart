@@ -1114,8 +1114,8 @@ class Translations$settings$en {
 	/// en: 'Download connections'
 	String get downloadConnections => 'Download connections';
 
-	/// en: 'Cloud drives: up to ${count} connections per file'
-	String downloadConnectionsDescription({required Object count}) => 'Cloud drives: up to ${count} connections per file';
+	/// en: 'Cloud drives: requested ${count}, effective maximum ${effective} connections per file'
+	String downloadConnectionsDescription({required Object count, required Object effective}) => 'Cloud drives: requested ${count}, effective maximum ${effective} connections per file';
 
 	/// en: 'Connections'
 	String get downloadConnectionsLabel => 'Connections';
@@ -1123,8 +1123,8 @@ class Translations$settings$en {
 	/// en: 'Download chunk size'
 	String get downloadChunkSize => 'Download chunk size';
 
-	/// en: 'Cloud drives: ${size} MB per request'
-	String downloadChunkSizeDescription({required Object size}) => 'Cloud drives: ${size} MB per request';
+	/// en: 'Cloud drives: ${size} MiB per range request'
+	String downloadChunkSizeDescription({required Object size}) => 'Cloud drives: ${size} MiB per range request';
 
 	/// en: 'Megabytes'
 	String get megabytesLabel => 'Megabytes';
@@ -8972,10 +8972,10 @@ extension on Translations {
 			'settings.autoRemoveWatchedDownloads' => 'Auto-remove watched downloads',
 			'settings.autoRemoveWatchedDownloadsDescription' => 'Delete watched downloads automatically',
 			'settings.downloadConnections' => 'Download connections',
-			'settings.downloadConnectionsDescription' => ({required Object count}) => 'Cloud drives: up to ${count} connections per file',
+			'settings.downloadConnectionsDescription' => ({required Object count, required Object effective}) => 'Cloud drives: requested ${count}, effective maximum ${effective} connections per file',
 			'settings.downloadConnectionsLabel' => 'Connections',
 			'settings.downloadChunkSize' => 'Download chunk size',
-			'settings.downloadChunkSizeDescription' => ({required Object size}) => 'Cloud drives: ${size} MB per request',
+			'settings.downloadChunkSizeDescription' => ({required Object size}) => 'Cloud drives: ${size} MiB per range request',
 			'settings.megabytesLabel' => 'Megabytes',
 			'settings.megabytesShort' => 'MB',
 			'settings.cellularDownloadBlocked' => 'Downloads are blocked on cellular. Use Wi-Fi or change the setting.',

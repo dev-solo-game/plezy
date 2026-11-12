@@ -485,10 +485,10 @@ class _Translations$settings$zh_Hant extends Translations$settings$zh {
 	@override String get autoRemoveWatchedDownloads => '自動移除已觀看的下載內容';
 	@override String get autoRemoveWatchedDownloadsDescription => '自動刪除已觀看的下載影片';
 	@override String get downloadConnections => '下載執行緒數';
-	@override String downloadConnectionsDescription({required Object count}) => '雲端硬碟：每個檔案最多使用 ${count} 個連線下載';
+	@override String downloadConnectionsDescription({required Object count, required Object effective}) => '雲端硬碟影片：設定 ${count} 路，實際最多 ${effective} 路';
 	@override String get downloadConnectionsLabel => '執行緒數';
 	@override String get downloadChunkSize => '下載分塊大小';
-	@override String downloadChunkSizeDescription({required Object size}) => '雲端硬碟：每次請求 ${size} MB';
+	@override String downloadChunkSizeDescription({required Object size}) => '雲端硬碟影片：每個 Range 請求 ${size} MiB';
 	@override String get megabytesLabel => 'MB';
 	@override String get megabytesShort => 'MB';
 	@override String get cellularDownloadBlocked => '使用行動網路時無法下載。請改用 Wi-Fi 或變更設定。';
@@ -3976,10 +3976,10 @@ extension on TranslationsZhHant {
 			'settings.autoRemoveWatchedDownloads' => '自動移除已觀看的下載內容',
 			'settings.autoRemoveWatchedDownloadsDescription' => '自動刪除已觀看的下載影片',
 			'settings.downloadConnections' => '下載執行緒數',
-			'settings.downloadConnectionsDescription' => ({required Object count}) => '雲端硬碟：每個檔案最多使用 ${count} 個連線下載',
+			'settings.downloadConnectionsDescription' => ({required Object count, required Object effective}) => '雲端硬碟影片：設定 ${count} 路，實際最多 ${effective} 路',
 			'settings.downloadConnectionsLabel' => '執行緒數',
 			'settings.downloadChunkSize' => '下載分塊大小',
-			'settings.downloadChunkSizeDescription' => ({required Object size}) => '雲端硬碟：每次請求 ${size} MB',
+			'settings.downloadChunkSizeDescription' => ({required Object size}) => '雲端硬碟影片：每個 Range 請求 ${size} MiB',
 			'settings.megabytesLabel' => 'MB',
 			'settings.megabytesShort' => 'MB',
 			'settings.cellularDownloadBlocked' => '使用行動網路時無法下載。請改用 Wi-Fi 或變更設定。',

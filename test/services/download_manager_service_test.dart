@@ -14,6 +14,8 @@ import 'package:path_provider_platform_interface/path_provider_platform_interfac
 import 'package:plezy/database/app_database.dart';
 import 'package:plezy/i18n/strings.g.dart';
 import 'package:plezy/database/download_operations.dart';
+import 'package:plezy/library/library_repository.dart';
+import 'package:plezy/library/local_library_client.dart';
 import 'package:plezy/exceptions/media_server_exceptions.dart';
 import 'package:plezy/media/download_resolution.dart';
 import 'package:plezy/media/media_backend.dart';
@@ -31,6 +33,10 @@ import 'package:plezy/services/jellyfin_api_cache.dart';
 import 'package:plezy/services/plex_api_cache.dart';
 import 'package:plezy/services/saf_storage_service.dart';
 import 'package:plezy/services/settings_service.dart';
+import 'package:plezy/storage/mount_manager.dart';
+import 'package:plezy/storage/mount_registry.dart';
+import 'package:plezy/storage/storage_mount.dart';
+import 'package:plezy/storage/stream_proxy.dart';
 import 'package:plezy/utils/media_server_http_client.dart';
 import 'package:plezy/utils/active_client_scope.dart';
 import 'package:saf_util/saf_util_platform_interface.dart';
@@ -163,6 +169,9 @@ void main() {
       AppDatabase db, {
       List<Task> nativeTasks = const [],
       List<TaskRecord> records = const [],
+      StreamProxy? mountedDownloadProxy,
+      MediaServerClient? client,
+      Future<bool> Function(Task)? enqueueTask,
     }) async {
       cancelledIds = [];
       deletedRecordIds = [];
@@ -170,7 +179,9 @@ void main() {
       final manager = DownloadManagerService(
         database: db,
         storageService: DownloadStorageService.instance,
-        clientResolver: (_, {clientScopeId}) => null,
+        clientResolver: (_, {clientScopeId}) => client,
+        mountedDownloadProxy: mountedDownloadProxy,
+        enqueueTaskOverride: enqueueTask,
         downloadsSupportedOverride: true,
         fileDownloaderInitializerOverride: () async => callOrder.add('initialize'),
         nativeOpsOverride: (
@@ -199,6 +210,121 @@ void main() {
       addTearDown(manager.dispose);
       return manager;
     }
+
+    test('mounted video recovery drops old proxy addresses and resolves a new bulk URL', () async {
+      final db = AppDatabase.forTesting(NativeDatabase.memory());
+      addTearDown(db.close);
+      JellyfinApiCache.initialize(db);
+      final registry = MountRegistry(db);
+      await registry.upsert(
+        StorageMount(
+          id: 'mount',
+          kind: StorageKind.local,
+          displayName: 'Local',
+          config: {MountKeys.rootPath: tmpRoot.path},
+        ),
+      );
+      final repo = LibraryRepository(db);
+      final itemId = await repo.insertItem(
+        LibraryItemsCompanion.insert(
+          kind: LibraryKinds.movie,
+          libraryType: 'movie',
+          title: 'Sample',
+          sortTitle: 'Sample',
+          addedAt: 1,
+          updatedAt: 1,
+        ),
+      );
+      final fileId = await repo.upsertFile(
+        mountId: 'mount',
+        path: '/sample.mkv',
+        role: LibraryFileRoles.video,
+        size: 1000,
+        scanId: 1,
+      );
+      await repo.assignFile(fileId, itemId);
+
+      final mounts = MountManager(registry);
+      final previousMounts = MountManager(registry);
+      addTearDown(mounts.dispose);
+      addTearDown(previousMounts.dispose);
+      final client = LocalLibraryClient(repository: repo, mounts: mounts);
+      final previousClient = LocalLibraryClient(repository: repo, mounts: previousMounts);
+      final item = (await client.fetchItem('$itemId'))!;
+      final key = item.globalKey;
+      final beforeRestart = (await previousClient.resolveDownload(item, mediaSourceId: '$fileId')).videoUrl!;
+      final previousPlayback = (await previousClient.resolveExternalPlayback(item, mediaSourceId: '$fileId'))!.url;
+      expect(Uri.parse(beforeRestart).pathSegments.first, 'd');
+      expect(Uri.parse(previousPlayback).pathSegments.first, 's');
+
+      await db.insertDownload(
+        serverId: client.serverId,
+        ratingKey: '$itemId',
+        globalKey: key,
+        type: 'movie',
+        status: DownloadStatus.downloading.index,
+        mediaSourceId: '$fileId',
+      );
+      await db.updateBgTaskId(key, 'old-download');
+      await db.updateDownloadProgress(key, 40, 400, 1000);
+      final task = _downloadTask('old-download', key).copyWith(url: beforeRestart);
+      final enqueued = Completer<Task>();
+      final manager = await managerFor(
+        db,
+        mountedDownloadProxy: mounts.proxy,
+        client: client,
+        enqueueTask: (task) async {
+          enqueued.complete(task);
+          return true;
+        },
+        records: [TaskRecord(task, TaskStatus.running, 0.4, 1000)],
+      );
+      await manager.recoverInterruptedDownloads();
+      expect(callOrder, ['allRecords', 'cancel:old-download', 'deleteRecord:old-download', 'initialize', 'reschedule']);
+      expect((await db.getDownloadedMedia(key))?.status, DownloadStatus.queued.index);
+      expect((await db.getDownloadedMedia(key))?.bgTaskId, isNull);
+      expect((await db.getDownloadedMedia(key))?.progress, 0);
+      expect((await db.getNextQueueItem())?.mediaGlobalKey, key);
+      expect((await db.getDownloadedMedia(key))?.mediaSourceId, '$fileId');
+
+      manager.resumeQueuedDownloads(client);
+      final current = (await enqueued.future.timeout(const Duration(seconds: 5))).url;
+      // The enqueue callback fires before the service finishes updating the
+      // row and removing the queue entry.
+      for (var attempt = 0; attempt < 100 && await db.getNextQueueItem() != null; attempt++) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      expect(await db.getNextQueueItem(), isNull);
+      expect(mounts.proxy.isRegisteredDownloadUrl(current), isTrue);
+      expect(mounts.proxy.isRegisteredDownloadUrl(beforeRestart), isFalse);
+      expect((await client.resolveDownload(item, mediaSourceId: 'missing')).videoUrl, isNull);
+
+      await db.removeFromQueue(key);
+      await db.updateDownloadStatus(key, DownloadStatus.paused.index);
+      await db.updateBgTaskId(key, 'paused-video');
+      await db.updateDownloadProgress(key, 40, 400, 1000);
+      final playing = (await client.resolveExternalPlayback(item, mediaSourceId: '$fileId'))!.url;
+      final paused = _downloadTask('paused-video', key);
+      var resumes = 0;
+      Future<bool> resumeFrom(String url) => manager.debugTryResumeNativeTask(
+        key,
+        paused.taskId,
+        taskForId: (_) async => paused.copyWith(url: url),
+        resumeTask: (task) async {
+          resumes++;
+          expect(task.url, current);
+          return true;
+        },
+      );
+      expect(await resumeFrom(current), isTrue);
+      expect((await db.getDownloadedMedia(key))?.progress, 40);
+      await db.updateDownloadStatus(key, DownloadStatus.paused.index);
+      expect(await resumeFrom(playing), isFalse);
+      expect(resumes, 1);
+      expect((await db.getDownloadedMedia(key))?.status, DownloadStatus.paused.index);
+      expect((await db.getDownloadedMedia(key))?.bgTaskId, isNull);
+      expect(await db.getNextQueueItem(), isNull);
+    });
 
     Future<void> seedRow(AppDatabase db, DownloadStatus status, {String? taskId, String? videoFilePath}) async {
       await db.insertDownload(
@@ -355,7 +481,10 @@ void main() {
 
       final complete = await db.getDownloadedMedia('srv:item-1');
       expect(complete?.status, DownloadStatus.completed.index);
-      expect(complete?.storedPartPaths, ['downloads/Movies/M/M.mkv', 'downloads/Movies/M/M - part2.mkv']);
+      expect(complete?.storedPartPaths, [
+        p.join('downloads', 'Movies', 'M', 'M.mkv'),
+        p.join('downloads', 'Movies', 'M', 'M - part2.mkv'),
+      ]);
       final incomplete = await db.getDownloadedMedia('srv:item-2');
       expect(incomplete?.status, DownloadStatus.queued.index, reason: 'not completed while a file is missing');
       expect(incomplete?.nextMissingPartIndex, 1, reason: 'the stored first file is kept for the resume');

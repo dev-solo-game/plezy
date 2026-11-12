@@ -11,6 +11,7 @@ import 'package:plezy/utils/media_server_http_client.dart';
 import '../exceptions/media_server_exceptions.dart';
 import '../database/app_database.dart';
 import '../database/download_operations.dart';
+import '../library/local_library_client.dart';
 import '../media/download_resolution.dart';
 import '../media/media_backend.dart';
 import '../media/media_item.dart';
@@ -30,6 +31,7 @@ import 'package:saf_util/saf_util_platform_interface.dart' show SafDocumentFile;
 import '../models/download_models.dart';
 import '../services/offline_mode_source.dart';
 import '../services/download_storage_service.dart';
+import '../storage/stream_proxy.dart';
 import '../i18n/strings.g.dart';
 import '../utils/app_logger.dart';
 import '../utils/serial_future_queue.dart';
@@ -190,6 +192,7 @@ class DownloadManagerService {
   // (constructor-injected). Falls back to _fallbackClient when no serverId
   // is available.
   final MediaClientResolver _clientResolver;
+  final StreamProxy? _mountedDownloadProxy;
   MediaServerClient? _fallbackClient;
 
   OfflineModeSource? _offlineSource;
@@ -285,6 +288,7 @@ class DownloadManagerService {
     required AppDatabase database,
     required DownloadStorageService storageService,
     required MediaClientResolver clientResolver,
+    StreamProxy? mountedDownloadProxy,
     MediaServerHttpClient? http,
     @visibleForTesting SafStorageOperations? safStorage,
     @visibleForTesting this._downloadsSupportedOverride,
@@ -309,6 +313,7 @@ class DownloadManagerService {
        _enqueueTaskOverride = enqueueTaskOverride,
        _storageService = storageService,
        _clientResolver = clientResolver,
+       _mountedDownloadProxy = mountedDownloadProxy,
        _http = http ?? httpClient,
        _safStorage = safStorage ?? SafStorageService.instance,
        _downloadLocationReader = downloadLocationReader,
@@ -993,7 +998,7 @@ class DownloadManagerService {
       // callbacks and calls resumeFromBackground, which can deliver a failure a relocated
       // task already hit on the old path — and a failed row is no longer restartable.
       // rescheduleKilledTasks, further down, would re-enqueue it against that path again.
-      await _purgeRelocatedDownloadRecords();
+      await _purgeObsoleteDownloadRecords();
 
       unawaited(Sentry.addBreadcrumb(Breadcrumb(message: 'Initializing FileDownloader', category: 'downloads')));
       await (_fileDownloaderInitializerOverride?.call() ?? _initializeFileDownloader());
@@ -1119,6 +1124,10 @@ class DownloadManagerService {
     final tasksByGlobalKey = <String, List<Task>>{};
     final rootTasks = <Task>[];
     for (final task in nativeTasks) {
+      if (_isObsoleteMountedVideoTask(task)) {
+        await _discardObsoleteMountedTask(task);
+        continue;
+      }
       if (task.baseDirectory == BaseDirectory.root) {
         rootTasks.add(task);
         continue;
@@ -1197,8 +1206,8 @@ class DownloadManagerService {
     }
   }
 
-  /// Drop downloader records whose target directory belongs to a previous location of the
-  /// app's private storage, and requeue the download so it restarts under the current one.
+  /// Drop records with a stale mounted URL or a relocated storage target
+  /// before native recovery can restart them.
   ///
   /// Runs before the downloader is initialized, and therefore before
   /// [FileDownloader.rescheduleKilledTasks], for two reasons. Reschedule re-enqueues every
@@ -1208,7 +1217,7 @@ class DownloadManagerService {
   /// hit — marking the row failed, which [_requeueRelocatedDownload] deliberately will not
   /// restart. Reading and deleting records needs no initialization: the record store is
   /// Dart-side, as [discardInterruptedNativeDownloadsAfterStorageFailure] also relies on.
-  Future<void> _purgeRelocatedDownloadRecords() async {
+  Future<void> _purgeObsoleteDownloadRecords() async {
     if (!downloadsSupported) return;
 
     final List<TaskRecord> records;
@@ -1218,7 +1227,14 @@ class DownloadManagerService {
       appLogger.w('Failed to enumerate download records during recovery', error: e);
       return;
     }
-    final rootRecords = records.where((record) => record.task.baseDirectory == BaseDirectory.root).toList();
+    final rootRecords = <TaskRecord>[];
+    for (final record in records) {
+      if (record.status != TaskStatus.complete && _isObsoleteMountedVideoTask(record.task)) {
+        await _discardObsoleteMountedTask(record.task);
+      } else if (record.task.baseDirectory == BaseDirectory.root) {
+        rootRecords.add(record);
+      }
+    }
     if (rootRecords.isEmpty) return;
 
     final rootBasePath = await Task.baseDirectoryPath(BaseDirectory.root);
@@ -1247,6 +1263,41 @@ class DownloadManagerService {
       }
       await _cancelNativeTaskIds(globalKey, [record.taskId], reason: 'relocated app storage before rescheduling');
       if (globalKey.isNotEmpty) await _requeueRelocatedDownload(globalKey);
+    }
+  }
+
+  bool _isObsoleteMountedVideoTask(Task task) {
+    final proxy = _mountedDownloadProxy;
+    return proxy != null &&
+        task is DownloadTask &&
+        parseGlobalKey(task.metaData)?.serverId.value == LocalLibraryClient.localServerId &&
+        !proxy.isRegisteredDownloadUrl(task.url);
+  }
+
+  /// A stale proxy URL cannot reach the original source. Native resume data
+  /// may retain that URL, so detach it and let normal preparation resolve a
+  /// current bulk URL. A paused download waits for the user's next Resume.
+  Future<void> _discardObsoleteMountedTask(Task task) async {
+    final globalKey = task.metaData;
+    await _database.transaction(() async {
+      final row = await _database.getDownloadedMedia(globalKey);
+      if (row == null || row.bgTaskId != task.taskId) return;
+      await _database.updateBgTaskId(globalKey, null);
+      if (row.nextMissingPartIndex == null) return;
+      final status = DownloadStatus.values[row.status];
+      if (status == DownloadStatus.paused || status == DownloadStatus.downloading || status == DownloadStatus.queued) {
+        await _database.updateDownloadProgress(globalKey, _storedPartsPercent(row), 0, 0);
+      }
+      if (status == DownloadStatus.downloading || status == DownloadStatus.queued) {
+        await _database.updateDownloadStatus(globalKey, DownloadStatus.queued.index);
+        await _database.addToQueue(mediaGlobalKey: globalKey);
+      }
+    });
+    await _cancelNativeTaskIds(globalKey, [task.taskId], reason: 'obsolete mounted download URL');
+    try {
+      await _nativeOps.deleteRecord(task.taskId);
+    } catch (error) {
+      appLogger.w('Failed to delete obsolete mounted download record ${task.taskId}', error: error);
     }
   }
 
@@ -1286,7 +1337,7 @@ class DownloadManagerService {
 
   @visibleForTesting
   Future<void> debugRecoverRelocatedDownloads() async {
-    await _purgeRelocatedDownloadRecords();
+    await _purgeObsoleteDownloadRecords();
     await _reconcileNativeDownloadTasks();
   }
 
@@ -3519,6 +3570,10 @@ class DownloadManagerService {
     try {
       final task = await (taskForId ?? FileDownloader().taskForId)(bgTaskId);
       if (task == null || task is! DownloadTask) return false;
+      if (_isObsoleteMountedVideoTask(task)) {
+        await _discardObsoleteMountedTask(task);
+        return false;
+      }
 
       // The row must read downloading before the task is handed back: the
       // downloader reports enqueued (on desktop synchronously, inside resume)

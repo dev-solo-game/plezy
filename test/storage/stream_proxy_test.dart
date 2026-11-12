@@ -210,6 +210,20 @@ void main() {
     expect(parallel.reads, [(start: 0, end: 9)]);
   });
 
+  test('only a live bulk registration can be reused for a native download', () async {
+    const entry = StorageEntry(path: '/file.mkv', name: 'file.mkv', isDirectory: false, size: 1000);
+    final plain = await proxy.register(mountId: 'm1', driver: driver, entry: entry);
+    final bulk = await proxy.register(mountId: 'm1', driver: driver, entry: entry, bulk: true);
+    expect(proxy.isRegisteredDownloadUrl(plain.toString()), isFalse);
+    expect(proxy.isRegisteredDownloadUrl(bulk.toString()), isTrue);
+    final previous = StreamProxy();
+    addTearDown(previous.stop);
+    final oldBulk = await previous.register(mountId: 'm1', driver: driver, entry: entry, bulk: true);
+    expect(proxy.isRegisteredDownloadUrl(oldBulk.toString()), isFalse);
+    proxy.unregisterMount('m1');
+    expect(proxy.isRegisteredDownloadUrl(bulk.toString()), isFalse);
+  });
+
   test('a disconnected bulk client cancels the upstream stream', () async {
     final cancelled = Completer<void>();
     final body = StreamController<List<int>>(onCancel: cancelled.complete);

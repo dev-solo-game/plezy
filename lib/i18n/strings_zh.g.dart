@@ -484,10 +484,10 @@ class Translations$settings$zh extends Translations$settings$en {
 	@override String get autoRemoveWatchedDownloads => '自动移除已观看的下载';
 	@override String get autoRemoveWatchedDownloadsDescription => '自动删除已观看的下载';
 	@override String get downloadConnections => '下载线程数';
-	@override String downloadConnectionsDescription({required Object count}) => '云盘：每个文件最多使用 ${count} 个连接下载';
+	@override String downloadConnectionsDescription({required Object count, required Object effective}) => '云盘视频：设置 ${count} 路，实际最多 ${effective} 路';
 	@override String get downloadConnectionsLabel => '线程数';
 	@override String get downloadChunkSize => '下载分块大小';
-	@override String downloadChunkSizeDescription({required Object size}) => '云盘：每次请求 ${size} MB';
+	@override String downloadChunkSizeDescription({required Object size}) => '云盘视频：每个 Range 请求 ${size} MiB';
 	@override String get megabytesLabel => 'MB';
 	@override String get megabytesShort => 'MB';
 	@override String get cellularDownloadBlocked => '已阻止通过移动网络下载。请连接 Wi-Fi 或更改设置。';
@@ -3975,10 +3975,10 @@ extension on TranslationsZh {
 			'settings.autoRemoveWatchedDownloads' => '自动移除已观看的下载',
 			'settings.autoRemoveWatchedDownloadsDescription' => '自动删除已观看的下载',
 			'settings.downloadConnections' => '下载线程数',
-			'settings.downloadConnectionsDescription' => ({required Object count}) => '云盘：每个文件最多使用 ${count} 个连接下载',
+			'settings.downloadConnectionsDescription' => ({required Object count, required Object effective}) => '云盘视频：设置 ${count} 路，实际最多 ${effective} 路',
 			'settings.downloadConnectionsLabel' => '线程数',
 			'settings.downloadChunkSize' => '下载分块大小',
-			'settings.downloadChunkSizeDescription' => ({required Object size}) => '云盘：每次请求 ${size} MB',
+			'settings.downloadChunkSizeDescription' => ({required Object size}) => '云盘视频：每个 Range 请求 ${size} MiB',
 			'settings.megabytesLabel' => 'MB',
 			'settings.megabytesShort' => 'MB',
 			'settings.cellularDownloadBlocked' => '已阻止通过移动网络下载。请连接 Wi-Fi 或更改设置。',

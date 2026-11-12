@@ -15,12 +15,19 @@ class BulkReadOptions {
   final int chunkSize;
 
   static const int defaultConnections = 4;
-  static const int defaultChunkSize = 16 * 1024 * 1024;
+  static const int bytesPerMiB = 1024 * 1024;
+  static const int defaultChunkSize = 2 * bytesPerMiB;
+  static const int maxConfiguredChunkMiB = 4;
 
   /// Maximum payload held in the ordered prefetch window for one download.
-  static const int maxBufferedBytes = defaultConnections * defaultChunkSize;
+  static const int maxBufferedBytes = 64 * bytesPerMiB;
 
   static const BulkReadOptions defaults = BulkReadOptions();
+
+  int get effectiveChunkSize => chunkSize.clamp(1, maxBufferedBytes);
+
+  /// Upper bound for a file large enough to use all these connections.
+  int get effectiveConnections => min(max(1, connections), maxBufferedBytes ~/ effectiveChunkSize);
 }
 
 /// A fetchable location for a file's bytes, plus the headers the origin
@@ -83,8 +90,9 @@ class HttpRangeReader {
     int? chunkSize,
     int? expectedSize,
   }) {
-    final piece = (chunkSize ?? this.chunkSize).clamp(1, BulkReadOptions.maxBufferedBytes);
-    final slots = min(connections, BulkReadOptions.maxBufferedBytes ~/ piece);
+    final options = BulkReadOptions(connections: connections, chunkSize: chunkSize ?? this.chunkSize);
+    final piece = options.effectiveChunkSize;
+    final slots = options.effectiveConnections;
     if (end == null || (expectedSize == null && (connections <= 1 || end - start + 1 <= piece))) {
       return _readSingle(resolve, start, end);
     }

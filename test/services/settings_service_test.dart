@@ -8,6 +8,7 @@ import 'package:plezy/models/transcode_quality_preset.dart';
 import 'package:plezy/services/base_shared_preferences_service.dart';
 import 'package:plezy/services/settings_service.dart';
 import 'package:plezy/services/trackers/tracker_constants.dart';
+import 'package:plezy/storage/http_range_reader.dart';
 import 'package:plezy/utils/platform_detector.dart';
 
 import '../test_helpers/prefs.dart';
@@ -22,6 +23,27 @@ void main() {
     TvDetectionService.debugSetAppleTVOverride(null);
     TvDetectionService.debugSetAutomotiveOverride(null);
   });
+
+  test('cloud downloads default to four 2 MiB ranges with a separate 64 MiB budget', () async {
+    final settings = await SettingsService.getInstance();
+    expect(settings.bulkReadOptions.effectiveConnections, 4);
+    expect(settings.bulkReadOptions.effectiveChunkSize, 2 * BulkReadOptions.bytesPerMiB);
+    expect(BulkReadOptions.maxBufferedBytes, 64 * BulkReadOptions.bytesPerMiB);
+  });
+
+  for (final oldSize in [4, 16, 64]) {
+    test('upgrades saved cloud chunk size $oldSize MiB without changing requested connections', () async {
+      resetSharedPreferencesForTest(
+        initialAsync: {SettingsService.downloadChunkSizeMb.key: oldSize, SettingsService.downloadConnections.key: 8},
+      );
+      final settings = await SettingsService.getInstance();
+      final expectedSize = oldSize == 4 ? 4 : 2;
+      expect(settings.read(SettingsService.downloadChunkSizeMb), expectedSize);
+      expect(settings.read(SettingsService.downloadConnections), 8);
+      expect(settings.bulkReadOptions.effectiveChunkSize, expectedSize * BulkReadOptions.bytesPerMiB);
+      expect(settings.bulkReadOptions.effectiveConnections, 8);
+    });
+  }
 
   group('SettingsService.parseMpvConfigText', () {
     test('parses plain key=value lines', () {

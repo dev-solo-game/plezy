@@ -732,13 +732,16 @@ class SettingsService extends BaseSharedPreferencesService {
   static const downloadConnections = IntPref('download_connections', defaultValue: BulkReadOptions.defaultConnections);
   static const downloadChunkSizeMb = IntPref(
     'download_chunk_size_mb',
-    defaultValue: BulkReadOptions.defaultChunkSize ~/ (1024 * 1024),
+    defaultValue: BulkReadOptions.defaultChunkSize ~/ BulkReadOptions.bytesPerMiB,
   );
+  static const cloudDownloadTuningPrefs = <Pref<Object?>>[downloadConnections, downloadChunkSizeMb];
 
   /// [downloadConnections] and [downloadChunkSizeMb] as the stream proxy
   /// reads them.
-  BulkReadOptions get bulkReadOptions =>
-      BulkReadOptions(connections: read(downloadConnections), chunkSize: read(downloadChunkSizeMb) * 1024 * 1024);
+  BulkReadOptions get bulkReadOptions => BulkReadOptions(
+    connections: read(downloadConnections).clamp(1, 16),
+    chunkSize: read(downloadChunkSizeMb).clamp(1, BulkReadOptions.maxConfiguredChunkMiB) * BulkReadOptions.bytesPerMiB,
+  );
 
   /// Set once the user has seen the pre-flight "background downloads are
   /// blocked" dialog. The persistent Downloads-screen banner covers repeat
@@ -1186,6 +1189,13 @@ class SettingsService extends BaseSharedPreferencesService {
   @override
   Future<void> onInit() async {
     _assertCredentialsReadable();
+
+    // Old 16–64 MiB chunks could delay the proxy's first byte past the
+    // downloader's response timeout on a slow connection.
+    final savedChunkMiB = readNullableInt(downloadChunkSizeMb.key);
+    if (savedChunkMiB != null && (savedChunkMiB < 1 || savedChunkMiB > BulkReadOptions.maxConfiguredChunkMiB)) {
+      await write(downloadChunkSizeMb, downloadChunkSizeMb.defaultValue);
+    }
 
     const legacyRecentRoomsKey = 'watch_together_recent_rooms';
     await prefs.remove(legacyRecentRoomsKey);
@@ -1700,7 +1710,7 @@ class SettingsService extends BaseSharedPreferencesService {
     'play_next_countdown' => (0, 30),
     'auto_skip_delay' => (1, 30),
     'download_connections' => (1, 16),
-    'download_chunk_size_mb' => (1, 64),
+    'download_chunk_size_mb' => (1, BulkReadOptions.maxConfiguredChunkMiB),
     'subtitle_font_size' => (10, 80),
     'subtitle_border_size' => (0, 5),
     'subtitle_position' => (0, 150),

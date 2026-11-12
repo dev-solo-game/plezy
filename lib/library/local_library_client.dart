@@ -1108,7 +1108,7 @@ class LocalLibraryClient implements MediaServerClient {
 
   @override
   Future<DownloadResolution> resolveDownload(MediaItem item, {int mediaIndex = 0, String? mediaSourceId}) async {
-    final picked = _pickVersion(await _versions(item.id), mediaIndex, mediaSourceId);
+    final picked = _pickVersion(await _versions(item.id), mediaIndex, mediaSourceId, requireSourceId: true);
     if (picked == null) return const DownloadResolution(videoUrl: null);
     final subtitles = await _repo.subtitlesOf(picked.file.id);
     return DownloadResolution(

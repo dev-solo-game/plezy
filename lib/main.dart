@@ -1366,6 +1366,7 @@ class _MainAppState extends State<MainApp> with WidgetsBindingObserver {
   late final DataAggregationService _aggregationService;
   late final LibraryEventService _libraryEventService;
   late final AppDatabase _appDatabase;
+  late final MountManager _mountManager;
   late final DownloadManagerService _downloadManager;
   late final OfflineWatchSyncService _offlineWatchSyncService;
   late final ConnectionRegistry _connections;
@@ -1417,10 +1418,15 @@ class _MainAppState extends State<MainApp> with WidgetsBindingObserver {
     PlexApiCache.initialize(_appDatabase);
     JellyfinApiCache.initialize(_appDatabase);
 
+    _mountManager = MountManager(
+      MountRegistry(_appDatabase),
+      bulkOptions: () => SettingsService.instanceOrNull?.bulkReadOptions ?? BulkReadOptions.defaults,
+    );
     _downloadManager = DownloadManagerService(
       database: _appDatabase,
       storageService: DownloadStorageService.instance,
       clientResolver: _serverManager.resolveDownloadClient,
+      mountedDownloadProxy: _mountManager.proxy,
     );
     // Keep the awaitable assigned synchronously, but do not let recovery's
     // Drift/native work compete with SetupScreen's first frame.
@@ -1762,13 +1768,7 @@ class _MainAppState extends State<MainApp> with WidgetsBindingObserver {
         Provider<SettingsService>.value(value: widget.settings),
         Provider<StorageService>.value(value: widget.storage),
         Provider<AppDatabase>.value(value: _appDatabase),
-        Provider<MountManager>(
-          create: (_) => MountManager(
-            MountRegistry(_appDatabase),
-            bulkOptions: () => SettingsService.instanceOrNull?.bulkReadOptions ?? BulkReadOptions.defaults,
-          ),
-          dispose: (_, manager) => unawaited(manager.dispose()),
-        ),
+        Provider<MountManager>(create: (_) => _mountManager, dispose: (_, manager) => unawaited(manager.dispose())),
         Provider<LibraryRepository>(create: (_) => LibraryRepository(_appDatabase)),
         Provider<LibrarySettingsStore>(create: (_) => LibrarySettingsStore(_appDatabase)),
         Provider<LibraryScrapeRunner>(

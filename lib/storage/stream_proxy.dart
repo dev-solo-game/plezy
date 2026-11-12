@@ -40,6 +40,22 @@ class StreamProxy {
 
   bool get isRunning => _server != null;
 
+  /// A native download task may only resume against this proxy's live bulk
+  /// registration. Ports and tokens from a previous process are ephemeral.
+  bool isRegisteredDownloadUrl(String url) {
+    final uri = Uri.tryParse(url);
+    final server = _server;
+    if (server == null ||
+        uri == null ||
+        uri.scheme != 'http' ||
+        uri.host != InternetAddress.loopbackIPv4.address ||
+        uri.port != server.port) {
+      return false;
+    }
+    final segments = uri.pathSegments;
+    return segments.length == 3 && segments.first == 'd' && _sources.containsKey(segments[1]);
+  }
+
   /// Starts listening. Safe to call repeatedly and concurrently.
   Future<void> start() async {
     await _ensureServer();

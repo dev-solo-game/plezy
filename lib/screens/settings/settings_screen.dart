@@ -512,13 +512,21 @@ class _SettingsScreenState extends State<SettingsScreen> with FocusableTab, Moun
           title: t.settings.autoRemoveWatchedDownloads,
           subtitle: t.settings.autoRemoveWatchedDownloadsDescription,
         ),
-        SettingNumberTile(
-          pref: settings.SettingsService.downloadConnections,
-          icon: Symbols.lan_rounded,
-          title: t.settings.downloadConnections,
-          subtitleBuilder: (v) => t.settings.downloadConnectionsDescription(count: v.toString()),
-          labelText: t.settings.downloadConnectionsLabel,
-          suffixText: '',
+        ListenableBuilder(
+          listenable: settings.SettingsService.instance.listenableOfAll(
+            settings.SettingsService.cloudDownloadTuningPrefs,
+          ),
+          builder: (context, _) => SettingNumberTile(
+            pref: settings.SettingsService.downloadConnections,
+            icon: Symbols.lan_rounded,
+            title: t.settings.downloadConnections,
+            subtitleBuilder: (v) => t.settings.downloadConnectionsDescription(
+              count: v,
+              effective: settings.SettingsService.instance.bulkReadOptions.effectiveConnections,
+            ),
+            labelText: t.settings.downloadConnectionsLabel,
+            suffixText: '',
+          ),
         ),
         SettingNumberTile(
           pref: settings.SettingsService.downloadChunkSizeMb,

@@ -325,6 +325,19 @@ void main() {
     expect(find.text(t.downloads.backgroundWarning.statusTile), findsNothing);
   });
 
+  testWidgets('download settings show the effective connection count and chunk size', (tester) async {
+    final harness = await _pumpSettingsScreen(tester);
+    addTearDown(() => harness.dispose(tester));
+
+    expect(find.text(t.settings.downloadConnectionsDescription(count: 4, effective: 4)), findsOneWidget);
+    expect(find.text(t.settings.downloadChunkSizeDescription(size: 2)), findsOneWidget);
+
+    await SettingsService.instance.write(SettingsService.downloadConnections, 8);
+    await _pumpUi(tester);
+
+    expect(find.text(t.settings.downloadConnectionsDescription(count: 8, effective: 8)), findsOneWidget);
+  });
+
   testWidgets('relay dialog rejects invalid bases without persisting them', (tester) async {
     final harness = await _pumpSettingsScreen(tester);
     addTearDown(() => harness.dispose(tester));
