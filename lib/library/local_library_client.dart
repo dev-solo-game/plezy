@@ -1,6 +1,9 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:crypto/crypto.dart';
 import '../database/app_database.dart';
 import '../media/artist_discography.dart';
 import '../media/download_resolution.dart';
@@ -35,6 +38,7 @@ import '../services/jellyfin_api_cache.dart';
 import '../services/playback_initialization_types.dart';
 import '../services/scrub_preview_source.dart';
 import '../storage/mount_manager.dart';
+import '../storage/drivers/quark_storage_driver.dart';
 import '../storage/storage_driver.dart';
 import '../storage/storage_mount.dart';
 import '../storage/storage_path.dart';
@@ -1111,15 +1115,43 @@ class LocalLibraryClient implements MediaServerClient {
     final picked = _pickVersion(await _versions(item.id), mediaIndex, mediaSourceId, requireSourceId: true);
     if (picked == null) return const DownloadResolution(videoUrl: null);
     final subtitles = await _repo.subtitlesOf(picked.file.id);
+    final mount = await _mountOf(picked.file);
+    var entry = _entryOf(picked.file);
+    String? resumeETag;
+    final Uri videoUrl;
+    if (Platform.isWindows && mount.kind == StorageKind.quark) {
+      final driver = _mountManager.driverFor(mount);
+      // Re-read Quark's file record rather than trusting the scan snapshot or
+      // a previously cached signed link. A replacement can keep the path.
+      entry = driver is QuarkStorageDriver
+          ? await driver.refreshDownloadEntry(entry.path)
+          : await driver.stat(entry.path);
+      if (entry.id != null && entry.size != null && (entry.contentHash != null || entry.modifiedAt != null)) {
+        final identity = jsonEncode([
+          mount.id,
+          entry.id,
+          entry.size,
+          entry.contentHash,
+          entry.modifiedAt?.millisecondsSinceEpoch,
+        ]);
+        resumeETag = '"plezy-quark-${sha256.convert(utf8.encode(identity))}"';
+      }
+      videoUrl = await _mountManager.proxy.register(
+        mountId: mount.id,
+        driver: driver,
+        entry: entry,
+        bulk: true,
+        downloadETag: resumeETag,
+      );
+    } else {
+      videoUrl = await _mountManager.streamUrl(mount, entry, bulk: true);
+    }
     return DownloadResolution(
       // Bulk: cloud drives cap each connection, so the downloader's URL is
       // fetched over several at once.
-      videoUrl: (await _mountManager.streamUrl(
-        await _mountOf(picked.file),
-        _entryOf(picked.file),
-        bulk: true,
-      )).toString(),
+      videoUrl: videoUrl.toString(),
       mediaSourceId: '${picked.file.id}',
+      resumeETag: resumeETag,
       externalSubtitles: [
         for (final subtitle in subtitles)
           DownloadSubtitleSpec(

@@ -1427,6 +1427,7 @@ class _MainAppState extends State<MainApp> with WidgetsBindingObserver {
       storageService: DownloadStorageService.instance,
       clientResolver: _serverManager.resolveDownloadClient,
       mountedDownloadProxy: _mountManager.proxy,
+      useAppNativeDownloader: true,
     );
     // Keep the awaitable assigned synchronously, but do not let recovery's
     // Drift/native work compete with SetupScreen's first frame.
@@ -1496,6 +1497,11 @@ class _MainAppState extends State<MainApp> with WidgetsBindingObserver {
     _memoryCheckTimer?.cancel();
 
     _libraryEventService.dispose();
+    try {
+      await _downloadManager.saveQuarkDownloadsForExit().timeout(const Duration(seconds: 6));
+    } catch (error, stackTrace) {
+      appLogger.w('Could not checkpoint Quark downloads before exit', error: error, stackTrace: stackTrace);
+    }
     _downloadManager.dispose();
     // Quitting straight from the player is a real stop: the trackers that own
     // their own watched semantics need the terminal report before the process

@@ -2090,6 +2090,8 @@
     "unknownSeason": "Unknown Season",
     "unknownAlbum": "Unknown Album",
     "completedOfTotal": "${completed}/${total} completed",
+    "errorQuarkFileChanged": "The Quark file has changed or is unavailable. Choose Retry to download it again.",
+    "errorQuarkResumeUnavailable": "The saved Quark download cannot be resumed. Choose Retry to download it again.",
     "errorFileNotFound": "File not found (404)",
     "errorDownloadNotAllowed": "Download not allowed by the server (403)",
     "errorDownloadFailed": "Download failed",

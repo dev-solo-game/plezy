@@ -212,6 +212,15 @@ class QuarkStorageDriver implements StorageDriver, StreamVariantSource, Parallel
     throw StorageException(StorageErrorKind.notFound, 'Not found: $normalized');
   }
 
+  /// Resolve the current file version before a Windows download is bound to
+  /// it. A subsequent GET must also obtain a fresh origin link for that file.
+  Future<StorageEntry> refreshDownloadEntry(String path) async {
+    final entry = await stat(path);
+    _links.remove(entry.id);
+    _rawLinks.remove(entry.id);
+    return entry;
+  }
+
   @override
   Stream<List<int>> openRead(StorageEntry entry, {int start = 0, int? end}) {
     return _reader.read(
@@ -299,6 +308,7 @@ class QuarkStorageDriver implements StorageDriver, StreamVariantSource, Parallel
     final isFile = row['file'] == true;
     final updatedAt = row['updated_at'];
     final size = row['size'];
+    final md5 = row['md5'];
     return StorageEntry(
       path: StoragePath.join(parentPath, name),
       name: name,
@@ -306,6 +316,7 @@ class QuarkStorageDriver implements StorageDriver, StreamVariantSource, Parallel
       size: isFile && size is num ? size.toInt() : null,
       modifiedAt: updatedAt is num ? DateTime.fromMillisecondsSinceEpoch(updatedAt.toInt()) : null,
       id: fid,
+      contentHash: isFile && md5 is String && md5.isNotEmpty ? md5 : null,
     );
   }
 

@@ -5025,6 +5025,12 @@ class Translations$downloads$en {
 	/// en: '${completed}/${total} completed'
 	String completedOfTotal({required Object completed, required Object total}) => '${completed}/${total} completed';
 
+	/// en: 'The Quark file has changed or is unavailable. Choose Retry to download it again.'
+	String get errorQuarkFileChanged => 'The Quark file has changed or is unavailable. Choose Retry to download it again.';
+
+	/// en: 'The saved Quark download cannot be resumed. Choose Retry to download it again.'
+	String get errorQuarkResumeUnavailable => 'The saved Quark download cannot be resumed. Choose Retry to download it again.';
+
 	/// en: 'File not found (404)'
 	String get errorFileNotFound => 'File not found (404)';
 
@@ -10509,6 +10515,8 @@ extension on Translations {
 			'downloads.unknownSeason' => 'Unknown Season',
 			'downloads.unknownAlbum' => 'Unknown Album',
 			'downloads.completedOfTotal' => ({required Object completed, required Object total}) => '${completed}/${total} completed',
+			'downloads.errorQuarkFileChanged' => 'The Quark file has changed or is unavailable. Choose Retry to download it again.',
+			'downloads.errorQuarkResumeUnavailable' => 'The saved Quark download cannot be resumed. Choose Retry to download it again.',
 			'downloads.errorFileNotFound' => 'File not found (404)',
 			'downloads.errorDownloadNotAllowed' => 'Download not allowed by the server (403)',
 			'downloads.errorDownloadFailed' => 'Download failed',
@@ -10658,10 +10666,10 @@ extension on Translations {
 			'performanceOverlay.dropped' => 'Dropped',
 			'performanceOverlay.dvRpus' => 'DV RPUs',
 			'performanceOverlay.dvRpuAverage' => 'DV RPU Avg',
-			'performanceOverlay.dvSampleAverage' => 'DV Sample Avg',
-			'performanceOverlay.maxLuma' => 'Max Luma',
 			_ => null,
 		} ?? switch (path) {
+			'performanceOverlay.dvSampleAverage' => 'DV Sample Avg',
+			'performanceOverlay.maxLuma' => 'Max Luma',
 			'performanceOverlay.minLuma' => 'Min Luma',
 			'performanceOverlay.maxCll' => 'MaxCLL',
 			'performanceOverlay.maxFall' => 'MaxFALL',

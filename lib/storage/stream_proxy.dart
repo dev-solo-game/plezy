@@ -21,6 +21,7 @@ import 'stream_variant.dart';
 /// It binds to loopback only, and each URL carries an unguessable token, so
 /// other devices cannot reach it and other local processes cannot enumerate it.
 class StreamProxy {
+  static const resumeRequestHeader = 'x-plezy-resume';
   StreamProxy({Random? random, BulkReadOptions Function()? bulkOptions})
     : _random = random ?? Random.secure(),
       _bulkOptions = bulkOptions ?? (() => BulkReadOptions.defaults);
@@ -97,14 +98,15 @@ class StreamProxy {
     required StorageDriver driver,
     required StorageEntry entry,
     bool bulk = false,
+    String? downloadETag,
   }) async {
     if (entry.isDirectory) {
       throw const StorageException(StorageErrorKind.unsupported, 'Cannot stream a directory');
     }
     final server = await _ensureServer();
-    final key = '$mountId\u0000${entry.path}';
+    final key = '$mountId\u0000${entry.path}${downloadETag == null ? '' : '\u0000$downloadETag'}';
     final token = _tokensByKey.putIfAbsent(key, _newToken);
-    _sources[token] = _Source(driver, entry);
+    _sources[token] = _Source(driver, entry, downloadETag: downloadETag);
     return Uri(
       scheme: 'http',
       host: InternetAddress.loopbackIPv4.address,
@@ -199,6 +201,14 @@ class StreamProxy {
       final bulk = segments.isNotEmpty && segments[0] == 'd';
       final source = segments.length >= 2 && (segments[0] == 's' || bulk) ? _sources[segments[1]] : null;
       if (source == null) return await _finish(response, HttpStatus.notFound);
+      final tag = bulk ? source.downloadETag : null;
+      if (tag != null) {
+        final requiredTag = request.headers.value(HttpHeaders.ifMatchHeader);
+        if (requiredTag != null && requiredTag != tag) {
+          return await _finish(response, HttpStatus.preconditionFailed);
+        }
+        response.headers.set(HttpHeaders.etagHeader, tag);
+      }
 
       var entry = source.entry;
       if (entry.size == null) {
@@ -210,7 +220,8 @@ class StreamProxy {
       if (size == null) return await _finish(response, HttpStatus.badGateway);
 
       final range = _parseRange(request.headers.value(HttpHeaders.rangeHeader), size);
-      if (range == _unsatisfiable) {
+      final mustResume = tag != null && request.headers.value(resumeRequestHeader) == '1';
+      if (range == _unsatisfiable || (mustResume && (range == null || range.start <= 0))) {
         response.headers.set(HttpHeaders.contentRangeHeader, 'bytes */$size');
         return await _finish(response, HttpStatus.requestedRangeNotSatisfiable);
       }
@@ -552,7 +563,8 @@ class _VariantSource {
 }
 
 class _Source {
-  _Source(this.driver, this.entry);
+  _Source(this.driver, this.entry, {this.downloadETag});
+  final String? downloadETag;
 
   final StorageDriver driver;
   StorageEntry entry;

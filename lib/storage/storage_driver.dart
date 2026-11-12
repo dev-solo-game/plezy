@@ -13,6 +13,7 @@ class StorageEntry {
     this.size,
     this.modifiedAt,
     this.id,
+    this.contentHash,
   });
 
   final String path;
@@ -23,6 +24,7 @@ class StorageEntry {
   final int? size;
   final DateTime? modifiedAt;
   final String? id;
+  final String? contentHash;
 
   @override
   String toString() => 'StorageEntry($path${isDirectory ? '/' : ''}, size: $size)';

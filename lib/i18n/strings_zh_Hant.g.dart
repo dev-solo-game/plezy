@@ -2012,6 +2012,8 @@ class _Translations$downloads$zh_Hant extends Translations$downloads$zh {
 	@override String get unknownSeason => '未知季度';
 	@override String get unknownAlbum => '未知專輯';
 	@override String completedOfTotal({required Object completed, required Object total}) => '已完成 ${completed}/${total}';
+	@override String get errorQuarkFileChanged => '夸克檔案已變更或無法使用，無法繼續舊下載。可點「重試」重新下載。';
+	@override String get errorQuarkResumeUnavailable => '找不到可用的夸克續傳進度。可點「重試」重新下載。';
 	@override String get errorFileNotFound => '找不到檔案（404）';
 	@override String get errorDownloadNotAllowed => '伺服器不允許下載（403）';
 	@override String get errorDownloadFailed => '下載失敗';
@@ -5506,6 +5508,8 @@ extension on TranslationsZhHant {
 			'downloads.unknownSeason' => '未知季度',
 			'downloads.unknownAlbum' => '未知專輯',
 			'downloads.completedOfTotal' => ({required Object completed, required Object total}) => '已完成 ${completed}/${total}',
+			'downloads.errorQuarkFileChanged' => '夸克檔案已變更或無法使用，無法繼續舊下載。可點「重試」重新下載。',
+			'downloads.errorQuarkResumeUnavailable' => '找不到可用的夸克續傳進度。可點「重試」重新下載。',
 			'downloads.errorFileNotFound' => '找不到檔案（404）',
 			'downloads.errorDownloadNotAllowed' => '伺服器不允許下載（403）',
 			'downloads.errorDownloadFailed' => '下載失敗',
@@ -5662,10 +5666,10 @@ extension on TranslationsZhHant {
 			'performanceOverlay.maxFall' => 'MaxFALL',
 			'performanceOverlay.cacheUsed' => '已用快取',
 			'performanceOverlay.cacheLimit' => '快取上限',
-			'performanceOverlay.speed' => '速度',
-			'performanceOverlay.player' => '播放器',
 			_ => null,
 		} ?? switch (path) {
+			'performanceOverlay.speed' => '速度',
+			'performanceOverlay.player' => '播放器',
 			'performanceOverlay.memory' => '記憶體',
 			'performanceOverlay.uiFps' => '介面 FPS',
 			'performanceOverlay.fps' => 'FPS',

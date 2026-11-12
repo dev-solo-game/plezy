@@ -32,6 +32,7 @@ import '../models/download_models.dart';
 import '../services/offline_mode_source.dart';
 import '../services/download_storage_service.dart';
 import '../storage/stream_proxy.dart';
+import '../storage/storage_driver.dart';
 import '../i18n/strings.g.dart';
 import '../utils/app_logger.dart';
 import '../utils/serial_future_queue.dart';
@@ -193,6 +194,18 @@ class DownloadManagerService {
   // is available.
   final MediaClientResolver _clientResolver;
   final StreamProxy? _mountedDownloadProxy;
+  // The Windows backend persists ResumeData through this public storage
+  // interface. Reuse the same instance to read the exact flushed byte count.
+  static final _appResumeStorage = Platform.isWindows ? LocalStorePersistentStorage() : null;
+  static final _appNativeDownloader = FileDownloader(persistentStorage: _appResumeStorage);
+  final bool _useAppNativeDownloader;
+  late final FileDownloader _downloader = _useAppNativeDownloader ? _appNativeDownloader : FileDownloader();
+  final PersistentStorage? _quarkResumeStorage;
+  final Map<String, DownloadTask> _savedQuarkResumes = {};
+  final Set<String> _resumingQuarkTasks = {};
+  final Map<String, ({int progress, int bytes, int total})> _latestQuarkProgress = {};
+  bool _quarkRecoveryReady = false;
+  bool _closingForExit = false;
   MediaServerClient? _fallbackClient;
 
   OfflineModeSource? _offlineSource;
@@ -251,7 +264,7 @@ class DownloadManagerService {
   /// Cancels native work and discards resumable partial files so startup can
   /// recover enough space to reopen the application database.
   static Future<void> discardInterruptedNativeDownloadsAfterStorageFailure() async {
-    final downloader = FileDownloader();
+    final downloader = _appNativeDownloader;
     try {
       await downloader.reset(group: _downloadGroup);
     } catch (error, stackTrace) {
@@ -289,6 +302,8 @@ class DownloadManagerService {
     required DownloadStorageService storageService,
     required MediaClientResolver clientResolver,
     StreamProxy? mountedDownloadProxy,
+    bool useAppNativeDownloader = false,
+    @visibleForTesting PersistentStorage? quarkResumeStorage,
     MediaServerHttpClient? http,
     @visibleForTesting SafStorageOperations? safStorage,
     @visibleForTesting this._downloadsSupportedOverride,
@@ -314,6 +329,8 @@ class DownloadManagerService {
        _storageService = storageService,
        _clientResolver = clientResolver,
        _mountedDownloadProxy = mountedDownloadProxy,
+       _useAppNativeDownloader = useAppNativeDownloader,
+       _quarkResumeStorage = quarkResumeStorage ?? (useAppNativeDownloader ? _appResumeStorage : null),
        _http = http ?? httpClient,
        _safStorage = safStorage ?? SafStorageService.instance,
        _downloadLocationReader = downloadLocationReader,
@@ -330,13 +347,13 @@ class DownloadManagerService {
   NativeDownloaderOps get _nativeOps =>
       _nativeOpsOverride ??
       (
-        allTasks: () => FileDownloader().allTasks(group: _downloadGroup),
-        allRecords: () => FileDownloader().database.allRecords(group: _downloadGroup),
-        deleteRecord: FileDownloader().database.deleteRecordWithId,
-        cancelTaskIds: FileDownloader().cancelTasksWithIds,
-        resetGroup: () => FileDownloader().reset(group: _downloadGroup),
-        cleanUpOrphanedTempFiles: FileDownloader().cleanUpOrphanedTempFiles,
-        rescheduleKilledTasks: FileDownloader().rescheduleKilledTasks,
+        allTasks: () => _downloader.allTasks(group: _downloadGroup),
+        allRecords: () => _downloader.database.allRecords(group: _downloadGroup),
+        deleteRecord: _downloader.database.deleteRecordWithId,
+        cancelTaskIds: _downloader.cancelTasksWithIds,
+        resetGroup: () => _downloader.reset(group: _downloadGroup),
+        cleanUpOrphanedTempFiles: _downloader.cleanUpOrphanedTempFiles,
+        rescheduleKilledTasks: _downloader.rescheduleKilledTasks,
       );
 
   bool _skipDownloadsUnsupported(String operation) {
@@ -927,7 +944,7 @@ class DownloadManagerService {
     if (_fileDownloaderInitialized) return;
     if (_skipDownloadsUnsupported('FileDownloader initialization')) return;
 
-    FileDownloader()
+    _downloader
         .registerCallbacks(
           group: _downloadGroup,
           taskStatusCallback: _onTaskStatusChanged,
@@ -944,16 +961,14 @@ class DownloadManagerService {
 
     // Protect native writes even while Flutter is suspended. Plex servers can
     // also reject concurrent media downloads.
-    await FileDownloader().configure(
-      globalConfig: [(Config.checkAvailableSpace, true), (Config.holdingQueue, (1, 1, 1))],
-    );
+    await _downloader.configure(globalConfig: [(Config.checkAvailableSpace, true), (Config.holdingQueue, (1, 1, 1))]);
     // Bring the downloader's persisted policy in line with the setting (it
     // may have been changed, e.g. by a settings import, while not running).
     await applyDownloadOnWifiOnly((await SettingsService.getInstance()).read(SettingsService.downloadOnWifiOnly));
 
-    await FileDownloader().trackTasks();
+    await _downloader.trackTasks();
     // Deliver status updates from iOS background-to-foreground transitions
-    await FileDownloader().resumeFromBackground();
+    await _downloader.resumeFromBackground();
 
     _fileDownloaderInitialized = true;
   }
@@ -968,7 +983,7 @@ class DownloadManagerService {
     if (!downloadsSupported) return;
     final requirement = wifiOnly ? RequireWiFi.forAllTasks : RequireWiFi.forNoTasks;
     try {
-      await (_requireWiFiOverride ?? FileDownloader().requireWiFi)(requirement);
+      await (_requireWiFiOverride ?? _downloader.requireWiFi)(requirement);
     } catch (e, st) {
       appLogger.w('Failed to apply Wi-Fi-only download policy ($requirement)', error: e, stackTrace: st);
     }
@@ -1071,6 +1086,7 @@ class DownloadManagerService {
       final allDownloads = await _database.select(_database.downloadedMedia).get();
       for (final item in allDownloads) {
         if (item.status == DownloadStatus.downloading.index) {
+          if (_savedQuarkResumes.containsKey(item.bgTaskId)) continue;
           // Skip items whose completion callback is already in-flight (race with trackTasks)
           if (_completingKeys.contains(item.globalKey)) {
             appLogger.d('Skipping orphan check for ${item.globalKey}: completion in progress');
@@ -1090,7 +1106,7 @@ class DownloadManagerService {
 
           Task? bgTask;
           if (item.bgTaskId != null) {
-            bgTask = await FileDownloader().taskForId(item.bgTaskId!);
+            bgTask = await _downloader.taskForId(item.bgTaskId!);
           }
 
           if (bgTask == null) {
@@ -1102,6 +1118,8 @@ class DownloadManagerService {
           }
         }
       }
+      _quarkRecoveryReady = true;
+      _scheduleRecoveredQuarkDownloads();
     } catch (e) {
       appLogger.e('Failed to recover interrupted downloads', error: e);
     }
@@ -1125,6 +1143,7 @@ class DownloadManagerService {
     final rootTasks = <Task>[];
     for (final task in nativeTasks) {
       if (_isObsoleteMountedVideoTask(task)) {
+        if (_savedQuarkResumes.containsKey(task.taskId)) continue;
         await _discardObsoleteMountedTask(task);
         continue;
       }
@@ -1230,6 +1249,7 @@ class DownloadManagerService {
     final rootRecords = <TaskRecord>[];
     for (final record in records) {
       if (record.status != TaskStatus.complete && _isObsoleteMountedVideoTask(record.task)) {
+        if (record.status == TaskStatus.paused && await _retainQuarkResume(record.task)) continue;
         await _discardObsoleteMountedTask(record.task);
       } else if (record.task.baseDirectory == BaseDirectory.root) {
         rootRecords.add(record);
@@ -1272,6 +1292,157 @@ class DownloadManagerService {
         task is DownloadTask &&
         parseGlobalKey(task.metaData)?.serverId.value == LocalLibraryClient.localServerId &&
         !proxy.isRegisteredDownloadUrl(task.url);
+  }
+
+  String? _quarkResumeTag(Task task) {
+    if (!Platform.isWindows ||
+        task is! DownloadTask ||
+        parseGlobalKey(task.metaData)?.serverId.value != LocalLibraryClient.localServerId) {
+      return null;
+    }
+    final tag = task.headers[HttpHeaders.ifMatchHeader];
+    return tag != null && tag.startsWith('"plezy-quark-') ? tag : null;
+  }
+
+  Future<bool> _retainQuarkResume(Task task) async {
+    if (task is! DownloadTask || _quarkResumeTag(task) == null) return false;
+    final row = await _database.getDownloadedMedia(task.metaData);
+    if (row == null ||
+        row.bgTaskId != task.taskId ||
+        row.nextMissingPartIndex == null ||
+        (row.status != DownloadStatus.paused.index && row.status != DownloadStatus.downloading.index)) {
+      return false;
+    }
+    if (task.baseDirectory == BaseDirectory.root &&
+        isRelocatedRootTaskDirectory(
+          task: task,
+          rootBasePath: await Task.baseDirectoryPath(BaseDirectory.root),
+          baseAppDirPath: await _storageService.baseAppDirectoryPath(),
+          customRootPath: _storageService.customFileRootPath,
+        )) {
+      return false;
+    }
+    _savedQuarkResumes[task.taskId] = task;
+    return true;
+  }
+
+  void _scheduleRecoveredQuarkDownloads() {
+    if (!_quarkRecoveryReady || _closingForExit || _disposed || _isOffline) return;
+    unawaited(
+      _resumeRecoveredQuarkDownloads().catchError((Object error, StackTrace stack) {
+        appLogger.w('Could not restore paused Quark downloads', error: error, stackTrace: stack);
+      }),
+    );
+  }
+
+  Future<void> _resumeRecoveredQuarkDownloads() async {
+    for (final task in _savedQuarkResumes.values.toList()) {
+      if (_closingForExit || _disposed || _isOffline) return;
+      final row = await _database.getDownloadedMedia(task.metaData);
+      // An exit-induced native pause leaves the app row downloading. A user
+      // pause has its own durable status and is only resumed on explicit tap.
+      if (row?.bgTaskId != task.taskId || row?.status != DownloadStatus.downloading.index) continue;
+      final client = await _getClientForDownloadKey(task.metaData);
+      if (client is LocalLibraryClient) await _resumeQuarkWithFreshUrl(task, client);
+    }
+  }
+
+  Future<void> _resumeQuarkWithFreshUrl(DownloadTask task, LocalLibraryClient client) async {
+    if (_closingForExit || _disposed || !_resumingQuarkTasks.add(task.taskId)) return;
+    final key = task.metaData;
+    try {
+      final row = await _database.getDownloadedMedia(key);
+      if (row == null ||
+          row.bgTaskId != task.taskId ||
+          (row.status != DownloadStatus.paused.index && row.status != DownloadStatus.downloading.index)) {
+        return;
+      }
+
+      final item = await client.fetchItem(row.ratingKey);
+      final resolution = item == null
+          ? null
+          : await client.resolveDownload(item, mediaIndex: row.mediaIndex, mediaSourceId: row.mediaSourceId);
+      final current = await _database.getDownloadedMedia(key);
+      if (_closingForExit ||
+          _disposed ||
+          current?.bgTaskId != task.taskId ||
+          current?.status != row.status ||
+          _pausingKeys.contains(key) ||
+          _cancellingKeys.contains(key)) {
+        return;
+      }
+      final url = resolution?.videoUrl;
+      if (url == null ||
+          resolution?.resumeETag != _quarkResumeTag(task) ||
+          _mountedDownloadProxy?.isRegisteredDownloadUrl(url) != true) {
+        await _markQuarkResumeUnavailable(task, t.downloads.errorQuarkFileChanged);
+        return;
+      }
+      final store = _quarkResumeStorage;
+      if (store != null) {
+        final checkpoint = await store.retrieveResumeData(task.taskId);
+        final valid =
+            checkpoint != null &&
+            checkpoint.eTag == _quarkResumeTag(task) &&
+            checkpoint.requiredStartByte > 0 &&
+            await File(checkpoint.tempFilepath).exists() &&
+            await File(checkpoint.tempFilepath).length() == checkpoint.requiredStartByte;
+        if (!valid) {
+          await _markQuarkResumeUnavailable(task, t.downloads.errorQuarkResumeUnavailable);
+          return;
+        }
+      }
+      final verified = await _database.getDownloadedMedia(key);
+      if (_closingForExit ||
+          _disposed ||
+          verified?.bgTaskId != task.taskId ||
+          verified?.status != row.status ||
+          _pausingKeys.contains(key) ||
+          _cancellingKeys.contains(key)) {
+        return;
+      }
+      await _transitionStatus(key, DownloadStatus.downloading, progress: row.progress);
+      // The Windows downloader looks up ResumeData by task id and runs the
+      // supplied task's URL. Keep the task id, destination and .part intact.
+      final resumed = await _downloader.resume(
+        task.copyWith(url: url, headers: {...task.headers, StreamProxy.resumeRequestHeader: '1'}),
+      );
+      if (resumed) {
+        _savedQuarkResumes.remove(task.taskId);
+      } else {
+        await _markQuarkResumeUnavailable(task, t.downloads.errorQuarkResumeUnavailable);
+      }
+    } on StorageException catch (error) {
+      if (error.kind == StorageErrorKind.notFound) {
+        await _markQuarkResumeUnavailable(task, t.downloads.errorQuarkFileChanged);
+      } else {
+        await _keepQuarkResumePaused(task, error);
+      }
+    } catch (error) {
+      await _keepQuarkResumePaused(task, error);
+    } finally {
+      _resumingQuarkTasks.remove(task.taskId);
+    }
+  }
+
+  Future<void> _keepQuarkResumePaused(DownloadTask task, Object error) async {
+    if (_disposed || _closingForExit) return;
+    final row = await _database.getDownloadedMedia(task.metaData);
+    if (row?.bgTaskId != task.taskId || row?.status != DownloadStatus.downloading.index) return;
+    appLogger.w('Could not refresh the URL of a paused Quark download', error: error.runtimeType);
+    await _transitionStatus(task.metaData, DownloadStatus.paused, progress: row!.progress);
+  }
+
+  Future<void> _markQuarkResumeUnavailable(DownloadTask task, String message) async {
+    if (_disposed || _closingForExit || _cancellingKeys.contains(task.metaData)) return;
+    final row = await _database.getDownloadedMedia(task.metaData);
+    if (row == null ||
+        row.bgTaskId != task.taskId ||
+        (row.status != DownloadStatus.paused.index && row.status != DownloadStatus.downloading.index)) {
+      return;
+    }
+    _savedQuarkResumes.remove(task.taskId);
+    await _transitionStatus(task.metaData, DownloadStatus.failed, progress: row.progress, errorMessage: message);
   }
 
   /// A stale proxy URL cannot reach the original source. Native resume data
@@ -1509,6 +1680,8 @@ class DownloadManagerService {
       return;
     }
 
+    _scheduleRecoveredQuarkDownloads();
+
     unawaited(repairPendingSupplementaryDownloads());
     unawaited(repairMissingArtworkForDownloads());
 
@@ -1702,9 +1875,10 @@ class DownloadManagerService {
   /// Cancel any per-download timers (progress debounce + auto-retry) for [key]
   /// and drop its per-task progress state. Idempotent; safe to call from any
   /// terminal/pause path.
-  void _cancelDownloadTimers(String key) {
+  void _cancelDownloadTimers(String key, {bool keepQuarkProgress = false}) {
     _progressDebounceTimers.remove(key)?.cancel();
     _autoRetryTimers.remove(key)?.cancel();
+    if (!keepQuarkProgress) _latestQuarkProgress.remove(key);
     _storedPartBytes.remove(key);
   }
 
@@ -1920,7 +2094,9 @@ class DownloadManagerService {
   /// Process the download queue — prepares and enqueues items with background_downloader.
   /// Non-blocking: returns after all queued items are enqueued (downloads run natively).
   Future<void> _processQueue(MediaServerClient client) async {
-    if (_skipDownloadsUnsupported('download queue processing') || _queueBlockedByStorageFailure) return;
+    if (_skipDownloadsUnsupported('download queue processing') || _queueBlockedByStorageFailure || _closingForExit) {
+      return;
+    }
     final queueProcessorOverride = _queueProcessorOverride;
     if (queueProcessorOverride != null) {
       _fallbackClient = client;
@@ -1945,7 +2121,7 @@ class DownloadManagerService {
         // Heads whose client could not be resolved this cycle: excluded from the
         // next lookup so the drain advances instead of re-reading the same row.
         final skippedGlobalKeys = <String>{};
-        while (!_queueBlockedByStorageFailure) {
+        while (!_queueBlockedByStorageFailure && !_closingForExit) {
           if (_consecutiveQueueFailures >= _maxConsecutiveFailures) {
             appLogger.w('Circuit breaker: $_consecutiveQueueFailures consecutive failures, pausing queue');
             break;
@@ -1981,7 +2157,9 @@ class DownloadManagerService {
 
   /// Cancel any lingering background task and reset progress before re-enqueuing.
   Future<void> _cleanupStaleDownload(String globalKey) async {
+    _latestQuarkProgress.remove(globalKey);
     final existingTaskId = await _database.getBgTaskId(globalKey);
+    _savedQuarkResumes.remove(existingTaskId);
     await _database.updateBgTaskId(globalKey, null);
     _pendingDownloadContext.remove(globalKey);
     await _cancelNativeTasksForGlobalKey(
@@ -2025,7 +2203,7 @@ class DownloadManagerService {
     if (!_fileDownloaderInitialized && taskIds.isEmpty) return;
 
     try {
-      final nativeTasks = await FileDownloader().allTasks(group: _downloadGroup);
+      final nativeTasks = await _downloader.allTasks(group: _downloadGroup);
       for (final task in nativeTasks) {
         if (task.metaData == globalKey && task.taskId != exceptTaskId) taskIds.add(task.taskId);
       }
@@ -2079,7 +2257,7 @@ class DownloadManagerService {
   Future<bool> _cancelEnqueuedTaskIfInactive(String globalKey, String taskId) async {
     if (!await _isCancelledOrDeleted(globalKey)) return false;
     if (downloadsSupported) {
-      await FileDownloader().cancelTaskWithId(taskId);
+      await _downloader.cancelTaskWithId(taskId);
     }
     await _database.updateBgTaskId(globalKey, null);
     await _database.removeFromQueue(globalKey);
@@ -2092,7 +2270,7 @@ class DownloadManagerService {
   /// while enqueueing and the task was dropped again.
   Future<bool> _enqueuePreparedTask(String globalKey, Task task, String kind) async {
     await _database.updateBgTaskId(globalKey, task.taskId);
-    final success = await (_enqueueTaskOverride ?? FileDownloader().enqueue)(task);
+    final success = await (_enqueueTaskOverride ?? _downloader.enqueue)(task);
     if (!success) throw Exception('Failed to enqueue $kind task');
     if (await _cancelEnqueuedTaskIfInactive(globalKey, task.taskId)) {
       return true;
@@ -2323,7 +2501,7 @@ class DownloadManagerService {
     final requiresWiFi = settings.read(SettingsService.downloadOnWifiOnly);
 
     await _serializeSafOwnership(() async {
-      if (_queueBlockedByStorageFailure) return true;
+      if (_queueBlockedByStorageFailure || _closingForExit) return true;
       final safBaseUri = _storageService.safBaseUri;
       final DownloadTask task;
       final String filePath;
@@ -2396,6 +2574,9 @@ class DownloadManagerService {
 
         task = DownloadTask(
           url: url,
+          headers: {
+            if (partIndex == 0 && resolution.resumeETag != null) HttpHeaders.ifMatchHeader: resolution.resumeETag!,
+          },
           filename: path.basename(downloadFilePath),
           directory: taskLocation.directory,
           baseDirectory: taskLocation.baseDirectory,
@@ -2534,6 +2715,9 @@ class DownloadManagerService {
     final progress = ((partIndex + update.progress) * 100 / partCount).round().clamp(0, 100);
     final downloadedBytes = storedBytes + fileDownloadedBytes;
     final totalBytes = fileBytes > 0 ? storedBytes + fileBytes : 0;
+    if (_quarkResumeTag(update.task) != null) {
+      _latestQuarkProgress[globalKey] = (progress: progress, bytes: downloadedBytes, total: totalBytes);
+    }
 
     _progressController.add(
       DownloadProgress(
@@ -2623,7 +2807,22 @@ class DownloadManagerService {
         case TaskStatus.complete:
           await _onDownloadComplete(globalKey, update.task);
         case TaskStatus.failed:
-          await _onDownloadFailed(globalKey, update.task.taskId, update.exception);
+          final exception = update.exception;
+          final status = exception is TaskHttpException ? exception.httpResponseCode : null;
+          final isQuarkResume =
+              _quarkResumeTag(update.task) != null && update.task.headers[StreamProxy.resumeRequestHeader] == '1';
+          if (isQuarkResume &&
+              (status == HttpStatus.preconditionFailed || status == HttpStatus.requestedRangeNotSatisfiable)) {
+            await _onDownloadPermanentlyFailed(
+              globalKey,
+              update.task.taskId,
+              status == HttpStatus.preconditionFailed
+                  ? t.downloads.errorQuarkFileChanged
+                  : t.downloads.errorQuarkResumeUnavailable,
+            );
+          } else {
+            await _onDownloadFailed(globalKey, update.task.taskId, exception);
+          }
         case TaskStatus.notFound:
           await _onDownloadPermanentlyFailed(globalKey, update.task.taskId, t.downloads.errorFileNotFound);
         case TaskStatus.canceled:
@@ -3508,6 +3707,64 @@ class DownloadManagerService {
     );
   }
 
+  /// Ask the Windows downloader to save its .part and ResumeData while the
+  /// loopback proxy and database still exist. Leave the app status downloading
+  /// so restart can distinguish these tasks from ones the user paused.
+  Future<void> saveQuarkDownloadsForExit() async {
+    if (!Platform.isWindows || _closingForExit) return;
+    _closingForExit = true;
+    if (!_fileDownloaderInitialized) return;
+    final downloader = _downloader;
+    await _serializeSafOwnership(() async {
+      final tasks = await _nativeOps.allTasks();
+      final pausedForExit = <DownloadTask>[];
+      for (final task in tasks.whereType<DownloadTask>()) {
+        if (_quarkResumeTag(task) == null) continue;
+        final row = await _database.getDownloadedMedia(task.metaData);
+        if (row?.bgTaskId != task.taskId ||
+            (row?.status != DownloadStatus.downloading.index && row?.status != DownloadStatus.paused.index)) {
+          continue;
+        }
+        final record = await downloader.database.recordForId(task.taskId);
+        if (record?.status == TaskStatus.paused || await downloader.pause(task)) pausedForExit.add(task);
+      }
+      final deadline = Stopwatch()..start();
+      for (final task in pausedForExit) {
+        await _saveQuarkPauseProgress(task, deadline);
+      }
+    });
+  }
+
+  Future<void> _saveQuarkPauseProgress(DownloadTask task, Stopwatch deadline) async {
+    final store = _quarkResumeStorage;
+    while (!_disposed && deadline.elapsed < const Duration(seconds: 4)) {
+      final record = await _downloader.database.recordForId(task.taskId);
+      if (record?.status == TaskStatus.paused) {
+        final checkpoint = await store?.retrieveResumeData(task.taskId);
+        if (checkpoint != null || (store == null && await _downloader.taskCanResume(task))) {
+          await _persistLatestQuarkProgress(
+            task.metaData,
+            checkpointBytes: checkpoint?.requiredStartByte,
+            expectedBytes: record?.expectedFileSize,
+          );
+          return;
+        }
+      }
+      if (record?.status.isFinalState == true) return;
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+    }
+  }
+
+  Future<void> _persistLatestQuarkProgress(String globalKey, {int? checkpointBytes, int? expectedBytes}) async {
+    final latest = _latestQuarkProgress.remove(globalKey);
+    if (latest == null && checkpointBytes == null) return;
+    _progressDebounceTimers.remove(globalKey)?.cancel();
+    final total = latest?.total ?? expectedBytes ?? 0;
+    final bytes = checkpointBytes ?? latest?.bytes ?? 0;
+    final percent = total > 0 ? (bytes * 100 / total).round().clamp(0, 100) : latest?.progress ?? 0;
+    await _database.updateDownloadProgress(globalKey, percent, bytes, total > 0 ? total : 0);
+  }
+
   /// Pause a download (works for both downloading and queued items)
   Future<void> pauseDownload(String globalKey) async {
     // Mark as pausing synchronously so callbacks from holding-queue promotions
@@ -3515,28 +3772,32 @@ class DownloadManagerService {
     _pausingKeys.add(globalKey);
 
     try {
-      _cancelDownloadTimers(globalKey);
+      _cancelDownloadTimers(globalKey, keepQuarkProgress: true);
       final bgTaskId = await _database.getBgTaskId(globalKey);
       await _cancelNativeTasksForGlobalKey(globalKey, exceptTaskId: bgTaskId, reason: 'duplicate task before pause');
       if (bgTaskId != null && downloadsSupported) {
-        final task = await FileDownloader().taskForId(bgTaskId);
+        final task = await _downloader.taskForId(bgTaskId);
         if (task != null && task is DownloadTask) {
           // App storage and SAF (UriDownloadTask) tasks both pause natively. A
           // task the downloader cannot pause (not started yet, or a SAF task
           // enqueued before SAF tasks allowed pause) is cancelled so it cannot
           // keep running behind the paused row; resume then re-downloads it.
-          if (!await FileDownloader().pause(task)) {
-            await FileDownloader().cancelTaskWithId(bgTaskId);
+          if (!await _downloader.pause(task)) {
+            await _downloader.cancelTaskWithId(bgTaskId);
+          } else if (_quarkResumeTag(task) != null) {
+            await _saveQuarkPauseProgress(task, Stopwatch()..start());
           }
         } else {
           // Task not found: cancel (re-download on resume)
-          await FileDownloader().cancelTaskWithId(bgTaskId);
+          await _downloader.cancelTaskWithId(bgTaskId);
         }
       } else if (bgTaskId != null) {
         await _database.updateBgTaskId(globalKey, null);
       }
       _pendingDownloadContext.remove(globalKey);
-      await _transitionStatus(globalKey, DownloadStatus.paused);
+      await _persistLatestQuarkProgress(globalKey);
+      final row = await _database.getDownloadedMedia(globalKey);
+      await _transitionStatus(globalKey, DownloadStatus.paused, progress: row?.progress);
       await _database.removeFromQueue(globalKey);
     } finally {
       _pausingKeys.remove(globalKey);
@@ -3549,6 +3810,13 @@ class DownloadManagerService {
     _rearmQueueForUserAction('manual resume');
 
     final bgTaskId = await _database.getBgTaskId(globalKey);
+    if (bgTaskId != null && Platform.isWindows && client is LocalLibraryClient) {
+      final task = _savedQuarkResumes[bgTaskId] ?? await _downloader.taskForId(bgTaskId);
+      if (task is DownloadTask && _quarkResumeTag(task) != null) {
+        await _resumeQuarkWithFreshUrl(task, client);
+        return;
+      }
+    }
 
     // Try native resume first (works for any DownloadTask that was paused)
     if (bgTaskId != null && await _tryResumeNativeTask(globalKey, bgTaskId)) return;
@@ -3568,7 +3836,7 @@ class DownloadManagerService {
 
     var markedDownloading = false;
     try {
-      final task = await (taskForId ?? FileDownloader().taskForId)(bgTaskId);
+      final task = await (taskForId ?? _downloader.taskForId)(bgTaskId);
       if (task == null || task is! DownloadTask) return false;
       if (_isObsoleteMountedVideoTask(task)) {
         await _discardObsoleteMountedTask(task);
@@ -3582,7 +3850,7 @@ class DownloadManagerService {
       // so the download would restart from 0%.
       await _transitionStatus(globalKey, DownloadStatus.downloading);
       markedDownloading = true;
-      if (await (resumeTask ?? FileDownloader().resume)(task)) {
+      if (await (resumeTask ?? _downloader.resume)(task)) {
         appLogger.i('Resumed download via background_downloader for $globalKey');
         return true;
       }
@@ -4547,6 +4815,8 @@ class DownloadManagerService {
 
   void dispose() {
     _disposed = true;
+    _latestQuarkProgress.clear();
+    _savedQuarkResumes.clear();
     for (final timer in _progressDebounceTimers.values) {
       timer.cancel();
     }

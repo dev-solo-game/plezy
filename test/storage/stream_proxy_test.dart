@@ -93,8 +93,10 @@ void main() {
     Uri url, {
     String? range,
     String method = 'GET',
+    Map<String, String> headers = const {},
   }) async {
     final request = await client.openUrl(method, url);
+    headers.forEach(request.headers.set);
     if (range != null) request.headers.set(HttpHeaders.rangeHeader, range);
     final response = await request.close();
     final body = await response.expand((c) => c).toList();
@@ -222,6 +224,24 @@ void main() {
     expect(proxy.isRegisteredDownloadUrl(oldBulk.toString()), isFalse);
     proxy.unregisterMount('m1');
     expect(proxy.isRegisteredDownloadUrl(bulk.toString()), isFalse);
+  });
+
+  test('a checkpointed bulk URL refuses changed validators and zero-offset resumes', () async {
+    const entry = StorageEntry(path: '/file.mkv', name: 'file.mkv', isDirectory: false, size: 1000);
+    const tag = '"plezy-quark-current"';
+    final bulk = await proxy.register(mountId: 'm1', driver: driver, entry: entry, bulk: true, downloadETag: tag);
+    // A later play registration of the same file cannot erase the bulk tag.
+    await proxy.register(mountId: 'm1', driver: driver, entry: entry);
+    const resume = {HttpHeaders.ifMatchHeader: tag, StreamProxy.resumeRequestHeader: '1'};
+    expect((await fetch(bulk, headers: resume)).status, HttpStatus.requestedRangeNotSatisfiable);
+    expect((await fetch(bulk, range: 'bytes=0-', headers: resume)).status, HttpStatus.requestedRangeNotSatisfiable);
+    final changed = await fetch(bulk, range: 'bytes=400-', headers: {...resume, HttpHeaders.ifMatchHeader: '"old"'});
+    expect(changed.status, HttpStatus.preconditionFailed);
+    expect(driver.reads, isEmpty);
+    final resumed = await fetch(bulk, range: 'bytes=400-', headers: resume);
+    expect(resumed.status, HttpStatus.partialContent);
+    expect(resumed.headers.value(HttpHeaders.etagHeader), tag);
+    expect(resumed.body, content.sublist(400));
   });
 
   test('a disconnected bulk client cancels the upstream stream', () async {

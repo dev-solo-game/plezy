@@ -58,6 +58,9 @@ class DownloadResolution {
   /// The first (for most items the only) file.
   final String? videoUrl;
   final String? mediaSourceId;
+
+  /// Version validator used when a mounted download is resumed by Windows.
+  final String? resumeETag;
   final List<DownloadSubtitleSpec> externalSubtitles;
 
   /// Whether [externalSubtitles] is authoritative. A false value keeps the
@@ -71,6 +74,7 @@ class DownloadResolution {
   const DownloadResolution({
     required this.videoUrl,
     this.mediaSourceId,
+    this.resumeETag,
     this.externalSubtitles = const [],
     this.externalSubtitlesResolved = true,
     this.additionalParts = const [],
