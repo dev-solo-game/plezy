@@ -42,8 +42,9 @@ import 'profile_name_field.dart';
 /// pick up additional connections via the borrow flow.
 class ProfileDetailScreen extends StatefulWidget {
   final Profile profile;
+  final bool mediaSourcesOnly;
 
-  const ProfileDetailScreen({super.key, required this.profile});
+  const ProfileDetailScreen({super.key, required this.profile, this.mediaSourcesOnly = false});
 
   @override
   State<ProfileDetailScreen> createState() => _ProfileDetailScreenState();
@@ -145,7 +146,11 @@ class _ProfileDetailScreenState extends State<ProfileDetailScreen> with Controll
   }
 
   Future<void> _addConnection() async {
-    await Navigator.of(context).push(MaterialPageRoute(builder: (_) => AddConnectionScreen(targetProfile: _profile)));
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => AddConnectionScreen(targetProfile: _profile, mediaBrowserOnly: widget.mediaSourcesOnly),
+      ),
+    );
   }
 
   Future<void> _removeConnection(ProfileConnection pc, Connection conn) async {
@@ -264,68 +269,70 @@ class _ProfileDetailScreenState extends State<ProfileDetailScreen> with Controll
     final avatarUrl = context.watch<ActiveProfileProvider>().avatarUrlFor(_profile.id);
 
     return FocusedScrollScaffold(
-      title: Text(_profile.displayName),
+      title: Text(widget.mediaSourcesOnly ? 'Emby / Jellyfin · ${_profile.displayName}' : _profile.displayName),
       slivers: [
         SliverPadding(
           padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
           sliver: SliverList(
             delegate: SliverChildListDelegate([
-              Center(
-                child: ProfileAvatar(profile: _profile, size: 96, avatarUrl: avatarUrl),
-              ),
-              const SizedBox(height: 24),
-              Text(t.profiles.profileNameLabel, style: theme.textTheme.labelLarge),
-              const SizedBox(height: 8),
-              if (isLocal)
-                ProfileNameField(
-                  controller: _nameController,
-                  focusNode: _nameFocusNode,
-                  onChanged: () => setState(() {}),
-                  onNavigateRight: _saveNameFocusNode.requestFocus,
-                  trailing: FocusableButton(
-                    focusNode: _saveNameFocusNode,
-                    useBackgroundFocus: true,
-                    onNavigateLeft: _nameFocusNode.requestFocus,
-                    onPressed:
-                        _nameController.text.trim().isEmpty || _nameController.text.trim() == _profile.displayName
-                        ? null
-                        : _saveName,
-                    child: FilledButton(
+              if (!widget.mediaSourcesOnly) ...[
+                Center(
+                  child: ProfileAvatar(profile: _profile, size: 96, avatarUrl: avatarUrl),
+                ),
+                const SizedBox(height: 24),
+                Text(t.profiles.profileNameLabel, style: theme.textTheme.labelLarge),
+                const SizedBox(height: 8),
+                if (isLocal)
+                  ProfileNameField(
+                    controller: _nameController,
+                    focusNode: _nameFocusNode,
+                    onChanged: () => setState(() {}),
+                    onNavigateRight: _saveNameFocusNode.requestFocus,
+                    trailing: FocusableButton(
+                      focusNode: _saveNameFocusNode,
+                      useBackgroundFocus: true,
+                      onNavigateLeft: _nameFocusNode.requestFocus,
                       onPressed:
                           _nameController.text.trim().isEmpty || _nameController.text.trim() == _profile.displayName
                           ? null
                           : _saveName,
-                      child: Text(t.common.save),
+                      child: FilledButton(
+                        onPressed:
+                            _nameController.text.trim().isEmpty || _nameController.text.trim() == _profile.displayName
+                            ? null
+                            : _saveName,
+                        child: Text(t.common.save),
+                      ),
                     ),
+                  )
+                else
+                  Text(
+                    _profile.displayName,
+                    style: theme.textTheme.bodyLarge?.copyWith(color: theme.colorScheme.onSurfaceVariant),
                   ),
-                )
-              else
-                Text(
-                  _profile.displayName,
-                  style: theme.textTheme.bodyLarge?.copyWith(color: theme.colorScheme.onSurfaceVariant),
-                ),
-              const SizedBox(height: 24),
-              Text(t.profiles.pinProtectionLabel, style: theme.textTheme.labelLarge),
-              const SizedBox(height: 8),
-              if (!isLocal)
-                Text(
-                  _profile.plexProtected ? t.profiles.pinManagedByPlex : t.profiles.noPinSetEditOnPlex,
-                  style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
-                )
-              else if (_profile.pinHash == null)
-                FocusableButton(
-                  focusNode: _setPinFocusNode,
-                  useBackgroundFocus: true,
-                  onPressed: _setPin,
-                  child: OutlinedButton.icon(
+                const SizedBox(height: 24),
+                Text(t.profiles.pinProtectionLabel, style: theme.textTheme.labelLarge),
+                const SizedBox(height: 8),
+                if (!isLocal)
+                  Text(
+                    _profile.plexProtected ? t.profiles.pinManagedByPlex : t.profiles.noPinSetEditOnPlex,
+                    style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                  )
+                else if (_profile.pinHash == null)
+                  FocusableButton(
+                    focusNode: _setPinFocusNode,
+                    useBackgroundFocus: true,
                     onPressed: _setPin,
-                    icon: const AppIcon(Symbols.lock_outline_rounded, fill: 1),
-                    label: Text(t.profiles.setPin),
-                  ),
-                )
-              else
-                PinStatusRow(onChange: _setPin, onRemove: _clearPin, changeFocusNode: _changePinFocusNode),
-              const SizedBox(height: 32),
+                    child: OutlinedButton.icon(
+                      onPressed: _setPin,
+                      icon: const AppIcon(Symbols.lock_outline_rounded, fill: 1),
+                      label: Text(t.profiles.setPin),
+                    ),
+                  )
+                else
+                  PinStatusRow(onChange: _setPin, onRemove: _clearPin, changeFocusNode: _changePinFocusNode),
+                const SizedBox(height: 32),
+              ],
               Row(
                 children: [
                   Expanded(child: Text(t.profiles.connectionsLabel, style: theme.textTheme.labelLarge)),
@@ -344,12 +351,13 @@ class _ProfileDetailScreenState extends State<ProfileDetailScreen> with Controll
               const SizedBox(height: 8),
               _ConnectionsList(
                 profile: _profile,
+                mediaBrowserOnly: widget.mediaSourcesOnly,
                 onRemove: _removeConnection,
                 onEdit: _editConnection,
                 onSignOutParent: _signOutParentAccount,
               ),
               const SizedBox(height: 24),
-              if (isLocal)
+              if (isLocal && !widget.mediaSourcesOnly)
                 FocusableButton(
                   focusNode: _deleteProfileFocusNode,
                   useBackgroundFocus: true,
@@ -370,12 +378,14 @@ class _ProfileDetailScreenState extends State<ProfileDetailScreen> with Controll
 
 class _ConnectionsList extends StatefulWidget {
   final Profile profile;
+  final bool mediaBrowserOnly;
   final Future<void> Function(ProfileConnection pc, Connection conn) onRemove;
   final Future<void> Function(Connection conn) onEdit;
   final Future<void> Function(Connection conn) onSignOutParent;
 
   const _ConnectionsList({
     required this.profile,
+    this.mediaBrowserOnly = false,
     required this.onRemove,
     required this.onEdit,
     required this.onSignOutParent,
@@ -435,8 +445,13 @@ class _ConnectionsListState extends State<_ConnectionsList> {
                 // full picture. The profile *is* a home user of that account,
                 // so the only removal is signing out of the whole account;
                 // it isn't shown for locals.
-                final parentConn = profile.isPlexHome ? byId[profile.parentConnectionId] : null;
-                final visiblePcs = visibleProfileConnections(profile, pcs);
+                final parentConn = profile.isPlexHome && !widget.mediaBrowserOnly
+                    ? byId[profile.parentConnectionId]
+                    : null;
+                final visiblePcs = visibleProfileConnections(
+                  profile,
+                  pcs,
+                ).where((pc) => !widget.mediaBrowserOnly || byId[pc.connectionId] is JellyfinConnection).toList();
                 if (visiblePcs.isEmpty && parentConn == null) {
                   return Padding(
                     padding: const EdgeInsets.symmetric(vertical: 12),

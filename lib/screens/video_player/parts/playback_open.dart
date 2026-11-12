@@ -892,6 +892,7 @@ extension _VideoPlayerOpenMethods on VideoPlayerScreenState {
       // Errors logged from here on belong to this file; a previous file's
       // last error must not be named by this open's failure view.
       _lastLogError = null;
+      _mountGatewayTimedOut = false;
       _transportFaultSeen = false;
       onOpening?.call();
       return player.open(

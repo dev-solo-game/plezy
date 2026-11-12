@@ -109,6 +109,18 @@ void main() {
       expect((jelly as JellyfinConnection).baseUrl, 'https://jellyfin.local');
     });
 
+    test('disabled Plex connections are excluded from runtime reads and stay on disk', () async {
+      await registry.upsert(_plex(id: 'p'));
+      await registry.upsert(_jellyfin(id: 'j'));
+      await registry.upsert(_emby(id: 'e'));
+
+      final runtime = ConnectionRegistry(db, includePlex: false);
+      expect((await runtime.list()).map((connection) => connection.id), unorderedEquals(['j', 'e']));
+      expect((await runtime.watchConnections().first).map((connection) => connection.id), unorderedEquals(['j', 'e']));
+      expect(await runtime.get('p'), isNull);
+      expect(await registry.getPlexAccount('p'), isA<PlexAccountConnection>());
+    });
+
     test('Emby upsert preserves its persisted discriminator and connection dialect', () async {
       await registry.upsert(_emby(id: 'e'));
 

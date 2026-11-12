@@ -937,7 +937,12 @@ class LocalLibraryClient implements MediaServerClient {
 
   Future<StorageMount> _mountOf(LibraryFileRow file) async {
     final mount = _mountsById[file.mountId] ?? await _mountManager.registry.get(file.mountId);
-    if (mount == null) throw const PlaybackException('The mount this file is on was removed');
+    if (mount == null) {
+      throw const PlaybackException(
+        'The mount this file is on was removed',
+        reason: PlaybackFailureReason.localFileUnavailable,
+      );
+    }
     return mount;
   }
 
@@ -968,20 +973,20 @@ class LocalLibraryClient implements MediaServerClient {
     return const [];
   }
 
-  /// Whether [item]'s first video sits on a source that transcodes renditions
+  /// Whether the selected file sits on a source that offers renditions
   /// of its own (a Quark mount). Local only: reads the library and the mount,
   /// never the network.
-  Future<bool> offersStreamQualities(MediaItem item) async {
-    final picked = _pickVersion(await _versions(item.id), 0, null);
+  Future<bool> offersStreamQualities(MediaItem item, {String? mediaSourceId}) async {
+    final picked = _pickVersion(await _versions(item.id), 0, mediaSourceId);
     if (picked == null) return false;
     final mount = _mountsById[picked.file.mountId] ?? await _mountManager.registry.get(picked.file.mountId);
     return mount != null && _mountManager.variantOrder(mount).isNotEmpty;
   }
 
-  /// The renditions [item]'s first video can play in, best first, asked of
+  /// The renditions the selected file can play in, best first, asked of
   /// its source. Empty when the source serves none or cannot be reached.
-  Future<List<StreamQuality>> streamQualitiesOf(MediaItem item) async {
-    final picked = _pickVersion(await _versions(item.id), 0, null);
+  Future<List<StreamQuality>> streamQualitiesOf(MediaItem item, {String? mediaSourceId}) async {
+    final picked = _pickVersion(await _versions(item.id), 0, mediaSourceId);
     if (picked == null) return const [];
     try {
       final variants = await _streamVariants(await _mountOf(picked.file), picked.file);
@@ -996,11 +1001,17 @@ class LocalLibraryClient implements MediaServerClient {
     return id == null ? const [] : _repo.versionsOf(id);
   }
 
-  ({LibraryFileRow file, int index})? _pickVersion(List<LibraryFileRow> files, int mediaIndex, String? sourceId) {
+  ({LibraryFileRow file, int index})? _pickVersion(
+    List<LibraryFileRow> files,
+    int mediaIndex,
+    String? sourceId, {
+    bool requireSourceId = false,
+  }) {
     if (files.isEmpty) return null;
     if (sourceId != null) {
       final byId = files.indexWhere((f) => '${f.id}' == sourceId);
       if (byId >= 0) return (file: files[byId], index: byId);
+      if (requireSourceId) return null;
     }
     final index = mediaIndex >= 0 && mediaIndex < files.length ? mediaIndex : 0;
     return (file: files[index], index: index);
@@ -1025,8 +1036,15 @@ class LocalLibraryClient implements MediaServerClient {
   @override
   Future<PlaybackInitializationResult> getPlaybackInitialization(PlaybackInitializationOptions options) async {
     final files = await _versions(options.metadata.id);
-    final picked = _pickVersion(files, options.selectedMediaIndex, options.selectedMediaSourceId);
+    final sourceId = options.selectedMediaSourceId;
+    final picked = _pickVersion(files, options.selectedMediaIndex, sourceId, requireSourceId: true);
     if (picked == null) {
+      if (sourceId != null) {
+        throw const PlaybackException(
+          'The selected file was removed',
+          reason: PlaybackFailureReason.localFileUnavailable,
+        );
+      }
       throw const PlaybackException(
         'No file is available for this title',
         reason: PlaybackFailureReason.noPlayableSource,
@@ -1047,7 +1065,10 @@ class LocalLibraryClient implements MediaServerClient {
               .toString();
       subtitles = await _externalSubtitles(picked.file);
     } on StorageException catch (e) {
-      throw PlaybackException(e.message, reason: PlaybackFailureReason.serverUnavailable);
+      final reason = e.kind == StorageErrorKind.network || e.kind == StorageErrorKind.notFound
+          ? PlaybackFailureReason.localFileUnavailable
+          : PlaybackFailureReason.serverUnavailable;
+      throw PlaybackException(e.message, reason: reason);
     }
     return PlaybackInitializationResult(
       availableVersions: [for (final file in files) _toVersion(file)],

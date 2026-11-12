@@ -81,10 +81,18 @@ Future<DownloadVersionConfig?> resolveDownloadVersion(
 
 /// Show a dialog for selecting a media version.
 /// Returns the selected index, or null if cancelled.
-Future<int?> showVersionPickerDialog(BuildContext context, List<MediaVersion> versions, String title) {
+Future<int?> showVersionPickerDialog(
+  BuildContext context,
+  List<MediaVersion> versions,
+  String title, {
+  String? description,
+  bool showCancel = false,
+}) {
   return showOptionPickerDialog<int>(
     context,
     title: title,
+    description: description,
+    showCancel: showCancel,
     options: List.generate(
       versions.length,
       (index) => (icon: Symbols.video_file_rounded, label: versions[index].displayLabel, value: index),

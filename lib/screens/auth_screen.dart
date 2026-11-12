@@ -67,7 +67,7 @@ class _AuthScreenState extends State<AuthScreen> {
     _errorMessage = widget.initialErrorMessage;
     // Debug-token verification only — release builds must not hold an idle
     // auth service (and its HTTP client) for a dialog that can't open.
-    if (kDebugMode && widget.initializeServices) unawaited(_initVerifyService());
+    if (plexSupportEnabled && kDebugMode && widget.initializeServices) unawaited(_initVerifyService());
   }
 
   Future<void> _initVerifyService() async {
@@ -352,6 +352,7 @@ class _AuthScreenState extends State<AuthScreen> {
         ],
       );
     }
+    if (!plexSupportEnabled) return _buildInitialButtons(context, () {}, () {}, false);
     return PlexPinAuthFlow(
       onTokenReceived: _connectToAllServersAndNavigate,
       autoStartQrOnTV: false,
@@ -373,75 +374,78 @@ class _AuthScreenState extends State<AuthScreen> {
       mainAxisSize: .min,
       crossAxisAlignment: .stretch,
       children: [
-        if (isTV) ...[
-          FocusableButton(
-            autofocus: true,
-            onPressed: busy ? null : startQrAfterRecovery,
-            useBackgroundFocus: true,
-            child: ElevatedButton(
+        if (plexSupportEnabled) ...[
+          if (isTV) ...[
+            FocusableButton(
+              autofocus: true,
               onPressed: busy ? null : startQrAfterRecovery,
-              style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 16)),
-              child: Row(
-                mainAxisAlignment: .center,
-                mainAxisSize: .min,
-                children: [
-                  const BackendBadge(backend: MediaBackend.plex, size: 18),
-                  const SizedBox(width: 8),
-                  Text(t.auth.signInWithPlex),
-                ],
+              useBackgroundFocus: true,
+              child: ElevatedButton(
+                onPressed: busy ? null : startQrAfterRecovery,
+                style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 16)),
+                child: Row(
+                  mainAxisAlignment: .center,
+                  mainAxisSize: .min,
+                  children: [
+                    const BackendBadge(backend: MediaBackend.plex, size: 18),
+                    const SizedBox(width: 8),
+                    Text(t.auth.signInWithPlex),
+                  ],
+                ),
               ),
             ),
-          ),
-          if (!isAppleTV) ...[
-            const SizedBox(height: 12),
+            if (!isAppleTV) ...[
+              const SizedBox(height: 12),
+              FocusableButton(
+                onPressed: busy ? null : startBrowserAfterRecovery,
+                child: OutlinedButton(
+                  onPressed: busy ? null : startBrowserAfterRecovery,
+                  style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 16)),
+                  child: Text(t.auth.useBrowser),
+                ),
+              ),
+            ],
+          ] else ...[
             FocusableButton(
               onPressed: busy ? null : startBrowserAfterRecovery,
-              child: OutlinedButton(
+              useBackgroundFocus: true,
+              child: ElevatedButton.icon(
                 onPressed: busy ? null : startBrowserAfterRecovery,
+                style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 16)),
+                icon: const BackendBadge(backend: MediaBackend.plex, size: 18),
+                label: Text(t.auth.signInWithPlex),
+              ),
+            ),
+            const SizedBox(height: 12),
+            FocusableButton(
+              onPressed: busy ? null : startQrAfterRecovery,
+              child: OutlinedButton(
+                onPressed: busy ? null : startQrAfterRecovery,
                 style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 16)),
-                child: Text(t.auth.useBrowser),
+                child: Text(t.auth.showQRCode),
               ),
             ),
           ],
-        ] else ...[
-          FocusableButton(
-            onPressed: busy ? null : startBrowserAfterRecovery,
-            useBackgroundFocus: true,
-            child: ElevatedButton.icon(
-              onPressed: busy ? null : startBrowserAfterRecovery,
-              style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 16)),
-              icon: const BackendBadge(backend: MediaBackend.plex, size: 18),
-              label: Text(t.auth.signInWithPlex),
-            ),
+          const SizedBox(height: 24),
+          Row(
+            children: [
+              Expanded(child: Divider(color: Theme.of(context).colorScheme.outlineVariant)),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                child: Text(
+                  t.auth.or,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6),
+                  ),
+                ),
+              ),
+              Expanded(child: Divider(color: Theme.of(context).colorScheme.outlineVariant)),
+            ],
           ),
           const SizedBox(height: 12),
-          FocusableButton(
-            onPressed: busy ? null : startQrAfterRecovery,
-            child: OutlinedButton(
-              onPressed: busy ? null : startQrAfterRecovery,
-              style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 16)),
-              child: Text(t.auth.showQRCode),
-            ),
-          ),
         ],
-        const SizedBox(height: 24),
-        Row(
-          children: [
-            Expanded(child: Divider(color: Theme.of(context).colorScheme.outlineVariant)),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              child: Text(
-                t.auth.or,
-                style: Theme.of(
-                  context,
-                ).textTheme.bodySmall?.copyWith(color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6)),
-              ),
-            ),
-            Expanded(child: Divider(color: Theme.of(context).colorScheme.outlineVariant)),
-          ],
-        ),
-        const SizedBox(height: 12),
         FocusableButton(
+          autofocus: !plexSupportEnabled && isTV,
           onPressed: connectToJellyfin,
           child: OutlinedButton.icon(
             onPressed: connectToJellyfin,
@@ -470,7 +474,7 @@ class _AuthScreenState extends State<AuthScreen> {
             label: Text(t.storage.title),
           ),
         ),
-        if (kDebugMode) ...[
+        if (plexSupportEnabled && kDebugMode) ...[
           const SizedBox(height: 12),
           FocusableButton(
             onPressed: _handleDebugTap,

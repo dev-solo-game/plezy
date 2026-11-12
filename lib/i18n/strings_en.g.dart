@@ -1114,8 +1114,8 @@ class Translations$settings$en {
 	/// en: 'Download connections'
 	String get downloadConnections => 'Download connections';
 
-	/// en: 'Cloud drives: fetch each file over ${count} connections at once'
-	String downloadConnectionsDescription({required Object count}) => 'Cloud drives: fetch each file over ${count} connections at once';
+	/// en: 'Cloud drives: up to ${count} connections per file'
+	String downloadConnectionsDescription({required Object count}) => 'Cloud drives: up to ${count} connections per file';
 
 	/// en: 'Connections'
 	String get downloadConnectionsLabel => 'Connections';
@@ -2721,6 +2721,9 @@ class Translations$messages$en {
 	/// en: 'File unavailable'
 	String get mediaUnreadableTitle => 'File unavailable';
 
+	/// en: 'The selected file could not be opened. It may have been removed or its storage may be offline. Choose another version to continue watching.'
+	String get localFileUnavailableChooseVersion => 'The selected file could not be opened. It may have been removed or its storage may be offline. Choose another version to continue watching.';
+
 	/// en: 'The server found this item but could not read its file (HTTP 404). The file was probably moved, deleted, or its storage is offline. Ask the server owner to check the file and rescan the library.'
 	String get mediaUnreadableBody => 'The server found this item but could not read its file (HTTP 404). The file was probably moved, deleted, or its storage is offline. Ask the server owner to check the file and rescan the library.';
 
@@ -3303,8 +3306,8 @@ class Translations$discover$en {
 	/// en: 'Continue Watching in ${library}'
 	String continueWatchingIn({required Object library}) => 'Continue Watching in ${library}';
 
-	/// en: 'Select Version'
-	String get selectVersion => 'Select Version';
+	/// en: 'Choose resume source'
+	String get selectResumeSource => 'Choose resume source';
 
 	/// en: 'Next Up'
 	String get nextUp => 'Next Up';
@@ -6563,6 +6566,12 @@ class Translations$streamQuality$en {
 
 	// Translations
 
+	/// en: 'Preferred quality'
+	String get preferred => 'Preferred quality';
+
+	/// en: 'Local library quality'
+	String get localPreference => 'Local library quality';
+
 	/// en: 'This file has no transcoded qualities yet; it plays the original'
 	String get noneForFile => 'This file has no transcoded qualities yet; it plays the original';
 
@@ -8963,7 +8972,7 @@ extension on Translations {
 			'settings.autoRemoveWatchedDownloads' => 'Auto-remove watched downloads',
 			'settings.autoRemoveWatchedDownloadsDescription' => 'Delete watched downloads automatically',
 			'settings.downloadConnections' => 'Download connections',
-			'settings.downloadConnectionsDescription' => ({required Object count}) => 'Cloud drives: fetch each file over ${count} connections at once',
+			'settings.downloadConnectionsDescription' => ({required Object count}) => 'Cloud drives: up to ${count} connections per file',
 			'settings.downloadConnectionsLabel' => 'Connections',
 			'settings.downloadChunkSize' => 'Download chunk size',
 			'settings.downloadChunkSizeDescription' => ({required Object size}) => 'Cloud drives: ${size} MB per request',
@@ -9507,6 +9516,7 @@ extension on Translations {
 			'messages.serverLimitBody' => 'Server error (HTTP 500). A bandwidth/transcoding limit likely rejected this session. Ask the owner to adjust it.',
 			'messages.serverLimitTranscode' => 'Try transcoding',
 			'messages.mediaUnreadableTitle' => 'File unavailable',
+			'messages.localFileUnavailableChooseVersion' => 'The selected file could not be opened. It may have been removed or its storage may be offline. Choose another version to continue watching.',
 			'messages.mediaUnreadableBody' => 'The server found this item but could not read its file (HTTP 404). The file was probably moved, deleted, or its storage is offline. Ask the server owner to check the file and rescan the library.',
 			'messages.serverBusyTitle' => 'Stream unavailable',
 			'messages.serverBusyBody' => 'The server kept refusing to stream this file (HTTP 503). It may be restarting, busy, or the file\'s storage may be offline. Try again in a moment — if it keeps happening, ask the server owner to check the server and the file\'s storage.',
@@ -9622,9 +9632,9 @@ extension on Translations {
 			'profiles.borrowFailed' => 'Failed to borrow connection.',
 			'profiles.incorrectPin' => 'Incorrect PIN.',
 			'profiles.incorrectPinTryAgain' => 'Incorrect PIN. Please try again.',
-			'profiles.sourceProfileMissingParentAccount' => 'Source profile is missing its parent account.',
 			_ => null,
 		} ?? switch (path) {
+			'profiles.sourceProfileMissingParentAccount' => 'Source profile is missing its parent account.',
 			'profiles.failedToLoadHomeUsers' => 'Could not load your Plex Home users. Check your connection and try again.',
 			'profiles.failedToVerifyPin' => 'Failed to verify PIN.',
 			'profiles.newProfile' => 'New profile',
@@ -9707,7 +9717,7 @@ extension on Translations {
 			'discover.addMediaToLibraries' => 'Add some media to your libraries',
 			'discover.continueWatching' => 'Continue Watching',
 			'discover.continueWatchingIn' => ({required Object library}) => 'Continue Watching in ${library}',
-			'discover.selectVersion' => 'Select Version',
+			'discover.selectResumeSource' => 'Choose resume source',
 			'discover.nextUp' => 'Next Up',
 			'discover.nextUpIn' => ({required Object library}) => 'Next Up in ${library}',
 			'discover.recentlyAdded' => 'Recently Added',
@@ -10136,9 +10146,9 @@ extension on Translations {
 			'liveTv.recordingRuleDeleted' => 'Recording rule deleted',
 			'liveTv.processRecordingRules' => 'Re-evaluate rules',
 			'liveTv.recordingInProgress' => 'Recording now',
-			'liveTv.recordingsCount' => ({required Object count}) => '${count} scheduled',
 			_ => null,
 		} ?? switch (path) {
+			'liveTv.recordingsCount' => ({required Object count}) => '${count} scheduled',
 			'liveTv.editRule' => 'Edit rule',
 			'liveTv.editRuleAction' => 'Edit',
 			'liveTv.recordingRuleUpdated' => 'Recording rule updated',
@@ -10650,9 +10660,9 @@ extension on Translations {
 			'performanceOverlay.dvRpuAverage' => 'DV RPU Avg',
 			'performanceOverlay.dvSampleAverage' => 'DV Sample Avg',
 			'performanceOverlay.maxLuma' => 'Max Luma',
-			'performanceOverlay.minLuma' => 'Min Luma',
 			_ => null,
 		} ?? switch (path) {
+			'performanceOverlay.minLuma' => 'Min Luma',
 			'performanceOverlay.maxCll' => 'MaxCLL',
 			'performanceOverlay.maxFall' => 'MaxFALL',
 			'performanceOverlay.cacheUsed' => 'Cache Used',
@@ -11070,6 +11080,8 @@ extension on Translations {
 			'storage.noMatchResults' => 'No results',
 			'storage.mediaSources' => 'Media sources',
 			'storage.scraperSettingsDescription' => 'TMDB key, language and proxy for metadata',
+			'streamQuality.preferred' => 'Preferred quality',
+			'streamQuality.localPreference' => 'Local library quality',
 			'streamQuality.noneForFile' => 'This file has no transcoded qualities yet; it plays the original',
 			'streamQuality.original' => 'Original',
 			'streamQuality.superHd' => 'Full HD',

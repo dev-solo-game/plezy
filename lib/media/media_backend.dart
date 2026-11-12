@@ -1,6 +1,9 @@
 import '../utils/app_logger.dart';
 import 'media_browser_dialect.dart';
 
+/// Product gate for Plex sign-in and activation of stored Plex connections.
+const plexSupportEnabled = bool.fromEnvironment('PLEZY_ENABLE_PLEX');
+
 /// Backend identifier for a media item, library, or server.
 ///
 /// Used as a discriminator on neutral domain types so consumers can branch on

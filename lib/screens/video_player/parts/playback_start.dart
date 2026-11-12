@@ -380,7 +380,18 @@ extension _VideoPlayerPlaybackStartMethods on VideoPlayerScreenState {
         widget.launchObserver?.mark('failed', failure: e.reason.name);
       }
       appLogger.w('Playback initialization failed', error: e, stackTrace: st);
-      if (attempt.isCurrent && mounted) _reportStartFailure(e.message, primaryMediaOpened: primaryMediaOpened);
+      if (attempt.isCurrent && mounted) {
+        if (e.reason == PlaybackFailureReason.localFileUnavailable && !primaryMediaOpened) {
+          void showUnavailable() => _reportStartFailure(t.messages.mediaUnreadableTitle, primaryMediaOpened: false);
+          if (_offerLocalVersionSwitch(onNoAlternatives: showUnavailable)) {
+            _latchFatalPlaybackError(PlaybackFailureAction.mediaUnreadableDialog);
+          } else {
+            showUnavailable();
+          }
+        } else {
+          _reportStartFailure(e.message, primaryMediaOpened: primaryMediaOpened);
+        }
+      }
     } catch (e, st) {
       if (attempt.isCurrent) widget.launchObserver?.mark('failed', failure: 'playbackFailed');
       appLogger.e('Failed to start playback', error: e, stackTrace: st);

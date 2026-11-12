@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:plezy/i18n/strings.g.dart';
 import 'package:plezy/focus/focusable_wrapper.dart';
 import 'package:plezy/focus/input_mode_tracker.dart';
 import 'package:plezy/media/media_backend.dart';
@@ -23,16 +24,23 @@ void main() {
   Profile profile(String id) =>
       Profile.local(id: id, displayName: id, sortOrder: 0, createdAt: DateTime.fromMillisecondsSinceEpoch(0));
 
-  testWidgets('offers Plex, Jellyfin and Emby, each with its own badge', (tester) async {
+  testWidgets('offers the enabled backends with their own badges', (tester) async {
     await tester.pumpWidget(app(const AddConnectionScreen()));
     await tester.pumpAndSettle();
 
-    expect(find.text('Sign in with Plex'), findsOneWidget);
+    expect(find.text('Sign in with Plex'), plexSupportEnabled ? findsOneWidget : findsNothing);
     expect(find.text('Connect to Jellyfin'), findsOneWidget);
     expect(find.text('Connect to Emby'), findsOneWidget);
 
     final badges = tester.widgetList<BackendBadge>(find.byType(BackendBadge)).map((b) => b.backend).toList();
-    expect(badges, containsAll(<MediaBackend>[MediaBackend.plex, MediaBackend.jellyfin, MediaBackend.emby]));
+    expect(
+      badges,
+      unorderedEquals(<MediaBackend>[
+        if (plexSupportEnabled) MediaBackend.plex,
+        MediaBackend.jellyfin,
+        MediaBackend.emby,
+      ]),
+    );
   });
 
   /// The pushed sign-in screen starts a 2s LAN discovery sweep and a
@@ -45,6 +53,18 @@ void main() {
     await tester.pump(const Duration(milliseconds: 400));
     return tester.widget<AddJellyfinScreen>(find.byType(AddJellyfinScreen));
   }
+
+  testWidgets('media sources picker offers only Emby and Jellyfin and keeps the target profile', (tester) async {
+    final target = profile('Local');
+    await tester.pumpWidget(app(AddConnectionScreen(targetProfile: target, mediaBrowserOnly: true)));
+    await tester.pumpAndSettle();
+    expect(find.text('Sign in with Plex'), findsNothing);
+    expect(find.text(t.addServer.borrowFromAnotherProfile), findsNothing);
+    expect(find.text('Connect to Jellyfin'), findsOneWidget);
+    final screen = await tapCard(tester, 'Connect to Emby');
+    expect(screen.targetProfile?.id, target.id);
+    expect(screen.dialect, MediaBrowserDialect.emby);
+  });
 
   testWidgets('the Emby card opens the sign-in screen bound to the Emby dialect', (tester) async {
     await tester.pumpWidget(app(const AddConnectionScreen()));
@@ -65,7 +85,7 @@ void main() {
     expect(find.text('Add Jellyfin server'), findsOneWidget);
   });
 
-  testWidgets('the Plex card is unaffected by the new option', (tester) async {
+  testWidgets('the Plex card opens Plex sign-in in an enabled build', skip: !plexSupportEnabled, (tester) async {
     await tester.pumpWidget(app(const AddConnectionScreen()));
     await tester.pumpAndSettle();
 
@@ -90,7 +110,7 @@ void main() {
     expect(screen.targetProfile?.id, target.id);
   });
 
-  testWidgets('the D-pad steps through all three backend cards', (tester) async {
+  testWidgets('the D-pad steps through all enabled backend cards', (tester) async {
     await tester.pumpWidget(app(const AddConnectionScreen()));
     await tester.pumpAndSettle();
 
@@ -103,7 +123,8 @@ void main() {
       if (focused != null) visited.add(focused);
     }
 
-    expect(find.byType(FocusableWrapper), findsNWidgets(3));
-    expect(visited.length, greaterThanOrEqualTo(3), reason: 'D-pad did not reach every backend card');
+    final count = plexSupportEnabled ? 3 : 2;
+    expect(find.byType(FocusableWrapper), findsNWidgets(count));
+    expect(visited.length, greaterThanOrEqualTo(count), reason: 'D-pad did not reach every backend card');
   });
 }

@@ -484,7 +484,7 @@ class Translations$settings$zh extends Translations$settings$en {
 	@override String get autoRemoveWatchedDownloads => '自动移除已观看的下载';
 	@override String get autoRemoveWatchedDownloadsDescription => '自动删除已观看的下载';
 	@override String get downloadConnections => '下载线程数';
-	@override String downloadConnectionsDescription({required Object count}) => '云盘：每个文件同时用 ${count} 个连接下载';
+	@override String downloadConnectionsDescription({required Object count}) => '云盘：每个文件最多使用 ${count} 个连接下载';
 	@override String get downloadConnectionsLabel => '线程数';
 	@override String get downloadChunkSize => '下载分块大小';
 	@override String downloadChunkSizeDescription({required Object size}) => '云盘：每次请求 ${size} MB';
@@ -1088,6 +1088,7 @@ class Translations$messages$zh extends Translations$messages$en {
 	@override String get serverLimitTitle => '播放失败';
 	@override String get serverLimitBody => '服务器错误（HTTP 500）。此次会话可能因带宽或转码限制而被拒绝。请联系服务器所有者调整限制。';
 	@override String get mediaUnreadableTitle => '文件不可用';
+	@override String get localFileUnavailableChooseVersion => '无法打开所选文件。文件可能已被删除，或来源已离线。请选择其他版本继续观看。';
 	@override String get mediaUnreadableBody => '服务器找到了此项目，但无法读取其文件（HTTP 404）。文件可能已被移动、删除，或其存储已离线。请联系服务器管理员检查文件并重新扫描媒体库。';
 	@override String get serverBusyTitle => '视频流不可用';
 	@override String get serverBusyBody => '服务器持续拒绝传输此文件（HTTP 503）。服务器可能正在重启或正忙，也可能是文件所在的存储设备已离线。请稍后重试；如果问题持续出现，请联系服务器所有者检查服务器和文件存储设备。';
@@ -1326,6 +1327,7 @@ class Translations$discover$zh extends Translations$discover$en {
 	@override String get addMediaToLibraries => '请向你的媒体库添加一些媒体';
 	@override String get continueWatching => '继续观看';
 	@override String continueWatchingIn({required Object library}) => '${library} 中继续观看';
+	@override String get selectResumeSource => '选择续播来源';
 	@override String get nextUp => '接下来';
 	@override String nextUpIn({required Object library}) => '${library} 中接下来';
 	@override String get recentlyAdded => '最近添加';
@@ -2619,6 +2621,8 @@ class Translations$streamQuality$zh extends Translations$streamQuality$en {
 	final TranslationsZh _root; // ignore: unused_field
 
 	// Translations
+	@override String get preferred => '首选画质';
+	@override String get localPreference => '本地媒体库画质';
 	@override String get noneForFile => '这个文件暂时没有转码画质，会播放原画';
 	@override String get original => '原画';
 	@override String get superHd => '超清';
@@ -3971,7 +3975,7 @@ extension on TranslationsZh {
 			'settings.autoRemoveWatchedDownloads' => '自动移除已观看的下载',
 			'settings.autoRemoveWatchedDownloadsDescription' => '自动删除已观看的下载',
 			'settings.downloadConnections' => '下载线程数',
-			'settings.downloadConnectionsDescription' => ({required Object count}) => '云盘：每个文件同时用 ${count} 个连接下载',
+			'settings.downloadConnectionsDescription' => ({required Object count}) => '云盘：每个文件最多使用 ${count} 个连接下载',
 			'settings.downloadConnectionsLabel' => '线程数',
 			'settings.downloadChunkSize' => '下载分块大小',
 			'settings.downloadChunkSizeDescription' => ({required Object size}) => '云盘：每次请求 ${size} MB',
@@ -4512,6 +4516,7 @@ extension on TranslationsZh {
 			'messages.serverLimitTitle' => '播放失败',
 			'messages.serverLimitBody' => '服务器错误（HTTP 500）。此次会话可能因带宽或转码限制而被拒绝。请联系服务器所有者调整限制。',
 			'messages.mediaUnreadableTitle' => '文件不可用',
+			'messages.localFileUnavailableChooseVersion' => '无法打开所选文件。文件可能已被删除，或来源已离线。请选择其他版本继续观看。',
 			'messages.mediaUnreadableBody' => '服务器找到了此项目，但无法读取其文件（HTTP 404）。文件可能已被移动、删除，或其存储已离线。请联系服务器管理员检查文件并重新扫描媒体库。',
 			'messages.serverBusyTitle' => '视频流不可用',
 			'messages.serverBusyBody' => '服务器持续拒绝传输此文件（HTTP 503）。服务器可能正在重启或正忙，也可能是文件所在的存储设备已离线。请稍后重试；如果问题持续出现，请联系服务器所有者检查服务器和文件存储设备。',
@@ -4630,9 +4635,9 @@ extension on TranslationsZh {
 			'profiles.sourceProfileMissingParentAccount' => '源用户资料缺少关联的主账户。',
 			'profiles.failedToLoadHomeUsers' => '无法加载您的 Plex Home 用户。请检查网络连接后重试。',
 			'profiles.failedToVerifyPin' => '无法验证 PIN。',
-			'profiles.newProfile' => '新建用户资料',
 			_ => null,
 		} ?? switch (path) {
+			'profiles.newProfile' => '新建用户资料',
 			'profiles.profileNameHint' => '例如：访客、儿童、客厅',
 			'profiles.pinProtectionOptional' => 'PIN 保护（可选）',
 			'profiles.pinExplain' => '切换用户资料时需要输入 4 位 PIN。',
@@ -4712,6 +4717,7 @@ extension on TranslationsZh {
 			'discover.addMediaToLibraries' => '请向你的媒体库添加一些媒体',
 			'discover.continueWatching' => '继续观看',
 			'discover.continueWatchingIn' => ({required Object library}) => '${library} 中继续观看',
+			'discover.selectResumeSource' => '选择续播来源',
 			'discover.nextUp' => '接下来',
 			'discover.nextUpIn' => ({required Object library}) => '${library} 中接下来',
 			'discover.recentlyAdded' => '最近添加',
@@ -5143,10 +5149,10 @@ extension on TranslationsZh {
 			'liveTv.guideReloadRequested' => '已请求更新节目指南',
 			'liveTv.guideReloadFailed' => '无法刷新节目指南',
 			'liveTv.rulesProcessRequested' => '已请求重新评估规则',
-			'liveTv.rulesProcessFailed' => '无法重新评估录制规则',
-			'liveTv.recordShow' => '录制节目',
 			_ => null,
 		} ?? switch (path) {
+			'liveTv.rulesProcessFailed' => '无法重新评估录制规则',
+			'liveTv.recordShow' => '录制节目',
 			'liveTv.recordSettings.startEarly' => '提前开始（秒）',
 			'liveTv.recordSettings.endLate' => '延后结束（秒）',
 			'liveTv.recordSettings.newOnly' => '仅新剧集',
@@ -5657,10 +5663,10 @@ extension on TranslationsZh {
 			'performanceOverlay.cacheLimit' => '缓存限制',
 			'performanceOverlay.speed' => '速度',
 			'performanceOverlay.player' => '播放器',
-			'performanceOverlay.memory' => '内存',
-			'performanceOverlay.uiFps' => 'UI FPS',
 			_ => null,
 		} ?? switch (path) {
+			'performanceOverlay.memory' => '内存',
+			'performanceOverlay.uiFps' => 'UI FPS',
 			'performanceOverlay.fps' => 'FPS',
 			'performanceOverlay.decoderAndroidHw' => 'Android 硬件',
 			'performanceOverlay.decoderNvidiaHw' => 'NVIDIA 硬件',
@@ -6069,6 +6075,8 @@ extension on TranslationsZh {
 			'storage.noMatchResults' => '没有结果',
 			'storage.mediaSources' => '媒体来源',
 			'storage.scraperSettingsDescription' => 'TMDB key、语言与刮削代理',
+			'streamQuality.preferred' => '首选画质',
+			'streamQuality.localPreference' => '本地媒体库画质',
 			'streamQuality.noneForFile' => '这个文件暂时没有转码画质，会播放原画',
 			'streamQuality.original' => '原画',
 			'streamQuality.superHd' => '超清',

@@ -566,6 +566,8 @@ Future<T?> showOptionPickerDialog<T>(
   BuildContext context, {
   required String title,
   required List<({IconData? icon, String label, T value})> options,
+  String? description,
+  bool showCancel = false,
   Future<T?> Function(T value)? onBeforeClose,
   OptionPickerToggle? toggle,
   String? Function(T value)? subtitleOf,
@@ -576,6 +578,8 @@ Future<T?> showOptionPickerDialog<T>(
     builder: (context) => _OptionPickerDialog<T>(
       title: title,
       options: options,
+      description: description,
+      showCancel: showCancel,
       focusFirstItem: focusFirstItem,
       onBeforeClose: onBeforeClose,
       toggle: toggle,
@@ -587,6 +591,8 @@ Future<T?> showOptionPickerDialog<T>(
 class _OptionPickerDialog<T> extends StatefulWidget {
   final String title;
   final List<({IconData? icon, String label, T value})> options;
+  final String? description;
+  final bool showCancel;
   final bool focusFirstItem;
   final Future<T?> Function(T value)? onBeforeClose;
   final OptionPickerToggle? toggle;
@@ -597,6 +603,8 @@ class _OptionPickerDialog<T> extends StatefulWidget {
   const _OptionPickerDialog({
     required this.title,
     required this.options,
+    this.description,
+    this.showCancel = false,
     this.focusFirstItem = false,
     this.onBeforeClose,
     this.toggle,
@@ -633,6 +641,7 @@ class _OptionPickerDialogState<T> extends State<_OptionPickerDialog<T>> {
     const rowHorizontalTitleGap = 8.0;
     const rowMinLeadingWidth = 24.0;
     final toggle = widget.toggle;
+    final description = widget.description;
     void updateToggle(bool value) {
       setState(() => _toggleValue = value);
       toggle?.onChanged(value);
@@ -650,6 +659,11 @@ class _OptionPickerDialogState<T> extends State<_OptionPickerDialog<T>> {
             mainAxisSize: .min,
             crossAxisAlignment: .stretch,
             children: [
+              if (description != null)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(24, 0, 24, 12),
+                  child: Text(description, style: Theme.of(context).textTheme.bodyMedium),
+                ),
               if (toggle != null)
                 MergeSemantics(
                   child: FocusableListTile(
@@ -699,6 +713,14 @@ class _OptionPickerDialogState<T> extends State<_OptionPickerDialog<T>> {
                   },
                 );
               }),
+              if (widget.showCancel)
+                Align(
+                  alignment: AlignmentDirectional.centerEnd,
+                  child: Padding(
+                    padding: const EdgeInsetsDirectional.only(end: 16),
+                    child: DialogActionButton(onPressed: () => Navigator.pop(context), label: t.common.cancel),
+                  ),
+                ),
             ],
           ),
         ),

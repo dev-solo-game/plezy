@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:plezy/database/app_database.dart';
+import 'package:plezy/library/local_library_client.dart';
 import 'package:plezy/media/ids.dart';
 import 'package:plezy/media/media_backend.dart';
 
@@ -261,6 +262,33 @@ void main() {
       expect(resolved!.index, 1);
       expect(resolved.sourceId, '102');
       expect(resolved.signature, '4k:hevc:mkv');
+    });
+
+    test('mounted playback keeps a missing same-item file id for the recovery picker', () async {
+      final localEpisode = episode.copyWith(serverId: LocalLibraryClient.localServerId);
+      await saveMediaVersionPreferenceFor(localEpisode, index: 1, versions: versions);
+
+      final afterScan = localEpisode.copyWith(mediaVersions: [versions.first]);
+      final selection = await resolveSavedMediaVersionFor(afterScan, keepMissingLocalFile: true);
+
+      expect(selection?.sourceId, versions.last.id);
+      expect((await savedMediaVersionPreferenceFor(afterScan))?.itemId, localEpisode.id);
+    });
+
+    test('mounted playback still matches equivalent files across sibling episodes', () async {
+      final localEpisode = episode.copyWith(serverId: LocalLibraryClient.localServerId);
+      await saveMediaVersionPreferenceFor(localEpisode, index: 1, versions: versions);
+
+      final sibling = localEpisode.copyWith(
+        id: 'ep-2',
+        mediaVersions: [
+          versions.first,
+          const MediaVersion(id: '202', videoResolution: '4k', videoCodec: 'hevc', container: 'mkv'),
+        ],
+      );
+      final selection = await resolveSavedMediaVersionFor(sibling, keepMissingLocalFile: true);
+
+      expect(selection?.sourceId, '202');
     });
 
     test('resolveSavedMediaVersionFor passes stored index/signature through without versions', () async {

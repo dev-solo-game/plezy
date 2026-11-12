@@ -15,9 +15,10 @@ import 'connection.dart';
 /// of truth for which connections the user has added; the runtime
 /// `MultiServerManager` populates per-server clients from these records.
 class ConnectionRegistry {
-  ConnectionRegistry(this._db);
+  ConnectionRegistry(this._db, {this._includePlex = true});
 
   final AppDatabase _db;
+  final bool _includePlex;
   static const DeepCollectionEquality _configEquality = DeepCollectionEquality();
 
   final Expando<Map<String, Object?>> _decryptedConfigs = Expando<Map<String, Object?>>(
@@ -139,6 +140,7 @@ class ConnectionRegistry {
   }
 
   Future<Connection?> _rowToConnection(ConnectionRow row) async {
+    if (!_includePlex && row.kind == MediaBackend.plex.id) return null;
     try {
       final json = jsonDecode(row.configJson) as Map<String, dynamic>;
       final kind = MediaBackend.fromId(row.kind);

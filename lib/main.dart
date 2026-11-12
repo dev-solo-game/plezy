@@ -17,6 +17,7 @@ import 'package:sentry_flutter/sentry_flutter.dart';
 import 'connection/connection.dart';
 import 'connection/connection_bootstrap.dart';
 import 'connection/connection_registry.dart';
+import 'media/media_backend.dart';
 import 'navigation/profile_navigation_scope.dart';
 import 'navigation/profile_session_screen.dart';
 import 'profiles/active_profile_binder.dart';
@@ -1429,7 +1430,7 @@ class _MainAppState extends State<MainApp> with WidgetsBindingObserver {
 
     _offlineWatchSyncService = OfflineWatchSyncService(database: _appDatabase, serverManager: _serverManager);
 
-    _connections = ConnectionRegistry(_appDatabase);
+    _connections = ConnectionRegistry(_appDatabase, includePlex: plexSupportEnabled);
     _profileConnections = ProfileConnectionRegistry(_appDatabase);
     // Owned here rather than by its provider: exit teardown must settle it
     // before the database closes. Hydrate the disk cache eagerly for profile
@@ -2318,14 +2319,15 @@ class _SetupScreenState extends State<SetupScreen> with MountedSetStateMixin {
         final profileRegistry = context.read<ProfileRegistry>();
         final activeProfiles = context.read<ActiveProfileProvider>();
         final serverManager = context.read<MultiServerProvider>().serverManager;
-        final bootstrap = ConnectionBootstrap(
-          storage: storage,
-          connectionRegistry: connRegistry,
-          serverRegistry: registry,
-          profileRegistry: profileRegistry,
-          plexHome: context.read<PlexHomeService>(),
-        );
-        await bootstrap.run();
+        if (plexSupportEnabled) {
+          await ConnectionBootstrap(
+            storage: storage,
+            connectionRegistry: connRegistry,
+            serverRegistry: registry,
+            profileRegistry: profileRegistry,
+            plexHome: context.read<PlexHomeService>(),
+          ).run();
+        }
         final pruned = await ProfileConnectionCleanup(
           profileConnections: profileConnections,
           connections: connRegistry,

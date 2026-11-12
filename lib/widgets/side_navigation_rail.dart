@@ -1,6 +1,14 @@
 import 'dart:async';
 import 'dart:ui' show lerpDouble;
 import '../media/ids.dart';
+import '../media/media_backend.dart';
+import '../connection/connection.dart';
+import '../connection/connection_registry.dart';
+import '../profiles/active_profile_provider.dart';
+import '../profiles/profile_connection_registry.dart';
+import '../profiles/profile_connection.dart';
+import '../library/local_library_client.dart';
+import '../utils/global_key_utils.dart';
 import 'dart:io' show Platform;
 
 import 'package:flutter/material.dart';
@@ -481,6 +489,42 @@ class SideNavigationRailState extends State<SideNavigationRail> with MountedSetS
 
   bool _hiddenLibrariesExpanded = false;
   final Set<String> _collapsedServerGroupKeys = {};
+  final Set<String> _expandedHiddenServers = {};
+  StreamSubscription<List<Connection>>? _connectionsSub;
+  StreamSubscription<List<ProfileConnection>>? _profileConnectionsSub;
+  List<Connection> _connections = [];
+  Set<String> _profileConnectionIds = {};
+  String? _sourcesProfileId;
+  bool _hasProfileScope = false;
+  Map<String, ({String name, MediaBackend backend})> _remoteSources = {};
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final activeProfiles = context.watch<ActiveProfileProvider?>();
+    final profileId = activeProfiles?.activeId;
+    final registry = context.read<ConnectionRegistry?>();
+    final bindings = context.read<ProfileConnectionRegistry?>();
+    _hasProfileScope = activeProfiles != null && registry != null && bindings != null;
+    if (registry != null) {
+      _connectionsSub ??= registry.watchConnections().listen((connections) {
+        if (mounted) setState(() => _connections = connections);
+      });
+    }
+    if (profileId == _sourcesProfileId) return;
+    _sourcesProfileId = profileId;
+    _profileConnectionsSub?.cancel();
+    _profileConnectionIds = {};
+    _collapsedServerGroupKeys.clear();
+    _expandedHiddenServers.clear();
+    if (profileId != null && bindings != null) {
+      _profileConnectionsSub = bindings.watchForProfile(profileId).listen((connections) {
+        if (mounted && _sourcesProfileId == profileId) {
+          setState(() => _profileConnectionIds = connections.map((c) => c.connectionId).toSet());
+        }
+      });
+    }
+  }
 
   // Unified focus state tracker for all nav items (main + libraries)
   late final FocusMemoryTracker _focusTracker;
@@ -511,6 +555,8 @@ class SideNavigationRailState extends State<SideNavigationRail> with MountedSetS
 
   @override
   void dispose() {
+    _connectionsSub?.cancel();
+    _profileConnectionsSub?.cancel();
     _collapseTimer?.cancel();
     _focusTracker.dispose();
     super.dispose();
@@ -609,7 +655,7 @@ class SideNavigationRailState extends State<SideNavigationRail> with MountedSetS
   FocusNode? _mountedFocusNodeFor(String? key) {
     if (key == null) return null;
     final node = _focusTracker.nodeFor(key);
-    return node != null && _isMounted(node) ? node : null;
+    return node != null && _isMounted(node) && node.canRequestFocus ? node : null;
   }
 
   /// Whether [node] is attached to a mounted row. A detached node keeps its
@@ -628,12 +674,14 @@ class SideNavigationRailState extends State<SideNavigationRail> with MountedSetS
         return _kExplore;
       case NavigationTabId.libraries:
         final libKey = widget.selectedLibraryKey;
-        if (libKey != null && _librariesExpanded) {
+        if (libKey != null) {
           final visibleKey = '$_kLibraryItemPrefix:${_LibraryNavSection.visible.name}:$libKey';
           if (_mountedFocusNodeFor(visibleKey) != null) return visibleKey;
-          if (_hiddenLibrariesExpanded) {
-            final hiddenKey = '$_kLibraryItemPrefix:${_LibraryNavSection.hidden.name}:$libKey';
-            if (_mountedFocusNodeFor(hiddenKey) != null) return hiddenKey;
+          final hiddenKey = '$_kLibraryItemPrefix:${_LibraryNavSection.hidden.name}:$libKey';
+          if (_mountedFocusNodeFor(hiddenKey) != null) return hiddenKey;
+          final serverId = parseGlobalKey(libKey)?.serverId;
+          if (serverId != null && _remoteSources.containsKey(serverId.toString())) {
+            return _serverHeaderFocusKey(_LibraryNavSection.visible, serverId);
           }
         }
         return _kLibraries;
@@ -673,6 +721,7 @@ class SideNavigationRailState extends State<SideNavigationRail> with MountedSetS
   Set<String> _buildValidFocusKeys({
     required List<_LibraryNavRow> visibleRows,
     required List<_LibraryNavRow> hiddenRows,
+    required List<_LibraryNavRow> remoteRows,
     required bool hasHiddenLibraries,
     required bool hasLiveTv,
     required bool hasNowPlaying,
@@ -691,6 +740,7 @@ class SideNavigationRailState extends State<SideNavigationRail> with MountedSetS
       if (_showFullscreenToggle) _kFullscreen,
       if (hasLiveTv) 'liveTv',
       ..._focusKeysForLibraryRows(visibleRows),
+      ..._focusKeysForLibraryRows(remoteRows),
       if (_hiddenLibrariesExpanded) ..._focusKeysForLibraryRows(hiddenRows),
     };
   }
@@ -735,25 +785,11 @@ class SideNavigationRailState extends State<SideNavigationRail> with MountedSetS
     return result;
   }
 
-  Set<String> _buildServerGroupStateKeys(
-    List<MediaLibrary> visibleLibraries,
-    List<MediaLibrary> hiddenLibraries, {
-    required bool showServerHeaders,
-  }) {
-    if (!showServerHeaders) return {};
-
-    return {
-      for (final lib in visibleLibraries)
-        if (lib.serverId != null) _serverGroupStateKey(_LibraryNavSection.visible, ServerId(lib.serverId!)),
-      for (final lib in hiddenLibraries)
-        if (lib.serverId != null) _serverGroupStateKey(_LibraryNavSection.hidden, ServerId(lib.serverId!)),
-    };
-  }
-
   /// Ordered list of focusable keys matching visual top-to-bottom order.
   List<String> _buildFocusOrder(
     List<_LibraryNavRow> visibleRows,
     List<_LibraryNavRow> hiddenRows, {
+    required List<_LibraryNavRow> remoteRows,
     required bool hasHiddenLibraries,
     required bool hasLiveTv,
     required bool hasNowPlaying,
@@ -776,6 +812,7 @@ class SideNavigationRailState extends State<SideNavigationRail> with MountedSetS
             if (_hiddenLibrariesExpanded) ..._focusKeysForLibraryRows(hiddenRows),
           ],
         ],
+        ..._focusKeysForLibraryRows(remoteRows),
         if (hasLiveTv) 'liveTv',
         if (hasExplore) _kExplore,
         _kSearch,
@@ -867,9 +904,24 @@ class SideNavigationRailState extends State<SideNavigationRail> with MountedSetS
     final allLibraries = librariesProvider.libraries;
     final visibleLibraries = <MediaLibrary>[];
     final hiddenLibraries = <MediaLibrary>[];
-    final serverIds = <String>{};
+    final remoteLibraries = <MediaLibrary>[];
+    _remoteSources = {
+      for (final conn in _connections.whereType<JellyfinConnection>())
+        if (_profileConnectionIds.contains(conn.id) && conn.serverMachineId.isNotEmpty)
+          conn.serverMachineId: (name: conn.serverName, backend: conn.backend),
+    };
     for (final lib in allLibraries) {
-      if (lib.serverId != null) serverIds.add(lib.serverId!);
+      final serverId = lib.serverId;
+      if (serverId != null && serverId != LocalLibraryClient.localServerId) {
+        // Persisted bindings are authoritative for MediaBrowser servers; do
+        // not expose a previous profile's libraries during a rebind.
+        if (_hasProfileScope && lib.backend.usesMediaBrowserApi && !_remoteSources.containsKey(serverId)) {
+          continue;
+        }
+        _remoteSources.putIfAbsent(serverId, () => (name: lib.serverName ?? serverId, backend: lib.backend));
+        remoteLibraries.add(lib);
+        continue;
+      }
       if (hiddenKeys.contains(lib.globalKey)) {
         hiddenLibraries.add(lib);
       } else {
@@ -903,12 +955,40 @@ class SideNavigationRailState extends State<SideNavigationRail> with MountedSetS
       ]),
       builder: (context, _) {
         final hasExplore = hasExploreSource && SettingsService.instance.read(SettingsService.showExploreTab);
-        // Server grouping: only when multi-server AND the user-facing toggle is on.
-        final groupByServerSetting = SettingsService.instance.read(SettingsService.groupLibrariesByServer);
-        final showServerHeaders = serverIds.length > 1 && groupByServerSetting;
-        _collapsedServerGroupKeys.retainAll(
-          _buildServerGroupStateKeys(visibleLibraries, hiddenLibraries, showServerHeaders: showServerHeaders),
-        );
+        // Each server is a sibling of the default library, even when it is
+        // the only server. This structure is independent of the old grouping preference.
+        const showServerHeaders = false;
+        final remoteRows = <_LibraryNavRow>[];
+        for (final entry in _remoteSources.entries) {
+          final serverId = entry.key;
+          remoteRows.add(
+            _LibraryServerHeaderRow(
+              section: _LibraryNavSection.visible,
+              serverId: serverId,
+              serverName: entry.value.name,
+            ),
+          );
+          if (isCollapsed || _collapsedServerGroupKeys.contains('visible:$serverId')) continue;
+          final libs = remoteLibraries.where((lib) => lib.serverId == serverId);
+          remoteRows.addAll(
+            libs
+                .where((lib) => !hiddenKeys.contains(lib.globalKey))
+                .map((lib) => _LibraryItemRow(section: _LibraryNavSection.visible, library: lib)),
+          );
+          final hidden = libs.where((lib) => hiddenKeys.contains(lib.globalKey)).toList();
+          if (hidden.isNotEmpty) {
+            remoteRows.add(
+              _LibraryServerHeaderRow(
+                section: _LibraryNavSection.hidden,
+                serverId: serverId,
+                serverName: Translations.of(context).libraries.hiddenLibrariesCount(count: hidden.length),
+              ),
+            );
+            if (_expandedHiddenServers.contains(serverId)) {
+              remoteRows.addAll(hidden.map((lib) => _LibraryItemRow(section: _LibraryNavSection.hidden, library: lib)));
+            }
+          }
+        }
         final visibleRows = _buildLibraryRows(
           visibleLibraries,
           section: _LibraryNavSection.visible,
@@ -923,6 +1003,7 @@ class SideNavigationRailState extends State<SideNavigationRail> with MountedSetS
           _buildValidFocusKeys(
             visibleRows: visibleRows,
             hiddenRows: hiddenRows,
+            remoteRows: remoteRows,
             hasHiddenLibraries: hiddenLibraries.isNotEmpty,
             hasLiveTv: hasLiveTv,
             hasNowPlaying: nowPlayingTrack != null,
@@ -932,6 +1013,7 @@ class SideNavigationRailState extends State<SideNavigationRail> with MountedSetS
         final focusOrder = _buildFocusOrder(
           visibleRows,
           hiddenRows,
+          remoteRows: remoteRows,
           hasHiddenLibraries: hiddenLibraries.isNotEmpty,
           hasLiveTv: hasLiveTv,
           hasNowPlaying: nowPlayingTrack != null,
@@ -1041,6 +1123,25 @@ class SideNavigationRailState extends State<SideNavigationRail> with MountedSetS
                                         isCollapsed: isCollapsed,
                                       ),
                                       const SizedBox(height: _itemGap),
+                                      // Keep all library focus nodes mounted, including
+                                      // selections below the viewport, as in the local section.
+                                      Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          for (final row in remoteRows)
+                                            if (row is _LibraryServerHeaderRow)
+                                              _buildRemoteHeader(
+                                                row,
+                                                t,
+                                                isCollapsed: isCollapsed,
+                                                hasLibraries: remoteLibraries.any(
+                                                  (lib) => lib.serverId == row.serverId,
+                                                ),
+                                              )
+                                            else if (row is _LibraryItemRow)
+                                              _buildLibraryItem(row.section, row.library, t),
+                                        ],
+                                      ),
                                       if (context.watch<MultiServerProvider>().hasLiveTv) ...[
                                         _buildNavItem(
                                           icon: Symbols.live_tv_rounded,
@@ -1267,7 +1368,12 @@ class SideNavigationRailState extends State<SideNavigationRail> with MountedSetS
   }) {
     final librariesProvider = context.watch<LibrariesProvider>();
     final isLoading = librariesProvider.isLoading;
-    final isLibrariesTabSelected = widget.selectedTab == NavigationTabId.libraries;
+    final selectedServerId = widget.selectedLibraryKey == null
+        ? null
+        : parseGlobalKey(widget.selectedLibraryKey!)?.serverId;
+    final isLibrariesTabSelected =
+        widget.selectedTab == NavigationTabId.libraries &&
+        (selectedServerId == null || selectedServerId.toString() == LocalLibraryClient.localServerId);
     final allEmpty = visibleRows.isEmpty && hiddenLibraryCount == 0;
     final headerLabelColor = isLibrariesTabSelected ? t.text : t.textMuted;
 
@@ -1408,6 +1514,70 @@ class SideNavigationRailState extends State<SideNavigationRail> with MountedSetS
       isExpanded: !_collapsedServerGroupKeys.contains(_serverGroupStateKey(section, serverId)),
       onToggle: () => _toggleServerCollapse(section, serverId),
       t: t,
+    );
+  }
+
+  Widget _buildRemoteHeader(
+    _LibraryServerHeaderRow row,
+    dynamic t, {
+    required bool isCollapsed,
+    required bool hasLibraries,
+  }) {
+    final serverId = ServerId(row.serverId);
+    final focusKey = _serverHeaderFocusKey(row.section, serverId);
+    if (row.section == _LibraryNavSection.hidden) {
+      return _buildCollapsibleHeader(
+        focusKey: focusKey,
+        icon: Symbols.visibility_off_rounded,
+        iconSize: 16,
+        label: row.serverName,
+        labelStyle: TextStyle(fontSize: 12, color: t.textMuted),
+        verticalPadding: 8,
+        isExpanded: _expandedHiddenServers.contains(row.serverId),
+        onToggle: () => setState(() {
+          if (!_expandedHiddenServers.add(row.serverId)) _expandedHiddenServers.remove(row.serverId);
+        }),
+        t: t,
+      );
+    }
+    final expanded = !_collapsedServerGroupKeys.contains(_serverGroupStateKey(row.section, serverId));
+    final selected =
+        widget.selectedTab == NavigationTabId.libraries &&
+        widget.selectedLibraryKey != null &&
+        parseGlobalKey(widget.selectedLibraryKey!)?.serverId == serverId;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        NavigationRailItem(
+          icon: Symbols.dns_rounded,
+          iconWidget: BackendBadge(backend: _remoteSources[row.serverId]!.backend, size: 22),
+          label: Text(
+            row.serverName,
+            overflow: TextOverflow.ellipsis,
+            maxLines: 1,
+            style: TextStyle(fontSize: 14, fontWeight: selected ? FontWeight.w600 : FontWeight.w400),
+          ),
+          labelColor: selected ? t.text : t.textMuted,
+          collapsedLabel: row.serverName,
+          trailing: AppIcon(expanded ? Symbols.expand_less_rounded : Symbols.expand_more_rounded, size: 18),
+          isSelected: selected,
+          isCollapsed: isCollapsed,
+          onTap: () => _toggleServerCollapse(row.section, serverId),
+          focusNode: _focusTracker.get(focusKey),
+          suppressSelectedBackground: widget.isSidebarFocused || expanded,
+          onNavigateRight: widget.onNavigateToContent,
+        ),
+        if (expanded && !isCollapsed && !hasLibraries)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 17, vertical: 8),
+            child: Text(
+              context.read<MultiServerProvider>().isServerOnline(serverId)
+                  ? Translations.of(context).libraries.noLibrariesFound
+                  : Translations.of(context).messages.playbackServerUnavailable,
+              style: TextStyle(fontSize: 12, color: t.textMuted),
+            ),
+          ),
+      ],
     );
   }
 

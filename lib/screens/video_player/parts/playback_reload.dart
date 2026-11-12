@@ -68,13 +68,12 @@ extension _VideoPlayerReloadMethods on VideoPlayerScreenState {
     }
     final transitionLease = _transitionGate.tryAcquire(PlaybackTransition.switchingSource);
     if (transitionLease == null) return PlaybackSourceChangeOutcome.busy;
-    final previous = _selectedStreamQuality;
     try {
-      _selectedStreamQuality = streamQuality;
       final outcome = await _reloadMediaInPlace(
         metadata: _currentMetadata.copyWith(viewOffsetMs: currentPlayer.state.position.inMilliseconds),
         selectedMediaIndex: _effectiveSelectedMediaIndex,
         selectedMediaSourceId: _requestedMediaSourceId,
+        streamQuality: streamQuality,
         resumePosition: currentPlayer.state.position,
         // Same file, so its audio and subtitle choices still apply.
         preserveCurrentTrackSelection: true,
@@ -83,9 +82,7 @@ extension _VideoPlayerReloadMethods on VideoPlayerScreenState {
       );
       if (outcome == MediaReloadOutcome.opened) {
         // An explicit pick becomes the global choice for every title.
-        unawaited(_saveStreamQuality(streamQuality));
-      } else if (mounted) {
-        _selectedStreamQuality = previous;
+        await _saveStreamQuality(streamQuality);
       }
       return switch (outcome) {
         MediaReloadOutcome.opened => PlaybackSourceChangeOutcome.applied,
@@ -94,7 +91,6 @@ extension _VideoPlayerReloadMethods on VideoPlayerScreenState {
         MediaReloadOutcome.failed => PlaybackSourceChangeOutcome.failed,
       };
     } catch (e) {
-      _selectedStreamQuality = previous;
       if (transitionLease.wasSuperseded) return PlaybackSourceChangeOutcome.superseded;
       if (mounted) showErrorSnackBar(context, t.messages.errorLoading(error: localizedErrorReason(e)));
       return PlaybackSourceChangeOutcome.failed;
@@ -233,11 +229,6 @@ extension _VideoPlayerReloadMethods on VideoPlayerScreenState {
     }
 
     try {
-      if (isVersionChange) {
-        await saveMediaVersionPreferenceFor(_currentMetadata, index: effectiveMediaIndex, versions: _availableVersions);
-        if (!isCurrentSourceSwitch()) return PlaybackSourceChangeOutcome.superseded;
-      }
-
       // Writing the part's stream selection is persistence, not delivery —
       // the reload carries the audio id and the subtitle intent itself. So it
       // answers to the same setting the in-player track handlers gate on,
@@ -270,6 +261,8 @@ extension _VideoPlayerReloadMethods on VideoPlayerScreenState {
       // A quality picked here outranks a downloaded copy from now on — for
       // this switch, a retry of it, and later episodes (issue #2466).
       if (isPresetChange) _qualityPresetExplicit = true;
+      final versionItem = _currentMetadata;
+      final versions = _availableVersions;
 
       final outcome = await _reloadMediaInPlace(
         metadata: _currentMetadata.copyWith(viewOffsetMs: currentPlayer.state.position.inMilliseconds),
@@ -287,6 +280,16 @@ extension _VideoPlayerReloadMethods on VideoPlayerScreenState {
         reason: 'source switch',
       );
       if (outcome == MediaReloadOutcome.opened) {
+        if (isVersionChange &&
+            mounted &&
+            _currentMetadata.globalKey == versionItem.globalKey &&
+            _effectiveSelectedMediaIndex == effectiveMediaIndex) {
+          try {
+            await saveMediaVersionPreferenceFor(versionItem, index: effectiveMediaIndex, versions: versions);
+          } catch (e) {
+            appLogger.w('Failed to remember the selected file: $e');
+          }
+        }
         rememberSourceAudioPreference();
         rememberSourceSubtitlePreference();
       }
@@ -432,6 +435,7 @@ extension _VideoPlayerReloadMethods on VideoPlayerScreenState {
     String? preferredVersionSignature,
     TranscodeQualityPreset? qualityPreset,
     int? selectedAudioStreamId,
+    String? streamQuality,
     Duration? resumePosition,
     bool preserveCurrentTrackSelection = false,
     AudioTrack? preservedAudioTrack,
@@ -557,6 +561,7 @@ extension _VideoPlayerReloadMethods on VideoPlayerScreenState {
 
       final targetMediaIndex = selectedMediaIndex ?? _effectiveSelectedMediaIndex;
       final targetQualityPreset = qualityPreset ?? _selectedQualityPreset;
+      final targetStreamQuality = streamQuality ?? SettingsService.instance.read<String>(SettingsService.streamQuality);
       final targetForceTranscode =
           forceTranscode ??
           (!isItemChange &&
@@ -645,7 +650,7 @@ extension _VideoPlayerReloadMethods on VideoPlayerScreenState {
             selectedMediaSourceId: selectedMediaSourceId,
             preferredVersionSignature: preferredVersionSignature,
             qualityPreset: targetQualityPreset,
-            streamQuality: _selectedStreamQuality,
+            streamQuality: targetStreamQuality,
             selectedAudioStreamId: targetAudioStreamId,
             preferredAudioTrack: initializationAudioTrack,
             preferredSubtitleTrack: initializationSubtitleTrack,
@@ -801,6 +806,7 @@ extension _VideoPlayerReloadMethods on VideoPlayerScreenState {
             // same boundary so identity and source state flip together.
             didOpenReplacement = true;
             if (!attempt.isCurrent) return;
+            _selectedStreamQuality = targetStreamQuality;
             _commitPlaybackSession(session);
             if (isItemChange) _serverLimitFallbackUsed = false;
           },

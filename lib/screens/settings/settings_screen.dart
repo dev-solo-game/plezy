@@ -53,11 +53,14 @@ import '../../profiles/profile.dart';
 import '../../watch_together/services/watch_party_relays.dart';
 import 'about_screen.dart';
 import 'add_connection_screen.dart';
+import '../profile/profile_detail_screen.dart';
 import 'account_preferences_screen.dart';
 import 'appearance_settings_screen.dart';
 import 'general_settings_screen.dart';
 import 'keyboard_shortcuts_screen.dart';
 import '../../connection/connection_registry.dart';
+import '../../connection/connection.dart';
+import '../../media/media_backend.dart';
 import '../storage/mounts_screen.dart';
 import '../storage/scraper_settings_screen.dart';
 import 'logs_screen.dart';
@@ -118,10 +121,12 @@ class _SettingsScreenState extends State<SettingsScreen> with FocusableTab, Moun
   static const _kAutoHidePerformanceOverlay = 'auto_hide_performance_overlay';
   static const _kViewLogs = 'view_logs';
   static const _kStorageMounts = 'storage_mounts';
+  static const _kScraperSettings = 'scraper_settings';
 
   /// Whether any Plex/Jellyfin/Emby connection is stored. Their settings
   /// stay hidden for installs that only use the local library.
   bool _hasServerConnections = false;
+  StreamSubscription<List<Connection>>? _connectionsSubscription;
   static const _kClearImageCache = 'clear_image_cache';
   static const _kResetSettings = 'reset_settings';
   static const _kCheckForUpdates = 'check_for_updates';
@@ -144,11 +149,9 @@ class _SettingsScreenState extends State<SettingsScreen> with FocusableTab, Moun
     super.initState();
     _focusTracker = FocusMemoryTracker(debugLabelPrefix: 'settings');
     try {
-      unawaited(
-        context.read<ConnectionRegistry>().list().then(
-          (connections) => setStateIfMounted(() => _hasServerConnections = connections.isNotEmpty),
-          onError: (Object _) {},
-        ),
+      _connectionsSubscription = context.read<ConnectionRegistry>().watchConnections().listen(
+        (connections) => setStateIfMounted(() => _hasServerConnections = connections.isNotEmpty),
+        onError: (Object _) {},
       );
     } on ProviderNotFoundException {
       // Hosted without the registry (previews, tests): nothing to show.
@@ -162,6 +165,7 @@ class _SettingsScreenState extends State<SettingsScreen> with FocusableTab, Moun
 
   @override
   void dispose() {
+    _connectionsSubscription?.cancel();
     _focusTracker.dispose();
     super.dispose();
   }
@@ -244,6 +248,18 @@ class _SettingsScreenState extends State<SettingsScreen> with FocusableTab, Moun
                   ),
 
                   _buildMediaSourcesSection(),
+                  const SizedBox(height: 16),
+                  SettingsGroup(
+                    children: [
+                      SettingNavigationTile(
+                        focusNode: _focusTracker.get(_kScraperSettings),
+                        icon: Symbols.travel_explore_rounded,
+                        title: t.storage.scraperSettings,
+                        subtitle: t.storage.scraperSettingsDescription,
+                        destinationBuilder: (_) => const ScraperSettingsScreen(),
+                      ),
+                    ],
+                  ),
 
                   // Server connections only matter to installs that still have some.
                   if (_hasServerConnections) _buildConnectionsSection(sheetContext),
@@ -370,6 +386,7 @@ class _SettingsScreenState extends State<SettingsScreen> with FocusableTab, Moun
   }
 
   Widget _buildMediaSourcesSection() {
+    final active = context.watch<ActiveProfileProvider?>()?.active;
     return SettingsGroup(
       title: t.storage.mediaSources,
       children: [
@@ -381,10 +398,17 @@ class _SettingsScreenState extends State<SettingsScreen> with FocusableTab, Moun
           destinationBuilder: (context) => const MountsScreen(),
         ),
         SettingNavigationTile(
-          icon: Symbols.travel_explore_rounded,
-          title: t.storage.scraperSettings,
-          subtitle: t.storage.scraperSettingsDescription,
-          destinationBuilder: (context) => const ScraperSettingsScreen(),
+          icon: Symbols.dns_rounded,
+          title: 'Emby / Jellyfin',
+          subtitle: active == null
+              ? t.addServer.connectToMediaBrowserCardSubtitle
+              : t.addServer.connectToMediaBrowserCardSubtitleScoped(
+                  product: 'Emby / Jellyfin',
+                  name: active.displayName,
+                ),
+          destinationBuilder: (_) => active == null
+              ? const AddConnectionScreen(mediaBrowserOnly: true)
+              : ProfileDetailScreen(profile: active, mediaSourcesOnly: true),
         ),
       ],
     );
@@ -392,26 +416,18 @@ class _SettingsScreenState extends State<SettingsScreen> with FocusableTab, Moun
 
   Widget _buildConnectionsSection(BuildContext context) {
     final active = context.select<ActiveProfileProvider, Profile?>((p) => p.active);
-    final subtitle = active == null
-        ? t.connections.addConnectionSubtitleNoProfile
-        : t.connections.addConnectionSubtitleScoped(displayName: active.displayName);
-
     return SettingsGroup(
       title: t.connections.sectionTitle,
       children: [
-        // Connections are managed per-profile (via the Profiles section
-        // and each profile's detail screen). The shortcut here just opens
-        // the picker scoped to the active profile so users can add a Plex
-        // account, Jellyfin server, or borrow from another profile.
-        SettingNavigationTile(
-          icon: Symbols.add_link_rounded,
-          title: t.connections.addConnection,
-          subtitle: subtitle,
-          onTap: () {
-            final active = context.read<ActiveProfileProvider>().active;
-            Navigator.push(context, MaterialPageRoute(builder: (_) => AddConnectionScreen(targetProfile: active)));
-          },
-        ),
+        if (plexSupportEnabled)
+          SettingNavigationTile(
+            icon: Symbols.add_link_rounded,
+            title: t.connections.addConnection,
+            subtitle: active == null
+                ? t.connections.addConnectionSubtitleNoProfile
+                : t.connections.addConnectionSubtitleScoped(displayName: active.displayName),
+            destinationBuilder: (_) => AddConnectionScreen(targetProfile: active),
+          ),
         _buildProfilesTile(context),
         if (context.select<AccountPreferencesController, bool>((c) => c.accounts.isNotEmpty))
           _buildAccountPreferencesTile(context),

@@ -150,8 +150,12 @@ Future<MediaItem?> _pickContinueWatchingCopy(BuildContext context, List<MediaIte
 
   return showOptionPickerDialog<MediaItem>(
     context,
-    title: t.discover.selectVersion,
+    title: t.discover.selectResumeSource,
     options: [for (final copy in copies) (icon: null, label: label(copy), value: copy)],
+    subtitleOf: (copy) {
+      final offset = copy.viewOffsetMs;
+      return offset == null || offset <= 0 ? null : formatDurationTimestamp(Duration(milliseconds: offset));
+    },
   );
 }
 

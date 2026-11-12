@@ -25,10 +25,57 @@ import 'package:plezy/utils/platform_detector.dart';
 import 'package:plezy/widgets/app_icon.dart';
 import 'package:plezy/widgets/side_navigation_rail.dart';
 import 'package:provider/provider.dart';
+import 'package:provider/single_child_widget.dart';
+import 'package:drift/native.dart';
+import 'package:plezy/database/app_database.dart';
+import 'package:plezy/connection/connection.dart';
+import 'package:plezy/connection/connection_registry.dart';
+import 'package:plezy/profiles/active_profile_provider.dart';
+import 'package:plezy/profiles/profile_registry.dart';
+import 'package:plezy/profiles/profile_connection.dart';
+import 'package:plezy/profiles/profile_connection_registry.dart';
+import 'package:plezy/profiles/plex_home_service.dart';
+import 'package:plezy/services/storage_service.dart';
 
 import '../test_helpers/multi_server_fixtures.dart';
 import '../test_helpers/prefs.dart';
 import '../test_helpers/theme.dart';
+import '../test_helpers/backend_client_fixtures.dart';
+
+class _SourceConnections extends ConnectionRegistry {
+  _SourceConnections(super.db, this.values);
+  final List<Connection> values;
+  @override
+  Stream<List<Connection>> watchConnections() => Stream.value(values);
+}
+
+class _SourceBindings extends ProfileConnectionRegistry {
+  _SourceBindings(super.db);
+  final updates = StreamController<List<ProfileConnection>>.broadcast();
+  Future<void> close() => updates.close();
+  @override
+  Stream<List<ProfileConnection>> watchForProfile(String profileId) async* {
+    yield [ProfileConnection(profileId: profileId, connectionId: profileId, userIdentifier: 'user')];
+    yield* updates.stream;
+  }
+}
+
+class _SourceProfile extends ActiveProfileProvider {
+  _SourceProfile({
+    required super.registry,
+    required super.plexHome,
+    required super.connections,
+    required super.profileConnections,
+    required super.storage,
+  });
+  String? currentId = 'a';
+  @override
+  String? get activeId => currentId;
+  void select(String? id) {
+    currentId = id;
+    notifyListeners();
+  }
+}
 
 /// A server whose library fetch waits on [libraries], holding the provider in
 /// its loading state (the rail then swaps the library rows for a spinner).
@@ -114,6 +161,7 @@ Future<void> _pumpBasicRail(
   double? height,
   CatalogSourcesProvider? catalogSources,
   ValueChanged<bool>? onFloatingPanelChanged,
+  List<SingleChildWidget> sourceProviders = const [],
 }) async {
   await SettingsService.getInstance();
 
@@ -146,6 +194,7 @@ Future<void> _pumpBasicRail(
     TranslationProvider(
       child: MultiProvider(
         providers: [
+          ...sourceProviders,
           ChangeNotifierProvider<LibrariesProvider>.value(value: librariesProvider),
           ChangeNotifierProvider<HiddenLibrariesProvider>.value(value: hiddenLibrariesProvider),
           ChangeNotifierProvider<MultiServerProvider>.value(value: multiServerProvider),
@@ -172,6 +221,126 @@ void main() {
     TvDetectionService.debugSetAppleTVOverride(null);
     TvDetectionService.setForceTVSync(false);
     LocaleSettings.setLocaleSync(AppLocale.en);
+  });
+
+  testWidgets('offline configured servers follow profile bindings and removal without leaking cached libraries', (
+    tester,
+  ) async {
+    final db = AppDatabase.forTesting(NativeDatabase.memory());
+    final connections = _SourceConnections(db, [
+      testEmbyConnection(id: 'a', machineId: 'server-a', serverName: 'Emby A'),
+      testJellyfinConnection(id: 'b', machineId: 'server-b', serverName: 'Jellyfin B'),
+    ]);
+    final bindings = _SourceBindings(db);
+    final storage = await StorageService.getInstance();
+    final home = PlexHomeService(
+      connections: connections,
+      profileConnections: bindings,
+      storage: storage,
+      plexHomeUserFetcher: (_) async => [],
+    );
+    final active = _SourceProfile(
+      registry: ProfileRegistry(db),
+      plexHome: home,
+      connections: connections,
+      profileConnections: bindings,
+      storage: storage,
+    );
+    addTearDown(() async {
+      active.dispose();
+      await bindings.close();
+      await home.dispose();
+      await db.close();
+    });
+    await _pumpBasicRail(
+      tester,
+      alwaysExpanded: true,
+      libraries: [
+        const MediaLibrary(
+          id: 'movies',
+          backend: MediaBackend.emby,
+          title: 'Private A Movies',
+          serverId: 'server-a',
+          serverName: 'Emby A',
+        ),
+      ],
+      sourceProviders: [
+        Provider<ConnectionRegistry>.value(value: connections),
+        Provider<ProfileConnectionRegistry>.value(value: bindings),
+        ChangeNotifierProvider<ActiveProfileProvider>.value(value: active),
+      ],
+    );
+    expect(find.text('Emby A'), findsOneWidget);
+    expect(find.text('Private A Movies'), findsOneWidget);
+    expect(find.text('Jellyfin B'), findsNothing);
+    active.select('b');
+    await tester.pumpAndSettle();
+    expect(find.text('Emby A'), findsNothing);
+    expect(find.text('Private A Movies'), findsNothing);
+    expect(find.text('Jellyfin B'), findsOneWidget);
+    expect(find.text(t.messages.playbackServerUnavailable), findsOneWidget);
+    expect(find.text('Libraries'), findsOneWidget);
+    bindings.updates.add([]);
+    await tester.pumpAndSettle();
+    expect(find.text('Jellyfin B'), findsNothing);
+    active.select(null);
+    await tester.pumpAndSettle();
+    expect(find.text('Private A Movies'), findsNothing);
+  });
+
+  testWidgets('server sections stay independent of the default library and grouping preference', (tester) async {
+    await SettingsService.getInstance();
+    await SettingsService.instance.write(SettingsService.groupLibrariesByServer, false);
+    await SettingsService.instance.write(SettingsService.librariesSectionExpanded, false);
+    final key = GlobalKey<SideNavigationRailState>();
+    await _pumpBasicRail(
+      tester,
+      sideNavKey: key,
+      alwaysExpanded: true,
+      selectedTab: NavigationTabId.libraries,
+      selectedLibraryKey: 'server-b:movies',
+      libraries: [
+        const MediaLibrary(
+          id: 'movies',
+          backend: MediaBackend.jellyfin,
+          title: 'Local Movies',
+          serverId: 'local-library',
+        ),
+        const MediaLibrary(
+          id: 'movies',
+          backend: MediaBackend.emby,
+          title: 'Emby Movies',
+          serverId: 'server-a',
+          serverName: 'Emby A',
+        ),
+        const MediaLibrary(
+          id: 'movies',
+          backend: MediaBackend.jellyfin,
+          title: 'Jellyfin Movies',
+          serverId: 'server-b',
+          serverName: 'Jellyfin B',
+        ),
+      ],
+    );
+    key.currentState!.focusActiveItem();
+    await tester.pumpAndSettle();
+    expect(
+      tester.widget<NavigationRailItem>(find.widgetWithText(NavigationRailItem, 'Jellyfin Movies')).focusNode.hasFocus,
+      isTrue,
+    );
+    // Collapsing A does not collapse B or the default library.
+    await tester.tap(find.text('Emby A'));
+    await tester.pumpAndSettle();
+    expect(find.text('Emby Movies'), findsNothing);
+    expect(find.text('Jellyfin Movies'), findsOneWidget);
+    await tester.tap(find.text('Jellyfin B'));
+    await tester.pumpAndSettle();
+    key.currentState!.focusActiveItem();
+    await tester.pumpAndSettle();
+    expect(
+      tester.widget<NavigationRailItem>(find.widgetWithText(NavigationRailItem, 'Jellyfin B')).focusNode.hasFocus,
+      isTrue,
+    );
   });
 
   testWidgets('closed TV rail is slim and keeps primary icons centered', (tester) async {
@@ -382,7 +551,7 @@ void main() {
 
   testWidgets('focusActiveItem skips a remembered library row that has unmounted', (tester) async {
     await SettingsService.getInstance();
-    final movies = _library(id: '1', title: 'Movies', serverId: ServerId('server-a'), serverName: 'Server A');
+    final movies = _library(id: '1', title: 'Movies', serverId: ServerId('local-library'), serverName: 'Server A');
 
     final librariesProvider = LibrariesProvider();
     await librariesProvider.updateLibraryOrder([movies]);
@@ -470,7 +639,7 @@ void main() {
   });
 
   testWidgets('collapsing the Libraries section survives a fresh rail', (tester) async {
-    final movies = _library(id: '1', title: 'Movies', serverId: ServerId('server-a'), serverName: 'Server A');
+    final movies = _library(id: '1', title: 'Movies', serverId: ServerId('local-library'), serverName: 'Server A');
 
     await _pumpBasicRail(tester, alwaysExpanded: true, libraries: [movies]);
     expect(_librariesChevron(Symbols.expand_less_rounded), findsOneWidget);
@@ -493,7 +662,7 @@ void main() {
     await SettingsService.getInstance();
     await SettingsService.instance.write(SettingsService.librariesSectionExpanded, false);
 
-    final movies = _library(id: '1', title: 'Movies', serverId: ServerId('server-a'), serverName: 'Server A');
+    final movies = _library(id: '1', title: 'Movies', serverId: ServerId('local-library'), serverName: 'Server A');
 
     final librariesProvider = LibrariesProvider();
     await librariesProvider.updateLibraryOrder([movies]);
@@ -554,7 +723,7 @@ void main() {
     await SettingsService.getInstance();
     await SettingsService.instance.write(SettingsService.librariesSectionExpanded, true);
 
-    final movies = _library(id: '1', title: 'Movies', serverId: ServerId('server-a'), serverName: 'Server A');
+    final movies = _library(id: '1', title: 'Movies', serverId: ServerId('local-library'), serverName: 'Server A');
 
     final librariesProvider = LibrariesProvider();
     await librariesProvider.updateLibraryOrder([movies]);
@@ -900,14 +1069,13 @@ void main() {
     sideNavKey.currentState!.focusActiveItem();
     await tester.pumpAndSettle();
 
-    // Home -> Libraries -> Server A header -> visible A -> Server B header -> visible B -> Hidden Libraries.
-    for (var i = 0; i < 6; i++) {
+    // Home -> Libraries -> Server A -> visible A -> hidden libraries of A.
+    for (var i = 0; i < 4; i++) {
       await _press(tester, LogicalKeyboardKey.arrowDown);
     }
     await _press(tester, LogicalKeyboardKey.enter);
 
-    // Hidden Libraries -> hidden Server A header -> hidden Server A library.
-    await _press(tester, LogicalKeyboardKey.arrowDown);
+    // The hidden library belongs directly to Server A.
     await _press(tester, LogicalKeyboardKey.arrowDown);
     await _press(tester, LogicalKeyboardKey.enter);
 

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:material_symbols_icons/symbols.dart';
 
 import '../../i18n/strings.g.dart';
+import '../../media/stream_quality.dart';
 import '../../models/audio_channel_limit.dart';
 import '../../models/audio_quality_preset.dart';
 import '../../models/transcode_quality_preset.dart';
@@ -115,6 +116,16 @@ class PlaybackSettingsScreen extends StatelessWidget {
             SettingsGroup(
               title: t.settings.quality,
               children: [
+                SettingSelectionTile<String>(
+                  pref: SettingsService.streamQuality,
+                  icon: Symbols.high_quality_rounded,
+                  title: t.streamQuality.localPreference,
+                  subtitleBuilder: streamQualityName,
+                  options: [
+                    for (final id in [StreamQuality.original, ...StreamQuality.renditionOrder])
+                      DialogOption(value: id, title: streamQualityName(id)),
+                  ],
+                ),
                 _defaultQualityTile(),
                 // Only a phone/tablet has a cellular radio; desktop and TV
                 // never report a cellular-only connection.

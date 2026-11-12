@@ -26,8 +26,9 @@ import 'add_plex_account_screen.dart';
 /// refreshes; pops with `null` (the default) when the user backs out.
 class AddConnectionScreen extends StatelessWidget {
   final Profile? targetProfile;
+  final bool mediaBrowserOnly;
 
-  const AddConnectionScreen({super.key, this.targetProfile});
+  const AddConnectionScreen({super.key, this.targetProfile, this.mediaBrowserOnly = false});
 
   @override
   Widget build(BuildContext context) {
@@ -35,12 +36,13 @@ class AddConnectionScreen extends StatelessWidget {
     const jellyfinDialect = MediaBrowserDialect.jellyfin;
     const embyDialect = MediaBrowserDialect.emby;
     final options = <_BackendOption>[
-      _BackendOption(
-        backend: MediaBackend.plex,
-        title: t.addServer.signInWithPlexCard,
-        subtitle: scoped ? t.addServer.signInWithPlexCardSubtitleScoped : t.addServer.signInWithPlexCardSubtitle,
-        builder: (_) => AddPlexAccountScreen(targetProfile: targetProfile),
-      ),
+      if (plexSupportEnabled && !mediaBrowserOnly)
+        _BackendOption(
+          backend: MediaBackend.plex,
+          title: t.addServer.signInWithPlexCard,
+          subtitle: scoped ? t.addServer.signInWithPlexCardSubtitleScoped : t.addServer.signInWithPlexCardSubtitle,
+          builder: (_) => AddPlexAccountScreen(targetProfile: targetProfile),
+        ),
       _BackendOption(
         backend: MediaBackend.jellyfin,
         title: t.addServer.connectToMediaBrowserCard(product: jellyfinDialect.productName),
@@ -63,7 +65,7 @@ class AddConnectionScreen extends StatelessWidget {
             : t.addServer.connectToMediaBrowserCardSubtitle,
         builder: (_) => AddJellyfinScreen(targetProfile: targetProfile, dialect: embyDialect),
       ),
-      if (scoped)
+      if (scoped && !mediaBrowserOnly)
         _BackendOption(
           backend: null,
           title: t.addServer.borrowFromAnotherProfile,

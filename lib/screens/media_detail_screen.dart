@@ -37,6 +37,7 @@ import '../media/episode_collection.dart';
 import '../media/media_item_types.dart';
 import '../media/media_kind.dart';
 import '../media/media_source_info.dart';
+import '../media/media_version.dart';
 import '../media/media_rating.dart';
 import '../media/media_role.dart';
 import '../media/paged_media_list_state.dart';
@@ -415,12 +416,12 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
   int _playbackProbeGeneration = 0;
   final ValueNotifier<int> _playbackStatusRevision = ValueNotifier(0);
 
-  /// The Play target whose source serves renditions of its own (a Quark
-  /// mount), which is what shows the quality button; null otherwise.
-  final ValueNotifier<String?> _streamQualityTargetKey = ValueNotifier(null);
+  /// The file the main Play action will use, and whether it offers renditions.
+  final ValueNotifier<({String key, MediaVersion? version, bool offers})?> _localPlaybackVersion = ValueNotifier(null);
 
   /// The target last checked for renditions, so the check runs once each.
-  String? _streamQualityCheckedKey;
+  String? _localPlaybackVersionKey;
+  Object? _localPlaybackVersionRequest;
 
   /// True while the quality button is asking the source for renditions.
   final ValueNotifier<bool> _streamQualityLoading = ValueNotifier(false);
@@ -1155,7 +1156,7 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
     _focusedEpisodeRatingsRevision.dispose();
     _playbackProbeTimer?.cancel();
     _playbackStatusRevision.dispose();
-    _streamQualityTargetKey.dispose();
+    _localPlaybackVersion.dispose();
     _streamQualityLoading.dispose();
     _extrasScrollController.dispose();
     _extrasFocusNode.removeListener(_handleExtrasFocusChange);
@@ -3939,7 +3940,7 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
         final summaryGap = 10 * scale;
         final summaryFontSize = availableHeight < 260 * scale ? 16.2 * scale : 18 * scale;
         final summaryLineHeight = summaryFontSize * 1.35;
-        final actionHeight = _tvDetailActionSize * scale;
+        final actionHeight = _tvDetailActionSize * scale + _localPlaybackCaptionHeight(context, metadata, scale: scale);
         final actionGap = 16 * scale;
         final hasDescription = description != null && description.isNotEmpty;
         final hasEpisodeTitle = episodeTitle != null && episodeTitle.isNotEmpty;
@@ -4823,7 +4824,7 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
         final availableHeight = constraints.maxHeight.isFinite ? constraints.maxHeight : 264.0;
         const desiredLogoHeight = _heroLogoHeight;
         const desiredLogoWidth = 400.0;
-        const actionHeight = _heroActionHeight;
+        final actionHeight = _heroActionHeight + _localPlaybackCaptionHeight(context, metadata);
         const chipHeight = _HeroChips.height;
         const rowGap = _HeroChips.spacing;
         // Phone widths stack the logo, chips and actions on the centre line —

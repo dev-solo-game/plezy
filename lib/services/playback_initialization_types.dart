@@ -232,6 +232,7 @@ enum PlaybackFailureReason {
   /// remote-playback rules). Signing in again changes nothing.
   playbackNotAllowed,
   serverUnavailable,
+  localFileUnavailable,
   cancelled,
   invalidPlaybackData,
   noPlayableSource,

@@ -3,6 +3,7 @@ import 'package:material_symbols_icons/symbols.dart';
 import 'package:flutter/services.dart';
 
 import '../../../focus/dpad_navigator.dart';
+import '../../../library/local_library_client.dart';
 import '../../../mpv/mpv.dart';
 import '../../../media/media_source_info.dart';
 import '../../../media/media_version.dart';
@@ -147,7 +148,42 @@ class TrackChapterControls extends StatelessWidget {
 
         final buttons = <Widget>[];
         int buttonIndex = 0;
+        final showText = !isMobile && MediaQuery.sizeOf(context).width >= 850;
 
+        if (state.serverId == LocalLibraryClient.localServerId &&
+            state.availableVersions.length > 1 &&
+            state.onSwitchVersion != null) {
+          buttons.add(
+            _buildTrackButton(
+              buttonIndex: buttonIndex++,
+              icon: Symbols.video_file_rounded,
+              label: showText ? t.videoControls.versionColumnHeader : null,
+              tooltip: t.mediaMenu.playVersion,
+              semanticLabel: t.videoControls.versionColumnHeader,
+              semanticValue: _selectedVersion(state)?.displayLabel,
+              buttons: buttons,
+              onPressed: () {
+                state.onCancelAutoHide?.call();
+                OverlaySheetController.of(context)
+                    .show(
+                      builder: (_) => BaseVideoControlSheet(
+                        title: t.videoControls.versionColumnHeader,
+                        icon: Symbols.video_file_rounded,
+                        child: VersionQualityPicker(
+                          availableVersions: state.availableVersions,
+                          selectedMediaIndex: state.selectedMediaIndex,
+                          selectedQualityPreset: state.selectedQualityPreset,
+                          serverSupportsTranscoding: false,
+                          onVersionSelected: (index) => state.onSwitchVersion?.call(index),
+                          onQualitySelected: (_) {},
+                        ),
+                      ),
+                    )
+                    .whenComplete(() => state.onStartAutoHide?.call());
+              },
+            ),
+          );
+        }
         if (state.hasStreamQualities) {
           final currentIndex = buttonIndex;
           buttons.add(
@@ -170,7 +206,7 @@ class TrackChapterControls extends StatelessWidget {
                           title: t.videoControls.qualityColumnHeader,
                           icon: Symbols.high_quality_rounded,
                           child: VersionQualityPicker(
-                            // Quality only: versions stay in the settings sheet.
+                            // Quality only: this acts on the current file.
                             availableVersions: [?_selectedVersion(state)],
                             selectedMediaIndex: 0,
                             selectedQualityPreset: state.selectedQualityPreset,
@@ -419,7 +455,23 @@ class TrackChapterControls extends StatelessWidget {
         }
 
         return IntrinsicHeight(
-          child: Row(mainAxisSize: .min, crossAxisAlignment: .stretch, children: buttons),
+          child: Row(
+            mainAxisSize: .min,
+            crossAxisAlignment: .stretch,
+            children: [
+              ...buttons,
+              if (showText &&
+                  state.serverId == LocalLibraryClient.localServerId &&
+                  state.availableVersions.isNotEmpty &&
+                  !state.hasStreamQualities)
+                Center(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    child: Text(t.streamQuality.original, style: const TextStyle(color: Colors.white70)),
+                  ),
+                ),
+            ],
+          ),
         );
       },
     );

@@ -10,6 +10,8 @@ import 'package:openwatchparty/openwatchparty.dart' as owp;
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 import 'package:plezy/database/app_database.dart';
 import 'package:plezy/i18n/strings.g.dart';
+import 'package:plezy/library/library_repository.dart';
+import 'package:plezy/library/local_library_client.dart';
 import 'package:plezy/media/ids.dart';
 import 'package:plezy/media/media_backend.dart';
 import 'package:plezy/media/media_server_client.dart';
@@ -32,6 +34,11 @@ import 'package:plezy/services/playback_coordinator.dart';
 import 'package:plezy/services/plex_client.dart';
 import 'package:plezy/services/settings_service.dart';
 import 'package:plezy/services/sleep_timer_service.dart';
+import 'package:plezy/storage/mount_manager.dart';
+import 'package:plezy/storage/mount_registry.dart';
+import 'package:plezy/storage/storage_driver.dart';
+import 'package:plezy/storage/storage_mount.dart';
+import 'package:plezy/storage/stream_variant.dart';
 import 'package:plezy/utils/platform_detector.dart';
 import 'package:plezy/utils/active_client_scope.dart';
 import 'package:plezy/utils/external_ids.dart';
@@ -669,7 +676,7 @@ void main() {
   Future<({GlobalKey<VideoPlayerScreenState> key, _ReloadPlayer player})> pumpReloadScreen(
     WidgetTester tester, {
     WatchTogetherProvider? watchTogether,
-    _ReloadClient? client,
+    MediaServerClient? client,
     bool isOffline = false,
     bool serverOnline = true,
   }) async {
@@ -689,7 +696,7 @@ void main() {
       accountPreferences.dispose();
     });
     final key = GlobalKey<VideoPlayerScreenState>();
-    final item = testMediaItem(id: 'movie-prior', serverId: 'srv-1', backend: MediaBackend.jellyfin);
+    final item = testMediaItem(id: 'movie-prior', serverId: client.serverId, backend: client.backend);
     await tester.pumpWidget(
       MultiProvider(
         providers: [
@@ -716,6 +723,88 @@ void main() {
     key.currentState!.player = fakePlayer;
     return (key: key, player: fakePlayer);
   }
+
+  testWidgets('switching a local file keeps the playhead and remembers only a successful version', (tester) async {
+    final repo = LibraryRepository(db);
+    final mounts = _VersionSwitchMounts(MountRegistry(db));
+    final client = LocalLibraryClient(repository: repo, mounts: mounts);
+    final id = await repo.insertItem(
+      LibraryItemsCompanion.insert(
+        kind: LibraryKinds.movie,
+        libraryType: 'movie',
+        title: 'Coastal Letters',
+        sortTitle: 'coastal letters',
+        addedAt: 1,
+        updatedAt: 1,
+      ),
+    );
+    for (final (mount, label) in [('quark', 'Quark · 4K'), ('smb', 'Living room SMB · 1080p')]) {
+      await db
+          .into(db.mounts)
+          .insert(MountsCompanion.insert(id: mount, kind: mount, displayName: mount, configJson: '{}', createdAt: 1));
+      final file = await repo.upsertFile(
+        mountId: mount,
+        path: '/$mount.mkv',
+        role: LibraryFileRoles.video,
+        scanId: 1,
+        size: 10,
+        modifiedAt: 1,
+        versionLabel: label,
+      );
+      await repo.assignFile(file, id);
+    }
+    final item = (await client.fetchItem('$id'))!;
+    final versions = item.mediaVersions!;
+    final quark = versions.indexWhere((v) => v.name!.startsWith('Quark'));
+    final smb = versions.indexWhere((v) => v.name!.contains('SMB'));
+    expect(await client.offersStreamQualities(item, mediaSourceId: versions[quark].id), isTrue);
+    expect(await client.offersStreamQualities(item, mediaSourceId: versions[smb].id), isFalse);
+    await SettingsService.instance.write(SettingsService.streamQuality, 'high');
+    await saveMediaVersionPreferenceFor(item, index: quark, versions: versions);
+    await withMockPlayerChannels(
+      methodChannelName: 'com.plezy/mpv_player',
+      eventChannelName: 'com.plezy/mpv_player/events',
+      testBody: () async {
+        final screen = await pumpReloadScreen(tester, client: client);
+        final player = screen.player;
+        final state = screen.key.currentState!;
+        var ready = false;
+        final initial = state.navigateToQueueItem(item).whenComplete(() => ready = true);
+        await pumpUntil(tester, () => ready);
+        await initial;
+        PlaybackSourceChangeOutcome? result;
+        Future<void> switchTo(int index) async {
+          result = null;
+          final switchResult = state
+              .debugSwitchPlaybackSourceForTesting(newMediaIndex: index)
+              .then((value) => result = value);
+          await pumpUntil(tester, () => result != null);
+          await switchResult;
+        }
+
+        const progress = Duration(minutes: 12);
+        player.setPosition(progress);
+        mounts.smbUnavailable = true;
+        await switchTo(smb);
+        expect(result, PlaybackSourceChangeOutcome.failed);
+        expect((await resolveSavedMediaVersionFor(item))?.index, quark);
+        expect(player.state.position, progress);
+
+        mounts.smbUnavailable = false;
+        await switchTo(smb);
+        expect(result, PlaybackSourceChangeOutcome.applied);
+        expect(player.lastOpened?.uri, 'https://preview.invalid/smb/original');
+        expect(player.lastOpened?.start, progress);
+        expect((await resolveSavedMediaVersionFor(item))?.index, smb);
+        expect(SettingsService.instance.read(SettingsService.streamQuality), 'high');
+
+        await switchTo(quark);
+        expect(result, PlaybackSourceChangeOutcome.applied);
+        expect(player.lastOpened?.uri, 'https://preview.invalid/quark/high');
+        expect(player.lastOpened?.start, progress);
+      },
+    );
+  });
 
   group('TV background suspend', () {
     testWidgets('a suspend under the Play Next prompt restores the prompt and its countdown', (tester) async {
@@ -1199,6 +1288,7 @@ class _ReloadPlayer extends FakeSyncPlayer {
     : super(playing: true, position: const Duration(seconds: 121), duration: const Duration(minutes: 40), rate: 1.25);
   bool opens;
   int openCalls = 0;
+  Media? lastOpened;
 
   /// When set, open() waits for it before loading.
   Completer<void>? openGate;
@@ -1245,6 +1335,7 @@ class _ReloadPlayer extends FakeSyncPlayer {
     final gate = openGate;
     if (gate != null) await gate.future;
     if (!opens) throw StateError('open failed before the open boundary');
+    lastOpened = media;
     setPosition(media.start ?? Duration.zero);
     setCompleted(false);
     emitPlaying(play);
@@ -1254,6 +1345,32 @@ class _ReloadPlayer extends FakeSyncPlayer {
 
   @override
   Future<void> selectSubtitleTrack(SubtitleTrack track) async {}
+}
+
+class _VersionSwitchMounts extends MountManager {
+  _VersionSwitchMounts(super.registry);
+
+  bool smbUnavailable = false;
+
+  @override
+  List<String> variantOrder(StorageMount mount) => mount.kind == StorageKind.quark ? ['high'] : [];
+
+  @override
+  Future<List<StreamVariant>> streamVariants(StorageMount mount, StorageEntry entry) async => [
+    if (mount.kind == StorageKind.quark)
+      StreamVariant(id: 'high', url: Uri.parse('https://preview.invalid/quark/high'), width: 1280, height: 720),
+  ];
+
+  @override
+  Future<Uri> streamUrl(StorageMount mount, StorageEntry entry, {bool bulk = false}) async {
+    if (smbUnavailable && mount.kind == StorageKind.smb) {
+      throw const StorageException(StorageErrorKind.network, 'SMB unavailable');
+    }
+    return Uri.parse('https://preview.invalid/${mount.id}/original');
+  }
+
+  @override
+  Future<Uri> variantUrl(StorageMount mount, StorageEntry entry, StreamVariant variant) async => variant.url;
 }
 
 class _ReloadClient with PlaybackReportRecorder implements MediaServerClient {

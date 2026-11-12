@@ -47,7 +47,8 @@ extension _VideoPlayerErrorMethods on VideoPlayerScreenState {
         unawaited(_showServerLimitDialog());
       case PlaybackFailureAction.mediaUnreadableDialog:
         _latchFatalPlaybackError(action);
-        unawaited(_showMediaUnreadableDialog());
+        void showUnreadable() => unawaited(_showMediaUnreadableDialog());
+        if (!_offerLocalVersionSwitch(onNoAlternatives: showUnreadable)) showUnreadable();
       case PlaybackFailureAction.serverBusyDialog:
         _latchFatalPlaybackError(action);
         unawaited(_showServerBusyDialog());
@@ -82,7 +83,100 @@ extension _VideoPlayerErrorMethods on VideoPlayerScreenState {
           unawaited(_handleBackButton());
           return;
         }
-        _presentPlaybackFailure(message);
+        final mountUnavailable =
+            _mountGatewayTimedOut ||
+            PlayerError.httpStatusFromLog(err.message) == 504 ||
+            err.cause == PlayerError.openTimedOut;
+        if (!mountUnavailable || !_offerLocalVersionSwitch(onNoAlternatives: () => _presentPlaybackFailure(message))) {
+          _presentPlaybackFailure(message);
+        }
+    }
+  }
+
+  /// A mounted file that failed before playback can be replaced by another
+  /// version of this item after an explicit user choice.
+  bool _offerLocalVersionSwitch({required VoidCallback onNoAlternatives}) {
+    final request = _currentOpenRequest;
+    final failedSourceId = _playbackSession?.mediaSourceId ?? request?.mediaSourceId;
+    if (request == null ||
+        failedSourceId == null ||
+        _currentMetadata.serverId != LocalLibraryClient.localServerId ||
+        _isOfflinePlayback ||
+        _firstFrame.rendered ||
+        _transitionGate.transition != PlaybackTransition.idle ||
+        widget.watchTogetherCopy != null ||
+        widget.launchObserver != null) {
+      return false;
+    }
+    final client = _getOnlineMediaServerClient(context);
+    if (client is! LocalLibraryClient) return false;
+    unawaited(_pickReplacementLocalVersion(client, request, failedSourceId, onNoAlternatives));
+    return true;
+  }
+
+  Future<void> _pickReplacementLocalVersion(
+    LocalLibraryClient client,
+    _PlaybackOpenRequest request,
+    String failedSourceId,
+    VoidCallback onNoAlternatives,
+  ) async {
+    final route = ModalRoute.of(context);
+    bool isCurrent() => !_shuttingDown && identical(_currentOpenRequest, request) && route?.isCurrent == true;
+    final item = request.metadata;
+    final List<MediaVersion> versions;
+    try {
+      versions = (await client.fetchItem(item.id))?.mediaVersions ?? const [];
+    } catch (e) {
+      appLogger.w('Could not load alternate versions of the mounted file', error: e);
+      if (mounted && isCurrent()) onNoAlternatives();
+      return;
+    }
+    if (!mounted || !isCurrent()) return;
+    final alternatives = versions.where((version) => version.id != failedSourceId).toList();
+    if (alternatives.isEmpty) {
+      onNoAlternatives();
+      return;
+    }
+
+    _firstFrame.forceUiReadyOnFailure();
+    unawaited(_wakelockController.setEnabled(false));
+    final picked = await showVersionPickerDialog(
+      context,
+      alternatives,
+      t.messages.mediaUnreadableTitle,
+      description: t.messages.localFileUnavailableChooseVersion,
+      showCancel: true,
+    );
+    if (!mounted || !isCurrent()) return;
+    if (picked == null) {
+      await _handleBackButton();
+      return;
+    }
+
+    final version = alternatives[picked];
+    final index = versions.indexOf(version);
+    final outcome = await _reloadMediaInPlace(
+      metadata: item,
+      selectedMediaIndex: index,
+      selectedMediaSourceId: version.id,
+      qualityPreset: request.qualityPreset,
+      useCurrentAudioStreamSelection: false,
+      resumePosition: request.resumePosition,
+      showErrorUi: false,
+      reason: 'switch from unavailable mounted file',
+    );
+    if (!mounted || _shuttingDown || _currentMetadata.globalKey != item.globalKey) return;
+    if (outcome == MediaReloadOutcome.opened && _playbackSession?.mediaSourceId == version.id) {
+      final attempt = _playbackAttempt;
+      if (attempt == null || !await attempt.outcome.fileLoaded || !attempt.isCurrent || _hasFatalPlaybackError) return;
+      try {
+        await saveMediaVersionPreferenceFor(item, index: index, versions: versions);
+      } catch (e) {
+        appLogger.w('Failed to remember the selected file', error: e);
+      }
+    } else if ((outcome == MediaReloadOutcome.failed || outcome == MediaReloadOutcome.rejected) &&
+        _playbackFailureMessage == null) {
+      _presentPlaybackFailure(t.messages.playbackFailed);
     }
   }
 
@@ -217,6 +311,7 @@ extension _VideoPlayerErrorMethods on VideoPlayerScreenState {
 
   void _onPlayerLog(PlayerLog log) {
     final status = PlayerError.httpStatusFromLog(log.text);
+    if (status == 504) _mountGatewayTimedOut = true;
     if (status != null && fatalPlaybackHttpStatuses.contains(status)) _fatalHttpStatuses.add(status);
     // An open the server answers with 503 never fails on its own: ffmpeg's
     // reconnect loop retries 503 forever and mpv just reports buffering

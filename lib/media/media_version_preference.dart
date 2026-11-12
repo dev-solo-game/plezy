@@ -3,13 +3,16 @@ import 'media_version.dart';
 /// A remembered media-version choice for a series or standalone item, stored
 /// in `SettingsService.mediaVersionPreferences` (#1492).
 ///
-/// Persisted as `{"id":…,"sig":…,"idx":…,"at":…}`. Values written before the
+/// Persisted as `{"id":…,"item":…,"sig":…,"idx":…,"at":…}`. Values written before the
 /// record form existed were bare positional ints; [MediaVersionPreference.fromJson]
 /// still accepts those so old preferences keep working.
 class MediaVersionPreference {
   /// Backend-opaque [MediaVersion.id] of the chosen version. Exact match only
   /// holds for the item the pick was made on (ids differ per episode).
   final String? versionId;
+
+  /// Item that owns the exact file id for a mounted-library preference.
+  final String? itemId;
 
   /// [MediaVersion.signature] ("res:codec:container") of the chosen version,
   /// for matching the equivalent version on sibling episodes.
@@ -23,21 +26,24 @@ class MediaVersionPreference {
   /// preference map is pruned. Null on legacy entries (evicted first).
   final int? updatedAt;
 
-  const MediaVersionPreference({this.versionId, this.signature, required this.index, this.updatedAt});
+  const MediaVersionPreference({this.versionId, this.itemId, this.signature, required this.index, this.updatedAt});
 
   /// Capture [version] (at [index] in its Media list) as a preference.
-  factory MediaVersionPreference.forVersion(MediaVersion version, int index) => MediaVersionPreference(
-    versionId: version.id.isEmpty ? null : version.id,
-    signature: version.signature,
-    index: index,
-    updatedAt: DateTime.now().millisecondsSinceEpoch,
-  );
+  factory MediaVersionPreference.forVersion(MediaVersion version, int index, {String? itemId}) =>
+      MediaVersionPreference(
+        versionId: version.id.isEmpty ? null : version.id,
+        itemId: itemId,
+        signature: version.signature,
+        index: index,
+        updatedAt: DateTime.now().millisecondsSinceEpoch,
+      );
 
   factory MediaVersionPreference.fromJson(Object? raw) {
     if (raw is int) return MediaVersionPreference(index: raw);
     if (raw is Map) {
       return MediaVersionPreference(
         versionId: raw['id'] as String?,
+        itemId: raw['item'] as String?,
         signature: raw['sig'] as String?,
         index: raw['idx'] is int ? raw['idx'] as int : 0,
         updatedAt: raw['at'] as int?,
@@ -48,6 +54,7 @@ class MediaVersionPreference {
 
   Map<String, dynamic> toJson() => {
     if (versionId != null) 'id': versionId,
+    if (itemId != null) 'item': itemId,
     if (signature != null) 'sig': signature,
     'idx': index,
     if (updatedAt != null) 'at': updatedAt,

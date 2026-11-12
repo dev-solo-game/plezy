@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 
 import 'package:provider/provider.dart';
 
+import '../library/local_library_client.dart';
 import '../media/media_item.dart';
 import '../media/media_version.dart';
 import '../media/media_version_preference.dart';
@@ -220,7 +221,11 @@ Future<void> saveMediaVersionPreferenceFor(
   final settingsService = await SettingsService.getInstance();
   checkCurrent?.call();
   final pref = index >= 0 && index < versions.length
-      ? MediaVersionPreference.forVersion(versions[index], index)
+      ? MediaVersionPreference.forVersion(
+          versions[index],
+          index,
+          itemId: metadata.serverId == LocalLibraryClient.localServerId ? metadata.id : null,
+        )
       : MediaVersionPreference(index: index, updatedAt: DateTime.now().millisecondsSinceEpoch);
   final updated = {...settingsService.read(SettingsService.mediaVersionPreferences)}
     ..remove(_legacyMediaVersionPreferenceKey(metadata))
@@ -256,10 +261,23 @@ typedef ResolvedMediaVersionPreference = ({int index, String? sourceId, String? 
 /// signature pass through with a null sourceId — an unverified id from a
 /// sibling episode would be meaningless downstream, while a signature is
 /// safely re-matched there.
-Future<ResolvedMediaVersionPreference?> resolveSavedMediaVersionFor(MediaItem metadata) async {
+Future<ResolvedMediaVersionPreference?> resolveSavedMediaVersionFor(
+  MediaItem metadata, {
+  bool keepMissingLocalFile = false,
+}) async {
   final pref = await savedMediaVersionPreferenceFor(metadata);
   if (pref == null) return null;
   final versions = metadata.mediaVersions ?? const <MediaVersion>[];
+  // Local file ids are authoritative on the same item, including older
+  // standalone preferences. Sibling episodes still use signature/index.
+  final exactId = pref.versionId;
+  if (keepMissingLocalFile &&
+      metadata.serverId == LocalLibraryClient.localServerId &&
+      exactId != null &&
+      (pref.itemId == metadata.id || (pref.itemId == null && metadata.grandparentId == null))) {
+    final index = versions.indexWhere((version) => version.id == exactId);
+    return (index: index < 0 ? pref.index : index, sourceId: exactId, signature: pref.signature);
+  }
   if (versions.isEmpty) return (index: pref.index, sourceId: null, signature: pref.signature);
   final index = pref.resolveIndex(versions);
   if (index == null) return null;
@@ -377,7 +395,7 @@ Future<bool?> navigateToVideoPlayer(
       downloadedMediaIndex == null &&
       downloadedMediaSourceId == null &&
       roomVersion == null) {
-    savedVersion = await resolveSavedMediaVersionFor(metadata);
+    savedVersion = await resolveSavedMediaVersionFor(metadata, keepMissingLocalFile: !isOffline);
   }
   if (!launchCurrent()) return null;
   final preferredVersion = savedVersion;

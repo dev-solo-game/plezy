@@ -734,6 +734,7 @@ class MediaCardState extends State<MediaCard> with ContextMenuTapMixin<MediaCard
                   enableDetailLinks: widget.onTap == null,
                   showTitleImplied: _impliesShowTitle(item),
                   catalogItem: _catalogItem,
+                  resumeSource: widget.isInContinueWatching ? item.serverName : null,
                 ),
             ],
           ),
@@ -1238,6 +1239,7 @@ class _MediaCardHelpers {
     bool enableDetailLinks = true,
     bool showTitleImplied = false,
     CatalogItem? catalogItem,
+    String? resumeSource,
   }) {
     final catalogMetadata = catalogItem == null
         ? ''
@@ -1257,10 +1259,12 @@ class _MediaCardHelpers {
         style: _captionStyle(context),
         enableDetailLinks: true,
         isOffline: isOffline,
+        resumeSource: resumeSource,
       );
     }
 
     final text = _metadataSubtitleText(mi, catalogMetadata: catalogMetadata, showTitleImplied: showTitleImplied);
+    if (resumeSource != null) return _caption(context, [?text, resumeSource].join(' · '));
     return text == null ? _emptyCaption(context) : _caption(context, text);
   }
 
@@ -1510,6 +1514,7 @@ Widget _buildEpisodeSubtitleRow(
   required TextStyle? style,
   required bool enableDetailLinks,
   required bool isOffline,
+  String? resumeSource,
 }) {
   final seasonLabel = 'S${mi.parentIndex}';
   return Row(
@@ -1525,7 +1530,12 @@ Widget _buildEpisodeSubtitleRow(
       ExcludeSemantics(child: Text('${_episodeNumberSuffix(mi)} · ', style: style)),
       Expanded(
         child: ExcludeSemantics(
-          child: Text(mi.displaySubtitle ?? mi.displayTitle, maxLines: 1, overflow: .ellipsis, style: style),
+          child: Text(
+            resumeSource ?? mi.displaySubtitle ?? mi.displayTitle,
+            maxLines: 1,
+            overflow: .ellipsis,
+            style: style,
+          ),
         ),
       ),
     ],

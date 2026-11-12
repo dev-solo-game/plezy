@@ -87,6 +87,7 @@ import '../providers/shader_provider.dart';
 import '../providers/account_preferences_controller.dart';
 import '../utils/app_logger.dart';
 import '../utils/dialogs.dart';
+import '../utils/download_version_utils.dart';
 import '../utils/iphone_duo.dart';
 import '../utils/log_redaction_manager.dart';
 import '../utils/immersive_mode_guard.dart';
@@ -132,6 +133,7 @@ import '../focus/focus_navigation_intent.dart';
 import '../focus/key_event_utils.dart';
 import '../focus/transport_keys.dart';
 import '../i18n/strings.g.dart';
+import '../library/local_library_client.dart';
 import '../watch_together/providers/watch_together_provider.dart';
 import '../watch_together/models/watch_copy.dart';
 import '../watch_together/services/player_adapter.dart';
@@ -1127,10 +1129,9 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen>
     _selectedAudioStreamId = session.audioStreamId;
     // Any freshly opened stream ends a dead-stream park (#1520).
     _eofRecovery.clearPark();
-    // Every successful open passes through here (never live TV), making it
-    // the chokepoint for the local last-played history. Offline plays are
-    // excluded — like version prefs, the history describes online intent.
-    if (!session.isOffline) {
+    // Mounted playback records history at its first frame. Startup commits
+    // the resolved session before the storage proxy has opened the file.
+    if (!session.isOffline && session.metadata.serverId != LocalLibraryClient.localServerId) {
       unawaited(LocalPlaybackHistory.recordPlayback(session.metadata));
     }
   }
@@ -2780,6 +2781,7 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen>
   }
 
   String? _lastLogError;
+  bool _mountGatewayTimedOut = false;
 
   /// Whether the transport layer has logged a fault for the current file;
   /// latched per open, read by [SpuriousEofRecovery] to classify an EOF.

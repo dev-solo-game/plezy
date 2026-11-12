@@ -19,6 +19,7 @@ import 'package:plezy/utils/platform_detector.dart';
 import 'package:provider/provider.dart';
 
 import '../../test_helpers/prefs.dart';
+import '../../test_helpers/theme.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -34,61 +35,66 @@ void main() {
     PlatformDetector.debugSetIsDesktopOSOverride(null);
   });
 
-  testWidgets('remote back pops the manage profile page', (tester) async {
-    TvDetectionService.debugSetAppleTVOverride(true);
-    // Simulated TV device, not desktop force-TV: keep locked keyboard mode.
-    PlatformDetector.debugSetIsDesktopOSOverride(false);
-    final db = AppDatabase.forTesting(NativeDatabase.memory());
-    final profile = Profile.local(id: 'local-owner', displayName: 'Owner', createdAt: DateTime(2026, 1, 1));
-    final profiles = _FakeProfileRegistry(db, [profile]);
-    final connections = _FakeConnectionRegistry(db);
-    final profileConnections = _FakeProfileConnectionRegistry(db);
-    final storage = await StorageService.getInstance();
-    final plexHome = PlexHomeService(
-      connections: connections,
-      profileConnections: profileConnections,
-      storage: storage,
-      plexHomeUserFetcher: (_) async => const [],
-    );
-    // The screen reads its avatar through this provider, exactly as it does
-    // under the app-lifetime scope in main.dart. Left uninitialized: this test
-    // is about TV back handling, and an idle provider yields no avatar without
-    // opening stream subscriptions the test would have to settle.
-    final activeProfile = ActiveProfileProvider(
-      registry: profiles,
-      plexHome: plexHome,
-      connections: connections,
-      profileConnections: profileConnections,
-      storage: storage,
-    );
-    addTearDown(() async {
-      activeProfile.dispose();
-      await plexHome.dispose();
-      await db.close();
-    });
+  for (final mediaSourcesOnly in [false, true]) {
+    testWidgets('remote back pops the manage profile page (mediaSourcesOnly=$mediaSourcesOnly)', (tester) async {
+      TvDetectionService.debugSetAppleTVOverride(true);
+      // Simulated TV device, not desktop force-TV: keep locked keyboard mode.
+      PlatformDetector.debugSetIsDesktopOSOverride(false);
+      final db = AppDatabase.forTesting(NativeDatabase.memory());
+      final profile = Profile.local(id: 'local-owner', displayName: 'Owner', createdAt: DateTime(2026, 1, 1));
+      final profiles = _FakeProfileRegistry(db, [profile]);
+      final connections = _FakeConnectionRegistry(db);
+      final profileConnections = _FakeProfileConnectionRegistry(db);
+      final storage = await StorageService.getInstance();
+      final plexHome = PlexHomeService(
+        connections: connections,
+        profileConnections: profileConnections,
+        storage: storage,
+        plexHomeUserFetcher: (_) async => const [],
+      );
+      // The screen reads its avatar through this provider, exactly as it does
+      // under the app-lifetime scope in main.dart. Left uninitialized: this test
+      // is about TV back handling, and an idle provider yields no avatar without
+      // opening stream subscriptions the test would have to settle.
+      final activeProfile = ActiveProfileProvider(
+        registry: profiles,
+        plexHome: plexHome,
+        connections: connections,
+        profileConnections: profileConnections,
+        storage: storage,
+      );
+      addTearDown(() async {
+        activeProfile.dispose();
+        await plexHome.dispose();
+        await db.close();
+      });
 
-    await tester.pumpWidget(
-      TranslationProvider(
-        child: MultiProvider(
-          providers: [
-            Provider<ProfileRegistry>.value(value: profiles),
-            Provider<ProfileConnectionRegistry>.value(value: profileConnections),
-            Provider<ConnectionRegistry>.value(value: connections),
-            Provider<PlexHomeService>.value(value: plexHome),
-            ChangeNotifierProvider<ActiveProfileProvider>.value(value: activeProfile),
-          ],
-          child: InputModeTracker(
-            child: MaterialApp(
-              home: Builder(
-                builder: (context) => Scaffold(
-                  body: Center(
-                    child: ElevatedButton(
-                      onPressed: () {
-                        Navigator.of(
-                          context,
-                        ).push(MaterialPageRoute(builder: (_) => ProfileDetailScreen(profile: profile)));
-                      },
-                      child: const Text('Open profile'),
+      await tester.pumpWidget(
+        TranslationProvider(
+          child: MultiProvider(
+            providers: [
+              Provider<ProfileRegistry>.value(value: profiles),
+              Provider<ProfileConnectionRegistry>.value(value: profileConnections),
+              Provider<ConnectionRegistry>.value(value: connections),
+              Provider<PlexHomeService>.value(value: plexHome),
+              ChangeNotifierProvider<ActiveProfileProvider>.value(value: activeProfile),
+            ],
+            child: InputModeTracker(
+              child: MaterialApp(
+                theme: ThemeData(extensions: const [testMonoTokens]),
+                home: Builder(
+                  builder: (context) => Scaffold(
+                    body: Center(
+                      child: ElevatedButton(
+                        onPressed: () {
+                          Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => ProfileDetailScreen(profile: profile, mediaSourcesOnly: mediaSourcesOnly),
+                            ),
+                          );
+                        },
+                        child: const Text('Open profile'),
+                      ),
                     ),
                   ),
                 ),
@@ -96,30 +102,45 @@ void main() {
             ),
           ),
         ),
-      ),
-    );
+      );
 
-    await tester.tap(find.text('Open profile'));
-    await tester.pumpAndSettle();
-    expect(find.text(t.profiles.connectionsLabel), findsOneWidget);
-    final fieldFinder = find.byType(TextField);
-    expect(find.byKey(const Key('tv_virtual_keyboard_panel')), findsNothing);
-    expect(tester.widget<TextField>(fieldFinder).readOnly, isFalse);
-    await tester.showKeyboard(fieldFinder);
+      await tester.tap(find.text('Open profile'));
+      await tester.pumpAndSettle();
+      expect(find.text(t.profiles.connectionsLabel), findsOneWidget);
+      if (mediaSourcesOnly) {
+        expect(find.byType(TextField), findsNothing);
+        expect(find.text(t.profiles.deleteProfileButton), findsNothing);
+        await tester.tap(find.text(t.profiles.add));
+        await tester.pumpAndSettle();
+        expect(find.text('Connect to Emby'), findsOneWidget);
+        expect(find.text('Connect to Jellyfin'), findsOneWidget);
+        expect(find.text('Sign in with Plex'), findsNothing);
+        await tester.sendKeyEvent(LogicalKeyboardKey.gameButtonB);
+        await tester.pumpAndSettle();
+        await tester.sendKeyEvent(LogicalKeyboardKey.gameButtonB);
+        await tester.pumpAndSettle();
+        expect(find.text('Open profile'), findsOneWidget);
+        return;
+      }
+      final fieldFinder = find.byType(TextField);
+      expect(find.byKey(const Key('tv_virtual_keyboard_panel')), findsNothing);
+      expect(tester.widget<TextField>(fieldFinder).readOnly, isFalse);
+      await tester.showKeyboard(fieldFinder);
 
-    await tester.sendKeyEvent(LogicalKeyboardKey.gameButtonB);
-    await tester.pumpAndSettle();
+      await tester.sendKeyEvent(LogicalKeyboardKey.gameButtonB);
+      await tester.pumpAndSettle();
 
-    expect(find.text(t.profiles.connectionsLabel), findsOneWidget);
-    expect(find.byKey(const Key('tv_virtual_keyboard_panel')), findsNothing);
-    expect(tester.widget<TextField>(fieldFinder).readOnly, isTrue);
+      expect(find.text(t.profiles.connectionsLabel), findsOneWidget);
+      expect(find.byKey(const Key('tv_virtual_keyboard_panel')), findsNothing);
+      expect(tester.widget<TextField>(fieldFinder).readOnly, isTrue);
 
-    await tester.sendKeyEvent(LogicalKeyboardKey.gameButtonB);
-    await tester.pumpAndSettle();
+      await tester.sendKeyEvent(LogicalKeyboardKey.gameButtonB);
+      await tester.pumpAndSettle();
 
-    expect(find.text('Open profile'), findsOneWidget);
-    expect(find.text(t.profiles.connectionsLabel), findsNothing);
-  });
+      expect(find.text('Open profile'), findsOneWidget);
+      expect(find.text(t.profiles.connectionsLabel), findsNothing);
+    });
+  }
 }
 
 class _FakeConnectionRegistry extends ConnectionRegistry {

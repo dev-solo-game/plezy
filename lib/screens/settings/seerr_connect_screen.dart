@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import '../../focus/focusable_button.dart';
 import '../../focus/focusable_text_field.dart';
 import '../../i18n/strings.g.dart';
+import '../../media/media_backend.dart';
 import '../../mixins/controller_disposer_mixin.dart';
 import '../../models/seerr/seerr_public_settings.dart';
 import '../../models/seerr/seerr_session.dart';
@@ -76,7 +77,8 @@ class _SeerrConnectScreenState extends State<SeerrConnectScreen>
 
   bool get _offersPlex {
     final instance = _instance;
-    return instance != null &&
+    return plexSupportEnabled &&
+        instance != null &&
         instance.mediaServerLogin &&
         instance.mediaServerType == SeerrMediaServerType.plex &&
         _plexTokenAvailable;

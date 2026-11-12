@@ -485,7 +485,7 @@ class _Translations$settings$zh_Hant extends Translations$settings$zh {
 	@override String get autoRemoveWatchedDownloads => '自動移除已觀看的下載內容';
 	@override String get autoRemoveWatchedDownloadsDescription => '自動刪除已觀看的下載影片';
 	@override String get downloadConnections => '下載執行緒數';
-	@override String downloadConnectionsDescription({required Object count}) => '雲端硬碟：每個檔案同時用 ${count} 個連線下載';
+	@override String downloadConnectionsDescription({required Object count}) => '雲端硬碟：每個檔案最多使用 ${count} 個連線下載';
 	@override String get downloadConnectionsLabel => '執行緒數';
 	@override String get downloadChunkSize => '下載分塊大小';
 	@override String downloadChunkSizeDescription({required Object size}) => '雲端硬碟：每次請求 ${size} MB';
@@ -1089,6 +1089,7 @@ class _Translations$messages$zh_Hant extends Translations$messages$zh {
 	@override String get serverLimitTitle => '播放失敗';
 	@override String get serverLimitBody => '伺服器錯誤（HTTP 500）。伺服器的頻寬或轉碼限制可能拒絕此播放要求。請聯絡伺服器擁有者調整設定。';
 	@override String get mediaUnreadableTitle => '檔案無法使用';
+	@override String get localFileUnavailableChooseVersion => '無法開啟所選檔案。檔案可能已被刪除，或來源已離線。請選擇其他版本繼續觀看。';
 	@override String get mediaUnreadableBody => '伺服器找到了此項目，但無法讀取其檔案（HTTP 404）。檔案可能已移動、刪除，或其儲存空間離線。請聯絡伺服器擁有者檢查檔案並重新掃描媒體庫。';
 	@override String get serverBusyTitle => '串流無法使用';
 	@override String get serverBusyBody => '伺服器持續拒絕串流此檔案（HTTP 503）。伺服器可能正在重新啟動、忙碌中，或檔案所在的儲存裝置可能已離線。請稍後再試；若問題持續發生，請要求伺服器擁有者檢查伺服器及檔案所在的儲存裝置。';
@@ -1327,6 +1328,7 @@ class _Translations$discover$zh_Hant extends Translations$discover$zh {
 	@override String get addMediaToLibraries => '請向您的媒體庫新增一些媒體內容';
 	@override String get continueWatching => '繼續觀看';
 	@override String continueWatchingIn({required Object library}) => '繼續在 ${library} 觀看';
+	@override String get selectResumeSource => '選擇續播來源';
 	@override String get nextUp => '接下來播放';
 	@override String nextUpIn({required Object library}) => '接下來在 ${library} 播放';
 	@override String get recentlyAdded => '最近新增';
@@ -2620,6 +2622,8 @@ class _Translations$streamQuality$zh_Hant extends Translations$streamQuality$zh 
 	final TranslationsZhHant _root; // ignore: unused_field
 
 	// Translations
+	@override String get preferred => '偏好畫質';
+	@override String get localPreference => '本機媒體庫畫質';
 	@override String get noneForFile => '這個檔案暫時沒有轉碼畫質，會播放原畫';
 	@override String get original => '原畫';
 	@override String get superHd => '超清';
@@ -3972,7 +3976,7 @@ extension on TranslationsZhHant {
 			'settings.autoRemoveWatchedDownloads' => '自動移除已觀看的下載內容',
 			'settings.autoRemoveWatchedDownloadsDescription' => '自動刪除已觀看的下載影片',
 			'settings.downloadConnections' => '下載執行緒數',
-			'settings.downloadConnectionsDescription' => ({required Object count}) => '雲端硬碟：每個檔案同時用 ${count} 個連線下載',
+			'settings.downloadConnectionsDescription' => ({required Object count}) => '雲端硬碟：每個檔案最多使用 ${count} 個連線下載',
 			'settings.downloadConnectionsLabel' => '執行緒數',
 			'settings.downloadChunkSize' => '下載分塊大小',
 			'settings.downloadChunkSizeDescription' => ({required Object size}) => '雲端硬碟：每次請求 ${size} MB',
@@ -4513,6 +4517,7 @@ extension on TranslationsZhHant {
 			'messages.serverLimitTitle' => '播放失敗',
 			'messages.serverLimitBody' => '伺服器錯誤（HTTP 500）。伺服器的頻寬或轉碼限制可能拒絕此播放要求。請聯絡伺服器擁有者調整設定。',
 			'messages.mediaUnreadableTitle' => '檔案無法使用',
+			'messages.localFileUnavailableChooseVersion' => '無法開啟所選檔案。檔案可能已被刪除，或來源已離線。請選擇其他版本繼續觀看。',
 			'messages.mediaUnreadableBody' => '伺服器找到了此項目，但無法讀取其檔案（HTTP 404）。檔案可能已移動、刪除，或其儲存空間離線。請聯絡伺服器擁有者檢查檔案並重新掃描媒體庫。',
 			'messages.serverBusyTitle' => '串流無法使用',
 			'messages.serverBusyBody' => '伺服器持續拒絕串流此檔案（HTTP 503）。伺服器可能正在重新啟動、忙碌中，或檔案所在的儲存裝置可能已離線。請稍後再試；若問題持續發生，請要求伺服器擁有者檢查伺服器及檔案所在的儲存裝置。',
@@ -4631,9 +4636,9 @@ extension on TranslationsZhHant {
 			'profiles.sourceProfileMissingParentAccount' => '來源使用者設定檔缺少其父帳戶資訊。',
 			'profiles.failedToLoadHomeUsers' => '無法載入您的 Plex Home 使用者。請檢查網路連線後重試。',
 			'profiles.failedToVerifyPin' => '無法驗證 PIN 碼。',
-			'profiles.newProfile' => '建立使用者設定檔',
 			_ => null,
 		} ?? switch (path) {
+			'profiles.newProfile' => '建立使用者設定檔',
 			'profiles.profileNameHint' => '例如：訪客、兒童、客廳',
 			'profiles.pinProtectionOptional' => 'PIN 碼保護（選填）',
 			'profiles.pinExplain' => '切換至此使用者設定檔時需要 4 位數 PIN 碼。',
@@ -4713,6 +4718,7 @@ extension on TranslationsZhHant {
 			'discover.addMediaToLibraries' => '請向您的媒體庫新增一些媒體內容',
 			'discover.continueWatching' => '繼續觀看',
 			'discover.continueWatchingIn' => ({required Object library}) => '繼續在 ${library} 觀看',
+			'discover.selectResumeSource' => '選擇續播來源',
 			'discover.nextUp' => '接下來播放',
 			'discover.nextUpIn' => ({required Object library}) => '接下來在 ${library} 播放',
 			'discover.recentlyAdded' => '最近新增',
@@ -5144,10 +5150,10 @@ extension on TranslationsZhHant {
 			'liveTv.guideReloadRequested' => '已要求更新節目表指南',
 			'liveTv.guideReloadFailed' => '無法重新載入節目表指南',
 			'liveTv.rulesProcessRequested' => '已要求重新評估規則',
-			'liveTv.rulesProcessFailed' => '無法重新評估錄影規則',
-			'liveTv.recordShow' => '錄製節目',
 			_ => null,
 		} ?? switch (path) {
+			'liveTv.rulesProcessFailed' => '無法重新評估錄影規則',
+			'liveTv.recordShow' => '錄製節目',
 			'liveTv.recordSettings.startEarly' => '提早開始（秒）',
 			'liveTv.recordSettings.endLate' => '延後結束（秒）',
 			'liveTv.recordSettings.newOnly' => '僅新劇集',
@@ -5658,10 +5664,10 @@ extension on TranslationsZhHant {
 			'performanceOverlay.cacheLimit' => '快取上限',
 			'performanceOverlay.speed' => '速度',
 			'performanceOverlay.player' => '播放器',
-			'performanceOverlay.memory' => '記憶體',
-			'performanceOverlay.uiFps' => '介面 FPS',
 			_ => null,
 		} ?? switch (path) {
+			'performanceOverlay.memory' => '記憶體',
+			'performanceOverlay.uiFps' => '介面 FPS',
 			'performanceOverlay.fps' => 'FPS',
 			'performanceOverlay.decoderAndroidHw' => 'Android 硬體',
 			'performanceOverlay.decoderNvidiaHw' => 'NVIDIA 硬體',
@@ -6070,6 +6076,8 @@ extension on TranslationsZhHant {
 			'storage.noMatchResults' => '沒有結果',
 			'storage.mediaSources' => '媒體來源',
 			'storage.scraperSettingsDescription' => 'TMDB key、語言與刮削代理',
+			'streamQuality.preferred' => '偏好畫質',
+			'streamQuality.localPreference' => '本機媒體庫畫質',
 			'streamQuality.noneForFile' => '這個檔案暫時沒有轉碼畫質，會播放原畫',
 			'streamQuality.original' => '原畫',
 			'streamQuality.superHd' => '超清',

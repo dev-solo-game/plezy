@@ -34,6 +34,9 @@ extension _MediaDetailPlaybackTracksStatus on _MediaDetailScreenState {
   }
 
   void _invalidatePlaybackProbes({required bool refreshItems}) {
+    _localPlaybackVersionRequest = null;
+    _localPlaybackVersionKey = null;
+    _localPlaybackVersion.value = null;
     _playbackProbeGeneration++;
     _playbackProbeTimer?.cancel();
     _playbackProbeRequests.clear();

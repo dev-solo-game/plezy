@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:plezy/database/tvos_database_recovery_store.dart';
 import 'package:plezy/i18n/strings.g.dart';
+import 'package:plezy/media/media_backend.dart';
 import 'package:plezy/main.dart';
 import 'package:plezy/screens/auth_screen.dart';
 import 'package:plezy/services/base_shared_preferences_service.dart';
@@ -48,7 +49,7 @@ void main() {
     expect(prefs.getString('current_user_uuid'), 'legacy-user');
   });
 
-  testWidgets('AuthScreen visibly renders recovery notice with Plex and Jellyfin actions', (tester) async {
+  testWidgets('AuthScreen visibly renders recovery notice with the enabled server actions', (tester) async {
     await tester.pumpWidget(
       TranslationProvider(
         child: MaterialApp(
@@ -63,7 +64,7 @@ void main() {
     await tester.pump();
 
     expect(find.text(t.auth.localDataRecoveryRequired), findsOneWidget);
-    expect(find.text(t.auth.signInWithPlex), findsOneWidget);
+    expect(find.text(t.auth.signInWithPlex), plexSupportEnabled ? findsOneWidget : findsNothing);
     expect(find.text(t.auth.connectToMediaBrowser(product: 'Jellyfin')), findsOneWidget);
     expect(find.text(t.auth.connectToMediaBrowser(product: 'Emby')), findsOneWidget);
   });
@@ -73,7 +74,7 @@ void main() {
     await tester.pump();
 
     expect(find.text(t.auth.localDataRecoveryRequired), findsNothing);
-    expect(find.text(t.auth.signInWithPlex), findsOneWidget);
+    expect(find.text(t.auth.signInWithPlex), plexSupportEnabled ? findsOneWidget : findsNothing);
     expect(find.text(t.auth.connectToMediaBrowser(product: 'Jellyfin')), findsOneWidget);
     expect(find.text(t.auth.connectToMediaBrowser(product: 'Emby')), findsOneWidget);
   });

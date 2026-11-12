@@ -14,12 +14,17 @@ class _DownloadButtonSpec {
 }
 
 extension _MediaDetailActionButtons on _MediaDetailScreenState {
+  double _localPlaybackCaptionHeight(BuildContext context, MediaItem metadata, {double scale = 1}) {
+    if (widget.isOffline || metadata.serverId != LocalLibraryClient.localServerId) return 0;
+    return 6 + MediaQuery.textScalerOf(context).scale(20 * scale);
+  }
+
   Widget _buildActionButtons(MediaItem metadata) {
     // Tie asynchronous playback prompts to the actionable subtree, not the
     // route's State: a deleted first-route detail intentionally stays mounted.
-    return ValueListenableBuilder<String?>(
-      valueListenable: _streamQualityTargetKey,
-      builder: (context, _, _) => _buildAvailableActionButtons(context, metadata),
+    return ListenableBuilder(
+      listenable: Listenable.merge([_localPlaybackVersion, _playbackStatusRevision]),
+      builder: (context, _) => _buildAvailableActionButtons(context, metadata),
     );
   }
 
@@ -122,20 +127,22 @@ extension _MediaDetailActionButtons on _MediaDetailScreenState {
     final qualityTarget = _playbackTargetItem(metadata);
     final qualityClient = widget.isOffline ? null : _getMediaClientForMetadata(context);
     if (qualityTarget != null && qualityClient is LocalLibraryClient) {
-      _checkStreamQualityOffer(qualityClient, qualityTarget);
+      _resolveLocalPlaybackVersion(qualityClient, qualityTarget);
     }
-    final showQuality =
-        qualityTarget != null &&
-        qualityClient is LocalLibraryClient &&
-        _streamQualityTargetKey.value == qualityTarget.globalKey;
+    final resolvedFile = _localPlaybackVersion.value;
+    final localFile = qualityClient is LocalLibraryClient && resolvedFile?.key == qualityTarget?.globalKey
+        ? resolvedFile
+        : null;
+    final showQuality = localFile?.offers == true;
     final qualityTextStyle = TextStyle(fontSize: isTv ? 15 * tvScale : 14, fontWeight: .w600);
     String qualityLabel() => streamQualityName(SettingsService.instance.read(SettingsService.streamQuality));
 
     Future<void> onQualityPressed() async {
       final target = _playbackTargetItem(metadata);
       final client = qualityClient;
-      if (!_canUseDetail || target == null || client is! LocalLibraryClient) return;
-      await _pickStreamQuality(context, client, target);
+      final version = localFile?.version;
+      if (!_canUseDetail || target == null || client is! LocalLibraryClient || version == null) return;
+      await _pickStreamQuality(context, client, target, version);
     }
 
     final isKeyboardMode = InputModeTracker.isKeyboardMode(context);
@@ -261,13 +268,13 @@ extension _MediaDetailActionButtons on _MediaDetailScreenState {
           builder: (context, loading, _) {
             final label = qualityLabel();
             return Semantics(
-              label: t.videoControls.qualityColumnHeader,
+              label: t.streamQuality.preferred,
               value: label,
               button: true,
               onTap: loading ? null : onQualityPressed,
               excludeSemantics: true,
               child: Tooltip(
-                message: t.videoControls.qualityColumnHeader,
+                message: t.streamQuality.preferred,
                 child: SizedBox(
                   height: actionSize,
                   child: FilledButton.tonal(
@@ -503,6 +510,11 @@ extension _MediaDetailActionButtons on _MediaDetailScreenState {
       ];
       if (!maxWidth.isFinite || estimatedRowWidth(medium) <= maxWidth) return medium;
 
+      final playback = <FocusableAction>[playAction, ?versionAction, ?qualityAction, ?moreActionsAction];
+      if (qualityAction != null && estimatedRowWidth(playback) <= maxWidth) return playback;
+      final playbackOnly = <FocusableAction>[playAction, ?versionAction, ?qualityAction];
+      if (qualityAction != null && estimatedRowWidth(playbackOnly) <= maxWidth) return playbackOnly;
+
       final compact = <FocusableAction>[playAction, ?versionAction, watchedAction, ?moreActionsAction];
       if (estimatedRowWidth(compact) <= maxWidth) return compact;
 
@@ -531,7 +543,7 @@ extension _MediaDetailActionButtons on _MediaDetailScreenState {
       return _buildPlaybackTracksStatus(context, metadata, isTv: false, tvScale: tvScale, maxWidth: remaining);
     }
 
-    return LayoutBuilder(
+    final buttons = LayoutBuilder(
       builder: (context, constraints) {
         final maxWidth = constraints.maxWidth;
         // TV screens are wide and D-pad focus should see every direct action.
@@ -554,39 +566,79 @@ extension _MediaDetailActionButtons on _MediaDetailScreenState {
         );
       },
     );
+    final captionHeight = _localPlaybackCaptionHeight(context, metadata, scale: isTv ? tvScale : 1);
+    if (captionHeight == 0) return buttons;
+    final version = localFile?.version;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(height: actionSize, child: buttons),
+        SizedBox(
+          height: captionHeight,
+          child: localFile == null
+              ? null
+              : Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Text(
+                    version == null
+                        ? t.messages.mediaUnreadableTitle
+                        : [version.displayLabel, if (!localFile.offers) t.streamQuality.original].join(' · '),
+                    key: const ValueKey('detail_local_playback_version'),
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(fontSize: isTv ? 13 * tvScale : 12),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+        ),
+      ],
+    );
   }
 
-  /// Learns, once per Play target, whether its source serves renditions of
-  /// its own. A local check (library and mount, no network); the button
-  /// appears when it answers yes.
-  void _checkStreamQualityOffer(LocalLibraryClient client, MediaItem target) {
+  /// Resolve the same version the main Play action uses, without contacting the mount.
+  void _resolveLocalPlaybackVersion(LocalLibraryClient client, MediaItem target) {
     final key = target.globalKey;
-    if (_streamQualityCheckedKey == key) return;
-    _streamQualityCheckedKey = key;
-    unawaited(
-      client.offersStreamQualities(target).then(
-        (offered) {
-          if (!mounted || _streamQualityCheckedKey != key) return;
-          _streamQualityTargetKey.value = offered ? key : null;
-        },
-        onError: (Object e) => appLogger.w('Could not check renditions for ${target.title}: $e'),
-      ),
-    );
+    if (_localPlaybackVersionKey == key) return;
+    _localPlaybackVersionKey = key;
+    final request = _localPlaybackVersionRequest = Object();
+    unawaited(() async {
+      try {
+        final item = target.mediaVersions?.isNotEmpty == true ? target : await client.fetchItem(target.id);
+        final versions = item?.mediaVersions;
+        if (item == null || versions == null || versions.isEmpty) return;
+        final selection = await resolveSavedMediaVersionFor(item, keepMissingLocalFile: true);
+        final sourceId = selection?.sourceId;
+        final index = sourceId != null
+            ? versions.indexWhere((version) => version.id == sourceId)
+            : selection?.index ?? 0;
+        final version = index >= 0 ? versions[index] : null;
+        final offers = version != null && await client.offersStreamQualities(item, mediaSourceId: version.id);
+        if (!_canUseDetail || _localPlaybackVersionRequest != request) return;
+        _localPlaybackVersion.value = (key: key, version: version, offers: offers);
+      } catch (e) {
+        appLogger.w('Could not resolve the playback file for ${target.title}: $e');
+      }
+    }());
   }
 
   /// Asks the source which renditions [target] has, then lets the user pick
   /// the global quality. The list marks the tier this file would play in
   /// under the current choice, by the same rule playback uses.
-  Future<void> _pickStreamQuality(BuildContext context, LocalLibraryClient client, MediaItem target) async {
+  Future<void> _pickStreamQuality(
+    BuildContext context,
+    LocalLibraryClient client,
+    MediaItem target,
+    MediaVersion source,
+  ) async {
     if (_streamQualityLoading.value) return;
     _streamQualityLoading.value = true;
     final List<StreamQuality> qualities;
     try {
-      qualities = await client.streamQualitiesOf(target);
+      qualities = await client.streamQualitiesOf(target, mediaSourceId: source.id);
     } finally {
       if (mounted) _streamQualityLoading.value = false;
     }
-    if (!_canUseDetail || !context.mounted) return;
+    if (!_canUseDetail || !context.mounted || _localPlaybackVersion.value?.version?.id != source.id) return;
     if (qualities.isEmpty) {
       showAppSnackBar(context, t.streamQuality.noneForFile);
       return;
@@ -597,14 +649,13 @@ extension _MediaDetailActionButtons on _MediaDetailScreenState {
     final playing =
         StreamVariant.pickBy(qualities, (q) => q.id, wanted, StreamQuality.renditionOrder)?.id ??
         StreamQuality.original;
-    final source = target.mediaVersions?.firstOrNull;
     final options = [
-      StreamQuality(id: StreamQuality.original, width: source?.width, height: source?.height),
+      StreamQuality(id: StreamQuality.original, width: source.width, height: source.height),
       ...qualities,
     ];
     final picked = await showOptionPickerDialog<String>(
       context,
-      title: t.videoControls.qualityColumnHeader,
+      title: t.streamQuality.preferred,
       options: [
         for (final quality in options)
           (
