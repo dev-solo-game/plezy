@@ -27,6 +27,7 @@ import 'package:plezy/theme/mono_theme.dart';
 import 'package:plezy/utils/platform_detector.dart';
 import 'package:plezy/watch_together/providers/watch_together_provider.dart';
 import 'package:plezy/widgets/video_controls/desktop_video_controls.dart';
+import 'package:plezy/widgets/video_controls/painters/skip_range_painter.dart';
 import 'package:plezy/widgets/video_controls/player_chrome_controller.dart';
 import 'package:plezy/widgets/video_controls/video_controls.dart';
 import 'package:plezy/widgets/video_controls/sheets/video_settings_sheet.dart';
@@ -288,6 +289,41 @@ void main() {
   }
 
   DesktopVideoControls controls(WidgetTester tester) => tester.widget(find.byType(DesktopVideoControls));
+
+  testWidgets('timeline marks the intro end and credits start within the track height', (tester) async {
+    await pump(
+      tester,
+      initial: const WorkSkipSettings(
+        introEnabled: true,
+        introEndMs: 115000,
+        creditsEnabled: true,
+        creditsDurationMs: 90000,
+      ),
+    );
+    final timeline = find.byType(TimelineSlider);
+    final track = tester.widget<SliderTheme>(find.descendant(of: timeline, matching: find.byType(SliderTheme)));
+    final painter = tester
+        .widget<CustomPaint>(
+          find.byWidgetPredicate((widget) => widget is CustomPaint && widget.painter is SkipRangePainter),
+        )
+        .painter!;
+    final height = track.data.trackHeight!;
+    final canvas = TestRecordingCanvas();
+    painter.paint(canvas, const Size(480, 30));
+    final marks = [
+      for (final record in canvas.invocations)
+        if (record.invocation.memberName == #drawRect)
+          (
+            record.invocation.positionalArguments[0] as Rect,
+            (record.invocation.positionalArguments[1] as Paint).color.toARGB32(),
+          ),
+    ];
+    expect(marks, [
+      (Rect.fromCenter(center: const Offset(23, 15), width: 3, height: height), 0xFF0057FF),
+      (Rect.fromCenter(center: const Offset(462, 15), width: 3, height: height), 0xFFFFA500),
+    ]);
+    await finish(tester);
+  });
 
   testWidgets('intro immediately jumps; manually seeking back permits review', (tester) async {
     await pump(tester);

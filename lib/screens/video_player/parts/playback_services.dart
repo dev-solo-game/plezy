@@ -287,6 +287,7 @@ extension _VideoPlayerPlaybackServiceMethods on VideoPlayerScreenState {
         // budget for the next stream death.
         _eofRecovery.onPositionAdvanced(position.inMilliseconds);
 
+        _clearCreditsPromptBeforeRange(position);
         final duration = activePlayer.state.duration;
         _episode.completionLatch.classifyPosition(
           positionMs: position.inMilliseconds,

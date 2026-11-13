@@ -1328,7 +1328,6 @@ class Translations$discover$zh extends Translations$discover$en {
 	@override String get addMediaToLibraries => '请向你的媒体库添加一些媒体';
 	@override String get continueWatching => '继续观看';
 	@override String continueWatchingIn({required Object library}) => '${library} 中继续观看';
-	@override String get selectResumeSource => '选择续播来源';
 	@override String get nextUp => '接下来';
 	@override String nextUpIn({required Object library}) => '${library} 中接下来';
 	@override String get recentlyAdded => '最近添加';
@@ -4758,7 +4757,6 @@ extension on TranslationsZh {
 			'discover.addMediaToLibraries' => '请向你的媒体库添加一些媒体',
 			'discover.continueWatching' => '继续观看',
 			'discover.continueWatchingIn' => ({required Object library}) => '${library} 中继续观看',
-			'discover.selectResumeSource' => '选择续播来源',
 			'discover.nextUp' => '接下来',
 			'discover.nextUpIn' => ({required Object library}) => '${library} 中接下来',
 			'discover.recentlyAdded' => '最近添加',

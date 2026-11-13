@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 
 import '../../media/media_item.dart';
+import '../../media/media_source_info.dart';
 import '../../providers/playback_state_provider.dart';
 import '../../services/episode_navigation_service.dart';
 import '../../services/playback_initialization_types.dart';
@@ -35,6 +36,10 @@ class EpisodeSessionState {
   bool isLoadingPrevious = false;
 
   bool showPlayNextDialog = false;
+
+  /// Retained through dismissal so a natural EOF cannot show the prompt again
+  /// on the same pass through the credits.
+  MediaMarker? creditsPromptMarker;
 
   Timer? autoPlayTimer;
   final ValueNotifier<int> autoPlayCountdown = ValueNotifier<int>(5);

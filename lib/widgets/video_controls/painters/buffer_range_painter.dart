@@ -9,13 +9,18 @@ import '../../../mpv/models.dart';
 class BufferRangePainter extends CustomPainter {
   final List<BufferRange> ranges;
   final Duration duration;
+  final double trackHeight;
   final List<MediaChapter> chapters;
 
-  BufferRangePainter({required this.ranges, required this.duration, this.chapters = const []});
+  BufferRangePainter({
+    required this.ranges,
+    required this.duration,
+    required this.trackHeight,
+    this.chapters = const [],
+  });
 
   @override
   void paint(Canvas canvas, Size size) {
-    const trackHeight = 8.0;
     const gapWidth = 4.0;
     final radius = trackHeight / 2;
     final y = (size.height - trackHeight) / 2;
@@ -83,6 +88,7 @@ class BufferRangePainter extends CustomPainter {
   @override
   bool shouldRepaint(BufferRangePainter oldDelegate) {
     return oldDelegate.duration != duration ||
+        oldDelegate.trackHeight != trackHeight ||
         !listEquals(oldDelegate.ranges, ranges) ||
         !_chapterSplitsEqual(oldDelegate.chapters, chapters);
   }

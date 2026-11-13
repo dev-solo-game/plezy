@@ -1,7 +1,11 @@
 part of '../../video_player_screen.dart';
 
 extension _VideoPlayerPlaybackPromptMethods on VideoPlayerScreenState {
-  void _onVideoCompleted(bool completed, {bool skipAutoPlayCountdown = false}) async {
+  Future<void> _onVideoCompleted(
+    bool completed, {
+    bool skipAutoPlayCountdown = false,
+    bool advanceFromCredits = false,
+  }) async {
     if (!completed) return;
     // Live TV streams are continuous — ignore transient EOF events while an
     // HLS playlist refreshes or crosses a discontinuity.
@@ -55,6 +59,7 @@ extension _VideoPlayerPlaybackPromptMethods on VideoPlayerScreenState {
     // dialogs: the user explicitly asked to stop after this item.
     final sleepTimerService = SleepTimerService();
     if (sleepTimerService.isEndOfVideoMode && !_episode.completionLatch.triggered) {
+      if (_episode.creditsPromptMarker != null) _cancelAutoPlay();
       _logVideoCompleted('sleepTimer');
       _episode.completionLatch.latch();
       sleepTimerService.notifyVideoCompleted();
@@ -63,6 +68,18 @@ extension _VideoPlayerPlaybackPromptMethods on VideoPlayerScreenState {
     if (!_canNavigateMediaItems()) {
       _logVideoCompleted('cannotNavigate');
       if (!_episode.completionLatch.triggered) _episode.completionLatch.latch();
+      return;
+    }
+
+    if (_episode.creditsPromptMarker != null && !_episode.completionLatch.triggered) {
+      _episode.completionLatch.latch();
+      if (advanceFromCredits) {
+        await _playNext();
+      } else if (!_episode.showPlayNextDialog) {
+        // The viewer chose to finish the credits. Natural EOF ends this visit
+        // without offering the same episode again.
+        unawaited(_handleBackButton());
+      }
       return;
     }
 
@@ -127,23 +144,7 @@ extension _VideoPlayerPlaybackPromptMethods on VideoPlayerScreenState {
       }
 
       _logVideoCompleted(serverStopped ? 'action=presentNext prompt serverStopped' : 'action=presentNext prompt');
-      _setPlayerState(() {
-        _episode.showPlayNextDialog = true;
-        _episode.autoPlayCountdown.value = autoPlayEnabled ? countdownSeconds : -1;
-      });
-
-      // Auto-focus Play Next button on TV when dialog appears (only in keyboard/TV mode)
-      if (isKeyboardMode) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) {
-            _playNextConfirmFocusNode.requestFocus();
-          }
-        });
-      }
-
-      if (autoPlayEnabled) {
-        _startAutoPlayTimer();
-      }
+      _showPlayNextPrompt(countdown: autoPlayEnabled ? countdownSeconds : -1, focusConfirm: isKeyboardMode);
     } else if (navigationAction == CompletionNavigationAction.exit && !_episode.completionLatch.triggered) {
       _logVideoCompleted('action=exit');
       _episode.completionLatch.latch();
@@ -151,6 +152,64 @@ extension _VideoPlayerPlaybackPromptMethods on VideoPlayerScreenState {
     } else {
       _logVideoCompleted('action=${navigationAction.name} latched');
     }
+  }
+
+  bool _showPlayNextDuringCredits(MediaMarker marker) {
+    if (!mounted ||
+        !_canNavigateMediaItems() ||
+        _episode.next == null ||
+        _episode.isLoadingNext ||
+        _episode.isLoadingPrevious ||
+        _episode.completionLatch.triggered ||
+        _showStillWatchingPrompt ||
+        _transitionGate.transition != PlaybackTransition.idle ||
+        SleepTimerService().isEndOfVideoMode ||
+        PipService().isPipActive.value) {
+      return false;
+    }
+    if (_episode.creditsPromptMarker != null) return true;
+    if (_episode.showPlayNextDialog) return false;
+
+    final settings = SettingsService.instance;
+    final autoPlay =
+        settings.read(SettingsService.autoPlayNextEpisode) && !(_progressTracker?.stoppedByServer ?? false);
+    final countdown = autoPlay ? settings.read(SettingsService.playNextCountdown) : -1;
+    _episode.creditsPromptMarker = marker;
+    if (countdown == 0 && !_playNextPromptOutOfSight()) {
+      unawaited(_onVideoCompleted(true, advanceFromCredits: true));
+    } else {
+      final focusConfirm = PlatformDetector.isTV() && InputModeTracker.isKeyboardMode(context, listen: false);
+      _showPlayNextPrompt(countdown: countdown == 0 ? 1 : countdown, focusConfirm: focusConfirm);
+    }
+    return true;
+  }
+
+  void _showPlayNextPrompt({required int countdown, required bool focusConfirm}) {
+    _setPlayerState(() {
+      _episode.showPlayNextDialog = true;
+      _episode.autoPlayCountdown.value = countdown;
+    });
+    if (focusConfirm) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _episode.showPlayNextDialog) _playNextConfirmFocusNode.requestFocus();
+      });
+    }
+    if (countdown > 0) _startAutoPlayTimer();
+  }
+
+  Future<void> _confirmPlayNextPrompt() async {
+    if (_episode.creditsPromptMarker != null && !_episode.completionLatch.triggered) {
+      await _onVideoCompleted(true, advanceFromCredits: true);
+    } else {
+      await _playNext();
+    }
+  }
+
+  void _clearCreditsPromptBeforeRange(Duration position) {
+    final marker = _episode.creditsPromptMarker;
+    if (marker == null || position >= marker.startTime) return;
+    _episode.creditsPromptMarker = null;
+    if (_episode.showPlayNextDialog) _cancelAutoPlay();
   }
 
   /// The completion chain used to run silently; one line per accepted EOF
@@ -177,11 +236,18 @@ extension _VideoPlayerPlaybackPromptMethods on VideoPlayerScreenState {
       // would start the next episode behind the viewer's back; the countdown
       // holds until they return.
       if (_playNextPromptOutOfSight()) return;
+      if (_episode.creditsPromptMarker != null && !_episode.completionLatch.triggered) {
+        if (SleepTimerService().isEndOfVideoMode || (_progressTracker?.stoppedByServer ?? false)) {
+          _cancelAutoPlay();
+          return;
+        }
+        if (player?.state.isActive != true) return;
+      }
       final nextCountdown = _episode.autoPlayCountdown.value - 1;
       _episode.autoPlayCountdown.value = nextCountdown;
       if (nextCountdown <= 0) {
         timer.cancel();
-        _playNext();
+        unawaited(_confirmPlayNextPrompt());
       }
     });
   }
@@ -247,33 +313,20 @@ extension _VideoPlayerPlaybackPromptMethods on VideoPlayerScreenState {
     final countdown = presentation == PlayNextRetryPresentation.countdown;
     if (countdown) _episode.playNextTransientRetryCount++;
 
-    _setPlayerState(() {
-      _episode.showPlayNextDialog = true;
-      // Deliberately not [SettingsService.playNextCountdown]: this countdown
-      // spaces transient-failure retries (see completion_latch.dart), so a
-      // user preference of 0 must not collapse it into a hot retry loop.
-      _episode.autoPlayCountdown.value = countdown ? 5 : -1;
-    });
-
-    if (isKeyboardMode) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _playNextConfirmFocusNode.requestFocus();
-      });
-    }
-
-    if (countdown) _startAutoPlayTimer();
+    // Space transient-failure retries independently of the user's countdown.
+    _showPlayNextPrompt(countdown: countdown ? 5 : -1, focusConfirm: isKeyboardMode);
   }
 
   /// Put the Play Next prompt back after a reload of the same item cleared it
   /// (TV background suspend restore), resuming its countdown where it held;
   /// a countdown of -1 means auto-play was off and the prompt waits.
-  Future<void> _restorePlayNextPrompt({required int countdown}) async {
+  Future<void> _restorePlayNextPrompt({required int countdown, required bool wasAtCompletion}) async {
     if (!mounted || !_canNavigateMediaItems()) return;
     if (_episode.isLoadingNext || _episode.showPlayNextDialog || _showStillWatchingPrompt) return;
 
     // The restored stream sits at the finished episode's end; its EOF must
     // not raise a second prompt while this one is being put back.
-    if (!_episode.completionLatch.triggered) _episode.completionLatch.latch();
+    if (wasAtCompletion && !_episode.completionLatch.triggered) _episode.completionLatch.latch();
 
     // The reload dropped the adjacent episodes and re-resolves them in the
     // background; the prompt needs its target now.
@@ -287,29 +340,21 @@ extension _VideoPlayerPlaybackPromptMethods on VideoPlayerScreenState {
       // Nothing to advance to after all: hand the parked end back to the
       // ordinary completion flow, which retries or exits.
       _episode.completionLatch.reset();
+      _episode.creditsPromptMarker = null;
       return;
     }
 
-    final remaining = countdown == 0 ? 1 : countdown;
-    _setPlayerState(() {
-      _episode.showPlayNextDialog = true;
-      _episode.autoPlayCountdown.value = remaining;
-    });
-
-    if (PlatformDetector.isTV() && InputModeTracker.isKeyboardMode(context, listen: false)) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _playNextConfirmFocusNode.requestFocus();
-      });
-    }
-
-    if (remaining > 0) _startAutoPlayTimer();
+    final focusConfirm = PlatformDetector.isTV() && InputModeTracker.isKeyboardMode(context, listen: false);
+    _showPlayNextPrompt(countdown: countdown == 0 ? 1 : countdown, focusConfirm: focusConfirm);
   }
 
   void _cancelAutoPlay() {
     if (_shuttingDown) return;
     _episode.autoPlayTimer?.cancel();
     _unfocusPlayNextPrompt();
-    _progressTracker?.resumeAfterStoppedReport();
+    if (_episode.creditsPromptMarker == null || _episode.completionLatch.triggered) {
+      _progressTracker?.resumeAfterStoppedReport();
+    }
     // Keep the latch set while playback is still parked at EOF, so duplicate
     // completed signals cannot re-open this prompt. It is re-armed once playback
     // seeks back clear of the end region (see the position listener) or new media loads.

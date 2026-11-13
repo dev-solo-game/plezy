@@ -628,6 +628,10 @@ class PlexVideoControls extends StatefulWidget {
   /// completion flow so the auto-play-next setting is honored.
   final void Function({required bool skipAutoPlayCountdown})? onReachedEnd;
 
+  /// Offers an end-of-item credits marker to the screen's Play Next prompt.
+  /// Returning true takes over automatic skipping for this visit.
+  final bool Function(MediaMarker marker)? onCreditsStarted;
+
   /// Whether the user can control playback (false in host-only mode for non-host).
   final bool canControl;
 
@@ -755,6 +759,7 @@ class PlexVideoControls extends StatefulWidget {
     this.onSeekCompleted,
     this.onBack,
     this.onReachedEnd,
+    this.onCreditsStarted,
     this.canControl = true,
     required this.canNavigateMediaItems,
     this.hasFirstFrame,
@@ -882,6 +887,7 @@ class _PlexVideoControlsState extends State<PlexVideoControls>
   late WorkSkipSettings _manualSkipRules = widget.initialSkipSettings ?? const WorkSkipSettings();
   int _manualDurationMs = -1;
   int? _suppressedMarkerId;
+  bool _creditsPromptHandled = false;
   bool _editingSkipSettings = false;
   bool _skipInFlight = false;
   int _manualSeekGeneration = 0;

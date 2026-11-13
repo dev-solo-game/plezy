@@ -30,6 +30,7 @@ import 'package:plezy/profiles/profile_connection_registry.dart';
 import 'package:plezy/profiles/profile_registry.dart';
 import 'package:plezy/providers/companion_remote_provider.dart';
 import 'package:plezy/providers/discover_provider.dart';
+import 'package:plezy/providers/download_provider.dart';
 import 'package:plezy/providers/hidden_libraries_provider.dart';
 import 'package:plezy/providers/libraries_provider.dart';
 import 'package:plezy/providers/multi_server_provider.dart';
@@ -37,9 +38,11 @@ import 'package:plezy/screens/discover_screen.dart';
 import 'package:plezy/screens/main_screen.dart';
 import 'package:plezy/services/data_aggregation_service.dart';
 import 'package:plezy/services/multi_server_manager.dart';
+import 'package:plezy/services/offline_watch_sync_service.dart';
 import 'package:plezy/services/settings_service.dart';
 import 'package:plezy/services/storage_service.dart';
 import 'package:plezy/theme/mono_theme.dart';
+import 'package:plezy/utils/external_ids.dart';
 import 'package:plezy/utils/layout_constants.dart';
 import 'package:plezy/utils/platform_detector.dart';
 import 'package:plezy/watch_together/watch_together.dart';
@@ -755,6 +758,57 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
+  for (final isTv in [false, true]) {
+    testWidgets('home resumes the displayed episode ${isTv ? 'from the TV rail' : 'from the hero controls'}', (
+      tester,
+    ) async {
+      final settings = await SettingsService.getInstance();
+      await settings.write(SettingsService.continueWatchingAction, ContinueWatchingAction.details);
+      final downloads = _PlaybackRequests();
+      addTearDown(downloads.dispose);
+      final episodes = [
+        for (final episode in [9, 6])
+          testMediaItem(
+            id: 'episode-$episode',
+            kind: MediaKind.episode,
+            title: 'Episode $episode',
+            grandparentId: 'series',
+            grandparentTitle: 'Series',
+            parentIndex: 1,
+            index: episode,
+            serverId: 'server_1',
+            durationMs: 20 * 60000,
+            viewOffsetMs: 4 * 60000,
+            lastViewedAt: episode,
+          ),
+      ];
+      await _pumpDiscoverShell(tester, isTv: isTv, continueWatching: episodes, downloads: downloads);
+      final discoverContext = tester.element(find.byType(DiscoverScreen));
+      final discover = discoverContext.read<DiscoverProvider>();
+      expect(discover.onDeck.map((item) => item.id), ['episode-9']);
+      expect(discover.continueWatchingCopiesOf(discover.onDeck.single).length, 2);
+
+      if (!isTv) {
+        final hero = tester.getRect(find.byType(PageView));
+        await tester.tapAt(Offset(hero.right - 100, hero.center.dy));
+        await tester.pump();
+        expect(downloads.items, isEmpty);
+        expect(find.byType(Dialog), findsNothing);
+        await tester.tap(find.text(t.discover.minutesLeft(minutes: 16)));
+        await tester.pump();
+        expect(downloads.items, [episodes.first.globalKey]);
+      }
+
+      (tester.state(find.byType(DiscoverScreen)) as FocusableTab).focusActiveTabIfReady();
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.select);
+      await tester.pump();
+      expect(downloads.items, [if (!isTv) episodes.first.globalKey, episodes.first.globalKey]);
+      expect(find.byType(Dialog), findsNothing);
+      await tester.pumpWidget(const SizedBox.shrink());
+    });
+  }
+
   testWidgets('clicking the Watch Together participant count opens Watch Together (#2846)', (tester) async {
     await _pumpDiscoverShell(tester, isTv: false, watchTogether: _InSessionWatchTogether(participantCount: 3));
     final badge = find.descendant(of: find.byType(FocusableActionBar), matching: find.text('3'));
@@ -1044,7 +1098,13 @@ Future<_GatedDiscover> _pumpGatedDiscover(WidgetTester tester, {bool underRootCo
 /// Mounts [DiscoverScreen] in the smallest graph both layout branches need, so
 /// one test can compare the TV and non-TV chrome without rebuilding it twice.
 /// Takes ownership of [watchTogether].
-Future<void> _pumpDiscoverShell(WidgetTester tester, {required bool isTv, WatchTogetherProvider? watchTogether}) async {
+Future<void> _pumpDiscoverShell(
+  WidgetTester tester, {
+  required bool isTv,
+  WatchTogetherProvider? watchTogether,
+  List<MediaItem> continueWatching = const [],
+  _PlaybackRequests? downloads,
+}) async {
   TvDetectionService.debugSetAppleTVOverride(isTv);
   await SettingsService.getInstance();
   tester.view.devicePixelRatio = 1.0;
@@ -1054,7 +1114,7 @@ Future<void> _pumpDiscoverShell(WidgetTester tester, {required bool isTv, WatchT
     tester.view.resetPhysicalSize();
   });
 
-  final client = _FakeMediaServerClient(hubs: const []);
+  final client = _FakeMediaServerClient(hubs: const [], continueWatching: continueWatching);
   final manager = MultiServerManager()..debugRegisterClientForTesting(client);
   final multiServerProvider = testMultiServerProvider(manager);
   final hiddenLibrariesProvider = HiddenLibrariesProvider();
@@ -1063,6 +1123,7 @@ Future<void> _pumpDiscoverShell(WidgetTester tester, {required bool isTv, WatchT
   final companionRemoteProvider = CompanionRemoteProvider();
 
   final db = AppDatabase.forTesting(NativeDatabase.memory());
+  final offlineWatch = OfflineWatchSyncService(database: db, serverManager: manager);
   final storage = await StorageService.getInstance();
   final connectionRegistry = _FakeConnectionRegistry(db);
   final profileConnectionRegistry = _FakeProfileConnectionRegistry(db);
@@ -1088,6 +1149,7 @@ Future<void> _pumpDiscoverShell(WidgetTester tester, {required bool isTv, WatchT
   );
 
   addTearDown(() async {
+    offlineWatch.dispose();
     discoverProvider.dispose();
     activeProfileProvider.dispose();
     companionRemoteProvider.dispose();
@@ -1103,6 +1165,8 @@ Future<void> _pumpDiscoverShell(WidgetTester tester, {required bool isTv, WatchT
     TranslationProvider(
       child: MultiProvider(
         providers: [
+          if (downloads != null) ChangeNotifierProvider<DownloadProvider>.value(value: downloads),
+          ChangeNotifierProvider<OfflineWatchSyncService>.value(value: offlineWatch),
           ChangeNotifierProvider<MultiServerProvider>.value(value: multiServerProvider),
           ChangeNotifierProvider<HiddenLibrariesProvider>.value(value: hiddenLibrariesProvider),
           ChangeNotifierProvider<LibrariesProvider>.value(value: librariesProvider),
@@ -1154,6 +1218,10 @@ class _FakeMediaServerClient implements MediaServerClient {
   ServerCapabilities get capabilities => ServerCapabilities.plex;
 
   @override
+  Future<ExternalIds> fetchExternalIds(String itemId) async =>
+      itemId == 'series' ? const ExternalIds(tvdb: 42) : const ExternalIds();
+
+  @override
   Future<List<MediaItem>> fetchContinueWatching({int? count = 20, Set<String> excludedLibraryIds = const {}}) async =>
       continueWatching;
 
@@ -1163,6 +1231,26 @@ class _FakeMediaServerClient implements MediaServerClient {
     bool includePlaybackHubs = true,
     HubFetchDiagnostics? diagnostics,
   }) async => hubs;
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _PlaybackRequests extends ChangeNotifier implements DownloadProvider {
+  final items = <String>[];
+  final _download = Completer<DownloadedMediaItem?>();
+
+  @override
+  Future<DownloadedMediaItem?> getCompletedDownload(String globalKey) {
+    items.add(globalKey);
+    return _download.future;
+  }
+
+  @override
+  void dispose() {
+    _download.complete(null);
+    super.dispose();
+  }
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);

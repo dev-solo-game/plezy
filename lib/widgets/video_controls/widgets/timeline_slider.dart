@@ -92,6 +92,7 @@ class _TimelineSliderState extends State<TimelineSlider> {
 
   // Must match the slider track inset: max(overlayRadius, thumbRadius)
   static const _sliderPadding = 0.0;
+  static const _trackHeight = 8.0;
 
   static const _thumbWidth = 160.0;
 
@@ -361,6 +362,7 @@ class _TimelineSliderState extends State<TimelineSlider> {
                     painter: BufferRangePainter(
                       ranges: widget.bufferRanges,
                       duration: widget.duration,
+                      trackHeight: _trackHeight,
                       chapters: widget.chaptersLoaded && widget.showChapterMarkersOnTimeline
                           ? widget.chapters
                           : const [],
@@ -386,7 +388,7 @@ class _TimelineSliderState extends State<TimelineSlider> {
                 child: IgnorePointer(
                   child: SliderTheme(
                     data: SliderTheme.of(context).copyWith(
-                      trackHeight: 8,
+                      trackHeight: _trackHeight,
                       trackGap: 0,
                       padding: .zero,
                       overlayShape: const RoundSliderOverlayShape(overlayRadius: 0),
@@ -414,7 +416,11 @@ class _TimelineSliderState extends State<TimelineSlider> {
             Positioned.fill(
               child: IgnorePointer(
                 child: CustomPaint(
-                  painter: SkipRangePainter(markers: widget.skipMarkers, duration: widget.duration),
+                  painter: SkipRangePainter(
+                    markers: widget.skipMarkers,
+                    duration: widget.duration,
+                    trackHeight: _trackHeight,
+                  ),
                 ),
               ),
             ),

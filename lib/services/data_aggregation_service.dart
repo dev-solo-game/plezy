@@ -346,8 +346,8 @@ class DataAggregationService {
   /// its rows absorbed, and [fresh] rows from newly-online servers, with the
   /// [freshCopies] their own dedup absorbed: same recency ordering and
   /// cross-server identity dedup as [getOnDeckFromAllServers], applied to the
-  /// union. Absorbed copies rejoin the pool so a regrouped row still offers
-  /// them, and a fresh row replaces any existing one with its global key.
+  /// union. Absorbed copies rejoin the pool so they can still represent a
+  /// regrouped row, and a fresh row replaces any existing one with its global key.
   Future<ContinueWatchingRows> mergeContinueWatching(
     List<MediaItem> existing,
     List<MediaItem> fresh, {
@@ -413,7 +413,7 @@ class DataAggregationService {
     // servers sync watch state across guid-linked siblings, so their
     // lastViewedAt ties and can't tell the 4K copy from the 1080p one
     // (#1492). Without local history the anchor (recency order) stands. The
-    // other members stay reachable through the slot's copies.
+    // other members remain available for future regrouping and state updates.
     final keyToGroup = <String, int>{};
     final groups = <List<MediaItem>>[];
     final groupSlots = <int, int>{};

@@ -614,6 +614,7 @@ extension _VideoPlayerReloadMethods on VideoPlayerScreenState {
         VideoPlayerScreenState._activeRouteGuard.update(this, targetLaunchIdentity);
         _unfocusPlayNextPrompt();
         _episode.showPlayNextDialog = false;
+        _episode.creditsPromptMarker = null;
         _episode.autoPlayTimer?.cancel();
         _firstFrame.resetUiForOpen();
 

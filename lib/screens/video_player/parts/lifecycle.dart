@@ -397,6 +397,8 @@ extension _VideoPlayerLifecycleMethods on VideoPlayerScreenState {
     // Play Next prompt up. The reload below clears the prompt; without it the
     // finished episode parks at its last frame with nothing to advance it.
     final playNextCountdown = _episode.showPlayNextDialog ? _episode.autoPlayCountdown.value : null;
+    final creditsPromptMarker = _episode.creditsPromptMarker;
+    final wasAtCompletion = _episode.completionLatch.triggered;
 
     _recordLifecycleState('resumed', action: 'tv_background_suspend_reload');
     final outcome = await _reloadMediaInPlace(
@@ -413,7 +415,13 @@ extension _VideoPlayerLifecycleMethods on VideoPlayerScreenState {
       reason: 'TV background suspend restore',
     );
     if (outcome == MediaReloadOutcome.opened) {
-      if (playNextCountdown != null) await _restorePlayNextPrompt(countdown: playNextCountdown);
+      _episode.creditsPromptMarker = creditsPromptMarker;
+      if (playNextCountdown != null) {
+        await _restorePlayNextPrompt(
+          countdown: playNextCountdown,
+          wasAtCompletion: creditsPromptMarker == null || wasAtCompletion,
+        );
+      }
     } else if (outcome == MediaReloadOutcome.rejected) {
       appLogger.w('TV background suspend restore: in-place reload rejected');
     } else if (outcome == MediaReloadOutcome.failed) {

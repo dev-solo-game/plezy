@@ -98,6 +98,7 @@ extension _VideoPlayerEpisodeNavigationMethods on VideoPlayerScreenState {
 
     _setPlayerState(() {
       _episode.showPlayNextDialog = false;
+      _episode.creditsPromptMarker = null;
       _episode.completionLatch.reset();
     });
 

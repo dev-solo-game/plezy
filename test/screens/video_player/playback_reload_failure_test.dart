@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:intl/date_symbol_data_local.dart';
 import 'package:openwatchparty/openwatchparty.dart' as owp;
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 import 'package:plezy/database/app_database.dart';
@@ -14,9 +15,12 @@ import 'package:plezy/library/library_repository.dart';
 import 'package:plezy/library/local_library_client.dart';
 import 'package:plezy/media/ids.dart';
 import 'package:plezy/media/media_backend.dart';
+import 'package:plezy/media/media_item.dart';
 import 'package:plezy/media/media_server_client.dart';
+import 'package:plezy/media/media_source_info.dart';
 import 'package:plezy/media/play_queue.dart';
 import 'package:plezy/media/server_capabilities.dart';
+import 'package:plezy/media/work_skip_settings.dart';
 import 'package:plezy/models/transcode_quality_preset.dart';
 import 'package:plezy/models/livetv_channel.dart';
 import 'package:plezy/mpv/mpv.dart';
@@ -26,6 +30,7 @@ import 'package:plezy/providers/companion_remote_provider.dart';
 import 'package:plezy/providers/playback_state_provider.dart';
 import 'package:plezy/screens/video_player_screen.dart';
 import 'package:plezy/screens/video_player/live_tv_session_args.dart';
+import 'package:plezy/screens/video_player/widgets/player_prompt_overlays.dart';
 import 'package:plezy/services/download_storage_service.dart';
 import 'package:plezy/services/episode_navigation_service.dart';
 import 'package:plezy/services/offline_watch_sync_service.dart';
@@ -34,6 +39,7 @@ import 'package:plezy/services/playback_coordinator.dart';
 import 'package:plezy/services/plex_client.dart';
 import 'package:plezy/services/settings_service.dart';
 import 'package:plezy/services/sleep_timer_service.dart';
+import 'package:plezy/services/work_skip_settings_store.dart';
 import 'package:plezy/storage/mount_manager.dart';
 import 'package:plezy/storage/mount_registry.dart';
 import 'package:plezy/storage/storage_driver.dart';
@@ -44,6 +50,7 @@ import 'package:plezy/utils/active_client_scope.dart';
 import 'package:plezy/utils/external_ids.dart';
 import 'package:plezy/utils/video_player_navigation.dart';
 import 'package:plezy/widgets/video_controls/video_controls.dart';
+import 'package:plezy/widgets/video_controls/widgets/skip_marker_button.dart';
 import 'package:plezy/watch_together/models/watch_notice.dart';
 import 'package:plezy/watch_together/providers/watch_together_provider.dart';
 import 'package:provider/provider.dart';
@@ -679,6 +686,7 @@ void main() {
     MediaServerClient? client,
     bool isOffline = false,
     bool serverOnline = true,
+    _ReloadPlayer? player,
   }) async {
     client ??= _ReloadClient();
     final multi = testMultiServer(clients: [client], offline: [if (!serverOnline) client]);
@@ -718,10 +726,109 @@ void main() {
         ),
       ),
     );
-    final fakePlayer = _ReloadPlayer(opens: true);
+    final fakePlayer = player ?? _ReloadPlayer(opens: true);
     addTearDown(fakePlayer.dispose);
     key.currentState!.player = fakePlayer;
     return (key: key, player: fakePlayer);
+  }
+
+  for (final action in ['countdown', 'confirm', 'cancel', 'short credits', 'post-credit scene']) {
+    testWidgets('Play Next during credits: $action', (tester) async {
+      await initializeDateFormatting();
+      await withMockPlayerChannels(
+        methodChannelName: 'com.plezy/mpv_player',
+        eventChannelName: 'com.plezy/mpv_player/events',
+        testBody: () async {
+          final settings = SettingsService.instance;
+          await settings.write(SettingsService.autoSkipDelay, action == 'post-credit scene' ? 0 : 25);
+          await settings.write(SettingsService.playNextCountdown, 3);
+          final client = _CreditsClient();
+          final player = _CreditsPlayer();
+          final screen = await pumpReloadScreen(tester, client: client, player: player);
+          final state = screen.key.currentState!;
+          final metadata = state.widget.metadata;
+          await tester.runAsync(() async {
+            final store = WorkSkipSettingsStore(db);
+            final work = (await store.resolve(metadata, client))!;
+            await store.save(
+              work,
+              WorkSkipSettings(
+                creditsEnabled: true,
+                creditsDurationMs: 60000,
+                creditsResumeBeforeEndMs: action == 'post-credit scene' ? 10000 : 0,
+              ),
+            );
+          });
+          final next = testMediaItem(id: 'next', title: 'Next episode', serverId: 'srv-1', backend: client.backend);
+          Provider.of<PlaybackStateProvider>(
+            screen.key.currentContext!,
+            listen: false,
+          ).setPlaybackFromLocalQueue(LocalPlayQueue(items: [metadata, next], currentIndex: 0));
+          state.debugCommitAdjacentEpisodesForTesting(
+            AdjacentEpisodes(
+              next: next,
+              nextStatus: QueueNavigationStatus.found,
+              previousStatus: QueueNavigationStatus.boundary,
+            ),
+          );
+          await state.debugWirePlayerStreamsForTesting();
+          await state.debugMarkPlaybackStartedForTesting();
+          await tester.pump();
+          player.emitPosition(const Duration(minutes: 39));
+
+          if (action == 'post-credit scene') {
+            await pumpUntil(tester, () => player.state.position == const Duration(minutes: 39, seconds: 50));
+            expect(state.debugPlayNextPromptVisibleForTesting, isFalse);
+            expect(player.openCalls, 0);
+            return;
+          }
+
+          await pumpUntil(tester, () => state.debugPlayNextPromptVisibleForTesting);
+          await tester.pump();
+          expect(state.debugAutoPlayCountdownForTesting, 3);
+          expect(player.state.playing, isTrue);
+          expect(find.byType(SkipMarkerButton), findsNothing);
+          expect(player.openCalls, 0);
+          final overlay = tester.widget<VideoPlayerPlayNextOverlay>(find.byType(VideoPlayerPlayNextOverlay));
+
+          if (action == 'cancel') {
+            await tester.tap(find.text(t.common.cancel));
+            await tester.pump();
+            player.emitPosition(const Duration(minutes: 39, seconds: 6));
+            await tester.pump(const Duration(seconds: 30));
+            expect(state.debugPlayNextPromptVisibleForTesting, isFalse);
+            expect(player.state.playing, isTrue);
+            expect(player.openCalls, 0);
+            expect(find.byType(SkipMarkerButton), findsNothing);
+            player.emitPosition(const Duration(minutes: 40));
+            player.setCompleted(true);
+            state.debugCompleteVideoForTesting();
+            await tester.pump();
+            expect(state.debugPlayNextPromptVisibleForTesting, isFalse);
+            expect(player.openCalls, 0);
+            return;
+          }
+
+          if (action == 'confirm') {
+            overlay.onPlayNext();
+          } else {
+            await tester.pump(const Duration(seconds: 1));
+            expect(state.debugAutoPlayCountdownForTesting, 2);
+            if (action == 'short credits') {
+              player.emitPosition(const Duration(minutes: 40));
+              player.setCompleted(true);
+              state.debugCompleteVideoForTesting();
+              await tester.pump();
+              expect(state.debugAutoPlayCountdownForTesting, 2);
+            }
+            await tester.pump(const Duration(seconds: 2));
+          }
+          await pumpUntil(tester, () => player.lastOpened?.uri == 'https://example.invalid/next');
+          expect(player.openCalls, 1);
+          expect(state.debugPlayNextPromptVisibleForTesting, isFalse);
+        },
+      );
+    });
   }
 
   testWidgets('switching a local file keeps the playhead and remembers only a successful version', (tester) async {
@@ -1347,6 +1454,47 @@ class _ReloadPlayer extends FakeSyncPlayer {
   Future<void> selectSubtitleTrack(SubtitleTrack track) async {}
 }
 
+class _CreditsPlayer extends _ReloadPlayer {
+  _CreditsPlayer() : super(opens: true);
+
+  final _positions = StreamController<Duration>.broadcast();
+
+  void emitPosition(Duration position) {
+    setPosition(position);
+    _positions.add(position);
+  }
+
+  @override
+  PlayerStreams get streams => PlayerStreams(
+    position: _positions.stream,
+    playing: super.streams.playing,
+    completed: super.streams.completed,
+    buffering: super.streams.buffering,
+    duration: super.streams.duration,
+    seekable: super.streams.seekable,
+    buffer: super.streams.buffer,
+    volume: super.streams.volume,
+    rate: super.streams.rate,
+    tracks: super.streams.tracks,
+    track: super.streams.track,
+    log: super.streams.log,
+    error: super.streams.error,
+    audioDevice: super.streams.audioDevice,
+    audioDevices: super.streams.audioDevices,
+    bufferRanges: super.streams.bufferRanges,
+    playbackRestart: super.streams.playbackRestart,
+    fileStarted: super.streams.fileStarted,
+    backendSwitched: super.streams.backendSwitched,
+  );
+
+  @override
+  Future<void> dispose({bool preserveDisplayMode = false}) async {
+    if (disposed) return;
+    await super.dispose(preserveDisplayMode: preserveDisplayMode);
+    await _positions.close();
+  }
+}
+
 class _VersionSwitchMounts extends MountManager {
   _VersionSwitchMounts(super.registry);
 
@@ -1413,6 +1561,23 @@ class _ReloadClient with PlaybackReportRecorder implements MediaServerClient {
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _CreditsClient extends _ReloadClient {
+  @override
+  Future<MediaItem?> fetchItem(String itemId) async => testMediaItem(id: itemId, serverId: serverId, backend: backend);
+
+  @override
+  Future<ExternalIds> fetchExternalIds(String itemId) async => const ExternalIds(tmdb: 42);
+
+  @override
+  Future<PlaybackExtras> fetchPlaybackExtras(
+    String itemId, {
+    String? introPattern,
+    String? creditsPattern,
+    bool forceChapterFallback = false,
+    bool forceRefresh = false,
+  }) async => PlaybackExtras(chapters: const [], markers: const []);
 }
 
 /// Plex-typed double so `context.getPlexClientForServer` resolves it and the

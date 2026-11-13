@@ -871,7 +871,7 @@ class DiscoverProvider extends ChangeNotifier with DisposableChangeNotifierMixin
     // "View All" renders through the same overlay as the row it expands, so
     // it has to reconcile too or the stale patch simply reappears there.
     _recordObservations(observation, fetched.observedItems, fetched.succeededServerIds);
-    // Its rows past the preview open the same copy picker as the row's.
+    // Keep merged members from the full list eligible for watch-state updates.
     _continueWatchingCopies = {..._continueWatchingCopies, ...fetched.copies};
     return fetched.items;
   }

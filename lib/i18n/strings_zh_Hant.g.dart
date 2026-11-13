@@ -1328,7 +1328,6 @@ class _Translations$discover$zh_Hant extends Translations$discover$zh {
 	@override String get addMediaToLibraries => '請向您的媒體庫新增一些媒體內容';
 	@override String get continueWatching => '繼續觀看';
 	@override String continueWatchingIn({required Object library}) => '繼續在 ${library} 觀看';
-	@override String get selectResumeSource => '選擇續播來源';
 	@override String get nextUp => '接下來播放';
 	@override String nextUpIn({required Object library}) => '接下來在 ${library} 播放';
 	@override String get recentlyAdded => '最近新增';
@@ -4729,7 +4728,6 @@ extension on TranslationsZhHant {
 			'discover.addMediaToLibraries' => '請向您的媒體庫新增一些媒體內容',
 			'discover.continueWatching' => '繼續觀看',
 			'discover.continueWatchingIn' => ({required Object library}) => '繼續在 ${library} 觀看',
-			'discover.selectResumeSource' => '選擇續播來源',
 			'discover.nextUp' => '接下來播放',
 			'discover.nextUpIn' => ({required Object library}) => '接下來在 ${library} 播放',
 			'discover.recentlyAdded' => '最近新增',

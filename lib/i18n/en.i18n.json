@@ -1198,7 +1198,6 @@
     "addMediaToLibraries": "Add some media to your libraries",
     "continueWatching": "Continue Watching",
     "continueWatchingIn": "Continue Watching in ${library}",
-    "selectResumeSource": "Choose resume source",
     "nextUp": "Next Up",
     "nextUpIn": "Next Up in ${library}",
     "recentlyAdded": "Recently Added",

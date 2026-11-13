@@ -3307,9 +3307,6 @@ class Translations$discover$en {
 	/// en: 'Continue Watching in ${library}'
 	String continueWatchingIn({required Object library}) => 'Continue Watching in ${library}';
 
-	/// en: 'Choose resume source'
-	String get selectResumeSource => 'Choose resume source';
-
 	/// en: 'Next Up'
 	String get nextUp => 'Next Up';
 
@@ -9820,7 +9817,6 @@ extension on Translations {
 			'discover.addMediaToLibraries' => 'Add some media to your libraries',
 			'discover.continueWatching' => 'Continue Watching',
 			'discover.continueWatchingIn' => ({required Object library}) => 'Continue Watching in ${library}',
-			'discover.selectResumeSource' => 'Choose resume source',
 			'discover.nextUp' => 'Next Up',
 			'discover.nextUpIn' => ({required Object library}) => 'Next Up in ${library}',
 			'discover.recentlyAdded' => 'Recently Added',

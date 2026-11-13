@@ -319,6 +319,7 @@ extension _VideoPlayerBuildMethods on VideoPlayerScreenState {
                         onBack: _handleBackButton,
                         onReachedEnd: ({skipAutoPlayCountdown = false}) =>
                             _onVideoCompleted(true, skipAutoPlayCountdown: skipAutoPlayCountdown),
+                        onCreditsStarted: _showPlayNextDuringCredits,
                         canControl: authority.canControlPlayback,
                         canNavigateMediaItems: authority.canNavigateMediaItems,
                         hasFirstFrame: _firstFrame.uiReady,
@@ -356,7 +357,7 @@ extension _VideoPlayerBuildMethods on VideoPlayerScreenState {
                 confirmFocusNode: _playNextConfirmFocusNode,
                 chromeController: _chromeController,
                 onCancel: _cancelAutoPlay,
-                onPlayNext: _playNext,
+                onPlayNext: _confirmPlayNextPrompt,
               ),
               // "Still watching?" overlay (hidden in PiP mode)
               VideoPlayerStillWatchingOverlay(

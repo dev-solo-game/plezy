@@ -1439,7 +1439,7 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen>
       chromeController: _chromeController,
       isPromptOpen: () => _episode.showPlayNextDialog || _showStillWatchingPrompt,
       dismissPrompt: _dismissPlaybackPromptForBack,
-      backLeavesPrompt: () => _episode.showPlayNextDialog,
+      backLeavesPrompt: () => _episode.showPlayNextDialog && _episode.creditsPromptMarker == null,
       isChromePresented: () =>
           _isPlayerInitialized && player != null && _firstFrame.uiReady.value && _chromeController.controlsPresented,
       // On phones a Back must exit the player even with the controls up
@@ -2381,7 +2381,8 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen>
   Future<void> _handleBackButton({bool navigateHome = false}) async {
     final acceptedExit = _routeExitOperation;
     if (acceptedExit != null) return acceptedExit;
-    if (!navigateHome && _showStillWatchingPrompt) {
+    if (!navigateHome &&
+        (_showStillWatchingPrompt || (_episode.showPlayNextDialog && _episode.creditsPromptMarker != null))) {
       _dismissPlaybackPromptForBack();
       return;
     }
