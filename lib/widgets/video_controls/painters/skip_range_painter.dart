@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../../media/media_source_info.dart';
 
-/// Separate bands above the track remain visible over played/buffered ranges.
+/// Marks where each skip starts, above the played and buffered track layers.
 class SkipRangePainter extends CustomPainter {
   const SkipRangePainter({required this.markers, required this.duration});
   final List<MediaMarker> markers;
@@ -9,15 +9,18 @@ class SkipRangePainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    if (duration <= Duration.zero) return;
+    final durationMs = duration.inMilliseconds;
+    if (durationMs <= 0 || size.isEmpty) return;
+
+    final width = size.width < 3.0 ? size.width : 3.0;
+    const height = 14.0;
+    final top = (size.height - height) / 2;
+    final paint = Paint();
     for (final marker in markers) {
-      final x1 = (marker.startTimeOffset / duration.inMilliseconds).clamp(0, 1) * size.width;
-      final x2 = (marker.endTimeOffset / duration.inMilliseconds).clamp(0, 1) * size.width;
-      final paint = Paint()..color = marker.isCredits ? Colors.amber : Colors.lightBlueAccent;
-      final y = size.height / 2 - 10;
-      canvas.drawRRect(RRect.fromRectAndRadius(Rect.fromLTRB(x1, y, x2, y + 3), const Radius.circular(2)), paint);
-      canvas.drawRect(Rect.fromLTWH(x1, y, 2, 8), paint);
-      canvas.drawRect(Rect.fromLTWH(x2 - 2, y, 2, 8), paint);
+      final x = marker.startTimeOffset / durationMs * size.width;
+      final left = (x - width / 2).clamp(0.0, size.width - width);
+      paint.color = marker.isCredits ? Colors.amber : Colors.lightBlueAccent;
+      canvas.drawRect(Rect.fromLTWH(left, top, width, height), paint);
     }
   }
 

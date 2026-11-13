@@ -400,7 +400,7 @@ void main() {
     await finish(tester);
   });
 
-  testWidgets('right click credits preserves intro, saves bands and restores paused state', (tester) async {
+  testWidgets('right click credits preserves intro, saves markers and restores paused state', (tester) async {
     await tester.runAsync(() => store.save(work, rules));
     await player.pause();
     await pump(tester);
