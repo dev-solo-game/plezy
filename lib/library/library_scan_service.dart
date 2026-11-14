@@ -29,8 +29,15 @@ class LibraryUpdate {
   final LibraryUpdateMode mode;
   final Set<String> mountIds;
   final cancel = ScanCancelToken();
+  final _finished = Completer<void>();
   final scrapingMounts = <String>{};
   bool scraping = false;
+  int? filesSeen;
+  int scraped = 0;
+  int scrapeTotal = 0;
+  String? _error;
+  bool _refreshWhenFinished = false;
+  bool get isBackground => mode == LibraryUpdateMode.incremental;
 }
 
 /// What the UI shows for one mount's scanning.
@@ -64,7 +71,7 @@ class LibraryScrapeStatus {
 }
 
 /// Runs library scans and metadata lookups and publishes their progress.
-/// Individual scans can run side by side. A Quark update owns the scanner
+/// Individual scans can run side by side. A media library update owns the scanner
 /// through both traversal and metadata lookup.
 class LibraryScanService extends ChangeNotifier {
   static const automaticInterval = Duration(minutes: 1);
@@ -121,36 +128,42 @@ class LibraryScanService extends ChangeNotifier {
   bool _scrapeAgain = false;
   bool _retryUnmatchedAgain = false;
   bool _scrapeCancelled = false;
+  bool _scrapeAfterUpdate = false;
+  bool _retryUnmatchedAfterUpdate = false;
   bool _disposed = false;
   LibraryUpdate? _update;
+  ({LibraryUpdateMode mode, String message})? _updateError;
   bool _checkingAutomatic = false;
   DateTime? _automaticPausedUntil;
   final _automaticFailures = <String, ({int attempts, DateTime retryAt, String? rejectedCookie})>{};
 
   LibraryUpdate? get update => _update;
+  ({LibraryUpdateMode mode, String message})? get updateError => _updateError;
+
+  int? get standaloneScanFiles {
+    if (_update != null || _running.isEmpty) return null;
+    return _running.keys.fold<int>(0, (total, id) => total + (_status[id]?.progress?.filesSeen ?? 0));
+  }
 
   bool canScan(String mountId) => _update == null && !_running.containsKey(mountId);
 
   static bool supportsIncremental(StorageMount mount) =>
       mount.kind == StorageKind.quark && QuarkMode.parse(mount.configString(MountKeys.quarkMode)).supportsIncremental;
 
-  Future<List<StorageMount>> quarkMounts() async =>
-      (await _mountManager.registry.list()).where((mount) => mount.kind == StorageKind.quark).toList();
-
   Future<bool> hasIncrementalBaseline(StorageMount mount) => _libraryScanner.hasQuarkBaseline(mount);
 
-  Future<Duration> checkAutomaticQuarkUpdates({required bool Function() canRun}) async {
+  Future<Duration> checkIncrementalUpdates({required bool Function() canRun, bool force = false}) async {
     if (_disposed || _checkingAutomatic || _update != null || _running.isNotEmpty || !canRun()) {
       return automaticInterval;
     }
     final now = clock.now();
     final pausedUntil = _automaticPausedUntil;
-    if (pausedUntil != null && now.isBefore(pausedUntil)) return pausedUntil.difference(now);
+    if (!force && pausedUntil != null && now.isBefore(pausedUntil)) return pausedUntil.difference(now);
     _checkingAutomatic = true;
     try {
       var nextCheck = automaticInterval;
       final due = <StorageMount>[];
-      final mounts = await quarkMounts();
+      final mounts = await _mountManager.registry.list();
       _automaticFailures.removeWhere((id, _) => !mounts.any((mount) => mount.id == id));
       for (final mount in mounts) {
         final cookie = mount.secret(MountKeys.secretCookie);
@@ -161,25 +174,47 @@ class LibraryScanService extends ChangeNotifier {
         if (failure?.rejectedCookie == cookie) continue;
         if (failure != null && now.isBefore(failure.retryAt) && failure.rejectedCookie == null) continue;
         final elapsed = now.difference(lastScan);
-        if (!elapsed.isNegative && elapsed < automaticInterval) {
+        if (!force && !elapsed.isNegative && elapsed < automaticInterval) {
           final remaining = automaticInterval - elapsed;
           if (remaining < nextCheck) nextCheck = remaining;
           continue;
         }
         due.add(mount);
       }
-      if (canRun()) await _updateQuark(due, LibraryUpdateMode.incremental, canRun: canRun);
+      if (canRun()) await _updateMounts(due, LibraryUpdateMode.incremental, canRun: canRun);
       return nextCheck;
     } finally {
       _checkingAutomatic = false;
     }
   }
 
-  Future<bool> updateQuark(List<StorageMount> mounts, LibraryUpdateMode mode) => _updateQuark(mounts, mode);
+  Future<bool> updateMounts(List<StorageMount> mounts, LibraryUpdateMode mode) => _updateMounts(mounts, mode);
 
-  Future<bool> _updateQuark(List<StorageMount> mounts, LibraryUpdateMode mode, {bool Function()? canRun}) async {
+  Future<bool> scanAllMounts() async {
+    final mounts = await _mountManager.registry.list();
+    if (_disposed) return false;
+    if (mounts.isEmpty) {
+      _libraryChanged();
+      return true;
+    }
+    return _updateMounts(mounts, LibraryUpdateMode.full, refreshWhenFinished: true);
+  }
+
+  Future<bool> _updateMounts(
+    List<StorageMount> mounts,
+    LibraryUpdateMode mode, {
+    bool Function()? canRun,
+    bool refreshWhenFinished = false,
+  }) async {
+    final running = _update;
+    if (mode == LibraryUpdateMode.full && running != null && running.isBackground) {
+      running.cancel.cancel();
+      await running._finished.future;
+    }
     if (_disposed || _update != null || _running.isNotEmpty || mounts.isEmpty) return false;
-    final job = _update = LibraryUpdate(mode, mounts.map((mount) => mount.id).toSet());
+    final job = _update = LibraryUpdate(mode, mounts.map((mount) => mount.id).toSet())
+      .._refreshWhenFinished = refreshWhenFinished;
+    _updateError = null;
     notifyListeners();
     try {
       await _scrapeRun;
@@ -187,24 +222,42 @@ class LibraryScanService extends ChangeNotifier {
         if (job.cancel.isCancelled || canRun?.call() == false) break;
         final current = await _mountManager.registry.get(mount.id);
         if (job.cancel.isCancelled || canRun?.call() == false) break;
-        if (current == null || current.kind != StorageKind.quark) continue;
+        if (current == null) continue;
         if (mode == LibraryUpdateMode.incremental && !supportsIncremental(current)) continue;
         if (canRun != null && current.secret(MountKeys.secretCookie) != mount.secret(MountKeys.secretCookie)) continue;
-        final result = await _scan(current, token: job.cancel, mode: mode, automatic: canRun != null);
+        final result = await _scan(current, token: job.cancel, mode: mode);
         if (result != null && !result.cancelled) job.scrapingMounts.add(current.id);
       }
-      if (!job.cancel.isCancelled && job.scrapingMounts.isNotEmpty && scrape != null) {
+      if (!job.cancel.isCancelled && !_scrapeAfterUpdate && job.scrapingMounts.isNotEmpty && scrape != null) {
         job.scraping = true;
+        _scrapeCancelled = false;
+        if (!_disposed) notifyListeners();
         await _runScrape(
           mountIds: job.scrapingMounts,
           refreshMatched: mode == LibraryUpdateMode.full,
           cancel: job.cancel,
+          silent: job.isBackground,
         );
       }
       return true;
+    } catch (error) {
+      job._error ??= '$error';
+      rethrow;
     } finally {
       _update = null;
-      if (!_disposed) notifyListeners();
+      final error = job._error;
+      if (error != null && !job.cancel.isCancelled) _updateError = (mode: mode, message: error);
+      job._finished.complete();
+      if (!_disposed) {
+        if (job._refreshWhenFinished) _libraryChanged();
+        if (_scrapeAfterUpdate) {
+          final retry = _retryUnmatchedAfterUpdate;
+          _scrapeAfterUpdate = false;
+          _retryUnmatchedAfterUpdate = false;
+          unawaited(scrapeLibrary(retryUnmatched: retry));
+        }
+        notifyListeners();
+      }
     }
   }
 
@@ -225,27 +278,46 @@ class LibraryScanService extends ChangeNotifier {
   /// when a scan of this mount is already running or this one failed (the
   /// failure is in [statusOf]).
   Future<ScanResult?> scan(StorageMount mount) async {
+    final running = _update;
+    if (running != null && running.isBackground) {
+      running.cancel.cancel();
+      await running._finished.future;
+    }
+    if (_disposed) return null;
     if (!canScan(mount.id)) return null;
+    _updateError = null;
     final result = await _scan(mount, token: ScanCancelToken());
     if (result != null && !result.cancelled) unawaited(scrapeLibrary());
     return result;
   }
 
-  Future<ScanResult?> _scan(
-    StorageMount mount, {
-    required ScanCancelToken token,
-    LibraryUpdateMode? mode,
-    bool automatic = false,
-  }) async {
+  Future<ScanResult?> _scan(StorageMount mount, {required ScanCancelToken token, LibraryUpdateMode? mode}) async {
+    final silent = mode == LibraryUpdateMode.incremental;
+    final job = _update;
     _running[mount.id] = token;
-    _publish(
-      mount.id,
-      const MountScanStatus(progress: ScanProgress(directoriesDone: 0, filesSeen: 0, currentPath: '/')),
-    );
+    if (job != null) {
+      job.filesSeen = 0;
+      if (silent && !_disposed) notifyListeners();
+    }
+    if (!silent) {
+      _publish(
+        mount.id,
+        const MountScanStatus(progress: ScanProgress(directoriesDone: 0, filesSeen: 0, currentPath: '/')),
+      );
+    }
 
     try {
       final driver = _mountManager.driverFor(mount);
-      void onProgress(ScanProgress progress) => _publish(mount.id, MountScanStatus(progress: progress));
+      void onProgress(ScanProgress progress) {
+        final previous = job?.filesSeen;
+        if (job != null) job.filesSeen = progress.filesSeen;
+        if (!silent) {
+          _publish(mount.id, MountScanStatus(progress: progress));
+        } else if (!_disposed && previous != progress.filesSeen) {
+          notifyListeners();
+        }
+      }
+
       final result = mode == LibraryUpdateMode.incremental
           ? await _libraryScanner.scanQuarkIncremental(
               mount,
@@ -262,13 +334,13 @@ class LibraryScanService extends ChangeNotifier {
             );
       _running.remove(mount.id);
       if (!result.cancelled) _automaticFailures.remove(mount.id);
-      _publish(mount.id, MountScanStatus(lastResult: result));
-      if (!automatic || result.hasChanges) _libraryChanged();
+      if (!silent || result.hasChanges) _publish(mount.id, MountScanStatus(lastResult: result));
+      if (job?._refreshWhenFinished != true && (!silent || result.hasChanges)) _libraryChanged();
       return result;
     } catch (e) {
       _running.remove(mount.id);
       if (token.isCancelled) {
-        _publish(mount.id, const MountScanStatus());
+        if (!silent) _publish(mount.id, const MountScanStatus());
         return null;
       }
       LibraryScanner.logFailure(mount, e);
@@ -282,7 +354,13 @@ class LibraryScanService extends ChangeNotifier {
               : null,
         );
       }
-      _publish(mount.id, MountScanStatus(error: e is StorageException ? e.message : '$e'));
+      final message = e is StorageException ? e.message : '$e';
+      if (job != null) {
+        job._error ??= message;
+      } else {
+        _updateError = (mode: LibraryUpdateMode.full, message: message);
+      }
+      if (!silent) _publish(mount.id, MountScanStatus(error: message));
       return null;
     }
   }
@@ -310,7 +388,13 @@ class LibraryScanService extends ChangeNotifier {
   /// [restart] stops a run that is going after its current title and starts
   /// over at once, for when the settings it was started with changed.
   Future<void> scrapeLibrary({bool retryUnmatched = false, bool restart = false}) {
-    if (scrape == null || _update != null) return Future.value();
+    if (_disposed || scrape == null) return Future.value();
+    if (_update != null) {
+      _scrapeAfterUpdate = true;
+      _retryUnmatchedAfterUpdate |= retryUnmatched;
+      if (restart) _scrapeCancelled = true;
+      return Future.value();
+    }
     final running = _scrapeRun;
     if (running != null) {
       _scrapeAgain = true;
@@ -339,9 +423,11 @@ class LibraryScanService extends ChangeNotifier {
     Set<String>? mountIds,
     bool refreshMatched = false,
     ScanCancelToken? cancel,
+    bool silent = false,
   }) async {
-    bool isCancelled() => _disposed || (cancel?.isCancelled ?? _scrapeCancelled);
-    _publishScrape(LibraryScrapeStatus(running: true, runs: _scrapeStatus.runs));
+    final job = cancel == null ? null : _update;
+    bool isCancelled() => _disposed || _scrapeCancelled || cancel?.isCancelled == true;
+    if (!silent) _publishScrape(LibraryScrapeStatus(running: true, runs: _scrapeStatus.runs));
     String? note;
     var hadWork = false;
     try {
@@ -351,8 +437,18 @@ class LibraryScanService extends ChangeNotifier {
         refreshMatched: refreshMatched,
         isCancelled: isCancelled,
         onProgress: (done, total) {
-          hadWork |= total > 0;
+          hadWork |= done > 0;
+          final progressChanged = job != null && (job.scraped != done || job.scrapeTotal != total);
+          if (progressChanged) {
+            job.scraped = done;
+            job.scrapeTotal = total;
+          }
+          if (silent) {
+            if (progressChanged && !_disposed) notifyListeners();
+            return;
+          }
           _publishScrape(LibraryScrapeStatus(running: true, done: done, total: total, runs: _scrapeStatus.runs));
+          if (job?._refreshWhenFinished == true) return;
           final last = _lastLiveRefresh;
           if (done > 0 && (last == null || DateTime.now().difference(last) >= _liveRefreshInterval)) {
             _libraryChanged();
@@ -362,8 +458,11 @@ class LibraryScanService extends ChangeNotifier {
     } catch (e) {
       note = '$e';
     }
-    _publishScrape(LibraryScrapeStatus(note: isCancelled() ? null : note, runs: _scrapeStatus.runs + 1));
-    if (mountIds == null || hadWork) _libraryChanged();
+    if (job != null && !isCancelled()) job._error ??= note;
+    if (!silent) {
+      _publishScrape(LibraryScrapeStatus(note: isCancelled() ? null : note, runs: _scrapeStatus.runs + 1));
+    }
+    if (job?._refreshWhenFinished != true && (mountIds == null || hadWork)) _libraryChanged();
   }
 
   /// Stops a running lookup after the title it is on.

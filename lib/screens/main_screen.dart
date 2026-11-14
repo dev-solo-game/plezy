@@ -536,9 +536,9 @@ class _MainScreenState extends State<MainScreen>
   static const _startupSettleFallback = Duration(seconds: 15);
   static const _backExitWindow = Duration(seconds: 3);
   DateTime? _lastBackPressAt;
-  Timer? _quarkUpdateTimer;
-  bool _quarkUpdateReady = false;
-  bool _checkingQuarkUpdates = false;
+  Timer? _libraryUpdateTimer;
+  bool _libraryUpdateReady = false;
+  bool _checkingLibraryUpdates = false;
 
   @override
   void initState() {
@@ -656,8 +656,8 @@ class _MainScreenState extends State<MainScreen>
 
       _updateTvosMenuPassthrough();
 
-      _quarkUpdateReady = true;
-      unawaited(_checkQuarkUpdates());
+      _libraryUpdateReady = true;
+      unawaited(_checkLibraryUpdates());
 
       // Check for updates on startup
       unawaited(_checkForUpdatesOnStartup());
@@ -1063,7 +1063,7 @@ class _MainScreenState extends State<MainScreen>
 
   @override
   void dispose() {
-    _quarkUpdateTimer?.cancel();
+    _libraryUpdateTimer?.cancel();
     if (_watchTogether?.navigatorOpener == _navigateToWatchTogetherMedia) _watchTogether?.navigatorOpener = null;
     WidgetsBinding.instance.removeObserver(this);
     _profileRouteObserver?.unsubscribe(this);
@@ -1114,27 +1114,27 @@ class _MainScreenState extends State<MainScreen>
   void onWindowClose() => _requestDesktopExit();
 
   @override
-  void onWindowRestore() => unawaited(_checkQuarkUpdates());
+  void onWindowRestore() => unawaited(_checkLibraryUpdates());
 
-  bool get _canScheduleQuarkUpdates {
+  bool get _canScheduleLibraryUpdates {
     final state = WidgetsBinding.instance.lifecycleState;
     return PlatformDetector.isDesktopOS() ? state != AppLifecycleState.detached : state == AppLifecycleState.resumed;
   }
 
-  Future<void> _checkQuarkUpdates() async {
-    if (!_quarkUpdateReady || !mounted || !_canScheduleQuarkUpdates || _checkingQuarkUpdates) return;
+  Future<void> _checkLibraryUpdates() async {
+    if (!_libraryUpdateReady || !mounted || !_canScheduleLibraryUpdates || _checkingLibraryUpdates) return;
     final scans = context.read<LibraryScanService?>();
     if (scans == null) return;
-    _quarkUpdateTimer?.cancel();
-    _checkingQuarkUpdates = true;
+    _libraryUpdateTimer?.cancel();
+    _checkingLibraryUpdates = true;
     var delay = LibraryScanService.automaticInterval;
     try {
-      delay = await scans.checkAutomaticQuarkUpdates(canRun: () => mounted && _canScheduleQuarkUpdates && !_isOffline);
+      delay = await scans.checkIncrementalUpdates(canRun: () => mounted && _canScheduleLibraryUpdates);
     } catch (error, stack) {
-      appLogger.w('Automatic Quark update failed', error: error, stackTrace: stack);
+      appLogger.w('Media library incremental update failed', error: error, stackTrace: stack);
     } finally {
-      _checkingQuarkUpdates = false;
-      if (mounted && _canScheduleQuarkUpdates) _quarkUpdateTimer = Timer(delay, _checkQuarkUpdates);
+      _checkingLibraryUpdates = false;
+      if (mounted && _canScheduleLibraryUpdates) _libraryUpdateTimer = Timer(delay, _checkLibraryUpdates);
     }
   }
 
@@ -1168,9 +1168,9 @@ class _MainScreenState extends State<MainScreen>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      unawaited(_checkQuarkUpdates());
-    } else if (!_canScheduleQuarkUpdates) {
-      _quarkUpdateTimer?.cancel();
+      unawaited(_checkLibraryUpdates());
+    } else if (!_canScheduleLibraryUpdates) {
+      _libraryUpdateTimer?.cancel();
     }
     // Always consume: the gates latch backgrounding on every lifecycle event.
     final resumedFromBackground = _profileSelectionResumeGate.consumePromptOn(

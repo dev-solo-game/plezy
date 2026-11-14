@@ -2566,13 +2566,14 @@ class Translations$storage$zh extends Translations$storage$en {
 	@override String get smbFolderNeedsServer => '请先填写服务器和共享名称';
 	@override String get scan => '扫描';
 	@override String get scanStop => '停止扫描';
-	@override String get incrementalUpdate => '增量更新';
-	@override String get fullUpdate => '全盘更新';
+	@override String get incrementalUpdate => '媒体库增量更新';
+	@override String get fullUpdate => '全盘扫描';
 	@override String get incrementalUnavailable => '当前媒体源暂不支持增量更新。';
 	@override String get incrementalNeedsFull => '请先完成一次全盘更新，以建立增量更新基线。';
 	@override String get incrementalReadyOnly => '只更新已建立增量基线的夸克媒体源。';
-	@override String get fullUpdateMessage => '从头扫描所选夸克媒体源的挂载目录，并重新刮削元数据。';
-	@override String get fullUpdateWarning => '此操作可能耗时较长。网盘中已找不到的文件会从媒体库移除。';
+	@override String get fullUpdateMessage => '从头扫描所选媒体源的挂载目录，并重新刮削元数据。';
+	@override String get fullLibraryScanMessage => '从头扫描所有已挂载的媒体源并重新刮削元数据，完成后刷新首页。';
+	@override String get fullUpdateWarning => '此操作可能耗时较长。媒体源中已找不到的文件会从媒体库移除。';
 	@override String get cancelUpdateTitle => '停止当前更新？';
 	@override String get cancelUpdateMessage => '当前扫描或刮削将停止，已经保存的变更会保留。';
 	@override String updating({required Object mode}) => '正在${mode}';
@@ -6082,13 +6083,14 @@ extension on TranslationsZh {
 			'storage.smbFolderNeedsServer' => '请先填写服务器和共享名称',
 			'storage.scan' => '扫描',
 			'storage.scanStop' => '停止扫描',
-			'storage.incrementalUpdate' => '增量更新',
-			'storage.fullUpdate' => '全盘更新',
+			'storage.incrementalUpdate' => '媒体库增量更新',
+			'storage.fullUpdate' => '全盘扫描',
 			'storage.incrementalUnavailable' => '当前媒体源暂不支持增量更新。',
 			'storage.incrementalNeedsFull' => '请先完成一次全盘更新，以建立增量更新基线。',
 			'storage.incrementalReadyOnly' => '只更新已建立增量基线的夸克媒体源。',
-			'storage.fullUpdateMessage' => '从头扫描所选夸克媒体源的挂载目录，并重新刮削元数据。',
-			'storage.fullUpdateWarning' => '此操作可能耗时较长。网盘中已找不到的文件会从媒体库移除。',
+			'storage.fullUpdateMessage' => '从头扫描所选媒体源的挂载目录，并重新刮削元数据。',
+			'storage.fullLibraryScanMessage' => '从头扫描所有已挂载的媒体源并重新刮削元数据，完成后刷新首页。',
+			'storage.fullUpdateWarning' => '此操作可能耗时较长。媒体源中已找不到的文件会从媒体库移除。',
 			'storage.cancelUpdateTitle' => '停止当前更新？',
 			'storage.cancelUpdateMessage' => '当前扫描或刮削将停止，已经保存的变更会保留。',
 			'storage.updating' => ({required Object mode}) => '正在${mode}',

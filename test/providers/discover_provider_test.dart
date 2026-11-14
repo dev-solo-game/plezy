@@ -260,6 +260,27 @@ void main() {
     expect(aggregation.hubCalls, 2);
   });
 
+  test('a library update refreshes home without switching to a loading state', () async {
+    aggregation.hubsResult = () => [_hub('existing')];
+    await provider.load();
+
+    final gate = Completer<void>();
+    aggregation.hubGate = gate.future;
+    aggregation.hubStarted = Completer<void>();
+    aggregation.hubsResult = () => [_hub('updated')];
+    final loadingStates = <bool>[];
+    provider.addListener(() => loadingStates.add(provider.isLoading || provider.areHubsLoading));
+    final refresh = provider.refreshAfterLibraryUpdate();
+    await aggregation.hubStarted!.future;
+    expect(provider.hubs.map((hub) => hub.id), ['existing']);
+    expect(provider.isLoading, isFalse);
+
+    gate.complete();
+    await refresh;
+    expect(provider.hubs.map((hub) => hub.id), ['updated']);
+    expect(loadingStates, isNot(contains(true)));
+  });
+
   test('a failed in-flight pass still runs one coalesced trailing pass', () async {
     final gate = Completer<void>();
     aggregation.onDeckGate = gate.future;

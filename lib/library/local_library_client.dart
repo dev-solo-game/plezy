@@ -47,6 +47,7 @@ import '../utils/app_logger.dart';
 import '../utils/external_ids.dart';
 import '../utils/media_server_http_client.dart' show AbortController;
 import 'library_repository.dart' as lib;
+import 'library_scanner.dart';
 import 'media_probe.dart';
 import 'scrapers/bangumi_provider.dart';
 
@@ -1022,19 +1023,79 @@ class LocalLibraryClient implements MediaServerClient {
   }
 
   Future<List<SubtitleTrack>> _externalSubtitles(LibraryFileRow video) async {
+    final mount = await _mountOf(video);
+    final entries = await _subtitleDirectory(mount, video);
     final tracks = <SubtitleTrack>[];
-    for (final subtitle in await _repo.subtitlesOf(video.id)) {
-      final url = await _streamUrl(subtitle);
-      tracks.add(
-        SubtitleTrack.uri(
-          url.toString(),
-          title: subtitle.language ?? StoragePath.name(subtitle.path),
-          language: subtitle.language,
-          codec: StoragePath.extension(subtitle.path),
-        ),
-      );
+    final subtitles =
+        entries != null &&
+            entries.any((entry) => !entry.isDirectory && entry.path == video.path && entry.id == video.remoteId)
+        ? [
+            for (final match in LibraryScanner.matchSubtitles(entries))
+              if (match.owner.path == video.path) (entry: match.subtitle, language: match.language),
+          ]
+        : [for (final row in await _repo.subtitlesOf(video.id)) (entry: _entryOf(row), language: row.language)];
+    for (final (:entry, :language) in subtitles) {
+      try {
+        final url = await _mountManager.streamUrl(mount, entry);
+        tracks.add(
+          SubtitleTrack.uri(
+            url.toString(),
+            title: language ?? entry.name,
+            language: language,
+            codec: StoragePath.extension(entry.name),
+          ),
+        );
+      } catch (error) {
+        appLogger.d('Could not prepare a media library subtitle', error: error);
+      }
     }
     return tracks;
+  }
+
+  static const _subtitleLookupTimeout = Duration(seconds: 3);
+  static const _subtitleCacheLifetime = Duration(minutes: 2);
+  final _subtitleDirectories =
+      <(StorageDriver, String), ({DateTime requestedAt, Future<List<StorageEntry>?> entries})>{};
+  final _subtitleLookups = <(StorageDriver, String), Future<List<StorageEntry>?>>{};
+
+  /// Starts a fresh lookup each time the detail page opens. Playback shares
+  /// the result or queries the actual version's directory on demand.
+  Future<void> prefetchSubtitles(String itemId) async {
+    try {
+      final video = (await _versions(itemId)).firstOrNull;
+      if (video != null) await _subtitleDirectory(await _mountOf(video), video, refresh: true);
+    } catch (error) {
+      appLogger.d('Could not prefetch media library subtitles', error: error);
+    }
+  }
+
+  Future<List<StorageEntry>?> _subtitleDirectory(StorageMount mount, LibraryFileRow video, {bool refresh = false}) {
+    final driver = _mountManager.driverFor(mount);
+    final directory = StoragePath.parent(video.path);
+    final key = (driver, directory);
+    final active = _subtitleLookups[key];
+    if (active != null) return active;
+    final now = DateTime.now();
+    _subtitleDirectories.removeWhere((_, value) => now.difference(value.requestedAt) >= _subtitleCacheLifetime);
+    final cached = _subtitleDirectories[key];
+    if (!refresh && cached != null) return cached.entries;
+
+    final lookup = Future.sync(() => driver.list(directory))
+        .timeout(_subtitleLookupTimeout)
+        .then<List<StorageEntry>?>(
+          (entries) => entries,
+          onError: (Object error) {
+            appLogger.d('Could not list the media library subtitle directory', error: error);
+            return null;
+          },
+        )
+        .whenComplete(() {
+          _subtitleLookups.remove(key);
+        });
+    _subtitleLookups[key] = lookup;
+    if (_subtitleDirectories.length >= 16) _subtitleDirectories.remove(_subtitleDirectories.keys.first);
+    _subtitleDirectories[key] = (requestedAt: now, entries: lookup);
+    return lookup;
   }
 
   @override

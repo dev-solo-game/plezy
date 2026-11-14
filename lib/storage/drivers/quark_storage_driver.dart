@@ -285,7 +285,7 @@ class QuarkStorageDriver implements StorageDriver, StreamVariantSource, Parallel
     final response = await _api(
       'GET',
       '/file/search',
-      query: {'q': '', '_sort': 'updated_at:desc', '_page': '$page', '_size': '$size'},
+      query: {'q': '', 'cat': 'video', '_sort': 'updated_at:desc', '_page': '$page', '_size': '$size'},
     );
     return [
       for (final row in _fileRows(response))

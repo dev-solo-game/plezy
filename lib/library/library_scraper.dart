@@ -141,7 +141,7 @@ class LibraryScraper {
         coalesce([parents.showId, parents.id]),
       ])
       ..where(
-        files.mountId.isIn(mountIds ?? const <String>{}) &
+        (mountIds == null ? const Constant(true) : files.mountId.isIn(mountIds)) &
             files.role.equals(LibraryFileRoles.video) &
             (refreshMatched ? const Constant(true) : files.matchState.equals(LibraryMatchStates.pending)),
       );
@@ -151,7 +151,8 @@ class LibraryScraper {
                 (t) =>
                     t.kind.isIn([LibraryKinds.movie, LibraryKinds.show]) &
                     (mountIds == null
-                        ? pending & t.locked.equals(false)
+                        ? (pending & t.locked.equals(false)) |
+                              (t.metadataSource.isNotNull() & t.id.isInQuery(mountedTitles))
                         : t.id.isInQuery(mountedTitles) &
                               (refreshMatched ? t.locked.equals(false) : const Constant(true))),
               )
@@ -166,7 +167,7 @@ class LibraryScraper {
       if (isCancelled?.call() ?? false) break;
       onProgress?.call(index, queue.length);
       try {
-        final outcome = mountIds != null && item.metadataSource != null
+        final outcome = item.metadataSource != null
             ? await _refreshKnown(item, refreshMatched: refreshMatched)
             : await scrapeItem(item.id);
         switch (outcome) {
@@ -651,13 +652,16 @@ class LibraryScraper {
 
   // ─── Files and merging ─────────────────────────────────────────────────
 
-  Future<List<int>> _leafIds(LibraryItemRow item) async {
+  Future<List<int>> _leafIds(LibraryItemRow item, {bool withMetadataOnly = false}) async {
     if (item.kind != LibraryKinds.show) return [item.id];
-    return [for (final episode in await _repo.episodesOfShow(item.id)) episode.item.id];
+    return [
+      for (final episode in await _repo.episodesOfShow(item.id))
+        if (!withMetadataOnly || episode.item.scrapedAt != null) episode.item.id,
+    ];
   }
 
   Future<void> _setFilesState(LibraryItemRow item, String state, {bool locked = false}) async {
-    final leaves = await _leafIds(item);
+    final leaves = await _leafIds(item, withMetadataOnly: !locked && state == LibraryMatchStates.matched);
     if (leaves.isEmpty) return;
     await (_db.update(_db.libraryFiles)..where(
           (t) =>

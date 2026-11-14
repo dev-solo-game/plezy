@@ -282,6 +282,11 @@ void main() {
 
     driver.files.add('/TV/Severance/Season 1/Severance.S01E02.mkv');
     await scan();
+    await scraper.scrapePending(mountIds: {mount.id});
+    final episode = (await repo.episodesOfShow(show.id)).last.item;
+    expect(episode.scrapedAt, isNull);
+    expect((await repo.versionsOf(episode.id)).single.matchState, LibraryMatchStates.pending);
+
     tmdb.details['95396'] = const ScrapedTitle(source: 'tmdb', tmdbId: '95396', title: 'Severance Updated');
     tmdb.seasons['95396/1'] = const ScrapedSeason(
       number: 1,
@@ -292,6 +297,7 @@ void main() {
     );
     await scraper.scrapePending(mountIds: {mount.id});
     expect((await repo.episodesOfShow(show.id)).map((e) => e.item.title), ['First', 'Second']);
+    expect((await repo.versionsOf(episode.id)).single.matchState, LibraryMatchStates.matched);
     expect((await items(LibraryKinds.show)).single.title, 'Severance');
 
     await scraper.scrapePending(mountIds: {mount.id}, refreshMatched: true);

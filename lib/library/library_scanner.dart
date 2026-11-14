@@ -119,7 +119,7 @@ class LibraryScanner {
       // still visible to the next incremental update. An empty drive starts at zero.
       try {
         final head = await quark.searchUpdatedPage(1, size: 1);
-        watermark = head.firstOrNull?.updatedAt ?? 0;
+        watermark = head.where((row) => !row.entry.isDirectory).firstOrNull?.updatedAt ?? 0;
       } on StorageException catch (error) {
         appLogger.w('Quark: could not establish a new incremental baseline: ${error.message}');
       }
@@ -214,20 +214,26 @@ class LibraryScanner {
     for (var page = 1; ; page++) {
       if (cancel.isCancelled) return _cancelled;
       final rows = await driver.searchUpdatedPage(page);
+      int? lastFileTimestamp;
       for (final row in rows) {
+        if (row.entry.isDirectory) continue;
         if (previousTimestamp != null && row.updatedAt > previousTimestamp) {
           throw const StorageException(StorageErrorKind.other, 'Quark: unexpected search order');
         }
         previousTimestamp = row.updatedAt;
+        lastFileTimestamp = row.updatedAt;
         if (row.updatedAt > latest) latest = row.updatedAt;
-        if (row.updatedAt < threshold || row.entry.isDirectory || !_isLibraryFile(row.entry.name)) continue;
+        if (row.updatedAt < threshold || !_isVideo(row.entry.name)) continue;
         if (row.parentId.isEmpty) {
           throw const StorageException(StorageErrorKind.other, 'Quark: missing parent folder ID');
         }
         changed.putIfAbsent(row.entry.id!, () => row);
       }
       onProgress?.call(ScanProgress(directoriesDone: 0, filesSeen: changed.length, currentPath: StoragePath.root));
-      if (rows.length < QuarkStorageDriver.searchPageSize || rows.last.updatedAt < threshold) break;
+      if (rows.length < QuarkStorageDriver.searchPageSize ||
+          (lastFileTimestamp != null && lastFileTimestamp < threshold)) {
+        break;
+      }
       if (page == 50) throw const StorageException(StorageErrorKind.other, 'Quark: full scan required after 50 pages');
     }
 
@@ -312,13 +318,8 @@ class LibraryScanner {
     return path;
   }
 
-  static bool _isLibraryFile(String name) {
-    final extension = StoragePath.extension(name);
-    return (videoExtensions.contains(extension) && !_sampleName.hasMatch(_baseName(name))) ||
-        subtitleExtensions.contains(extension) ||
-        imageExtensions.contains(extension) ||
-        extension == 'nfo';
-  }
+  static bool _isVideo(String name) =>
+      videoExtensions.contains(StoragePath.extension(name)) && !_sampleName.hasMatch(_baseName(name));
 
   // ─── Run bookkeeping ───────────────────────────────────────────────────
 
@@ -395,21 +396,18 @@ class LibraryScanner {
   /// Records the files of one directory. Returns how many were videos.
   Future<int> _recordDirectory(StorageMount mount, String directory, List<StorageEntry> files, int scanId) async {
     final videos = <StorageEntry>[];
-    final subtitles = <StorageEntry>[];
     final others = <(StorageEntry, String)>[];
     for (final file in files) {
       final extension = StoragePath.extension(file.name);
       if (videoExtensions.contains(extension)) {
         if (!_sampleName.hasMatch(_baseName(file.name))) videos.add(file);
-      } else if (subtitleExtensions.contains(extension)) {
-        subtitles.add(file);
       } else if (extension == 'nfo') {
         others.add((file, LibraryFileRoles.nfo));
       } else if (imageExtensions.contains(extension)) {
         others.add((file, LibraryFileRoles.artwork));
       }
     }
-    if (videos.isEmpty && subtitles.isEmpty && others.isEmpty) return 0;
+    if (videos.isEmpty && others.isEmpty) return 0;
 
     final folders = [
       for (final segment in StoragePath.segments(directory).reversed.take(3)) MediaNameParser.parseFolder(segment),
@@ -440,9 +438,7 @@ class LibraryScanner {
         }
       }
 
-      for (final subtitle in subtitles) {
-        final owner = _ownerOf(subtitle, videos);
-        if (owner == null) continue;
+      for (final (:subtitle, :owner, :language) in matchSubtitles(files)) {
         await _prepareFile(mount, subtitle);
         await _repo.upsertFile(
           mountId: mount.id,
@@ -453,7 +449,7 @@ class LibraryScanner {
           size: subtitle.size,
           modifiedAt: subtitle.modifiedAt?.millisecondsSinceEpoch,
           ownerFileId: videoIds[owner.path],
-          language: _subtitleLanguage(subtitle, owner),
+          language: language,
         );
       }
 
@@ -656,6 +652,18 @@ class LibraryScanner {
   }
 
   // ─── Subtitles ─────────────────────────────────────────────────────────
+
+  static Iterable<({StorageEntry subtitle, StorageEntry owner, String? language})> matchSubtitles(
+    List<StorageEntry> entries,
+  ) sync* {
+    final videos = entries.where((entry) => !entry.isDirectory && _isVideo(entry.name)).toList();
+    if (videos.isEmpty) return;
+    for (final entry in entries) {
+      if (entry.isDirectory || !subtitleExtensions.contains(StoragePath.extension(entry.name))) continue;
+      final owner = _ownerOf(entry, videos);
+      if (owner != null) yield (subtitle: entry, owner: owner, language: _subtitleLanguage(entry, owner));
+    }
+  }
 
   static String _baseName(String fileName) {
     final dot = fileName.lastIndexOf('.');

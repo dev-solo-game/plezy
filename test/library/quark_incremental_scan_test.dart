@@ -10,11 +10,14 @@ import 'package:plezy/database/app_database.dart';
 import 'package:plezy/library/library_repository.dart';
 import 'package:plezy/library/library_scan_service.dart';
 import 'package:plezy/library/library_scanner.dart';
+import 'package:plezy/library/local_library_client.dart';
+import 'package:plezy/services/playback_initialization_types.dart';
 import 'package:plezy/storage/drivers/quark_storage_driver.dart';
 import 'package:plezy/storage/mount_manager.dart';
 import 'package:plezy/storage/mount_registry.dart';
 import 'package:plezy/storage/storage_driver.dart';
 import 'package:plezy/storage/storage_mount.dart';
+import 'package:plezy/storage/stream_variant.dart';
 
 Map<String, Object> _file(String id, String name, int time, {String parent = 'season'}) => {
   'fid': id,
@@ -32,6 +35,9 @@ class _MountManager extends MountManager {
 
   @override
   StorageDriver driverFor(StorageMount mount) => driver;
+
+  @override
+  Future<List<StreamVariant>> streamVariants(StorageMount mount, StorageEntry entry) async => const [];
 }
 
 class _MountRegistry extends MountRegistry {
@@ -67,6 +73,7 @@ void main() {
   late List<int> searchPages;
   late List<String?> searchCookies;
   late bool failSecondPage;
+  late bool failFolderReads;
   late int? searchError;
 
   setUp(() async {
@@ -89,6 +96,7 @@ void main() {
     searchPages = [];
     searchCookies = [];
     failSecondPage = false;
+    failFolderReads = false;
     searchError = null;
     server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     server.listen((request) async {
@@ -100,6 +108,7 @@ void main() {
       final folder = query['pdir_fid'];
       final ancestry = query['_fetch_full_path'] == '1';
       if (isSearch) {
+        expect(query['cat'], 'video');
         searchPages.add(page);
         searchCookies.add(request.headers.value(HttpHeaders.cookieHeader));
         if (searchError != null || (page == 2 && failSecondPage)) {
@@ -109,6 +118,11 @@ void main() {
         }
       } else if (!ancestry) {
         folderReads.add(folder!);
+        if (failFolderReads) {
+          response.statusCode = HttpStatus.serviceUnavailable;
+          await response.close();
+          return;
+        }
       }
       final rows = isSearch ? search : (folder == 'library' ? [season] : seasonFiles);
       response.headers.contentType = ContentType.json;
@@ -153,7 +167,8 @@ void main() {
     final added = _file('new', 'Series.S01E01.mkv', next);
     search = [
       renamed,
-      for (var i = 0; i < 99; i++) _file('pic-$i', 'Picture $i.jpg', next, parent: 'outside'),
+      {'fid': 'dir-inv', 'pdir_fid': 'library', 'file_name': 'Series', 'dir': true, 'updated_at': next + 5000},
+      for (var i = 0; i < 98; i++) _file('pic-$i', 'Picture $i.jpg', next, parent: 'outside'),
       added,
       _file('historical', 'Historical.mkv', baseline - 60001, parent: 'outside'),
     ];
@@ -209,6 +224,36 @@ void main() {
     expect(await checkpoint(), 'library:$next');
   });
 
+  test('subtitle-only uploads are found on detail and direct playback, with a cached fallback', () async {
+    seasonFiles.add(_file('sub-en', 'Old Movie (2022).en.srt', baseline));
+    await scanner.scan(mount, driver);
+    final repository = LibraryRepository(db);
+    final mounts = _MountManager(MountRegistry(db), driver);
+    addTearDown(mounts.dispose);
+    LocalLibraryClient client() => LocalLibraryClient(repository: repository, mounts: mounts);
+    final indexedVideo = (await db.select(db.libraryFiles).get()).singleWhere((file) => file.remoteId == 'old');
+    final media = (await client().fetchItem('${indexedVideo.itemId}'))!;
+    final options = PlaybackInitializationOptions(metadata: media, selectedMediaIndex: 0);
+    seasonFiles.add(_file('sub-zh', 'Old Movie (2022).chs.ass', next));
+
+    final fromDetail = client();
+    await fromDetail.prefetchSubtitles(media.id);
+    folderReads.clear();
+    final detailPlayback = await fromDetail.getPlaybackInitialization(options);
+    expect(detailPlayback.subtitleSidecars.map((sidecar) => sidecar.track.language), ['en', 'zh-Hans']);
+    expect(folderReads, isEmpty);
+    expect(await repository.subtitlesOf(indexedVideo.id), hasLength(1));
+
+    final directPlayback = await client().getPlaybackInitialization(options);
+    expect(directPlayback.subtitleSidecars, hasLength(2));
+    expect(folderReads, ['season']);
+
+    failFolderReads = true;
+    final fallback = await client().getPlaybackInitialization(options);
+    expect(fallback.videoUrl, isNotNull);
+    expect(fallback.subtitleSidecars.single.track.language, 'en');
+  });
+
   test('an existing Web mount can establish a baseline and update through the service', () async {
     // Older Web mounts omit the login mode in their saved configuration.
     final webMount = mount.copyWith(config: {MountKeys.rootFolderId: 'library'});
@@ -229,16 +274,45 @@ void main() {
     expect(LibraryScanService.supportsIncremental(webMount), isTrue);
     expect(LibraryScanService.supportsIncremental(mount.copyWith(config: {MountKeys.quarkMode: 'tv'})), isFalse);
     expect(await scans.hasIncrementalBaseline(webMount), isFalse);
-    expect(await scans.updateQuark([webMount], LibraryUpdateMode.full), isTrue);
+    expect(await scans.updateMounts([webMount], LibraryUpdateMode.full), isTrue);
     expect(await scans.hasIncrementalBaseline(webMount), isTrue);
     expect(await checkpoint(), 'library:$baseline');
 
     arrangeChanges();
-    expect(await scans.updateQuark([webMount], LibraryUpdateMode.incremental), isTrue);
+    expect(await scans.updateMounts([webMount], LibraryUpdateMode.incremental), isTrue);
     expect(scans.statusOf(webMount.id).error, isNull);
     expect(await checkpoint(), 'library:$next');
     expect((await db.select(db.libraryFiles).get()).map((row) => row.remoteId), unorderedEquals(['old', 'new']));
     expect(searchCookies, everyElement('__puus=test-web-cookie'));
+  });
+
+  test('home full scan publishes the library change once after scraping finishes', () async {
+    final scraping = Completer<void>();
+    final finishScraping = Completer<void>();
+    var changes = 0;
+    final scans = LibraryScanService(
+      repository: LibraryRepository(db),
+      scanner: scanner,
+      mounts: _MountManager(MountRegistry(db), driver),
+      onLibraryChanged: () => changes++,
+      scrape: ({retryUnmatched = false, mountIds, refreshMatched = false, isCancelled, onProgress}) async {
+        expect(mountIds, {mount.id});
+        expect(refreshMatched, isTrue);
+        onProgress?.call(1, 1);
+        scraping.complete();
+        await finishScraping.future;
+        return null;
+      },
+    );
+    addTearDown(scans.dispose);
+    final fullScan = scans.scanAllMounts();
+    await Future.any([scraping.future, fullScan.then((_) => fail('Scraping did not start'))]);
+    expect(changes, 0);
+    expect(scans.update?.scraping, isTrue);
+    finishScraping.complete();
+    expect(await fullScan, isTrue);
+    expect(changes, 1);
+    expect(scans.update, isNull);
   });
 
   test('holds the update lock through scraping and passes cancellation to the scraper', () async {
@@ -258,17 +332,47 @@ void main() {
       },
     );
     addTearDown(scans.dispose);
-    final running = scans.updateQuark([mount], LibraryUpdateMode.full);
-    expect(await scans.updateQuark([mount], LibraryUpdateMode.incremental), isFalse);
+    final running = scans.updateMounts([mount], LibraryUpdateMode.full);
+    expect(await scans.updateMounts([mount], LibraryUpdateMode.incremental), isFalse);
     await Future.any([scrapes.future, running.then((_) => fail('Scraping did not start'))]);
     expect(scans.update?.scraping, isTrue);
-    expect(await scans.updateQuark([mount], LibraryUpdateMode.incremental), isFalse);
+    expect(await scans.updateMounts([mount], LibraryUpdateMode.incremental), isFalse);
     scans.cancelUpdate(scans.update!);
     expect(scans.update?.cancel.isCancelled, isTrue);
     finishScraping.complete();
     expect(await running, isTrue);
     expect(await cancelled.future, isTrue);
     expect(scans.update, isNull);
+  });
+
+  test('restarts metadata lookup once after a settings change during an incremental update', () async {
+    await scanner.scan(mount, driver);
+    final started = Completer<void>();
+    final release = Completer<void>();
+    final restarted = Completer<bool>();
+    final scans = LibraryScanService(
+      repository: LibraryRepository(db),
+      scanner: scanner,
+      mounts: _MountManager(MountRegistry(db), driver),
+      scrape: ({retryUnmatched = false, mountIds, refreshMatched = false, isCancelled, onProgress}) async {
+        if (mountIds == null) {
+          restarted.complete(retryUnmatched);
+        } else {
+          started.complete();
+          await release.future;
+          expect(isCancelled!(), isTrue);
+        }
+        return null;
+      },
+    );
+    addTearDown(scans.dispose);
+    final update = scans.updateMounts([mount], LibraryUpdateMode.incremental);
+    await Future.any([started.future, update.then((_) => fail('Scraping did not start'))]);
+    await scans.scrapeLibrary(retryUnmatched: true, restart: true);
+    await scans.scrapeLibrary(restart: true);
+    release.complete();
+    await update;
+    expect(await restarted.future, isTrue);
   });
 
   test('automatic checks share the persisted one-minute interval and only run incremental scans', () async {
@@ -283,12 +387,12 @@ void main() {
       onLibraryChanged: () => notifications++,
     );
     addTearDown(scans.dispose);
-    Future<Duration> check() => scans.checkAutomaticQuarkUpdates(canRun: () => canRun);
+    Future<Duration> check() => scans.checkIncrementalUpdates(canRun: () => canRun);
 
     await withClock(Clock(() => now), () async {
       await check();
       expect(searchPages, isEmpty, reason: 'no baseline must never trigger an automatic full scan');
-      await scans.updateQuark([mount], LibraryUpdateMode.full);
+      await scans.updateMounts([mount], LibraryUpdateMode.full);
       searchPages.clear();
       folderReads.clear();
       notifications = 0;
@@ -327,7 +431,7 @@ void main() {
       mounts: _MountManager(registry, driver),
     );
     addTearDown(scans.dispose);
-    Future<Duration> check() => scans.checkAutomaticQuarkUpdates(canRun: () => true);
+    Future<Duration> check() => scans.checkIncrementalUpdates(canRun: () => true);
 
     await withClock(Clock(() => now), () async {
       await scanner.scan(mount, driver);
@@ -335,6 +439,8 @@ void main() {
       now = now.add(const Duration(minutes: 1));
       searchError = HttpStatus.tooManyRequests;
       await check();
+      expect(scans.updateError?.mode, LibraryUpdateMode.incremental);
+      expect(scans.updateError?.message, contains('429'));
       now = now.add(const Duration(minutes: 1));
       await check();
       expect(searchPages, [1]);
@@ -350,6 +456,7 @@ void main() {
       registry.mount = mount.copyWith(secrets: {MountKeys.secretCookie: 'new'});
       await check();
       expect(searchPages, [1, 1, 1]);
+      expect(scans.updateError, isNull);
       expect(scans.statusOf(mount.id).error, isNull);
     });
   });

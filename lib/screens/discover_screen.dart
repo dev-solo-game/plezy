@@ -49,6 +49,7 @@ import '../mixins/refreshable.dart';
 import '../mixins/tab_visibility_aware.dart';
 import '../i18n/strings.g.dart';
 import '../library/library_scan_service.dart';
+import '../library/library_scrape_runner.dart';
 import '../utils/app_logger.dart';
 import '../utils/dialogs.dart';
 import '../utils/formatters.dart';
@@ -67,7 +68,7 @@ import '../navigation/settings_shortcut.dart';
 import '../watch_together/watch_together.dart';
 import '../providers/companion_remote_provider.dart';
 import '../widgets/companion_remote/remote_session_dialog.dart';
-import '../widgets/quark_update_controls.dart';
+import '../widgets/library_scan_controls.dart';
 import 'companion_remote/mobile_remote_screen.dart';
 
 class DiscoverScreen extends StatefulWidget {
@@ -75,6 +76,66 @@ class DiscoverScreen extends StatefulWidget {
 
   @override
   State<DiscoverScreen> createState() => _DiscoverScreenState();
+}
+
+class _LibraryUpdateIndicator extends StatelessWidget {
+  const _LibraryUpdateIndicator();
+
+  @override
+  Widget build(BuildContext context) {
+    return Selector<LibraryScanService?, ({String label, String detail, bool failed})?>(
+      selector: (_, scans) {
+        final job = scans?.update;
+        final files = job?.filesSeen ?? scans?.standaloneScanFiles;
+        final error = scans?.updateError;
+        if (job == null && files == null && error == null) return null;
+        final mode = job?.mode ?? error?.mode ?? LibraryUpdateMode.full;
+        final label = mode == LibraryUpdateMode.incremental ? t.storage.incrementalUpdate : t.storage.fullUpdate;
+        if (job == null && files == null && error != null) {
+          final detail = error.message == LibraryScrapeRunner.noTmdbKey ? t.storage.scrapeNoKey : error.message;
+          return (label: label, detail: detail, failed: true);
+        }
+        final progress = switch (job) {
+          LibraryUpdate(cancel: final cancel) when cancel.isCancelled => t.storage.cancellingUpdate,
+          LibraryUpdate(scraping: true, :final scraped, :final scrapeTotal) =>
+            scrapeTotal == 0 ? t.storage.scraping : t.storage.scrapingProgress(done: scraped, total: scrapeTotal),
+          _ when files != null => t.storage.scanning(files: files),
+          _ => t.storage.waitingToUpdate(mode: label),
+        };
+        return (label: label, detail: progress, failed: false);
+      },
+      builder: (context, status, _) {
+        if (status == null) return const SizedBox.shrink();
+        final theme = Theme.of(context);
+        final color = status.failed ? theme.colorScheme.error : theme.colorScheme.onSurface;
+        final text = status.failed ? '${status.label} · ${t.common.error}' : '${status.label} · ${status.detail}';
+        return Tooltip(
+          message: '${status.label}\n${status.detail}',
+          child: Padding(
+            padding: const EdgeInsetsDirectional.only(end: 8),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (status.failed)
+                  AppIcon(Symbols.error_outline_rounded, color: color, size: 14)
+                else
+                  const SizedBox.square(dimension: 12, child: CircularProgressIndicator(strokeWidth: 2)),
+                const SizedBox(width: 6),
+                Flexible(
+                  child: Text(
+                    text,
+                    style: theme.textTheme.labelMedium?.copyWith(color: color),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
 }
 
 class _DiscoverScreenState extends State<DiscoverScreen>
@@ -629,32 +690,54 @@ class _DiscoverScreenState extends State<DiscoverScreen>
   }
 
   @override
-  void manualRefresh() => unawaited(_refreshFromToolbar());
+  void manualRefresh() => unawaited(_chooseRefreshMode());
 
-  bool _refreshDialogOpen = false;
+  bool _refreshMenuOpen = false;
 
-  Future<void> _onRefreshPressed() async {
-    if (_refreshDialogOpen) return;
+  Future<void> _chooseRefreshMode() async {
+    if (_refreshMenuOpen) return;
     final scans = context.read<LibraryScanService?>();
     if (scans == null) return _refreshFromToolbar();
-    _refreshDialogOpen = true;
+
+    _refreshMenuOpen = true;
     try {
-      final job = scans.update;
-      if (job != null) {
-        await confirmCancelLibraryUpdate(context, scans, job);
-        return;
+      final mode = await showOptionPickerDialog<LibraryUpdateMode>(
+        context,
+        title: t.common.refresh,
+        options: [
+          (icon: Symbols.refresh_rounded, label: t.storage.incrementalUpdate, value: LibraryUpdateMode.incremental),
+          (icon: Symbols.folder_rounded, label: t.storage.fullUpdate, value: LibraryUpdateMode.full),
+        ],
+      );
+      if (!mounted || mode == null) return;
+      if (mode == LibraryUpdateMode.incremental) {
+        unawaited(_refreshFromToolbar());
+        unawaited(_checkLibraryIncrementalUpdates(scans));
+      } else if (await showFullLibraryScanConfirmation(context, allSources: true) && mounted) {
+        unawaited(_scanAllLibrarySources(scans));
       }
-      final mounts = await scans.quarkMounts();
-      if (!mounted) return;
-      if (mounts.isEmpty) {
-        await _refreshFromToolbar();
-      } else {
-        await showQuarkUpdateOptions(context, scans, mounts);
-      }
-    } catch (error) {
-      if (mounted) showErrorSnackBar(context, t.storage.scanFailed(message: '$error'));
     } finally {
-      _refreshDialogOpen = false;
+      _refreshMenuOpen = false;
+    }
+  }
+
+  Future<void> _scanAllLibrarySources(LibraryScanService scans) async {
+    try {
+      final started = await scans.scanAllMounts();
+      if (!started && mounted) showErrorSnackBar(context, t.storage.updateBusy);
+    } catch (error, stack) {
+      appLogger.w('Media library full scan failed', error: error, stackTrace: stack);
+      if (mounted && scans.updateError == null) {
+        showErrorSnackBar(context, t.storage.scanFailed(message: '$error'));
+      }
+    }
+  }
+
+  Future<void> _checkLibraryIncrementalUpdates(LibraryScanService scans) async {
+    try {
+      await scans.checkIncrementalUpdates(canRun: () => mounted, force: true);
+    } catch (error, stack) {
+      appLogger.w('Media library incremental update failed', error: error, stackTrace: stack);
     }
   }
 
@@ -825,20 +908,7 @@ class _DiscoverScreenState extends State<DiscoverScreen>
     }
   }
 
-  ({LibraryUpdateMode mode, bool scraping, bool cancelling})? _selectUpdate(LibraryScanService? scans) {
-    final update = scans?.update;
-    return update == null
-        ? null
-        : (mode: update.mode, scraping: update.scraping, cancelling: update.cancel.isCancelled);
-  }
-
-  Widget _buildOverlaidAppBar() =>
-      Selector<LibraryScanService?, ({LibraryUpdateMode mode, bool scraping, bool cancelling})?>(
-        selector: (_, scans) => _selectUpdate(scans),
-        builder: (_, update, _) => _buildUpdateAppBar(update),
-      );
-
-  Widget _buildUpdateAppBar(({LibraryUpdateMode mode, bool scraping, bool cancelling})? update) {
+  Widget _buildOverlaidAppBar() {
     final colorScheme = Theme.of(context).colorScheme;
     final foregroundColor = colorScheme.onSurface;
     return ToolbarScrim(
@@ -860,19 +930,7 @@ class _DiscoverScreenState extends State<DiscoverScreen>
                   ),
                   const SizedBox(width: 12),
                 ],
-                if (update != null)
-                  Flexible(
-                    child: Text(
-                      update.cancelling
-                          ? t.storage.cancellingUpdate
-                          : update.scraping
-                          ? '${libraryUpdateLabel(update.mode)} · ${t.storage.scraping}'
-                          : t.storage.updating(mode: libraryUpdateLabel(update.mode)),
-                      style: Theme.of(context).textTheme.labelMedium?.copyWith(color: foregroundColor),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
+                const Flexible(child: _LibraryUpdateIndicator()),
               ],
             ),
           ),
@@ -897,15 +955,8 @@ class _DiscoverScreenState extends State<DiscoverScreen>
                   FocusableAction(
                     icon: Symbols.refresh_rounded,
                     iconColor: foregroundColor,
-                    tooltip: update == null ? t.common.refresh : t.storage.scanStop,
-                    onPressed: _onRefreshPressed,
-                    child: update == null
-                        ? null
-                        : IconButton(
-                            tooltip: t.storage.scanStop,
-                            icon: LibraryRefreshIcon(color: foregroundColor),
-                            onPressed: _onRefreshPressed,
-                          ),
+                    tooltip: t.common.refresh,
+                    onPressed: manualRefresh,
                   ),
                   // Watch Together
                   FocusableAction(

@@ -6417,11 +6417,11 @@ class Translations$storage$en {
 	/// en: 'Stop scanning'
 	String get scanStop => 'Stop scanning';
 
-	/// en: 'Incremental update'
-	String get incrementalUpdate => 'Incremental update';
+	/// en: 'Media library incremental update'
+	String get incrementalUpdate => 'Media library incremental update';
 
-	/// en: 'Full update'
-	String get fullUpdate => 'Full update';
+	/// en: 'Full scan'
+	String get fullUpdate => 'Full scan';
 
 	/// en: 'Incremental updates are unavailable for these sources.'
 	String get incrementalUnavailable => 'Incremental updates are unavailable for these sources.';
@@ -6432,11 +6432,14 @@ class Translations$storage$en {
 	/// en: 'Only Quark sources with an incremental baseline will be updated.'
 	String get incrementalReadyOnly => 'Only Quark sources with an incremental baseline will be updated.';
 
-	/// en: 'Scan the selected Quark media folders from the beginning and refresh metadata.'
-	String get fullUpdateMessage => 'Scan the selected Quark media folders from the beginning and refresh metadata.';
+	/// en: 'Scan the selected media source from the beginning and refresh metadata.'
+	String get fullUpdateMessage => 'Scan the selected media source from the beginning and refresh metadata.';
 
-	/// en: 'This can take a while. Files missing from Quark will be removed from the media library.'
-	String get fullUpdateWarning => 'This can take a while. Files missing from Quark will be removed from the media library.';
+	/// en: 'Scan all mounted media sources from the beginning, refresh metadata, and then refresh Home.'
+	String get fullLibraryScanMessage => 'Scan all mounted media sources from the beginning, refresh metadata, and then refresh Home.';
+
+	/// en: 'This can take a while. Missing files will be removed from the media library.'
+	String get fullUpdateWarning => 'This can take a while. Missing files will be removed from the media library.';
 
 	/// en: 'Stop the current update?'
 	String get cancelUpdateTitle => 'Stop the current update?';
@@ -11175,13 +11178,14 @@ extension on Translations {
 			'storage.smbFolderNeedsServer' => 'Enter the server and share first',
 			'storage.scan' => 'Scan',
 			'storage.scanStop' => 'Stop scanning',
-			'storage.incrementalUpdate' => 'Incremental update',
-			'storage.fullUpdate' => 'Full update',
+			'storage.incrementalUpdate' => 'Media library incremental update',
+			'storage.fullUpdate' => 'Full scan',
 			'storage.incrementalUnavailable' => 'Incremental updates are unavailable for these sources.',
 			'storage.incrementalNeedsFull' => 'Run a full update first to set up incremental updates.',
 			'storage.incrementalReadyOnly' => 'Only Quark sources with an incremental baseline will be updated.',
-			'storage.fullUpdateMessage' => 'Scan the selected Quark media folders from the beginning and refresh metadata.',
-			'storage.fullUpdateWarning' => 'This can take a while. Files missing from Quark will be removed from the media library.',
+			'storage.fullUpdateMessage' => 'Scan the selected media source from the beginning and refresh metadata.',
+			'storage.fullLibraryScanMessage' => 'Scan all mounted media sources from the beginning, refresh metadata, and then refresh Home.',
+			'storage.fullUpdateWarning' => 'This can take a while. Missing files will be removed from the media library.',
 			'storage.cancelUpdateTitle' => 'Stop the current update?',
 			'storage.cancelUpdateMessage' => 'The current scan or metadata lookup will stop. Changes already saved will be kept.',
 			'storage.updating' => ({required Object mode}) => 'Running ${mode}',

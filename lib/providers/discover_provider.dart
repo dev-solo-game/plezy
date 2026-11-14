@@ -106,7 +106,7 @@ class DiscoverProvider extends ChangeNotifier with DisposableChangeNotifierMixin
        _isRefreshBlocked = isRefreshBlocked ?? _neverBlocked,
        _syncSystemShelfOverride = syncSystemShelf,
        _syncServerSourcesOverride = syncServerSources {
-    _loadCoordinator = CoalescedLoadCoordinator<String>(onFull: _loadOnce, onDelta: _loadDeltaOnce);
+    _loadCoordinator = CoalescedLoadCoordinator<String>(onFull: _runFullLoad, onDelta: _loadDeltaOnce);
     _libraryEventPacer = RefreshPacer(
       debounce: libraryEventDebounce,
       cooldown: libraryEventCooldown,
@@ -233,6 +233,7 @@ class DiscoverProvider extends ChangeNotifier with DisposableChangeNotifierMixin
   bool _hasMoreContinueWatching = false;
   DiscoverLoadState _onDeckState = DiscoverLoadState.initial;
   DiscoverLoadState _hubsState = DiscoverLoadState.initial;
+  bool _showLoadingOnNextPass = false;
   String? _errorMessage;
   int _loadGeneration = 0;
   int _contentRevision = 0;
@@ -321,12 +322,18 @@ class DiscoverProvider extends ChangeNotifier with DisposableChangeNotifierMixin
   /// while the profile binder runs ends without fetching or touching state.
   Future<void> load() {
     if (isDisposed) return Future<void>.value();
+    _showLoadingOnNextPass = true;
+    return _loadCoordinator.requestFull();
+  }
+
+  Future<void> refreshAfterLibraryUpdate() {
+    if (isDisposed) return Future<void>.value();
     return _loadCoordinator.requestFull();
   }
 
   Future<DiscoverRefreshOutcome> refreshNow() async {
     if (isDisposed) return DiscoverRefreshOutcome.cancelled;
-    await _loadCoordinator.requestFull();
+    await load();
     if (isDisposed) return DiscoverRefreshOutcome.cancelled;
     return _lastOutcome;
   }
@@ -373,7 +380,13 @@ class DiscoverProvider extends ChangeNotifier with DisposableChangeNotifierMixin
     return true;
   }
 
-  Future<void> _loadOnce() async {
+  Future<void> _runFullLoad() {
+    final showLoading = _showLoadingOnNextPass;
+    _showLoadingOnNextPass = false;
+    return _loadOnce(showLoading: showLoading);
+  }
+
+  Future<void> _loadOnce({required bool showLoading}) async {
     var outcome = DiscoverRefreshOutcome.cancelled;
     var passClearedExceptionBoundary = false;
     List<MediaItem>? systemShelfPassToken;
@@ -431,10 +444,12 @@ class DiscoverProvider extends ChangeNotifier with DisposableChangeNotifierMixin
       if (isDisposed || isProfileBinding()) return;
       ++_contentRevision;
       appLogger.d('DiscoverProvider: loading content from all servers');
-      _onDeckState = DiscoverLoadState.loading;
-      _hubsState = DiscoverLoadState.loading;
-      _errorMessage = null;
-      safeNotifyListeners();
+      if (showLoading || previousOnDeckState == DiscoverLoadState.initial) {
+        _onDeckState = DiscoverLoadState.loading;
+        _hubsState = DiscoverLoadState.loading;
+        _errorMessage = null;
+        safeNotifyListeners();
+      }
 
       if (!_multiServer.hasConnectedServers) throw Exception('No servers available');
 
@@ -560,6 +575,7 @@ class DiscoverProvider extends ChangeNotifier with DisposableChangeNotifierMixin
       appLogger.e('Failed to load discover content', error: e);
       final hadPriorContent = previousOnDeck.isNotEmpty || previousHubs.isNotEmpty;
       if (!hadPriorContent) {
+        if (!showLoading && previousOnDeckState == DiscoverLoadState.loaded) return;
         _errorMessage = e.toString();
         _onDeckState = DiscoverLoadState.error;
         _hubsState = DiscoverLoadState.error;

@@ -46,14 +46,12 @@ import 'package:plezy/services/settings_service.dart';
 import 'package:plezy/services/storage_service.dart';
 import 'package:plezy/storage/mount_manager.dart';
 import 'package:plezy/storage/mount_registry.dart';
-import 'package:plezy/storage/storage_mount.dart';
 import 'package:plezy/theme/mono_theme.dart';
 import 'package:plezy/utils/external_ids.dart';
 import 'package:plezy/utils/layout_constants.dart';
 import 'package:plezy/utils/platform_detector.dart';
 import 'package:plezy/watch_together/watch_together.dart';
 import 'package:plezy/widgets/rasterized_gradient.dart';
-import 'package:plezy/widgets/quark_update_controls.dart';
 import 'package:plezy/widgets/side_navigation_rail.dart';
 import 'package:plezy/widgets/tv_browse_rail.dart';
 import 'package:plezy/widgets/system_clock.dart';
@@ -81,47 +79,66 @@ void main() {
     TvDetectionService.debugSetAppleTVOverride(null);
   });
 
-  testWidgets('refresh offers both modes, warns for full, and confirms cancellation while running', (tester) async {
-    late _QuarkUpdates scans;
-    await _pumpDiscoverShell(
+  testWidgets('library update status leaves the home refresh available for Emby', (tester) async {
+    late _LibraryUpdates scans;
+    final client = await _pumpDiscoverShell(
       tester,
       isTv: false,
-      createScans: (db) => scans = _QuarkUpdates(LibraryRepository(db), db),
+      backend: MediaBackend.emby,
+      createScans: (db) => scans = _LibraryUpdates(LibraryRepository(db), db),
     );
-    final actions = find.byType(FocusableActionBar);
-    final idleActions = tester.getRect(actions);
+    final libraryRequests = client.libraryRequests;
+    final refresh = find.byTooltip(t.common.refresh);
+    expect(refresh, findsOneWidget);
 
-    await tester.tap(find.byTooltip(t.common.refresh));
+    await tester.tap(refresh);
+    await tester.pumpAndSettle();
+    expect(scans.forcedChecks, 0);
+    expect(find.text(t.storage.fullUpdate), findsOneWidget);
+    await tester.tap(find.text(t.storage.incrementalUpdate));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 350));
+
+    expect(client.libraryRequests, greaterThan(libraryRequests));
+    expect(scans.forcedChecks, 1);
+    expect(scans.incrementalCheck.isCompleted, isFalse);
+    expect(find.textContaining(t.storage.incrementalUpdate), findsOneWidget);
+    expect(find.byTooltip(t.common.refresh), findsOneWidget);
+    expect(find.byType(SimpleDialog), findsNothing);
+    expect(find.byType(AlertDialog), findsNothing);
+
+    scans.incrementalCheck.complete(LibraryScanService.automaticInterval);
+    await tester.pump();
+    expect(find.textContaining(t.storage.incrementalUpdate), findsNothing);
+
+    final requestsBeforeFull = client.libraryRequests;
+    await tester.tap(refresh);
     await tester.pumpAndSettle();
     await tester.tap(find.text(t.storage.fullUpdate));
     await tester.pumpAndSettle();
-    expect(find.text(t.storage.fullUpdateWarning), findsOneWidget);
-    expect(scans.update, isNull);
+    expect(find.text(t.storage.fullLibraryScanMessage), findsOneWidget);
+    expect(scans.fullScans, 0);
     await tester.tap(find.text(t.common.cancel));
     await tester.pumpAndSettle();
+    expect(scans.fullScans, 0);
 
-    await tester.tap(find.byTooltip(t.common.refresh));
+    await tester.tap(refresh);
     await tester.pumpAndSettle();
-    await tester.tap(find.text(t.storage.incrementalUpdate));
+    await tester.tap(find.text(t.storage.fullUpdate));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, t.storage.fullUpdate));
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 300));
-    expect(scans.update?.mode, LibraryUpdateMode.incremental);
-    expect(find.byType(LibraryRefreshIcon), findsOneWidget);
-    final status = find.text(t.storage.updating(mode: t.storage.incrementalUpdate));
-    expect(status, findsOneWidget);
-    expect(tester.getRect(actions), idleActions);
-    expect(tester.getTopRight(status).dx, lessThanOrEqualTo(idleActions.left));
+    await tester.pump(const Duration(milliseconds: 350));
+    expect(scans.fullScans, 1);
+    expect(client.libraryRequests, requestsBeforeFull);
+    expect(find.textContaining(t.storage.fullUpdate), findsOneWidget);
+    expect(find.textContaining(t.storage.scanning(files: 12)), findsOneWidget);
+    expect(refresh, findsOneWidget);
 
-    await tester.tap(find.byTooltip(t.storage.scanStop));
+    scans.fullScan.complete();
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 300));
-    expect(find.text(t.storage.cancelUpdateTitle), findsOneWidget);
-    expect(scans.update?.cancel.isCancelled, isFalse);
-    await tester.tap(find.text(t.storage.scanStop));
-    await tester.pumpAndSettle();
-    expect(scans.cancelled, isTrue);
-    expect(find.byType(LibraryRefreshIcon), findsNothing);
-    expect(tester.getRect(actions), idleActions);
+    expect(find.text('${t.storage.fullUpdate} · ${t.common.error}'), findsOneWidget);
+    expect(refresh, findsOneWidget);
   });
 
   testWidgets('TV tab focus returns to discover browse rail instead of reload action', (tester) async {
@@ -974,39 +991,45 @@ void main() {
   });
 }
 
-class _QuarkUpdates extends LibraryScanService {
-  _QuarkUpdates(LibraryRepository repository, AppDatabase db)
+class _LibraryUpdates extends LibraryScanService {
+  _LibraryUpdates(LibraryRepository repository, AppDatabase db)
     : super(repository: repository, scanner: LibraryScanner(db, repository), mounts: MountManager(MountRegistry(db)));
 
-  static const mount = StorageMount(
-    id: 'quark',
-    displayName: 'Quark',
-    kind: StorageKind.quark,
-    config: {MountKeys.quarkMode: 'pc'},
-  );
+  final incrementalCheck = Completer<Duration>();
+  final fullScan = Completer<void>();
+  int forcedChecks = 0;
+  int fullScans = 0;
 
   @override
   LibraryUpdate? update;
-  bool cancelled = false;
 
   @override
-  Future<List<StorageMount>> quarkMounts() async => [mount];
+  ({LibraryUpdateMode mode, String message})? updateError;
 
-  @override
-  Future<bool> hasIncrementalBaseline(StorageMount mount) async => true;
-
-  @override
-  Future<bool> updateQuark(List<StorageMount> mounts, LibraryUpdateMode mode) async {
-    update = LibraryUpdate(mode, {mount.id});
+  void showUpdate(LibraryUpdate? job, {({LibraryUpdateMode mode, String message})? error}) {
+    update = job;
+    updateError = error;
     notifyListeners();
+  }
+
+  @override
+  Future<bool> scanAllMounts() async {
+    fullScans++;
+    showUpdate(LibraryUpdate(LibraryUpdateMode.full, {'mount'})..filesSeen = 12);
+    await fullScan.future;
+    showUpdate(null, error: (mode: LibraryUpdateMode.full, message: 'Directory unavailable'));
     return true;
   }
 
   @override
-  void cancelUpdate(LibraryUpdate job) {
-    cancelled = true;
-    update = null;
-    notifyListeners();
+  Future<Duration> checkIncrementalUpdates({required bool Function() canRun, bool force = false}) async {
+    if (force && canRun()) {
+      forcedChecks++;
+      showUpdate(LibraryUpdate(LibraryUpdateMode.incremental, {'mount'}));
+    }
+    final delay = await incrementalCheck.future;
+    showUpdate(null);
+    return delay;
   }
 }
 
@@ -1184,12 +1207,13 @@ Future<_GatedDiscover> _pumpGatedDiscover(WidgetTester tester, {bool underRootCo
 /// Mounts [DiscoverScreen] in the smallest graph both layout branches need, so
 /// one test can compare the TV and non-TV chrome without rebuilding it twice.
 /// Takes ownership of [watchTogether].
-Future<void> _pumpDiscoverShell(
+Future<_FakeMediaServerClient> _pumpDiscoverShell(
   WidgetTester tester, {
   required bool isTv,
   WatchTogetherProvider? watchTogether,
   List<MediaItem> continueWatching = const [],
   _PlaybackRequests? downloads,
+  MediaBackend backend = MediaBackend.plex,
   LibraryScanService Function(AppDatabase db)? createScans,
 }) async {
   TvDetectionService.debugSetAppleTVOverride(isTv);
@@ -1201,7 +1225,7 @@ Future<void> _pumpDiscoverShell(
     tester.view.resetPhysicalSize();
   });
 
-  final client = _FakeMediaServerClient(hubs: const [], continueWatching: continueWatching);
+  final client = _FakeMediaServerClient(hubs: const [], continueWatching: continueWatching, backend: backend);
   final manager = MultiServerManager()..debugRegisterClientForTesting(client);
   final multiServerProvider = testMultiServerProvider(manager);
   final hiddenLibrariesProvider = HiddenLibrariesProvider();
@@ -1287,13 +1311,15 @@ Future<void> _pumpDiscoverShell(
   // pumpAndSettle would never settle.
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 100));
+  return client;
 }
 
 class _FakeMediaServerClient implements MediaServerClient {
   final List<MediaHub> hubs;
   List<MediaItem> continueWatching;
+  int libraryRequests = 0;
 
-  _FakeMediaServerClient({required this.hubs, this.continueWatching = const []});
+  _FakeMediaServerClient({required this.hubs, this.continueWatching = const [], this.backend = MediaBackend.plex});
 
   @override
   ServerId get serverId => ServerId('server_1');
@@ -1302,10 +1328,17 @@ class _FakeMediaServerClient implements MediaServerClient {
   String? get serverName => 'Server';
 
   @override
-  MediaBackend get backend => MediaBackend.plex;
+  final MediaBackend backend;
 
   @override
-  ServerCapabilities get capabilities => ServerCapabilities.plex;
+  ServerCapabilities get capabilities =>
+      backend == MediaBackend.emby ? ServerCapabilities.emby : ServerCapabilities.plex;
+
+  @override
+  Future<List<MediaLibrary>> fetchLibraries() async {
+    libraryRequests++;
+    return const [];
+  }
 
   @override
   Future<ExternalIds> fetchExternalIds(String itemId) async =>

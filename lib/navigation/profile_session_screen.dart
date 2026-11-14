@@ -271,7 +271,7 @@ class _ProfileSessionScreenState extends State<ProfileSessionScreen> {
                       if (discover.isDisposed) {
                         scans.removeLibraryListener(reload);
                       } else {
-                        unawaited(discover.load());
+                        unawaited(discover.refreshAfterLibraryUpdate());
                       }
                     }
 

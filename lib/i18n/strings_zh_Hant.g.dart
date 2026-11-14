@@ -2566,13 +2566,14 @@ class _Translations$storage$zh_Hant extends Translations$storage$zh {
 	@override String get smbFolderNeedsServer => '請先填寫伺服器和共用名稱';
 	@override String get scan => '掃描';
 	@override String get scanStop => '停止掃描';
-	@override String get incrementalUpdate => '增量更新';
-	@override String get fullUpdate => '全盤更新';
+	@override String get incrementalUpdate => '媒體庫增量更新';
+	@override String get fullUpdate => '全盤掃描';
 	@override String get incrementalUnavailable => '目前的媒體來源暫不支援增量更新。';
 	@override String get incrementalNeedsFull => '請先完成一次全盤更新，以建立增量更新基準。';
 	@override String get incrementalReadyOnly => '只更新已建立增量基準的夸克媒體來源。';
-	@override String get fullUpdateMessage => '從頭掃描所選夸克媒體來源的掛載資料夾，並重新刮削中繼資料。';
-	@override String get fullUpdateWarning => '此操作可能耗時較長。網盤中已找不到的檔案會從媒體庫移除。';
+	@override String get fullUpdateMessage => '從頭掃描所選媒體來源的掛載資料夾，並重新刮削中繼資料。';
+	@override String get fullLibraryScanMessage => '從頭掃描所有已掛載的媒體來源並重新刮削中繼資料，完成後重新整理首頁。';
+	@override String get fullUpdateWarning => '此操作可能耗時較長。媒體來源中已找不到的檔案會從媒體庫移除。';
 	@override String get cancelUpdateTitle => '停止目前的更新？';
 	@override String get cancelUpdateMessage => '目前的掃描或刮削將停止，已儲存的變更會保留。';
 	@override String updating({required Object mode}) => '正在${mode}';
@@ -6053,13 +6054,14 @@ extension on TranslationsZhHant {
 			'storage.smbFolderNeedsServer' => '請先填寫伺服器和共用名稱',
 			'storage.scan' => '掃描',
 			'storage.scanStop' => '停止掃描',
-			'storage.incrementalUpdate' => '增量更新',
-			'storage.fullUpdate' => '全盤更新',
+			'storage.incrementalUpdate' => '媒體庫增量更新',
+			'storage.fullUpdate' => '全盤掃描',
 			'storage.incrementalUnavailable' => '目前的媒體來源暫不支援增量更新。',
 			'storage.incrementalNeedsFull' => '請先完成一次全盤更新，以建立增量更新基準。',
 			'storage.incrementalReadyOnly' => '只更新已建立增量基準的夸克媒體來源。',
-			'storage.fullUpdateMessage' => '從頭掃描所選夸克媒體來源的掛載資料夾，並重新刮削中繼資料。',
-			'storage.fullUpdateWarning' => '此操作可能耗時較長。網盤中已找不到的檔案會從媒體庫移除。',
+			'storage.fullUpdateMessage' => '從頭掃描所選媒體來源的掛載資料夾，並重新刮削中繼資料。',
+			'storage.fullLibraryScanMessage' => '從頭掃描所有已掛載的媒體來源並重新刮削中繼資料，完成後重新整理首頁。',
+			'storage.fullUpdateWarning' => '此操作可能耗時較長。媒體來源中已找不到的檔案會從媒體庫移除。',
 			'storage.cancelUpdateTitle' => '停止目前的更新？',
 			'storage.cancelUpdateMessage' => '目前的掃描或刮削將停止，已儲存的變更會保留。',
 			'storage.updating' => ({required Object mode}) => '正在${mode}',

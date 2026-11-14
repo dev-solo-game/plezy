@@ -28,18 +28,19 @@
 
 通过真实已登录账号的 PC 端凭证直接调用夸克 API 进行探测，得出以下关键实测结论：
 
-### 2.1 可用的增量接口：`/file/search` 全盘时间倒序
+### 2.1 可用的增量接口：`/file/search` 全盘时间倒序（`cat=video`）
 - **接口地址**：`GET https://drive-pc.quark.cn/1/clouddrive/file/search`
 - **关键参数**：
   - `q`: `""`（空字符串，检索全盘）
+  - `cat`: `"video"`（服务端仅过滤返回视频文件，`has_dir=false`，与 `/file/category?cat=video` 返回的 57 个字段及 `fid` 顺序 100% 一致，且响应更快）
   - `_sort`: `updated_at:desc`（按服务端修改时间倒序排列）
   - `_size`: `100`（单页条数）
-  - `_page`: `1, 2, ...`（支持深度翻页回溯，实测全盘 4,600 条文件时 `_page=5` 仍正常返回 `code: 0`）
-- **其他探测结果（不可用/有缺陷）**：
+  - `_page`: `1, 2, ...`（支持深度翻页回溯，实测连续翻页跨页与页内 `updated_at` 均严格单调递减，`inversions=0`）
+- **其他探测结果与防坑记录**：
   - `/file/recent`：返回 HTTP 404（无此接口）；
   - `/file/sync/list`：返回 HTTP 400（参数/业务不适用）；
   - 目录级 `updated_at` 剪枝：实测发现深层子目录新增剧集时，顶层父目录的 `updated_at` **并不总是实时冒泡更新**，直接拿顶层目录时间戳做剪枝会导致漏扫新剧集；
-  - `category=1` 过滤：实测 `/file/search` 会忽略 `category` 参数（依然返回全盘所有类型），需由客户端在内存中进行后缀过滤。
+  - `category=1` vs `cat=video`：实测 `/file/search` 会忽略 `category=1` 参数，且不传 `cat=video` 时结果中会混入文件夹（`dir=true`），而文件夹在搜索索引中的排序权重会导致 `updated_at` 与前后文件出现局部倒挂；传入 `cat=video` 可直接在服务端剔除文件夹与非视频杂项（如相册备份照片），同时客户端在顺序校验前也会先跳过 `isDirectory` 条目作为双保险。
 
 ### 2.2 夸克 `updated_at` 时间戳标准验证
 通过对比实测返回的 4 个时间字段：
