@@ -2566,6 +2566,20 @@ class _Translations$storage$zh_Hant extends Translations$storage$zh {
 	@override String get smbFolderNeedsServer => '請先填寫伺服器和共用名稱';
 	@override String get scan => '掃描';
 	@override String get scanStop => '停止掃描';
+	@override String get incrementalUpdate => '增量更新';
+	@override String get fullUpdate => '全盤更新';
+	@override String get incrementalUnavailable => '目前的媒體來源暫不支援增量更新。';
+	@override String get incrementalNeedsFull => '請先完成一次全盤更新，以建立增量更新基準。';
+	@override String get incrementalReadyOnly => '只更新已建立增量基準的夸克媒體來源。';
+	@override String get fullUpdateMessage => '從頭掃描所選夸克媒體來源的掛載資料夾，並重新刮削中繼資料。';
+	@override String get fullUpdateWarning => '此操作可能耗時較長。網盤中已找不到的檔案會從媒體庫移除。';
+	@override String get cancelUpdateTitle => '停止目前的更新？';
+	@override String get cancelUpdateMessage => '目前的掃描或刮削將停止，已儲存的變更會保留。';
+	@override String updating({required Object mode}) => '正在${mode}';
+	@override String get cancellingUpdate => '正在停止更新…';
+	@override String waitingToUpdate({required Object mode}) => '等待${mode}';
+	@override String get waitingToScrape => '等待刮削';
+	@override String get updateBusy => '已有媒體來源正在掃描。';
 	@override String scanning({required Object files}) => '掃描中… 已發現 ${files} 個檔案';
 	@override String scanSummary({required Object videos}) => '${videos} 個影片';
 	@override String scanSummaryUnidentified({required Object videos, required Object unidentified}) => '${videos} 個影片 · ${unidentified} 個未識別';
@@ -5159,9 +5173,9 @@ extension on TranslationsZhHant {
 			'liveTv.guideReloadRequested' => '已要求更新節目表指南',
 			'liveTv.guideReloadFailed' => '無法重新載入節目表指南',
 			'liveTv.rulesProcessRequested' => '已要求重新評估規則',
+			'liveTv.rulesProcessFailed' => '無法重新評估錄影規則',
 			_ => null,
 		} ?? switch (path) {
-			'liveTv.rulesProcessFailed' => '無法重新評估錄影規則',
 			'liveTv.recordShow' => '錄製節目',
 			'liveTv.recordSettings.startEarly' => '提早開始（秒）',
 			'liveTv.recordSettings.endLate' => '延後結束（秒）',
@@ -5673,9 +5687,9 @@ extension on TranslationsZhHant {
 			'performanceOverlay.maxFall' => 'MaxFALL',
 			'performanceOverlay.cacheUsed' => '已用快取',
 			'performanceOverlay.cacheLimit' => '快取上限',
+			'performanceOverlay.speed' => '速度',
 			_ => null,
 		} ?? switch (path) {
-			'performanceOverlay.speed' => '速度',
 			'performanceOverlay.player' => '播放器',
 			'performanceOverlay.memory' => '記憶體',
 			'performanceOverlay.uiFps' => '介面 FPS',
@@ -6039,6 +6053,20 @@ extension on TranslationsZhHant {
 			'storage.smbFolderNeedsServer' => '請先填寫伺服器和共用名稱',
 			'storage.scan' => '掃描',
 			'storage.scanStop' => '停止掃描',
+			'storage.incrementalUpdate' => '增量更新',
+			'storage.fullUpdate' => '全盤更新',
+			'storage.incrementalUnavailable' => '目前的媒體來源暫不支援增量更新。',
+			'storage.incrementalNeedsFull' => '請先完成一次全盤更新，以建立增量更新基準。',
+			'storage.incrementalReadyOnly' => '只更新已建立增量基準的夸克媒體來源。',
+			'storage.fullUpdateMessage' => '從頭掃描所選夸克媒體來源的掛載資料夾，並重新刮削中繼資料。',
+			'storage.fullUpdateWarning' => '此操作可能耗時較長。網盤中已找不到的檔案會從媒體庫移除。',
+			'storage.cancelUpdateTitle' => '停止目前的更新？',
+			'storage.cancelUpdateMessage' => '目前的掃描或刮削將停止，已儲存的變更會保留。',
+			'storage.updating' => ({required Object mode}) => '正在${mode}',
+			'storage.cancellingUpdate' => '正在停止更新…',
+			'storage.waitingToUpdate' => ({required Object mode}) => '等待${mode}',
+			'storage.waitingToScrape' => '等待刮削',
+			'storage.updateBusy' => '已有媒體來源正在掃描。',
 			'storage.scanning' => ({required Object files}) => '掃描中… 已發現 ${files} 個檔案',
 			'storage.scanSummary' => ({required Object videos}) => '${videos} 個影片',
 			'storage.scanSummaryUnidentified' => ({required Object videos, required Object unidentified}) => '${videos} 個影片 · ${unidentified} 個未識別',

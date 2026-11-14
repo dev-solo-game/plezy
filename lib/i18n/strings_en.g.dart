@@ -6417,6 +6417,48 @@ class Translations$storage$en {
 	/// en: 'Stop scanning'
 	String get scanStop => 'Stop scanning';
 
+	/// en: 'Incremental update'
+	String get incrementalUpdate => 'Incremental update';
+
+	/// en: 'Full update'
+	String get fullUpdate => 'Full update';
+
+	/// en: 'Incremental updates are unavailable for these sources.'
+	String get incrementalUnavailable => 'Incremental updates are unavailable for these sources.';
+
+	/// en: 'Run a full update first to set up incremental updates.'
+	String get incrementalNeedsFull => 'Run a full update first to set up incremental updates.';
+
+	/// en: 'Only Quark sources with an incremental baseline will be updated.'
+	String get incrementalReadyOnly => 'Only Quark sources with an incremental baseline will be updated.';
+
+	/// en: 'Scan the selected Quark media folders from the beginning and refresh metadata.'
+	String get fullUpdateMessage => 'Scan the selected Quark media folders from the beginning and refresh metadata.';
+
+	/// en: 'This can take a while. Files missing from Quark will be removed from the media library.'
+	String get fullUpdateWarning => 'This can take a while. Files missing from Quark will be removed from the media library.';
+
+	/// en: 'Stop the current update?'
+	String get cancelUpdateTitle => 'Stop the current update?';
+
+	/// en: 'The current scan or metadata lookup will stop. Changes already saved will be kept.'
+	String get cancelUpdateMessage => 'The current scan or metadata lookup will stop. Changes already saved will be kept.';
+
+	/// en: 'Running ${mode}'
+	String updating({required Object mode}) => 'Running ${mode}';
+
+	/// en: 'Stopping update…'
+	String get cancellingUpdate => 'Stopping update…';
+
+	/// en: 'Waiting for ${mode}'
+	String waitingToUpdate({required Object mode}) => 'Waiting for ${mode}';
+
+	/// en: 'Waiting for metadata lookup'
+	String get waitingToScrape => 'Waiting for metadata lookup';
+
+	/// en: 'A media source is already being scanned.'
+	String get updateBusy => 'A media source is already being scanned.';
+
 	/// en: 'Scanning… ${files} files seen'
 	String scanning({required Object files}) => 'Scanning… ${files} files seen';
 
@@ -10245,9 +10287,9 @@ extension on Translations {
 			'liveTv.recordingRuleDeleted' => 'Recording rule deleted',
 			'liveTv.processRecordingRules' => 'Re-evaluate rules',
 			'liveTv.recordingInProgress' => 'Recording now',
+			'liveTv.recordingsCount' => ({required Object count}) => '${count} scheduled',
 			_ => null,
 		} ?? switch (path) {
-			'liveTv.recordingsCount' => ({required Object count}) => '${count} scheduled',
 			'liveTv.editRule' => 'Edit rule',
 			'liveTv.editRuleAction' => 'Edit',
 			'liveTv.recordingRuleUpdated' => 'Recording rule updated',
@@ -10759,9 +10801,9 @@ extension on Translations {
 			'performanceOverlay.dropped' => 'Dropped',
 			'performanceOverlay.dvRpus' => 'DV RPUs',
 			'performanceOverlay.dvRpuAverage' => 'DV RPU Avg',
+			'performanceOverlay.dvSampleAverage' => 'DV Sample Avg',
 			_ => null,
 		} ?? switch (path) {
-			'performanceOverlay.dvSampleAverage' => 'DV Sample Avg',
 			'performanceOverlay.maxLuma' => 'Max Luma',
 			'performanceOverlay.minLuma' => 'Min Luma',
 			'performanceOverlay.maxCll' => 'MaxCLL',
@@ -11133,6 +11175,20 @@ extension on Translations {
 			'storage.smbFolderNeedsServer' => 'Enter the server and share first',
 			'storage.scan' => 'Scan',
 			'storage.scanStop' => 'Stop scanning',
+			'storage.incrementalUpdate' => 'Incremental update',
+			'storage.fullUpdate' => 'Full update',
+			'storage.incrementalUnavailable' => 'Incremental updates are unavailable for these sources.',
+			'storage.incrementalNeedsFull' => 'Run a full update first to set up incremental updates.',
+			'storage.incrementalReadyOnly' => 'Only Quark sources with an incremental baseline will be updated.',
+			'storage.fullUpdateMessage' => 'Scan the selected Quark media folders from the beginning and refresh metadata.',
+			'storage.fullUpdateWarning' => 'This can take a while. Files missing from Quark will be removed from the media library.',
+			'storage.cancelUpdateTitle' => 'Stop the current update?',
+			'storage.cancelUpdateMessage' => 'The current scan or metadata lookup will stop. Changes already saved will be kept.',
+			'storage.updating' => ({required Object mode}) => 'Running ${mode}',
+			'storage.cancellingUpdate' => 'Stopping update…',
+			'storage.waitingToUpdate' => ({required Object mode}) => 'Waiting for ${mode}',
+			'storage.waitingToScrape' => 'Waiting for metadata lookup',
+			'storage.updateBusy' => 'A media source is already being scanned.',
 			'storage.scanning' => ({required Object files}) => 'Scanning… ${files} files seen',
 			'storage.scanSummary' => ({required Object videos}) => '${videos} videos',
 			'storage.scanSummaryUnidentified' => ({required Object videos, required Object unidentified}) => '${videos} videos · ${unidentified} unidentified',

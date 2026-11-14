@@ -270,6 +270,36 @@ void main() {
     expect((await repo.versionsOf(episodes.first.item.id)).single.matchState, LibraryMatchStates.matched);
   });
 
+  test('an incremental scrape fills a new episode and a full scrape refreshes the matched show', () async {
+    driver.files.add('/TV/Severance/Season 1/Severance.S01E01.mkv');
+    await scan();
+    tmdb.results['severance'] = [tmdb.hit('95396', 'Severance')];
+    tmdb.details['95396'] = const ScrapedTitle(source: 'tmdb', tmdbId: '95396', title: 'Severance');
+    tmdb.seasons['95396/1'] = const ScrapedSeason(number: 1, episodes: [ScrapedEpisode(number: 1, title: 'First')]);
+    await scraper.scrapePending();
+    final show = (await items(LibraryKinds.show)).single;
+    tmdb.calls.clear();
+
+    driver.files.add('/TV/Severance/Season 1/Severance.S01E02.mkv');
+    await scan();
+    tmdb.details['95396'] = const ScrapedTitle(source: 'tmdb', tmdbId: '95396', title: 'Severance Updated');
+    tmdb.seasons['95396/1'] = const ScrapedSeason(
+      number: 1,
+      episodes: [
+        ScrapedEpisode(number: 1, title: 'First Updated'),
+        ScrapedEpisode(number: 2, title: 'Second'),
+      ],
+    );
+    await scraper.scrapePending(mountIds: {mount.id});
+    expect((await repo.episodesOfShow(show.id)).map((e) => e.item.title), ['First', 'Second']);
+    expect((await items(LibraryKinds.show)).single.title, 'Severance');
+
+    await scraper.scrapePending(mountIds: {mount.id}, refreshMatched: true);
+    expect((await repo.episodesOfShow(show.id)).map((e) => e.item.title), ['First Updated', 'Second']);
+    expect((await items(LibraryKinds.show)).single.title, 'Severance Updated');
+    expect(tmdb.calls, isEmpty);
+  });
+
   test('anime asks Bangumi first and falls back to TMDB', () async {
     driver.files
       ..add('/Anime/[Group] Frieren - 01 [1080p].mkv')

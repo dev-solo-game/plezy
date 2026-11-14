@@ -79,6 +79,7 @@ import 'downloads/downloads_screen.dart';
 import 'settings/settings_screen.dart';
 import 'profile/profile_switch_screen.dart';
 import 'video_player_screen.dart';
+import '../library/library_scan_service.dart';
 import 'profile/profile_teardown.dart';
 import '../watch_together/watch_together.dart';
 
@@ -535,6 +536,9 @@ class _MainScreenState extends State<MainScreen>
   static const _startupSettleFallback = Duration(seconds: 15);
   static const _backExitWindow = Duration(seconds: 3);
   DateTime? _lastBackPressAt;
+  Timer? _quarkUpdateTimer;
+  bool _quarkUpdateReady = false;
+  bool _checkingQuarkUpdates = false;
 
   @override
   void initState() {
@@ -651,6 +655,9 @@ class _MainScreenState extends State<MainScreen>
       }
 
       _updateTvosMenuPassthrough();
+
+      _quarkUpdateReady = true;
+      unawaited(_checkQuarkUpdates());
 
       // Check for updates on startup
       unawaited(_checkForUpdatesOnStartup());
@@ -1056,6 +1063,7 @@ class _MainScreenState extends State<MainScreen>
 
   @override
   void dispose() {
+    _quarkUpdateTimer?.cancel();
     if (_watchTogether?.navigatorOpener == _navigateToWatchTogetherMedia) _watchTogether?.navigatorOpener = null;
     WidgetsBinding.instance.removeObserver(this);
     _profileRouteObserver?.unsubscribe(this);
@@ -1105,6 +1113,31 @@ class _MainScreenState extends State<MainScreen>
   @override
   void onWindowClose() => _requestDesktopExit();
 
+  @override
+  void onWindowRestore() => unawaited(_checkQuarkUpdates());
+
+  bool get _canScheduleQuarkUpdates {
+    final state = WidgetsBinding.instance.lifecycleState;
+    return PlatformDetector.isDesktopOS() ? state != AppLifecycleState.detached : state == AppLifecycleState.resumed;
+  }
+
+  Future<void> _checkQuarkUpdates() async {
+    if (!_quarkUpdateReady || !mounted || !_canScheduleQuarkUpdates || _checkingQuarkUpdates) return;
+    final scans = context.read<LibraryScanService?>();
+    if (scans == null) return;
+    _quarkUpdateTimer?.cancel();
+    _checkingQuarkUpdates = true;
+    var delay = LibraryScanService.automaticInterval;
+    try {
+      delay = await scans.checkAutomaticQuarkUpdates(canRun: () => mounted && _canScheduleQuarkUpdates && !_isOffline);
+    } catch (error, stack) {
+      appLogger.w('Automatic Quark update failed', error: error, stackTrace: stack);
+    } finally {
+      _checkingQuarkUpdates = false;
+      if (mounted && _canScheduleQuarkUpdates) _quarkUpdateTimer = Timer(delay, _checkQuarkUpdates);
+    }
+  }
+
   /// Quits through the root exit observer so exit teardown runs. Shared by the
   /// window close button and the root press-back-again exit; overlapping
   /// requests join the one in flight.
@@ -1134,6 +1167,11 @@ class _MainScreenState extends State<MainScreen>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(_checkQuarkUpdates());
+    } else if (!_canScheduleQuarkUpdates) {
+      _quarkUpdateTimer?.cancel();
+    }
     // Always consume: the gates latch backgrounding on every lifecycle event.
     final resumedFromBackground = _profileSelectionResumeGate.consumePromptOn(
       state,

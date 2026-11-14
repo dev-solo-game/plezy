@@ -25,6 +25,8 @@ enum QuarkMode {
   /// The modes a mount can be set up with today.
   static const Set<QuarkMode> supported = {web, pc};
 
+  bool get supportsIncremental => this == web || this == pc;
+
   static QuarkMode parse(String? name) => values.firstWhere((m) => m.name == name, orElse: () => web);
 }
 
@@ -80,7 +82,8 @@ class QuarkStorageDriver implements StorageDriver, StreamVariantSource, Parallel
     QuarkPcDevice? fallbackDevice,
     this._downloadConnections,
     this._downloadChunkMiB,
-  }) : _apiBase = apiBase ?? Uri.parse('https://drive-pc.quark.cn/1/clouddrive'),
+  }) : supportsIncremental = mode.supportsIncremental,
+       _apiBase = apiBase ?? Uri.parse('https://drive-pc.quark.cn/1/clouddrive'),
        _client = httpClient ?? HttpClient(),
        _throttle = RequestThrottle(requestInterval) {
     _transport = mode == QuarkMode.pc
@@ -136,7 +139,11 @@ class QuarkStorageDriver implements StorageDriver, StreamVariantSource, Parallel
   static const int minRequestIntervalMs = 200;
 
   static const int _pageSize = 100;
+  static const int searchPageSize = 100;
   static const Duration _linkLifetime = Duration(minutes: 30);
+
+  final bool supportsIncremental;
+  String get rootFolderId => _folderIds[StoragePath.root]!;
 
   late final QuarkTransport _transport;
   final Uri _apiBase;
@@ -271,6 +278,55 @@ class QuarkStorageDriver implements StorageDriver, StreamVariantSource, Parallel
     return _listFolder(normalized, folderId);
   }
 
+  Future<List<({StorageEntry entry, String parentId, int updatedAt})>> searchUpdatedPage(
+    int page, {
+    int size = searchPageSize,
+  }) async {
+    final response = await _api(
+      'GET',
+      '/file/search',
+      query: {'q': '', '_sort': 'updated_at:desc', '_page': '$page', '_size': '$size'},
+    );
+    return [
+      for (final row in _fileRows(response))
+        if (row['updated_at'] case final num updatedAt when updatedAt > 0)
+          (
+            entry: _entryFromRow(StoragePath.root, row) ?? (throw _invalidFileResponse),
+            parentId: row['pdir_fid'] is String ? row['pdir_fid'] as String : '',
+            updatedAt: updatedAt.toInt(),
+          )
+        else
+          throw _invalidFileResponse,
+    ];
+  }
+
+  Future<List<({String id, String name})>> folderAncestry(String id) async {
+    if (id == defaultRootFolderId) return const [];
+    final response = await _folderPage(id, 1, size: 1, fetchFullPath: true);
+    final data = response['data'];
+    final rows = data is Map ? data['full_path'] : null;
+    if (rows is! List) throw _invalidFileResponse;
+    final ancestry = <({String id, String name})>[];
+    for (final row in rows) {
+      if (row is! Map) throw _invalidFileResponse;
+      if (row['fid'] == defaultRootFolderId) continue;
+      final entry = _entryFromRow(StoragePath.root, row);
+      if (entry == null) throw _invalidFileResponse;
+      ancestry.add((id: entry.id!, name: entry.name));
+    }
+    if (ancestry.lastOrNull?.id != id) throw _invalidFileResponse;
+    return ancestry;
+  }
+
+  static const _invalidFileResponse = StorageException(StorageErrorKind.other, 'Quark: invalid file response');
+
+  List<Map> _fileRows(Map<String, dynamic> response) {
+    final data = response['data'];
+    final rows = data is Map ? data['list'] : null;
+    if (rows is! List || rows.any((row) => row is! Map)) throw _invalidFileResponse;
+    return rows.cast<Map>();
+  }
+
   @override
   Future<StorageEntry> stat(String path) async {
     final normalized = StoragePath.normalize(path);
@@ -355,21 +411,9 @@ class QuarkStorageDriver implements StorageDriver, StreamVariantSource, Parallel
   Future<List<StorageEntry>> _listFolder(String path, String folderId) async {
     final entries = <StorageEntry>[];
     for (var page = 1; ; page++) {
-      final json = await _api(
-        'GET',
-        '/file/sort',
-        query: {
-          'pdir_fid': folderId,
-          '_size': '$_pageSize',
-          '_page': '$page',
-          '_fetch_total': '1',
-          '_sort': 'file_type:asc,file_name:asc',
-        },
-      );
-      final data = json['data'];
-      final rows = data is Map && data['list'] is List ? data['list'] as List : const [];
+      final json = await _folderPage(folderId, page);
+      final rows = _fileRows(json);
       for (final row in rows) {
-        if (row is! Map) continue;
         final entry = _entryFromRow(path, row);
         if (entry == null) continue;
         entries.add(entry);
@@ -382,13 +426,33 @@ class QuarkStorageDriver implements StorageDriver, StreamVariantSource, Parallel
     return entries;
   }
 
+  Future<Map<String, dynamic>> _folderPage(
+    String folderId,
+    int page, {
+    int size = _pageSize,
+    bool fetchFullPath = false,
+  }) {
+    return _api(
+      'GET',
+      '/file/sort',
+      query: {
+        'pdir_fid': folderId,
+        '_size': '$size',
+        '_page': '$page',
+        '_fetch_total': '1',
+        '_sort': 'file_type:asc,file_name:asc',
+        if (fetchFullPath) '_fetch_full_path': '1',
+      },
+    );
+  }
+
   StorageEntry? _entryFromRow(String parentPath, Map<dynamic, dynamic> row) {
     final fid = row['fid'];
     final name = row['file_name'];
     if (fid is! String || fid.isEmpty || name is! String || name.isEmpty) return null;
     // A name that would change meaning when normalized cannot be addressed by path.
     if (name == '.' || name == '..' || name.contains('/') || name.contains('\\')) return null;
-    final isFile = row['file'] == true;
+    final isFile = row['dir'] is bool ? row['dir'] == false : row['file'] == true;
     final updatedAt = row['updated_at'];
     final size = row['size'];
     final md5 = row['md5'];

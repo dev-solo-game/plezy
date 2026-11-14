@@ -90,6 +90,7 @@ class LibraryItems extends Table {
 /// at the same [itemId].
 @DataClassName('LibraryFileRow')
 @TableIndex(name: 'idx_library_files_mount_path', columns: {#mountId, #path}, unique: true)
+@TableIndex(name: 'idx_library_files_mount_remote', columns: {#mountId, #remoteId})
 @TableIndex(name: 'idx_library_files_item', columns: {#itemId})
 @TableIndex(name: 'idx_library_files_match', columns: {#role, #matchState})
 @TableIndex(name: 'idx_library_files_owner', columns: {#ownerFileId})
@@ -294,6 +295,9 @@ class LibraryScanStates extends Table {
   IntColumn get startedAt => integer().nullable()();
   IntColumn get finishedAt => integer().nullable()();
   TextColumn get lastError => text().nullable()();
+
+  /// The Quark root FID and the last committed server timestamp.
+  TextColumn get quarkCheckpoint => text().nullable()();
 
   @override
   Set<Column> get primaryKey => {mountId};

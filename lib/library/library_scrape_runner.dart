@@ -76,12 +76,19 @@ class LibraryScrapeRunner {
   /// in the queue.
   Future<String?> scrapePending({
     bool retryUnmatched = false,
+    Set<String>? mountIds,
+    bool refreshMatched = false,
     bool Function()? isCancelled,
     void Function(int done, int total)? onProgress,
   }) {
     return withScraper((scraper, current) async {
       if (retryUnmatched) await scraper.requeueUnmatched();
-      final summary = await scraper.scrapePending(isCancelled: isCancelled, onProgress: onProgress);
+      final summary = await scraper.scrapePending(
+        mountIds: mountIds,
+        refreshMatched: refreshMatched,
+        isCancelled: isCancelled,
+        onProgress: onProgress,
+      );
       if (summary.stoppedBy != null) return summary.stoppedBy;
       return summary.skipped > 0 && !current.hasTmdb ? noTmdbKey : null;
     }, isCancelled: isCancelled);

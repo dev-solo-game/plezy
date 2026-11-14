@@ -127,18 +127,33 @@ class LibraryScraper {
 
   /// Scrapes every movie and show that has not been looked up yet.
   Future<ScrapeSummary> scrapePending({
+    Set<String>? mountIds,
+    bool refreshMatched = false,
     bool Function()? isCancelled,
     void Function(int done, int total)? onProgress,
   }) async {
     final items = _db.libraryItems;
+    final files = _db.libraryFiles;
+    final parents = _db.alias(items, 'scrape_parent');
+    final pending = items.metadataSource.isNull() & items.scrapedAt.isNull();
+    final mountedTitles = _db.selectOnly(files).join([innerJoin(parents, parents.id.equalsExp(files.itemId))])
+      ..addColumns([
+        coalesce([parents.showId, parents.id]),
+      ])
+      ..where(
+        files.mountId.isIn(mountIds ?? const <String>{}) &
+            files.role.equals(LibraryFileRoles.video) &
+            (refreshMatched ? const Constant(true) : files.matchState.equals(LibraryMatchStates.pending)),
+      );
     final queue =
         await (_db.select(items)
               ..where(
                 (t) =>
                     t.kind.isIn([LibraryKinds.movie, LibraryKinds.show]) &
-                    t.metadataSource.isNull() &
-                    t.scrapedAt.isNull() &
-                    t.locked.equals(false),
+                    (mountIds == null
+                        ? pending & t.locked.equals(false)
+                        : t.id.isInQuery(mountedTitles) &
+                              (refreshMatched ? t.locked.equals(false) : const Constant(true))),
               )
               ..orderBy([(t) => OrderingTerm.asc(t.id)]))
             .get();
@@ -151,7 +166,10 @@ class LibraryScraper {
       if (isCancelled?.call() ?? false) break;
       onProgress?.call(index, queue.length);
       try {
-        switch (await scrapeItem(item.id)) {
+        final outcome = mountIds != null && item.metadataSource != null
+            ? await _refreshKnown(item, refreshMatched: refreshMatched)
+            : await scrapeItem(item.id);
+        switch (outcome) {
           case ScrapeOutcome.matched:
             matched++;
           case ScrapeOutcome.merged:
@@ -175,6 +193,24 @@ class LibraryScraper {
     }
     onProgress?.call(queue.length, queue.length);
     return ScrapeSummary(matched: matched, unmatched: unmatched, merged: merged, skipped: skipped);
+  }
+
+  Future<ScrapeOutcome> _refreshKnown(LibraryItemRow item, {required bool refreshMatched}) async {
+    final provider = _metadataProviders.where((p) => p.source == item.metadataSource).firstOrNull;
+    final id = provider?.source == 'tmdb' ? item.tmdbId : item.bangumiId;
+    if (provider == null || id == null) return ScrapeOutcome.skipped;
+    final isShow = item.kind == LibraryKinds.show;
+    var title = item.title;
+    if (refreshMatched) {
+      final details = isShow ? await provider.show(id) : await provider.movie(id);
+      await _apply(item, details, folder: await _folderOf(item));
+      title = details.title;
+    }
+    if (isShow) {
+      await _fillSeasons(item, provider, id, title, pendingOnly: !refreshMatched);
+    }
+    await _setFilesState(item, LibraryMatchStates.matched);
+    return ScrapeOutcome.matched;
   }
 
   /// Puts every title whose lookup found nothing back in the queue.
@@ -465,11 +501,19 @@ class LibraryScraper {
   }
 
   /// Season and episode details for every season the library has files for.
-  Future<void> _fillSeasons(LibraryItemRow show, MetadataProvider provider, String showId, String showTitle) async {
+  Future<void> _fillSeasons(
+    LibraryItemRow show,
+    MetadataProvider provider,
+    String showId,
+    String showTitle, {
+    bool pendingOnly = false,
+  }) async {
     for (final seasonView in await _repo.children(show.id)) {
       final seasonRow = seasonView.item;
       final number = seasonRow.seasonNumber;
       if (number == null) continue;
+      final episodes = await _repo.children(seasonRow.id);
+      if (pendingOnly && episodes.every((episode) => episode.item.scrapedAt != null)) continue;
 
       var season = await provider.season(showId, number);
       if (season == null && provider.source == 'bangumi' && number > 1) {
@@ -490,7 +534,8 @@ class LibraryScraper {
         ),
       );
       final byNumber = {for (final episode in season.episodes) episode.number: episode};
-      for (final episodeView in await _repo.children(seasonRow.id)) {
+      for (final episodeView in episodes) {
+        if (pendingOnly && episodeView.item.scrapedAt != null) continue;
         final scraped = byNumber[episodeView.item.episodeNumber];
         if (scraped != null) await _applyEpisode(episodeView.item, scraped, provider.source);
       }

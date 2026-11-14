@@ -13,6 +13,9 @@ import 'package:plezy/connection/connection_registry.dart';
 import 'package:plezy/database/app_database.dart';
 import 'package:plezy/focus/focusable_action_bar.dart';
 import 'package:plezy/i18n/strings.g.dart';
+import 'package:plezy/library/library_repository.dart';
+import 'package:plezy/library/library_scan_service.dart';
+import 'package:plezy/library/library_scanner.dart';
 import 'package:plezy/media/media_backend.dart';
 import 'package:plezy/media/media_hub.dart';
 import 'package:plezy/media/media_item.dart';
@@ -41,12 +44,16 @@ import 'package:plezy/services/multi_server_manager.dart';
 import 'package:plezy/services/offline_watch_sync_service.dart';
 import 'package:plezy/services/settings_service.dart';
 import 'package:plezy/services/storage_service.dart';
+import 'package:plezy/storage/mount_manager.dart';
+import 'package:plezy/storage/mount_registry.dart';
+import 'package:plezy/storage/storage_mount.dart';
 import 'package:plezy/theme/mono_theme.dart';
 import 'package:plezy/utils/external_ids.dart';
 import 'package:plezy/utils/layout_constants.dart';
 import 'package:plezy/utils/platform_detector.dart';
 import 'package:plezy/watch_together/watch_together.dart';
 import 'package:plezy/widgets/rasterized_gradient.dart';
+import 'package:plezy/widgets/quark_update_controls.dart';
 import 'package:plezy/widgets/side_navigation_rail.dart';
 import 'package:plezy/widgets/tv_browse_rail.dart';
 import 'package:plezy/widgets/system_clock.dart';
@@ -72,6 +79,49 @@ void main() {
 
   tearDown(() {
     TvDetectionService.debugSetAppleTVOverride(null);
+  });
+
+  testWidgets('refresh offers both modes, warns for full, and confirms cancellation while running', (tester) async {
+    late _QuarkUpdates scans;
+    await _pumpDiscoverShell(
+      tester,
+      isTv: false,
+      createScans: (db) => scans = _QuarkUpdates(LibraryRepository(db), db),
+    );
+    final actions = find.byType(FocusableActionBar);
+    final idleActions = tester.getRect(actions);
+
+    await tester.tap(find.byTooltip(t.common.refresh));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text(t.storage.fullUpdate));
+    await tester.pumpAndSettle();
+    expect(find.text(t.storage.fullUpdateWarning), findsOneWidget);
+    expect(scans.update, isNull);
+    await tester.tap(find.text(t.common.cancel));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip(t.common.refresh));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text(t.storage.incrementalUpdate));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(scans.update?.mode, LibraryUpdateMode.incremental);
+    expect(find.byType(LibraryRefreshIcon), findsOneWidget);
+    final status = find.text(t.storage.updating(mode: t.storage.incrementalUpdate));
+    expect(status, findsOneWidget);
+    expect(tester.getRect(actions), idleActions);
+    expect(tester.getTopRight(status).dx, lessThanOrEqualTo(idleActions.left));
+
+    await tester.tap(find.byTooltip(t.storage.scanStop));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text(t.storage.cancelUpdateTitle), findsOneWidget);
+    expect(scans.update?.cancel.isCancelled, isFalse);
+    await tester.tap(find.text(t.storage.scanStop));
+    await tester.pumpAndSettle();
+    expect(scans.cancelled, isTrue);
+    expect(find.byType(LibraryRefreshIcon), findsNothing);
+    expect(tester.getRect(actions), idleActions);
   });
 
   testWidgets('TV tab focus returns to discover browse rail instead of reload action', (tester) async {
@@ -924,6 +974,42 @@ void main() {
   });
 }
 
+class _QuarkUpdates extends LibraryScanService {
+  _QuarkUpdates(LibraryRepository repository, AppDatabase db)
+    : super(repository: repository, scanner: LibraryScanner(db, repository), mounts: MountManager(MountRegistry(db)));
+
+  static const mount = StorageMount(
+    id: 'quark',
+    displayName: 'Quark',
+    kind: StorageKind.quark,
+    config: {MountKeys.quarkMode: 'pc'},
+  );
+
+  @override
+  LibraryUpdate? update;
+  bool cancelled = false;
+
+  @override
+  Future<List<StorageMount>> quarkMounts() async => [mount];
+
+  @override
+  Future<bool> hasIncrementalBaseline(StorageMount mount) async => true;
+
+  @override
+  Future<bool> updateQuark(List<StorageMount> mounts, LibraryUpdateMode mode) async {
+    update = LibraryUpdate(mode, {mount.id});
+    notifyListeners();
+    return true;
+  }
+
+  @override
+  void cancelUpdate(LibraryUpdate job) {
+    cancelled = true;
+    update = null;
+    notifyListeners();
+  }
+}
+
 class _GatedDiscover {
   _GatedDiscover({required this.client, required this.sidebarItem, required this.otherSidebarItem, this.rootNavigator});
 
@@ -1104,6 +1190,7 @@ Future<void> _pumpDiscoverShell(
   WatchTogetherProvider? watchTogether,
   List<MediaItem> continueWatching = const [],
   _PlaybackRequests? downloads,
+  LibraryScanService Function(AppDatabase db)? createScans,
 }) async {
   TvDetectionService.debugSetAppleTVOverride(isTv);
   await SettingsService.getInstance();
@@ -1123,6 +1210,7 @@ Future<void> _pumpDiscoverShell(
   final companionRemoteProvider = CompanionRemoteProvider();
 
   final db = AppDatabase.forTesting(NativeDatabase.memory());
+  final scans = createScans?.call(db);
   final offlineWatch = OfflineWatchSyncService(database: db, serverManager: manager);
   final storage = await StorageService.getInstance();
   final connectionRegistry = _FakeConnectionRegistry(db);
@@ -1149,6 +1237,7 @@ Future<void> _pumpDiscoverShell(
   );
 
   addTearDown(() async {
+    scans?.dispose();
     offlineWatch.dispose();
     discoverProvider.dispose();
     activeProfileProvider.dispose();
@@ -1166,6 +1255,7 @@ Future<void> _pumpDiscoverShell(
       child: MultiProvider(
         providers: [
           if (downloads != null) ChangeNotifierProvider<DownloadProvider>.value(value: downloads),
+          if (scans != null) ChangeNotifierProvider<LibraryScanService>.value(value: scans),
           ChangeNotifierProvider<OfflineWatchSyncService>.value(value: offlineWatch),
           ChangeNotifierProvider<MultiServerProvider>.value(value: multiServerProvider),
           ChangeNotifierProvider<HiddenLibrariesProvider>.value(value: hiddenLibrariesProvider),

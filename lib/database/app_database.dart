@@ -384,7 +384,7 @@ class AppDatabase extends _$AppDatabase {
   static const FormatException _invalidRecoveryImage = FormatException('Invalid tvOS database recovery image');
 
   @override
-  int get schemaVersion => 32;
+  int get schemaVersion => 33;
 
   @override
   MigrationStrategy get migration {
@@ -848,6 +848,16 @@ class AppDatabase extends _$AppDatabase {
             "WHERE locked = 0 AND kind IN ('movie', 'show') AND "
             "((kind = 'movie' AND metadata_source = 'bangumi') OR library_type = 'pending')",
           );
+        }
+        if (from >= 27 && from < 33) {
+          await _ignoreAlreadyExists(
+            'LibraryScanStates.quarkCheckpoint',
+            () => m.addColumn(libraryScanStates, libraryScanStates.quarkCheckpoint),
+          );
+          final remoteIndex = allSchemaEntities.whereType<Index>().firstWhere(
+            (index) => index.entityName == 'idx_library_files_mount_remote',
+          );
+          await _ignoreAlreadyExists(remoteIndex.entityName, () => m.create(remoteIndex));
         }
         if (from < 32) {
           await _ignoreAlreadyExists('WorkWatchStates table', () => m.createTable(workWatchStates));

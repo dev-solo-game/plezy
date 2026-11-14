@@ -13,6 +13,7 @@ import '../../storage/mount_manager.dart';
 import '../../storage/storage_mount.dart';
 import '../../storage/storage_path.dart';
 import '../../widgets/app_icon.dart';
+import '../../widgets/quark_update_controls.dart';
 import 'library_preview_screen.dart';
 import 'mount_edit_screen.dart';
 import 'quark_account_details.dart';
@@ -177,8 +178,15 @@ class MountsScreen extends StatelessWidget {
                     ),
                     onScan: () {
                       final scans = context.read<LibraryScanService>();
-                      if (scans.isScanning(mount.id)) {
+                      final job = scans.update;
+                      if (job != null) {
+                        if (job.mountIds.contains(mount.id)) {
+                          unawaited(confirmCancelLibraryUpdate(context, scans, job));
+                        }
+                      } else if (scans.isScanning(mount.id)) {
                         scans.cancel(mount.id);
+                      } else if (mount.kind == StorageKind.quark) {
+                        unawaited(showQuarkUpdateOptions(context, scans, [mount]));
                       } else {
                         unawaited(scans.scan(mount));
                       }
@@ -263,7 +271,10 @@ class _MountCard extends StatelessWidget {
     final kindLabel = storageKindLabel(mount.kind);
     final showQuarkAccount =
         mount.kind == StorageKind.quark && mount.secret(MountKeys.secretCookie)?.isNotEmpty == true;
-    final status = context.watch<LibraryScanService>().statusOf(mount.id);
+    final scans = context.watch<LibraryScanService>();
+    final status = scans.statusOf(mount.id);
+    final update = scans.update;
+    final participating = update != null && update.mountIds.contains(mount.id);
     return Card(
       margin: EdgeInsets.zero,
       clipBehavior: Clip.antiAlias,
@@ -311,7 +322,8 @@ class _MountCard extends StatelessWidget {
                   PopupMenuItem(value: _MountAction.browse, child: Text(t.storage.browseFiles)),
                   PopupMenuItem(
                     value: _MountAction.scan,
-                    child: Text(status.isRunning ? t.storage.scanStop : t.storage.scan),
+                    enabled: update == null || participating,
+                    child: Text(participating || status.isRunning ? t.storage.scanStop : t.storage.scan),
                   ),
                   PopupMenuItem(value: _MountAction.remove, child: Text(t.storage.remove)),
                 ],
@@ -336,15 +348,36 @@ class _ScanLine extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final style = theme.textTheme.bodySmall;
+    final scans = context.read<LibraryScanService>();
+    final update = scans.update;
+    final participating = update != null && update.mountIds.contains(mountId);
     final progress = status.progress;
-    if (progress != null) {
+    final active = participating && (status.error == null || progress != null);
+    if (progress != null || active) {
+      final String message;
+      if (active && update.cancel.isCancelled) {
+        message = t.storage.cancellingUpdate;
+      } else if (active && update.scraping && update.scrapingMounts.contains(mountId)) {
+        final scrape = scans.scrapeStatus;
+        message = scrape.total == 0
+            ? t.storage.scraping
+            : t.storage.scrapingProgress(done: scrape.done, total: scrape.total);
+      } else if (progress != null) {
+        final scanning = t.storage.scanning(files: progress.filesSeen);
+        message = active ? '${libraryUpdateLabel(update.mode)} · $scanning' : scanning;
+      } else {
+        final label = libraryUpdateLabel(update!.mode);
+        message = update.scrapingMounts.contains(mountId)
+            ? t.storage.waitingToScrape
+            : t.storage.waitingToUpdate(mode: label);
+      }
       return Row(
         children: [
           const SizedBox.square(dimension: 12, child: CircularProgressIndicator(strokeWidth: 2)),
           const SizedBox(width: 8),
           Expanded(
             child: Text(
-              t.storage.scanning(files: progress.filesSeen),
+              message,
               style: style?.copyWith(color: theme.colorScheme.primary),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
@@ -362,7 +395,6 @@ class _ScanLine extends StatelessWidget {
         overflow: TextOverflow.ellipsis,
       );
     }
-    final scans = context.read<LibraryScanService>();
     return FutureBuilder(
       // Keyed on the last result so the counts refresh when a scan ends.
       key: ValueKey(status.lastResult),

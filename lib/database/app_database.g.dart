@@ -14459,6 +14459,17 @@ class $LibraryScanStatesTable extends LibraryScanStates
     type: DriftSqlType.string,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _quarkCheckpointMeta = const VerificationMeta(
+    'quarkCheckpoint',
+  );
+  @override
+  late final GeneratedColumn<String> quarkCheckpoint = GeneratedColumn<String>(
+    'quark_checkpoint',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
   @override
   List<GeneratedColumn> get $columns => [
     mountId,
@@ -14468,6 +14479,7 @@ class $LibraryScanStatesTable extends LibraryScanStates
     startedAt,
     finishedAt,
     lastError,
+    quarkCheckpoint,
   ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -14525,6 +14537,15 @@ class $LibraryScanStatesTable extends LibraryScanStates
         lastError.isAcceptableOrUnknown(data['last_error']!, _lastErrorMeta),
       );
     }
+    if (data.containsKey('quark_checkpoint')) {
+      context.handle(
+        _quarkCheckpointMeta,
+        quarkCheckpoint.isAcceptableOrUnknown(
+          data['quark_checkpoint']!,
+          _quarkCheckpointMeta,
+        ),
+      );
+    }
     return context;
   }
 
@@ -14562,6 +14583,10 @@ class $LibraryScanStatesTable extends LibraryScanStates
         DriftSqlType.string,
         data['${effectivePrefix}last_error'],
       ),
+      quarkCheckpoint: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}quark_checkpoint'],
+      ),
     );
   }
 
@@ -14586,6 +14611,9 @@ class LibraryScanStateRow extends DataClass
   final int? startedAt;
   final int? finishedAt;
   final String? lastError;
+
+  /// The Quark root FID and the last committed server timestamp.
+  final String? quarkCheckpoint;
   const LibraryScanStateRow({
     required this.mountId,
     required this.scanId,
@@ -14594,6 +14622,7 @@ class LibraryScanStateRow extends DataClass
     this.startedAt,
     this.finishedAt,
     this.lastError,
+    this.quarkCheckpoint,
   });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
@@ -14612,6 +14641,9 @@ class LibraryScanStateRow extends DataClass
     }
     if (!nullToAbsent || lastError != null) {
       map['last_error'] = Variable<String>(lastError);
+    }
+    if (!nullToAbsent || quarkCheckpoint != null) {
+      map['quark_checkpoint'] = Variable<String>(quarkCheckpoint);
     }
     return map;
   }
@@ -14633,6 +14665,9 @@ class LibraryScanStateRow extends DataClass
       lastError: lastError == null && nullToAbsent
           ? const Value.absent()
           : Value(lastError),
+      quarkCheckpoint: quarkCheckpoint == null && nullToAbsent
+          ? const Value.absent()
+          : Value(quarkCheckpoint),
     );
   }
 
@@ -14649,6 +14684,7 @@ class LibraryScanStateRow extends DataClass
       startedAt: serializer.fromJson<int?>(json['startedAt']),
       finishedAt: serializer.fromJson<int?>(json['finishedAt']),
       lastError: serializer.fromJson<String?>(json['lastError']),
+      quarkCheckpoint: serializer.fromJson<String?>(json['quarkCheckpoint']),
     );
   }
   @override
@@ -14662,6 +14698,7 @@ class LibraryScanStateRow extends DataClass
       'startedAt': serializer.toJson<int?>(startedAt),
       'finishedAt': serializer.toJson<int?>(finishedAt),
       'lastError': serializer.toJson<String?>(lastError),
+      'quarkCheckpoint': serializer.toJson<String?>(quarkCheckpoint),
     };
   }
 
@@ -14673,6 +14710,7 @@ class LibraryScanStateRow extends DataClass
     Value<int?> startedAt = const Value.absent(),
     Value<int?> finishedAt = const Value.absent(),
     Value<String?> lastError = const Value.absent(),
+    Value<String?> quarkCheckpoint = const Value.absent(),
   }) => LibraryScanStateRow(
     mountId: mountId ?? this.mountId,
     scanId: scanId ?? this.scanId,
@@ -14681,6 +14719,9 @@ class LibraryScanStateRow extends DataClass
     startedAt: startedAt.present ? startedAt.value : this.startedAt,
     finishedAt: finishedAt.present ? finishedAt.value : this.finishedAt,
     lastError: lastError.present ? lastError.value : this.lastError,
+    quarkCheckpoint: quarkCheckpoint.present
+        ? quarkCheckpoint.value
+        : this.quarkCheckpoint,
   );
   LibraryScanStateRow copyWithCompanion(LibraryScanStatesCompanion data) {
     return LibraryScanStateRow(
@@ -14693,6 +14734,9 @@ class LibraryScanStateRow extends DataClass
           ? data.finishedAt.value
           : this.finishedAt,
       lastError: data.lastError.present ? data.lastError.value : this.lastError,
+      quarkCheckpoint: data.quarkCheckpoint.present
+          ? data.quarkCheckpoint.value
+          : this.quarkCheckpoint,
     );
   }
 
@@ -14705,7 +14749,8 @@ class LibraryScanStateRow extends DataClass
           ..write('pending: $pending, ')
           ..write('startedAt: $startedAt, ')
           ..write('finishedAt: $finishedAt, ')
-          ..write('lastError: $lastError')
+          ..write('lastError: $lastError, ')
+          ..write('quarkCheckpoint: $quarkCheckpoint')
           ..write(')'))
         .toString();
   }
@@ -14719,6 +14764,7 @@ class LibraryScanStateRow extends DataClass
     startedAt,
     finishedAt,
     lastError,
+    quarkCheckpoint,
   );
   @override
   bool operator ==(Object other) =>
@@ -14730,7 +14776,8 @@ class LibraryScanStateRow extends DataClass
           other.pending == this.pending &&
           other.startedAt == this.startedAt &&
           other.finishedAt == this.finishedAt &&
-          other.lastError == this.lastError);
+          other.lastError == this.lastError &&
+          other.quarkCheckpoint == this.quarkCheckpoint);
 }
 
 class LibraryScanStatesCompanion extends UpdateCompanion<LibraryScanStateRow> {
@@ -14741,6 +14788,7 @@ class LibraryScanStatesCompanion extends UpdateCompanion<LibraryScanStateRow> {
   final Value<int?> startedAt;
   final Value<int?> finishedAt;
   final Value<String?> lastError;
+  final Value<String?> quarkCheckpoint;
   final Value<int> rowid;
   const LibraryScanStatesCompanion({
     this.mountId = const Value.absent(),
@@ -14750,6 +14798,7 @@ class LibraryScanStatesCompanion extends UpdateCompanion<LibraryScanStateRow> {
     this.startedAt = const Value.absent(),
     this.finishedAt = const Value.absent(),
     this.lastError = const Value.absent(),
+    this.quarkCheckpoint = const Value.absent(),
     this.rowid = const Value.absent(),
   });
   LibraryScanStatesCompanion.insert({
@@ -14760,6 +14809,7 @@ class LibraryScanStatesCompanion extends UpdateCompanion<LibraryScanStateRow> {
     this.startedAt = const Value.absent(),
     this.finishedAt = const Value.absent(),
     this.lastError = const Value.absent(),
+    this.quarkCheckpoint = const Value.absent(),
     this.rowid = const Value.absent(),
   }) : mountId = Value(mountId);
   static Insertable<LibraryScanStateRow> custom({
@@ -14770,6 +14820,7 @@ class LibraryScanStatesCompanion extends UpdateCompanion<LibraryScanStateRow> {
     Expression<int>? startedAt,
     Expression<int>? finishedAt,
     Expression<String>? lastError,
+    Expression<String>? quarkCheckpoint,
     Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
@@ -14780,6 +14831,7 @@ class LibraryScanStatesCompanion extends UpdateCompanion<LibraryScanStateRow> {
       if (startedAt != null) 'started_at': startedAt,
       if (finishedAt != null) 'finished_at': finishedAt,
       if (lastError != null) 'last_error': lastError,
+      if (quarkCheckpoint != null) 'quark_checkpoint': quarkCheckpoint,
       if (rowid != null) 'rowid': rowid,
     });
   }
@@ -14792,6 +14844,7 @@ class LibraryScanStatesCompanion extends UpdateCompanion<LibraryScanStateRow> {
     Value<int?>? startedAt,
     Value<int?>? finishedAt,
     Value<String?>? lastError,
+    Value<String?>? quarkCheckpoint,
     Value<int>? rowid,
   }) {
     return LibraryScanStatesCompanion(
@@ -14802,6 +14855,7 @@ class LibraryScanStatesCompanion extends UpdateCompanion<LibraryScanStateRow> {
       startedAt: startedAt ?? this.startedAt,
       finishedAt: finishedAt ?? this.finishedAt,
       lastError: lastError ?? this.lastError,
+      quarkCheckpoint: quarkCheckpoint ?? this.quarkCheckpoint,
       rowid: rowid ?? this.rowid,
     );
   }
@@ -14830,6 +14884,9 @@ class LibraryScanStatesCompanion extends UpdateCompanion<LibraryScanStateRow> {
     if (lastError.present) {
       map['last_error'] = Variable<String>(lastError.value);
     }
+    if (quarkCheckpoint.present) {
+      map['quark_checkpoint'] = Variable<String>(quarkCheckpoint.value);
+    }
     if (rowid.present) {
       map['rowid'] = Variable<int>(rowid.value);
     }
@@ -14846,6 +14903,7 @@ class LibraryScanStatesCompanion extends UpdateCompanion<LibraryScanStateRow> {
           ..write('startedAt: $startedAt, ')
           ..write('finishedAt: $finishedAt, ')
           ..write('lastError: $lastError, ')
+          ..write('quarkCheckpoint: $quarkCheckpoint, ')
           ..write('rowid: $rowid')
           ..write(')'))
         .toString();
@@ -15188,6 +15246,10 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     'idx_library_files_mount_path',
     'CREATE UNIQUE INDEX idx_library_files_mount_path ON library_files (mount_id, path)',
   );
+  late final Index idxLibraryFilesMountRemote = Index(
+    'idx_library_files_mount_remote',
+    'CREATE INDEX idx_library_files_mount_remote ON library_files (mount_id, remote_id)',
+  );
   late final Index idxLibraryFilesItem = Index(
     'idx_library_files_item',
     'CREATE INDEX idx_library_files_item ON library_files (item_id)',
@@ -15272,6 +15334,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     idxLibraryItemsTmdb,
     idxLibraryItemsAdded,
     idxLibraryFilesMountPath,
+    idxLibraryFilesMountRemote,
     idxLibraryFilesItem,
     idxLibraryFilesMatch,
     idxLibraryFilesOwner,
@@ -25455,6 +25518,7 @@ typedef $$LibraryScanStatesTableCreateCompanionBuilder =
       Value<int?> startedAt,
       Value<int?> finishedAt,
       Value<String?> lastError,
+      Value<String?> quarkCheckpoint,
       Value<int> rowid,
     });
 typedef $$LibraryScanStatesTableUpdateCompanionBuilder =
@@ -25466,6 +25530,7 @@ typedef $$LibraryScanStatesTableUpdateCompanionBuilder =
       Value<int?> startedAt,
       Value<int?> finishedAt,
       Value<String?> lastError,
+      Value<String?> quarkCheckpoint,
       Value<int> rowid,
     });
 
@@ -25539,6 +25604,11 @@ class $$LibraryScanStatesTableFilterComposer
     builder: (column) => ColumnFilters(column),
   );
 
+  ColumnFilters<String> get quarkCheckpoint => $composableBuilder(
+    column: $table.quarkCheckpoint,
+    builder: (column) => ColumnFilters(column),
+  );
+
   $$MountsTableFilterComposer get mountId {
     final $$MountsTableFilterComposer composer = $composerBuilder(
       composer: this,
@@ -25602,6 +25672,11 @@ class $$LibraryScanStatesTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<String> get quarkCheckpoint => $composableBuilder(
+    column: $table.quarkCheckpoint,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   $$MountsTableOrderingComposer get mountId {
     final $$MountsTableOrderingComposer composer = $composerBuilder(
       composer: this,
@@ -25654,6 +25729,11 @@ class $$LibraryScanStatesTableAnnotationComposer
 
   GeneratedColumn<String> get lastError =>
       $composableBuilder(column: $table.lastError, builder: (column) => column);
+
+  GeneratedColumn<String> get quarkCheckpoint => $composableBuilder(
+    column: $table.quarkCheckpoint,
+    builder: (column) => column,
+  );
 
   $$MountsTableAnnotationComposer get mountId {
     final $$MountsTableAnnotationComposer composer = $composerBuilder(
@@ -25719,6 +25799,7 @@ class $$LibraryScanStatesTableTableManager
                 Value<int?> startedAt = const Value.absent(),
                 Value<int?> finishedAt = const Value.absent(),
                 Value<String?> lastError = const Value.absent(),
+                Value<String?> quarkCheckpoint = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => LibraryScanStatesCompanion(
                 mountId: mountId,
@@ -25728,6 +25809,7 @@ class $$LibraryScanStatesTableTableManager
                 startedAt: startedAt,
                 finishedAt: finishedAt,
                 lastError: lastError,
+                quarkCheckpoint: quarkCheckpoint,
                 rowid: rowid,
               ),
           createCompanionCallback:
@@ -25739,6 +25821,7 @@ class $$LibraryScanStatesTableTableManager
                 Value<int?> startedAt = const Value.absent(),
                 Value<int?> finishedAt = const Value.absent(),
                 Value<String?> lastError = const Value.absent(),
+                Value<String?> quarkCheckpoint = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => LibraryScanStatesCompanion.insert(
                 mountId: mountId,
@@ -25748,6 +25831,7 @@ class $$LibraryScanStatesTableTableManager
                 startedAt: startedAt,
                 finishedAt: finishedAt,
                 lastError: lastError,
+                quarkCheckpoint: quarkCheckpoint,
                 rowid: rowid,
               ),
           withReferenceMapper: (p0) => p0

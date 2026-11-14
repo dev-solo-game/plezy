@@ -1,9 +1,11 @@
 import 'dart:convert';
 
 import 'package:clock/clock.dart';
+import 'package:collection/collection.dart';
 import 'package:drift/drift.dart';
 
 import '../database/app_database.dart';
+import '../storage/drivers/quark_storage_driver.dart';
 import '../storage/storage_driver.dart';
 import '../storage/storage_mount.dart';
 import '../storage/storage_path.dart';
@@ -30,7 +32,7 @@ class ScanProgress {
 }
 
 class ScanResult {
-  const ScanResult({required this.videos, required this.removed, required this.cancelled});
+  const ScanResult({required this.videos, required this.removed, required this.cancelled, this.hasChanges = true});
 
   /// Videos seen by this run.
   final int videos;
@@ -38,9 +40,10 @@ class ScanResult {
   /// Files dropped because the mount no longer has them.
   final int removed;
 
-  /// True when the run was stopped early. Its position is saved and the next
-  /// scan of the mount resumes from it.
+  /// True when the run was stopped early.
   final bool cancelled;
+
+  final bool hasChanges;
 }
 
 /// Walks a mount, records what it finds in the library tables, and files each
@@ -81,13 +84,48 @@ class LibraryScanner {
 
   static int _now() => clock.now().millisecondsSinceEpoch;
 
+  Future<LibraryScanStateRow?> _state(String mountId) =>
+      (_db.select(_db.libraryScanStates)..where((t) => t.mountId.equals(mountId))).getSingleOrNull();
+
+  Future<bool> hasQuarkBaseline(StorageMount mount) async {
+    return await quarkLastSuccessfulScan(mount) != null;
+  }
+
+  Future<DateTime?> quarkLastSuccessfulScan(StorageMount mount) async {
+    final root = mount.configString(MountKeys.rootFolderId) ?? QuarkStorageDriver.defaultRootFolderId;
+    final state = await _state(mount.id);
+    final finishedAt = state?.finishedAt;
+    if (finishedAt == null || _watermark(state, root) == null) return null;
+    return DateTime.fromMillisecondsSinceEpoch(finishedAt);
+  }
+
+  static int? _watermark(LibraryScanStateRow? state, String root) {
+    final checkpoint = state?.quarkCheckpoint;
+    if (checkpoint == null || !checkpoint.startsWith('$root:')) return null;
+    return int.tryParse(checkpoint.substring(root.length + 1));
+  }
+
   Future<ScanResult> scan(
     StorageMount mount,
     StorageDriver driver, {
     ScanCancelToken? cancel,
     void Function(ScanProgress progress)? onProgress,
+    bool restart = false,
   }) async {
-    final run = await _begin(mount.id);
+    final quark = driver is QuarkStorageDriver && driver.supportsIncremental ? driver : null;
+    int? watermark;
+    if (quark != null) {
+      // Capture the server time before traversal so concurrent uploads are
+      // still visible to the next incremental update. An empty drive starts at zero.
+      try {
+        final head = await quark.searchUpdatedPage(1, size: 1);
+        watermark = head.firstOrNull?.updatedAt ?? 0;
+      } on StorageException catch (error) {
+        appLogger.w('Quark: could not establish a new incremental baseline: ${error.message}');
+      }
+    }
+    if (cancel?.isCancelled == true) return _cancelled;
+    final run = await _begin(mount.id, restart: restart || quark != null);
     final queue = run.queue;
     var directoriesDone = 0;
     var filesSeen = 0;
@@ -108,7 +146,7 @@ class LibraryScanner {
         try {
           entries = await driver.list(directory.path, parent: directory.id == null ? null : directory);
         } on StorageException catch (e) {
-          if (e.kind == StorageErrorKind.notFound) {
+          if (e.kind == StorageErrorKind.notFound && directory.path != StoragePath.root) {
             // Deleted between listing its parent and getting here.
             await _saveQueue(mount.id, queue);
             continue;
@@ -137,29 +175,160 @@ class LibraryScanner {
       rethrow;
     }
 
-    final removed = await _repo.removeFilesNotSeen(mount.id, run.scanId);
-    // Re-filed videos can leave their old titles empty even when no file went.
-    await _repo.pruneEmptyTitles();
-    await (_db.update(_db.libraryScanStates)..where((t) => t.mountId.equals(mount.id))).write(
-      LibraryScanStatesCompanion(
-        status: const Value('idle'),
-        pending: const Value(null),
-        finishedAt: Value(_now()),
-        lastError: const Value(null),
-      ),
-    );
-    return ScanResult(videos: videos, removed: removed, cancelled: false);
+    return _db.transaction(() async {
+      if (cancel?.isCancelled == true) return _cancelled;
+      final removed = await _repo.removeFilesNotSeen(mount.id, run.scanId);
+      await _repo.pruneEmptyTitles();
+      await (_db.update(_db.libraryScanStates)..where((t) => t.mountId.equals(mount.id))).write(
+        LibraryScanStatesCompanion(
+          status: const Value('idle'),
+          pending: const Value(null),
+          finishedAt: Value(_now()),
+          lastError: const Value(null),
+          quarkCheckpoint: quark == null
+              ? const Value(null)
+              : watermark == null
+              ? const Value.absent()
+              : Value('${quark.rootFolderId}:$watermark'),
+        ),
+      );
+      return ScanResult(videos: videos, removed: removed, cancelled: false);
+    });
+  }
+
+  static const _cancelled = ScanResult(videos: 0, removed: 0, cancelled: true);
+
+  Future<ScanResult> scanQuarkIncremental(
+    StorageMount mount,
+    QuarkStorageDriver driver, {
+    required ScanCancelToken cancel,
+    void Function(ScanProgress progress)? onProgress,
+  }) async {
+    final state = await _state(mount.id);
+    final watermark = _watermark(state, driver.rootFolderId);
+    if (watermark == null) throw const StorageException(StorageErrorKind.other, 'Quark: full scan required');
+    final threshold = watermark - const Duration(minutes: 1).inMilliseconds;
+    final changed = <String, ({StorageEntry entry, String parentId, int updatedAt})>{};
+    var latest = watermark;
+    int? previousTimestamp;
+    for (var page = 1; ; page++) {
+      if (cancel.isCancelled) return _cancelled;
+      final rows = await driver.searchUpdatedPage(page);
+      for (final row in rows) {
+        if (previousTimestamp != null && row.updatedAt > previousTimestamp) {
+          throw const StorageException(StorageErrorKind.other, 'Quark: unexpected search order');
+        }
+        previousTimestamp = row.updatedAt;
+        if (row.updatedAt > latest) latest = row.updatedAt;
+        if (row.updatedAt < threshold || row.entry.isDirectory || !_isLibraryFile(row.entry.name)) continue;
+        if (row.parentId.isEmpty) {
+          throw const StorageException(StorageErrorKind.other, 'Quark: missing parent folder ID');
+        }
+        changed.putIfAbsent(row.entry.id!, () => row);
+      }
+      onProgress?.call(ScanProgress(directoriesDone: 0, filesSeen: changed.length, currentPath: StoragePath.root));
+      if (rows.length < QuarkStorageDriver.searchPageSize || rows.last.updatedAt < threshold) break;
+      if (page == 50) throw const StorageException(StorageErrorKind.other, 'Quark: full scan required after 50 pages');
+    }
+
+    final directories = <String, String>{};
+    final paths = <String, String?>{driver.rootFolderId: StoragePath.root};
+    final movedOut = <String>[];
+    for (final row in changed.values) {
+      if (cancel.isCancelled) return _cancelled;
+      final parent = paths.containsKey(row.parentId)
+          ? paths[row.parentId]
+          : paths[row.parentId] = await _quarkFolderPath(driver, row.parentId);
+      if (parent == null) {
+        movedOut.add(row.entry.id!);
+      } else if (!directories.containsKey(row.parentId)) {
+        final path = StoragePath.join(parent, row.entry.name);
+        final existing = await _fileAt(mount.id, path);
+        if (existing?.remoteId != row.entry.id || existing?.modifiedAt != row.updatedAt) {
+          directories[row.parentId] = parent;
+        }
+      }
+    }
+
+    final listings = <String, List<StorageEntry>>{};
+    for (final MapEntry(key: id, value: path) in directories.entries) {
+      if (cancel.isCancelled) return _cancelled;
+      final folder = StorageEntry(id: id, path: path, name: StoragePath.name(path), isDirectory: true);
+      final entries = await driver.list(path, parent: folder);
+      listings[path] = entries.where((entry) => !entry.isDirectory).toList();
+      onProgress?.call(ScanProgress(directoriesDone: listings.length, filesSeen: changed.length, currentPath: path));
+    }
+
+    // Fetch all pages and resolve all folders before changing the library.
+    // Rolling back this transaction also rolls back the checkpoint.
+    try {
+      return await _db.transaction(() async {
+        _checkIncrementalCancellation(cancel);
+        var videos = 0;
+        var removed = 0;
+        final files = _db.libraryFiles;
+        for (final ids in movedOut.slices(100)) {
+          removed += await (_db.delete(files)..where((t) => t.mountId.equals(mount.id) & t.remoteId.isIn(ids))).go();
+        }
+        for (final directory in listings.entries) {
+          _checkIncrementalCancellation(cancel);
+          videos += await _recordDirectory(mount, directory.key, directory.value, state!.scanId);
+        }
+        if (removed > 0 || listings.isNotEmpty) await _repo.pruneEmptyTitles();
+        _checkIncrementalCancellation(cancel);
+        await (_db.update(_db.libraryScanStates)..where((t) => t.mountId.equals(mount.id))).write(
+          LibraryScanStatesCompanion(
+            finishedAt: Value(_now()),
+            quarkCheckpoint: Value('${driver.rootFolderId}:$latest'),
+          ),
+        );
+        _checkIncrementalCancellation(cancel);
+        return ScanResult(
+          videos: videos,
+          removed: removed,
+          cancelled: false,
+          hasChanges: listings.isNotEmpty || removed > 0,
+        );
+      });
+    } on _IncrementalCancelled {
+      return _cancelled;
+    }
+  }
+
+  static void _checkIncrementalCancellation(ScanCancelToken cancel) {
+    if (cancel.isCancelled) throw const _IncrementalCancelled();
+  }
+
+  Future<String?> _quarkFolderPath(QuarkStorageDriver driver, String id) async {
+    final ancestry = await driver.folderAncestry(id);
+    final root = driver.rootFolderId;
+    final rootIndex = ancestry.indexWhere((folder) => folder.id == root);
+    if (rootIndex == -1 && root != QuarkStorageDriver.defaultRootFolderId) return null;
+    var path = StoragePath.root;
+    for (final folder in ancestry.skip(rootIndex + 1)) {
+      if (_isSkippedFolder(folder.name)) return null;
+      path = StoragePath.join(path, folder.name);
+    }
+    return path;
+  }
+
+  static bool _isLibraryFile(String name) {
+    final extension = StoragePath.extension(name);
+    return (videoExtensions.contains(extension) && !_sampleName.hasMatch(_baseName(name))) ||
+        subtitleExtensions.contains(extension) ||
+        imageExtensions.contains(extension) ||
+        extension == 'nfo';
   }
 
   // ─── Run bookkeeping ───────────────────────────────────────────────────
 
-  Future<({int scanId, List<StorageEntry> queue})> _begin(String mountId) async {
+  Future<({int scanId, List<StorageEntry> queue})> _begin(String mountId, {required bool restart}) async {
     final states = _db.libraryScanStates;
-    final state = await (_db.select(states)..where((t) => t.mountId.equals(mountId))).getSingleOrNull();
+    final state = await _state(mountId);
 
     // An interrupted run left its queue behind: pick it up under the same
     // scan id, so files it already stamped still count as seen.
-    if (state != null && state.status != 'idle' && state.pending != null) {
+    if (!restart && state != null && state.status != 'idle' && state.pending != null) {
       final queue = _decodeQueue(state.pending!);
       if (queue.isNotEmpty) {
         await (_db.update(states)..where((t) => t.mountId.equals(mountId))).write(
@@ -182,6 +351,7 @@ class LibraryScanner {
             startedAt: Value(_now()),
             finishedAt: Value(state?.finishedAt),
             lastError: const Value(null),
+            quarkCheckpoint: Value(state?.quarkCheckpoint),
           ),
         );
     return (scanId: scanId, queue: queue);
@@ -252,7 +422,7 @@ class LibraryScanner {
       for (final video in videos) {
         final name = parsed[video.path]!;
         final classified = MediaClassifier.classify(file: name, folders: folders, numberedSiblings: numbered);
-        final previous = await _fileAt(mount.id, video.path);
+        final previous = await _prepareFile(mount, video);
         final id = await _repo.upsertFile(
           mountId: mount.id,
           path: video.path,
@@ -265,12 +435,15 @@ class LibraryScanner {
           versionLabel: classified.versionLabel,
         );
         videoIds[video.path] = id;
-        await _file(id, previous, classified);
+        if (previous == null || previous.remoteId != video.id || previous.path == video.path) {
+          await _file(id, previous, classified);
+        }
       }
 
       for (final subtitle in subtitles) {
         final owner = _ownerOf(subtitle, videos);
         if (owner == null) continue;
+        await _prepareFile(mount, subtitle);
         await _repo.upsertFile(
           mountId: mount.id,
           path: subtitle.path,
@@ -285,6 +458,7 @@ class LibraryScanner {
       }
 
       for (final (file, role) in others) {
+        await _prepareFile(mount, file);
         await _repo.upsertFile(
           mountId: mount.id,
           path: file.path,
@@ -349,6 +523,22 @@ class LibraryScanner {
     return (_db.select(
       _db.libraryFiles,
     )..where((t) => t.mountId.equals(mountId) & t.path.equals(path))).getSingleOrNull();
+  }
+
+  Future<LibraryFileRow?> _prepareFile(StorageMount mount, StorageEntry entry) async {
+    final existing = await _fileAt(mount.id, entry.path);
+    final fid = entry.id;
+    if (mount.kind != StorageKind.quark || fid == null || existing?.remoteId == fid) return existing;
+    final files = _db.libraryFiles;
+    final prior =
+        await (_db.select(files)
+              ..where((t) => t.mountId.equals(mount.id) & t.remoteId.equals(fid))
+              ..limit(1))
+            .getSingleOrNull();
+    if (prior == null) return existing;
+    if (existing != null) await (_db.delete(files)..where((t) => t.id.equals(existing.id))).go();
+    await _repo.updateFile(prior.id, LibraryFilesCompanion(path: Value(entry.path)));
+    return prior;
   }
 
   /// Files a video under the title its name points at.
@@ -523,4 +713,8 @@ class LibraryScanner {
   static void logFailure(StorageMount mount, Object error) {
     appLogger.w('Scan of mount "${mount.displayName}" failed: ${error is StorageException ? error.message : error}');
   }
+}
+
+class _IncrementalCancelled implements Exception {
+  const _IncrementalCancelled();
 }

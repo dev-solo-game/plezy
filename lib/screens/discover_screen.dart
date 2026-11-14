@@ -48,6 +48,7 @@ import '../widgets/tv_spotlight_scaffold.dart';
 import '../mixins/refreshable.dart';
 import '../mixins/tab_visibility_aware.dart';
 import '../i18n/strings.g.dart';
+import '../library/library_scan_service.dart';
 import '../utils/app_logger.dart';
 import '../utils/dialogs.dart';
 import '../utils/formatters.dart';
@@ -66,6 +67,7 @@ import '../navigation/settings_shortcut.dart';
 import '../watch_together/watch_together.dart';
 import '../providers/companion_remote_provider.dart';
 import '../widgets/companion_remote/remote_session_dialog.dart';
+import '../widgets/quark_update_controls.dart';
 import 'companion_remote/mobile_remote_screen.dart';
 
 class DiscoverScreen extends StatefulWidget {
@@ -629,6 +631,33 @@ class _DiscoverScreenState extends State<DiscoverScreen>
   @override
   void manualRefresh() => unawaited(_refreshFromToolbar());
 
+  bool _refreshDialogOpen = false;
+
+  Future<void> _onRefreshPressed() async {
+    if (_refreshDialogOpen) return;
+    final scans = context.read<LibraryScanService?>();
+    if (scans == null) return _refreshFromToolbar();
+    _refreshDialogOpen = true;
+    try {
+      final job = scans.update;
+      if (job != null) {
+        await confirmCancelLibraryUpdate(context, scans, job);
+        return;
+      }
+      final mounts = await scans.quarkMounts();
+      if (!mounted) return;
+      if (mounts.isEmpty) {
+        await _refreshFromToolbar();
+      } else {
+        await showQuarkUpdateOptions(context, scans, mounts);
+      }
+    } catch (error) {
+      if (mounted) showErrorSnackBar(context, t.storage.scanFailed(message: '$error'));
+    } finally {
+      _refreshDialogOpen = false;
+    }
+  }
+
   Future<void> _refreshFromToolbar() async {
     final outcome = await _discover.refreshNow();
     if (!mounted) return;
@@ -796,7 +825,20 @@ class _DiscoverScreenState extends State<DiscoverScreen>
     }
   }
 
-  Widget _buildOverlaidAppBar() {
+  ({LibraryUpdateMode mode, bool scraping, bool cancelling})? _selectUpdate(LibraryScanService? scans) {
+    final update = scans?.update;
+    return update == null
+        ? null
+        : (mode: update.mode, scraping: update.scraping, cancelling: update.cancel.isCancelled);
+  }
+
+  Widget _buildOverlaidAppBar() =>
+      Selector<LibraryScanService?, ({LibraryUpdateMode mode, bool scraping, bool cancelling})?>(
+        selector: (_, scans) => _selectUpdate(scans),
+        builder: (_, update, _) => _buildUpdateAppBar(update),
+      );
+
+  Widget _buildUpdateAppBar(({LibraryUpdateMode mode, bool scraping, bool cancelling})? update) {
     final colorScheme = Theme.of(context).colorScheme;
     final foregroundColor = colorScheme.onSurface;
     return ToolbarScrim(
@@ -807,15 +849,33 @@ class _DiscoverScreenState extends State<DiscoverScreen>
               t.discover.title,
               style: Theme.of(context).textTheme.titleLarge?.copyWith(color: foregroundColor, fontWeight: .bold),
             ),
-          const Spacer(),
-          // TV only: a fullscreen leanback app hides the system clock, while a
-          // phone status bar and a desktop menu bar already show one.
-          if (PlatformDetector.isTV()) ...[
-            SystemClock(
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(color: foregroundColor, fontWeight: .w500),
+          Expanded(
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                // Fullscreen TV has no system clock outside the app.
+                if (PlatformDetector.isTV()) ...[
+                  SystemClock(
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(color: foregroundColor, fontWeight: .w500),
+                  ),
+                  const SizedBox(width: 12),
+                ],
+                if (update != null)
+                  Flexible(
+                    child: Text(
+                      update.cancelling
+                          ? t.storage.cancellingUpdate
+                          : update.scraping
+                          ? '${libraryUpdateLabel(update.mode)} · ${t.storage.scraping}'
+                          : t.storage.updating(mode: libraryUpdateLabel(update.mode)),
+                      style: Theme.of(context).textTheme.labelMedium?.copyWith(color: foregroundColor),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+              ],
             ),
-            const SizedBox(width: 12),
-          ],
+          ),
           Consumer2<WatchTogetherProvider, CompanionRemoteProvider>(
             builder: (context, watchTogether, companionRemote, _) {
               final isDesktop = PlatformDetector.shouldActAsRemoteHost(context);
@@ -834,7 +894,19 @@ class _DiscoverScreenState extends State<DiscoverScreen>
                 onNavigateLeft: _navigateToSidebar,
                 onNavigateDown: _focusContentFromAppBar,
                 actions: [
-                  FocusableAction(icon: Symbols.refresh_rounded, iconColor: foregroundColor, onPressed: manualRefresh),
+                  FocusableAction(
+                    icon: Symbols.refresh_rounded,
+                    iconColor: foregroundColor,
+                    tooltip: update == null ? t.common.refresh : t.storage.scanStop,
+                    onPressed: _onRefreshPressed,
+                    child: update == null
+                        ? null
+                        : IconButton(
+                            tooltip: t.storage.scanStop,
+                            icon: LibraryRefreshIcon(color: foregroundColor),
+                            onPressed: _onRefreshPressed,
+                          ),
+                  ),
                   // Watch Together
                   FocusableAction(
                     onPressed: openWatchTogether,
