@@ -804,6 +804,15 @@ class _PlexVideoControlsState extends State<PlexVideoControls>
   late bool _chaptersLoaded = widget.initialChapters != null;
   bool _isAlwaysOnTop = false;
   late final FocusNode _focusNode;
+
+  /// The chrome's own [FocusScope] node, owned here so drift onto it can be
+  /// answered; see [_onChromeScopeFocusChanged].
+  late final FocusScopeNode _chromeScopeNode;
+
+  /// A chrome control held focus when the first-frame gate closed, so the
+  /// open's [FirstFrameGuard] took it away from the remote; see
+  /// [_restoreChromeFocusAfterOpen].
+  bool _chromeFocusLostToFirstFrameGate = false;
   KeyboardShortcutsService? _keyboardService;
   // Live settings — read through the service so a change anywhere in the app
   // reflects here without a manual reload. UI rebuilds are wired via
@@ -958,6 +967,7 @@ class _PlexVideoControlsState extends State<PlexVideoControls>
       alsoOwns: (key) => !_showControls && (key.isLeftKey || key.isRightKey),
     );
     _skipMarkerFocusNode = FocusNode(debugLabel: 'SkipMarkerButton');
+    _chromeScopeNode = FocusScopeNode(debugLabel: 'PlayerChrome');
     _seekThrottle = throttle(
       (Duration pos) {
         unawaited(_seekToTimelinePosition(pos));
@@ -999,6 +1009,7 @@ class _PlexVideoControlsState extends State<PlexVideoControls>
       SettingsService.showChapterMarkersOnTimeline,
     ]);
     _releaseChromeListener = bindListenable(widget.chromeController, _onChromeChanged);
+    bindListenable(_chromeScopeNode, _onChromeScopeFocusChanged);
     _releaseSyncOffsetsListener = bindListenable(PlayerSyncOffsets.of(widget.player), _onSyncOffsetsChanged);
     _configureChromeController();
     widget.chromeController.setPlaying(widget.player.state.playing);
@@ -1166,6 +1177,7 @@ class _PlexVideoControlsState extends State<PlexVideoControls>
     _rateSubscription?.cancel();
     _focusNode.dispose();
     _skipMarkerFocusNode.dispose();
+    _chromeScopeNode.dispose();
     _fallbackHasFirstFrame.dispose();
     // Restore original rate if long-press was active when disposed
     if (_isLongPressing && _rateBeforeLongPress != null) {
@@ -1309,8 +1321,15 @@ class _PlexVideoControlsState extends State<PlexVideoControls>
                         : IgnorePointer(
                             ignoring: !_showControls,
                             child: FocusScope(
+                              node: _chromeScopeNode,
                               // Prevent focus from entering controls when hidden
                               canRequestFocus: _showControls,
+                              // Explicit: left null, the widget reads it back from
+                              // the supplied node, whose scope getter folds in
+                              // canRequestFocus, so a rebuild while hiding would
+                              // write `false` back and keep the controls
+                              // unfocusable after the chrome returns.
+                              descendantsAreFocusable: true,
                               child: AnimatedOpacity(
                                 opacity: _controlsOpaque ? 1.0 : 0.0,
                                 duration: const Duration(milliseconds: 200),
