@@ -84,6 +84,7 @@ class LibraryScanService extends ChangeNotifier {
     required MountManager mounts,
     this.scrape,
     this.onLibraryChanged,
+    this.onCatalogChanged,
   }) : _libraryScanner = scanner,
        _mountManager = mounts;
 
@@ -91,6 +92,9 @@ class LibraryScanService extends ChangeNotifier {
 
   /// Called when a scan or scrape changed what the library holds.
   void Function()? onLibraryChanged;
+
+  /// Called with touched mount ids after scans, JIT refreshes, or scrapes finish.
+  void Function(Set<String>? mountIds)? onCatalogChanged;
 
   final Set<VoidCallback> _libraryListeners = {};
 
@@ -358,7 +362,10 @@ class LibraryScanService extends ChangeNotifier {
         await scrapeLibrary();
       }
     }
-    if (!_disposed) _libraryChanged();
+    if (!_disposed) {
+      _libraryChanged();
+      onCatalogChanged?.call(changedMounts);
+    }
     return true;
   }
 
@@ -407,6 +414,7 @@ class LibraryScanService extends ChangeNotifier {
       if (!result.cancelled) _automaticFailures.remove(mount.id);
       if (!silent || result.hasChanges) _publish(mount.id, MountScanStatus(lastResult: result));
       if (job?._refreshWhenFinished != true && (!silent || result.hasChanges)) _libraryChanged();
+      if (result.hasChanges) onCatalogChanged?.call({mount.id});
       return result;
     } catch (e) {
       _running.remove(mount.id);
@@ -534,6 +542,7 @@ class LibraryScanService extends ChangeNotifier {
       _publishScrape(LibraryScrapeStatus(note: isCancelled() ? null : note, runs: _scrapeStatus.runs + 1));
     }
     if (job?._refreshWhenFinished != true && (mountIds == null || hadWork)) _libraryChanged();
+    if (hadWork) onCatalogChanged?.call(mountIds);
   }
 
   /// Stops a running lookup after the title it is on.

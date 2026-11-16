@@ -98,6 +98,7 @@ class Translations with BaseTranslations<AppLocale, Translations> {
 	late final Translations$storage$en storage = Translations$storage$en.internal(_root);
 	late final Translations$streamQuality$en streamQuality = Translations$streamQuality$en.internal(_root);
 	late final Translations$workSkip$en workSkip = Translations$workSkip$en.internal(_root);
+	late final Translations$sync$en sync = Translations$sync$en.internal(_root);
 }
 
 // Path: app
@@ -6781,6 +6782,78 @@ class Translations$workSkip$en {
 	String get legend => 'Blue: intro · Amber: credits';
 }
 
+// Path: sync
+class Translations$sync$en {
+	Translations$sync$en.internal(this._root);
+
+	final Translations _root; // ignore: unused_field
+
+	// Translations
+
+	/// en: 'Cloud Sync'
+	String get title => 'Cloud Sync';
+
+	/// en: 'E2EE multi-device library & progress sync'
+	String get subtitle => 'E2EE multi-device library & progress sync';
+
+	/// en: 'Sync Server URL'
+	String get serverUrl => 'Sync Server URL';
+
+	/// en: 'Username'
+	String get username => 'Username';
+
+	/// en: 'Password'
+	String get password => 'Password';
+
+	/// en: 'Create Account'
+	String get register => 'Create Account';
+
+	/// en: 'Sign In'
+	String get login => 'Sign In';
+
+	/// en: 'TV / Big-Screen Quick Login'
+	String get qrLoginTitle => 'TV / Big-Screen Quick Login';
+
+	/// en: 'Show QR Code'
+	String get qrGenerate => 'Show QR Code';
+
+	/// en: 'Scan or paste the code on an already signed-in phone or PC to hand over your encryption key securely.'
+	String get qrHint => 'Scan or paste the code on an already signed-in phone or PC to hand over your encryption key securely.';
+
+	/// en: 'Authorize TV Device'
+	String get qrAuthorizeTitle => 'Authorize TV Device';
+
+	/// en: 'Paste the pairing URI from your TV screen.'
+	String get qrAuthorizeHint => 'Paste the pairing URI from your TV screen.';
+
+	/// en: 'Confirm Authorization'
+	String get qrAuthorizeButton => 'Confirm Authorization';
+
+	/// en: 'TV authorization sent.'
+	String get qrAuthorized => 'TV authorization sent.';
+
+	/// en: 'Sync Now'
+	String get syncNow => 'Sync Now';
+
+	/// en: 'Syncing…'
+	String get syncing => 'Syncing…';
+
+	/// en: 'Sign Out'
+	String get signOut => 'Sign Out';
+
+	/// en: 'Account: ${name}'
+	String account({required Object name}) => 'Account: ${name}';
+
+	/// en: '${count} pending offline change(s)'
+	String pendingChanges({required Object count}) => '${count} pending offline change(s)';
+
+	/// en: 'Last synced: ${time}'
+	String lastSynced({required Object time}) => 'Last synced: ${time}';
+
+	/// en: 'Not synced yet'
+	String get neverSynced => 'Not synced yet';
+}
+
 // Path: appIcon.names
 class Translations$appIcon$names$en {
 	Translations$appIcon$names$en.internal(this._root);
@@ -11338,6 +11411,27 @@ extension on Translations {
 			'workSkip.delayDescription' => ({required Object seconds}) => 'Wait ${seconds} seconds before skipping credits. Intro skips immediately.',
 			'workSkip.cancelVisit' => 'Cancel this skip',
 			'workSkip.legend' => 'Blue: intro · Amber: credits',
+			'sync.title' => 'Cloud Sync',
+			'sync.subtitle' => 'E2EE multi-device library & progress sync',
+			'sync.serverUrl' => 'Sync Server URL',
+			'sync.username' => 'Username',
+			'sync.password' => 'Password',
+			'sync.register' => 'Create Account',
+			'sync.login' => 'Sign In',
+			'sync.qrLoginTitle' => 'TV / Big-Screen Quick Login',
+			'sync.qrGenerate' => 'Show QR Code',
+			'sync.qrHint' => 'Scan or paste the code on an already signed-in phone or PC to hand over your encryption key securely.',
+			'sync.qrAuthorizeTitle' => 'Authorize TV Device',
+			'sync.qrAuthorizeHint' => 'Paste the pairing URI from your TV screen.',
+			'sync.qrAuthorizeButton' => 'Confirm Authorization',
+			'sync.qrAuthorized' => 'TV authorization sent.',
+			'sync.syncNow' => 'Sync Now',
+			'sync.syncing' => 'Syncing…',
+			'sync.signOut' => 'Sign Out',
+			'sync.account' => ({required Object name}) => 'Account: ${name}',
+			'sync.pendingChanges' => ({required Object count}) => '${count} pending offline change(s)',
+			'sync.lastSynced' => ({required Object time}) => 'Last synced: ${time}',
+			'sync.neverSynced' => 'Not synced yet',
 			_ => null,
 		};
 	}

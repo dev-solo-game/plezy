@@ -90,6 +90,7 @@ import 'library/library_settings.dart';
 import 'library/local_library_client.dart';
 import 'library/library_scan_service.dart';
 import 'library/library_scanner.dart';
+import 'library/sync/sync_coordinator.dart';
 import 'storage/http_range_reader.dart';
 import 'storage/mount_manager.dart';
 import 'storage/mount_registry.dart';
@@ -1802,6 +1803,31 @@ class _MainAppState extends State<MainApp> with WidgetsBindingObserver {
             );
             _mountManager.onReachabilityChanged = service.notifyLibraryChanged;
             return service;
+          },
+        ),
+        ChangeNotifierProvider<SyncAndScanCoordinator>(
+          lazy: false,
+          create: (context) {
+            final repository = context.read<LibraryRepository>();
+            final scanService = context.read<LibraryScanService>();
+            final localClient = context.read<LocalLibraryClient>();
+            final coordinator = SyncAndScanCoordinator(
+              db: _appDatabase,
+              repo: repository,
+              mountManager: _mountManager,
+              scanService: scanService,
+              isTvDevice: TvDetectionService.isTVSync(),
+            );
+            scanService.onCatalogChanged = (mountIds) => unawaited(coordinator.onCatalogChanged(mountIds: mountIds));
+            localClient.onSyncOutboxEnqueued = () => unawaited(coordinator.pushOutboxOnly());
+            unawaited(
+              coordinator.initialize().then((_) {
+                if (coordinator.isSignedIn) {
+                  unawaited(coordinator.syncNow());
+                }
+              }),
+            );
+            return coordinator;
           },
         ),
         Provider<ConnectionRegistry>.value(value: _connections),

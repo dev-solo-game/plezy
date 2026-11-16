@@ -9,6 +9,7 @@ import 'package:provider/provider.dart';
 import '../../i18n/strings.g.dart';
 import '../../library/library_scan_service.dart';
 import '../../library/library_scrape_runner.dart';
+import '../../library/sync/sync_coordinator.dart';
 import '../../storage/mount_manager.dart';
 import '../../storage/storage_mount.dart';
 import '../../storage/storage_path.dart';
@@ -19,6 +20,7 @@ import 'mount_edit_screen.dart';
 import 'quark_account_details.dart';
 import 'scraper_settings_screen.dart';
 import 'storage_browser_screen.dart';
+import 'sync_settings_screen.dart';
 
 /// Widest the mount screens let their content grow on large windows.
 const double storageContentMaxWidth = 640;
@@ -111,6 +113,11 @@ class MountsScreen extends StatelessWidget {
     if (confirmed != true) return;
     scans.cancel(mount.id);
     await manager.remove(mount.id);
+    try {
+      if (context.mounted) {
+        unawaited(context.read<SyncAndScanCoordinator>().onMountRemoved(mount.id));
+      }
+    } on ProviderNotFoundException catch (_) {}
     // The mount's files went with it; drop the titles that leaves empty.
     await scans.repository.pruneEmptyTitles();
     scans.notifyLibraryChanged();
@@ -123,6 +130,12 @@ class MountsScreen extends StatelessWidget {
       appBar: AppBar(
         title: Text(t.storage.title),
         actions: [
+          IconButton(
+            tooltip: t.sync.title,
+            icon: const AppIcon(Symbols.cloud_sync_rounded),
+            onPressed: () =>
+                Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const SyncSettingsScreen())),
+          ),
           IconButton(
             tooltip: t.storage.scraperSettings,
             icon: const AppIcon(Symbols.travel_explore_rounded),

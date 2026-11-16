@@ -73,6 +73,7 @@ class LocalLibraryClient implements MediaServerClient {
     required lib.LibraryRepository repository,
     required MountManager mounts,
     this.seekDebounceDuration = const Duration(seconds: 3),
+    this.onSyncOutboxEnqueued,
   }) : _repo = repository,
        _mountManager = mounts;
 
@@ -89,6 +90,7 @@ class LocalLibraryClient implements MediaServerClient {
   final lib.LibraryRepository _repo;
   final MountManager _mountManager;
   final Duration seekDebounceDuration;
+  void Function()? onSyncOutboxEnqueued;
   late final SyncLocalStore _syncStore = SyncLocalStore(_repo.database);
   final Map<int, _PlaybackSyncSession> _playbackSyncSessions = {};
   Map<String, StorageMount> _mountsById = const {};
@@ -686,12 +688,22 @@ class LocalLibraryClient implements MediaServerClient {
 
   // ─── Watch state ───────────────────────────────────────────────────────
 
+  Future<void> _enqueueProgress(int id) async {
+    await _syncStore.enqueueWatchProgressForItemId(id);
+    onSyncOutboxEnqueued?.call();
+  }
+
+  Future<void> _enqueuePrefs(int id) async {
+    await _syncStore.enqueueWorkPrefsForItemId(id);
+    onSyncOutboxEnqueued?.call();
+  }
+
   @override
   Future<void> markWatched(MediaItem item) async {
     final id = _id(item.id);
     if (id == null) return;
     await _repo.markWatched(id, watched: true);
-    await _syncStore.enqueueWatchProgressForItemId(id);
+    await _enqueueProgress(id);
   }
 
   @override
@@ -699,7 +711,7 @@ class LocalLibraryClient implements MediaServerClient {
     final id = _id(item.id);
     if (id == null) return;
     await _repo.markWatched(id, watched: false);
-    await _syncStore.enqueueWatchProgressForItemId(id);
+    await _enqueueProgress(id);
   }
 
   @override
@@ -707,8 +719,8 @@ class LocalLibraryClient implements MediaServerClient {
     final id = _id(item.id);
     if (id == null) return;
     await _repo.hideFromContinueWatching(id);
-    await _syncStore.enqueueWatchProgressForItemId(id);
-    await _syncStore.enqueueWorkPrefsForItemId(id);
+    await _enqueueProgress(id);
+    await _enqueuePrefs(id);
   }
 
   @override
@@ -719,7 +731,7 @@ class LocalLibraryClient implements MediaServerClient {
     final id = _id(item.id);
     if (id == null) return;
     await _repo.setFavorite(id, favorite: isFavorite);
-    await _syncStore.enqueueWorkPrefsForItemId(id);
+    await _enqueuePrefs(id);
   }
 
   @override
@@ -777,7 +789,7 @@ class LocalLibraryClient implements MediaServerClient {
       session.lastPosMs = posMs;
       session.lastReportWallMs = now;
       session.lastOutboxWallMs = now;
-      await _syncStore.enqueueWatchProgressForItemId(id);
+      await _enqueueProgress(id);
       return;
     }
     if (!isPaused) session.wasPaused = false;
@@ -794,7 +806,7 @@ class LocalLibraryClient implements MediaServerClient {
         session.seekDebounce = null;
         if (_closed) return;
         session.lastOutboxWallMs = clock.now().millisecondsSinceEpoch;
-        unawaited(_syncStore.enqueueWatchProgressForItemId(id));
+        unawaited(_enqueueProgress(id));
       });
       return;
     }
@@ -803,7 +815,7 @@ class LocalLibraryClient implements MediaServerClient {
       session.seekDebounce?.cancel();
       session.seekDebounce = null;
       session.lastOutboxWallMs = now;
-      await _syncStore.enqueueWatchProgressForItemId(id);
+      await _enqueueProgress(id);
     }
   }
 
@@ -823,7 +835,7 @@ class LocalLibraryClient implements MediaServerClient {
     final id = _id(itemId);
     if (id == null) return;
     _playbackSyncSessions.remove(id)?.seekDebounce?.cancel();
-    await _syncStore.enqueueWatchProgressForItemId(id);
+    await _enqueueProgress(id);
   }
 
   Future<void> _saveProgress(String itemId, Duration position, Duration? duration) async {

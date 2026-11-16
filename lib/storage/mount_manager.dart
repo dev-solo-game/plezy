@@ -313,6 +313,14 @@ class MountManager {
     });
   }
 
+  Future<void> dropCachedDriver(String mountId) async {
+    await _dropDriver(mountId);
+    if (!_disposed && onlineStatuses.value.containsKey(mountId)) {
+      final updated = Map<String, MountOnlineStatus>.from(onlineStatuses.value)..remove(mountId);
+      onlineStatuses.value = updated;
+    }
+  }
+
   Future<void> _dropDriver(String mountId) async {
     proxy.unregisterMount(mountId);
     await _drivers.remove(mountId)?.close();

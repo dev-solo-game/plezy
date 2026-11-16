@@ -2785,5 +2785,28 @@
     "delayDescription": "Wait $seconds seconds before skipping credits. Intro skips immediately.",
     "cancelVisit": "Cancel this skip",
     "legend": "Blue: intro · Amber: credits"
+  },
+  "sync": {
+    "title": "Cloud Sync",
+    "subtitle": "E2EE multi-device library & progress sync",
+    "serverUrl": "Sync Server URL",
+    "username": "Username",
+    "password": "Password",
+    "register": "Create Account",
+    "login": "Sign In",
+    "qrLoginTitle": "TV / Big-Screen Quick Login",
+    "qrGenerate": "Show QR Code",
+    "qrHint": "Scan or paste the code on an already signed-in phone or PC to hand over your encryption key securely.",
+    "qrAuthorizeTitle": "Authorize TV Device",
+    "qrAuthorizeHint": "Paste the pairing URI from your TV screen.",
+    "qrAuthorizeButton": "Confirm Authorization",
+    "qrAuthorized": "TV authorization sent.",
+    "syncNow": "Sync Now",
+    "syncing": "Syncing…",
+    "signOut": "Sign Out",
+    "account": "Account: ${name}",
+    "pendingChanges": "${count} pending offline change(s)",
+    "lastSynced": "Last synced: ${time}",
+    "neverSynced": "Not synced yet"
   }
 }

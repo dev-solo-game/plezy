@@ -88,10 +88,10 @@ class WorkSkipSettingsStore {
     }
   }
 
-  Future<void> save(WorkIdentity work, WorkSkipSettings settings) async {
+  Future<void> save(WorkIdentity work, WorkSkipSettings settings, {bool syncToOutbox = true}) async {
     if (!settings.validFor()) throw ArgumentError('Invalid skip ranges');
     await _put(_key(work), jsonEncode(settings.toJson()));
-    if (work.source == WorkIdentity.localSource) {
+    if (syncToOutbox && work.source == WorkIdentity.localSource) {
       await SyncLocalStore(db).enqueueWorkPrefsForIdentity(work);
     }
   }

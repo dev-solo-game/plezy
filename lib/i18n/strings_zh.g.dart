@@ -97,6 +97,7 @@ class TranslationsZh extends Translations with BaseTranslations<AppLocale, Trans
 	@override late final Translations$storage$zh storage = Translations$storage$zh.internal(_root);
 	@override late final Translations$streamQuality$zh streamQuality = Translations$streamQuality$zh.internal(_root);
 	@override late final Translations$workSkip$zh workSkip = Translations$workSkip$zh.internal(_root);
+	@override late final Translations$sync$zh sync = Translations$sync$zh.internal(_root);
 }
 
 // Path: app
@@ -2699,6 +2700,36 @@ class Translations$workSkip$zh extends Translations$workSkip$en {
 	@override String delayDescription({required Object seconds}) => '进入片尾后等待 ${seconds} 秒再跳过；片头直接跳过。';
 	@override String get cancelVisit => '取消本次跳过';
 	@override String get legend => '蓝色：片头 · 金色：片尾';
+}
+
+// Path: sync
+class Translations$sync$zh extends Translations$sync$en {
+	Translations$sync$zh.internal(TranslationsZh root) : this._root = root, super.internal(root);
+
+	final TranslationsZh _root; // ignore: unused_field
+
+	// Translations
+	@override String get title => '多端云同步';
+	@override String get subtitle => '端到端加密媒体库索引、网盘配置与播放进度同步';
+	@override String get serverUrl => '同步服务器地址';
+	@override String get username => '用户名';
+	@override String get password => '密码';
+	@override String get register => '注册账号';
+	@override String get login => '密码登录';
+	@override String get qrLoginTitle => '电视 / 大屏快捷登录';
+	@override String get qrGenerate => '生成登录二维码';
+	@override String get qrHint => '使用已登录同账号的手机或电脑确认授权，即可零密码安全移交加密主密钥。';
+	@override String get qrAuthorizeTitle => '授权电视端登录';
+	@override String get qrAuthorizeHint => '粘贴电视端展示的配对链接（plezy://qr-auth?...）。';
+	@override String get qrAuthorizeButton => '确认授权给该设备';
+	@override String get qrAuthorized => '已发送授权与加密密钥。';
+	@override String get syncNow => '立即同步';
+	@override String get syncing => '同步中…';
+	@override String get signOut => '退出同步账号';
+	@override String account({required Object name}) => '当前账号：${name}';
+	@override String pendingChanges({required Object count}) => '待上传离线变更：${count} 条';
+	@override String lastSynced({required Object time}) => '上次同步：${time}';
+	@override String get neverSynced => '尚未同步';
 }
 
 // Path: appIcon.names
@@ -6213,6 +6244,27 @@ extension on TranslationsZh {
 			'workSkip.delayDescription' => ({required Object seconds}) => '进入片尾后等待 ${seconds} 秒再跳过；片头直接跳过。',
 			'workSkip.cancelVisit' => '取消本次跳过',
 			'workSkip.legend' => '蓝色：片头 · 金色：片尾',
+			'sync.title' => '多端云同步',
+			'sync.subtitle' => '端到端加密媒体库索引、网盘配置与播放进度同步',
+			'sync.serverUrl' => '同步服务器地址',
+			'sync.username' => '用户名',
+			'sync.password' => '密码',
+			'sync.register' => '注册账号',
+			'sync.login' => '密码登录',
+			'sync.qrLoginTitle' => '电视 / 大屏快捷登录',
+			'sync.qrGenerate' => '生成登录二维码',
+			'sync.qrHint' => '使用已登录同账号的手机或电脑确认授权，即可零密码安全移交加密主密钥。',
+			'sync.qrAuthorizeTitle' => '授权电视端登录',
+			'sync.qrAuthorizeHint' => '粘贴电视端展示的配对链接（plezy://qr-auth?...）。',
+			'sync.qrAuthorizeButton' => '确认授权给该设备',
+			'sync.qrAuthorized' => '已发送授权与加密密钥。',
+			'sync.syncNow' => '立即同步',
+			'sync.syncing' => '同步中…',
+			'sync.signOut' => '退出同步账号',
+			'sync.account' => ({required Object name}) => '当前账号：${name}',
+			'sync.pendingChanges' => ({required Object count}) => '待上传离线变更：${count} 条',
+			'sync.lastSynced' => ({required Object time}) => '上次同步：${time}',
+			'sync.neverSynced' => '尚未同步',
 			_ => null,
 		};
 	}

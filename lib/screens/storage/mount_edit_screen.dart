@@ -10,6 +10,7 @@ import '../../focus/focusable_button.dart';
 import '../../focus/focusable_text_field.dart';
 import '../../i18n/strings.g.dart';
 import '../../library/library_scan_service.dart';
+import '../../library/sync/sync_coordinator.dart';
 import '../../services/file_picker_service.dart';
 import '../../services/settings_service.dart';
 import '../../storage/drivers/quark_pc_device_store.dart';
@@ -268,6 +269,11 @@ class _MountEditScreenState extends State<MountEditScreen> {
         final resolvedStatus = await _probeOnSave(manager, mount);
         await manager.save(mount);
         manager.setStatus(mount.id, resolvedStatus);
+        try {
+          if (mounted) {
+            unawaited(context.read<SyncAndScanCoordinator>().onMountSaved(mount));
+          }
+        } on ProviderNotFoundException catch (_) {}
         // A new or changed mount is scanned straight away; the list shows progress.
         unawaited(scans.scan(mount));
       }

@@ -2773,5 +2773,28 @@
     "delayDescription": "进入片尾后等待 $seconds 秒再跳过；片头直接跳过。",
     "cancelVisit": "取消本次跳过",
     "legend": "蓝色：片头 · 金色：片尾"
+  },
+  "sync": {
+    "title": "多端云同步",
+    "subtitle": "端到端加密媒体库索引、网盘配置与播放进度同步",
+    "serverUrl": "同步服务器地址",
+    "username": "用户名",
+    "password": "密码",
+    "register": "注册账号",
+    "login": "密码登录",
+    "qrLoginTitle": "电视 / 大屏快捷登录",
+    "qrGenerate": "生成登录二维码",
+    "qrHint": "使用已登录同账号的手机或电脑确认授权，即可零密码安全移交加密主密钥。",
+    "qrAuthorizeTitle": "授权电视端登录",
+    "qrAuthorizeHint": "粘贴电视端展示的配对链接（plezy://qr-auth?...）。",
+    "qrAuthorizeButton": "确认授权给该设备",
+    "qrAuthorized": "已发送授权与加密密钥。",
+    "syncNow": "立即同步",
+    "syncing": "同步中…",
+    "signOut": "退出同步账号",
+    "account": "当前账号：${name}",
+    "pendingChanges": "待上传离线变更：${count} 条",
+    "lastSynced": "上次同步：${time}",
+    "neverSynced": "尚未同步"
   }
 }
