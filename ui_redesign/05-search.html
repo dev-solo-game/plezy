@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-accent="glacier">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>05 跨源聚合搜索 · Plezy UI 重设计</title>
+  <link rel="stylesheet" href="styles/design-system.css" />
+  <style>
+    .search-shell {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      background: radial-gradient(circle at 50% 0%, rgba(92, 184, 255, 0.1), transparent 46%), #0b0d12;
+      overflow-y: auto;
+      padding: 24px 32px;
+      gap: 20px;
+    }
+    .glass-search-bar {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 18px;
+      border-radius: 18px;
+      background: rgba(255, 255, 255, 0.07);
+      backdrop-filter: var(--blur-md);
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
+    }
+    .glass-search-bar input {
+      flex: 1;
+      background: transparent;
+      border: none;
+      outline: none;
+      color: #fff;
+      font-size: 16px;
+      font-weight: 500;
+      font-family: inherit;
+    }
+    .result-row-card {
+      display: flex;
+      gap: 14px;
+      padding: 12px;
+      border-radius: 16px;
+      background: rgba(255, 255, 255, 0.035);
+      border: 1px solid var(--border-subtle);
+      align-items: center;
+      transition: background 0.16s ease, border-color 0.16s ease;
+      cursor: pointer;
+    }
+    .result-row-card:hover {
+      background: rgba(255, 255, 255, 0.07);
+      border-color: var(--border-glass);
+    }
+    .result-thumb {
+      width: 72px;
+      aspect-ratio: 2 / 3;
+      border-radius: 10px;
+      flex-shrink: 0;
+      position: relative;
+      overflow: hidden;
+    }
+    #wideVirtualKbd.open { display: flex !important; }
+  </style>
+</head>
+<body>
+  <header class="showcase-topbar">
+    <div class="showcase-brand">
+      <a href="index.html" class="brand-mark">P</a>
+      <div>
+        <div class="brand-title">05 · 跨源聚合搜索 (Unified Search)</div>
+        <div class="brand-sub">对比现版：phone-search.png + search_screen.dart</div>
+      </div>
+    </div>
+    <nav class="showcase-nav">
+      <a class="nav-pill" href="index.html">总览</a>
+      <a class="nav-pill" href="01-home-discover.html">01 首页发现</a>
+      <a class="nav-pill" href="02-library-browse.html">02 媒体库</a>
+      <a class="nav-pill" href="03-media-detail.html">03 详情页</a>
+      <a class="nav-pill" href="04-video-player.html">04 播放器</a>
+      <a class="nav-pill active" href="05-search.html">05 搜索</a>
+      <a class="nav-pill" href="06-storage-sources.html">06 存储与刮削</a>
+      <a class="nav-pill" href="07-downloads-settings-profile.html">07 下载/设置</a>
+    </nav>
+    <div class="showcase-controls">
+      <div class="seg-group">
+        <button class="seg-btn active" data-platform="desktop">💻 Desktop</button>
+        <button class="seg-btn" data-platform="mobile">📲 Mobile</button>
+        <button class="seg-btn" data-platform="tv">📺 TV</button>
+        <button class="seg-btn" data-platform="compare">⚖ 现版对比</button>
+      </div>
+      <div class="accent-dots">
+        <button class="accent-dot" data-accent="glacier" style="background:#5cb8ff"></button>
+        <button class="accent-dot" data-accent="neutral" style="background:#ffffff"></button>
+        <button class="accent-dot" data-accent="ember" style="background:#ff8a5b"></button>
+        <button class="accent-dot" data-accent="plum" style="background:#c084fc"></button>
+      </div>
+    </div>
+  </header>
+
+  <main class="page-container">
+    <div class="design-notes-bar">
+      <div class="note-card">
+        <strong>① Spotlight 聚合分组展示</strong>
+        <span>现版搜索结果是扁平混排；新版按「本地刮削库 / 夸克网盘直搜 / Emby 服务器 / 演职员」分区呈现，避免跨源重名混淆。</span>
+      </div>
+      <div class="note-card">
+        <strong>② 来源与画质徽章一目了然</strong>
+        <span>每条搜索结果直接携带 <code>4K DV</code>、<code>☁ 夸克</code>、<code>📁 SMB</code> 胶囊，无需点进详情就能辨别版本。</span>
+      </div>
+      <div class="note-card">
+        <strong>③ Mobile 保留单手搜索体验</strong>
+        <span>大字号悬浮毛玻璃搜索栏 + 胶囊过滤 + 底部悬浮 Dock，消除顶部生硬黑底。</span>
+      </div>
+    </div>
+
+    <div class="stage-wrapper">
+      <!-- ==================== DESKTOP / TABLET / TV (统一宽屏搜索) ==================== -->
+      <section class="stage-panel active" data-platform="desktop tablet tv">
+        <div class="device-desktop">
+          <aside class="glass-sidebar">
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:4px 8px 14px;">
+              <div class="traffic-lights"><span class="tl r"></span><span class="tl y"></span><span class="tl g"></span></div>
+              <span style="font-size:11px;color:var(--text-muted);font-weight:600;">全局搜索</span>
+            </div>
+            <div class="side-item" data-nav="01-home-discover.html">🏠 首页发现</div>
+            <div class="side-item active" data-nav="05-search.html">🔍 全局搜索 <span class="side-badge">⌘K</span></div>
+            <div class="side-item" data-nav="06-storage-sources.html">☁ 媒体源与刮削</div>
+            <div class="side-item" data-nav="07-downloads-settings-profile.html">⬇ 离线下载</div>
+            <div class="sidebar-section-label">本地媒体库</div>
+            <div class="side-item" data-nav="02-library-browse.html">🎬 电影</div>
+            <div class="side-item" data-nav="02-library-browse.html">📺 电视剧</div>
+            <div class="side-item" data-nav="02-library-browse.html">✨ 动漫番剧</div>
+          </aside>
+
+          <div class="search-shell">
+            <div class="glass-search-bar">
+              <span style="font-size:18px;opacity:0.75;">🔍</span>
+              <input id="tvSearchInput" type="text" value="the" aria-label="Search">
+              <button class="glass-pill" style="padding:4px 10px;font-size:11px;" data-toggle-target="wideVirtualKbd">⌨ 虚拟键盘</button>
+              <button class="glass-pill" style="padding:4px 10px;font-size:11px;" onclick="document.getElementById('tvSearchInput').value='';">清空</button>
+            </div>
+
+            <!-- Collapsible QWERTY Virtual Keyboard (for TV / Touch / Remote) -->
+            <div id="wideVirtualKbd" class="glass-panel" style="display:none;flex-direction:column;gap:8px;padding:14px;">
+              <div style="display:flex;justify-content:space-between;align-items:center;">
+                <span style="font-size:11.5px;color:var(--text-muted);">虚拟键盘 (TV 遥控器 / 触屏可用)</span>
+                <div style="display:flex;gap:6px;">
+                  <span class="glass-pill tv-quick-term" style="padding:3px 9px;font-size:11px;">葬送的芙莉莲</span>
+                  <span class="glass-pill tv-quick-term" style="padding:3px 9px;font-size:11px;">沙丘 2</span>
+                  <span class="glass-pill tv-quick-term" style="padding:3px 9px;font-size:11px;">4K REMUX</span>
+                </div>
+              </div>
+              <div id="tvKbd" style="display:flex;flex-direction:column;gap:6px;">
+                <div style="display:grid;grid-template-columns:repeat(10,1fr);gap:5px;">
+                  <span class="tv-kbd-key">Q</span><span class="tv-kbd-key">W</span><span class="tv-kbd-key tv-focus-default">E</span><span class="tv-kbd-key">R</span><span class="tv-kbd-key">T</span><span class="tv-kbd-key">Y</span><span class="tv-kbd-key">U</span><span class="tv-kbd-key">I</span><span class="tv-kbd-key">O</span><span class="tv-kbd-key">P</span>
+                </div>
+                <div style="display:grid;grid-template-columns:repeat(10,1fr);gap:5px;">
+                  <span class="tv-kbd-key">A</span><span class="tv-kbd-key">S</span><span class="tv-kbd-key">D</span><span class="tv-kbd-key">F</span><span class="tv-kbd-key">G</span><span class="tv-kbd-key">H</span><span class="tv-kbd-key">J</span><span class="tv-kbd-key">K</span><span class="tv-kbd-key">L</span><span class="tv-kbd-key" data-kbd-action="backspace">⌫</span>
+                </div>
+                <div style="display:grid;grid-template-columns:repeat(7,1fr) 1.5fr 1.5fr;gap:5px;">
+                  <span class="tv-kbd-key">Z</span><span class="tv-kbd-key">X</span><span class="tv-kbd-key">C</span><span class="tv-kbd-key">V</span><span class="tv-kbd-key">B</span><span class="tv-kbd-key">N</span><span class="tv-kbd-key">M</span><span class="tv-kbd-key" data-kbd-action="space">␣ 空格</span><span class="tv-kbd-key" data-kbd-action="clear">清空</span>
+                </div>
+              </div>
+            </div>
+
+            <div style="display:flex;gap:8px;flex-wrap:wrap;" data-pill-group>
+              <button class="glass-pill active" data-pill>全部结果 (14)</button>
+              <button class="glass-pill" data-pill>本地媒体库 (8)</button>
+              <button class="glass-pill" data-pill>Emby 客厅 (4)</button>
+              <button class="glass-pill" data-pill>演职员 (2)</button>
+              <button class="glass-pill" data-pill>仅看 4K</button>
+            </div>
+
+            <div>
+              <div style="font-size:13px;font-weight:700;color:var(--text-secondary);margin-bottom:10px;">本地刮削库 · 电视剧 & 动漫</div>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+                <div class="result-row-card" data-nav="03-media-detail.html">
+                  <div class="result-thumb art-apothecary"><span class="poster-badge-top">48</span></div>
+                  <div style="min-width:0;flex:1;">
+                    <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">
+                      <strong style="font-size:14.5px;">The Apothecary Diaries</strong>
+                      <span class="spec-pill" style="padding:1px 6px;font-size:10px;">☁ 夸克</span>
+                    </div>
+                    <div style="font-size:11.5px;color:var(--text-muted);margin-bottom:5px;">药屋少女的呢喃 · TV-14 · 2023 · ★ 8.8</div>
+                    <div style="font-size:11.5px;color:var(--text-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">出身花街的少女猫猫凭借药学知识破解宫廷悬案…</div>
+                  </div>
+                </div>
+                <div class="result-row-card" data-nav="03-media-detail.html">
+                  <div class="result-thumb art-bcs"><span class="poster-badge-top">86</span></div>
+                  <div style="min-width:0;flex:1;">
+                    <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">
+                      <strong style="font-size:14.5px;">The Sopranos</strong>
+                      <span class="spec-pill" style="padding:1px 6px;font-size:10px;">📁 SMB</span>
+                    </div>
+                    <div style="font-size:11.5px;color:var(--text-muted);margin-bottom:5px;">黑道家族 · TV-MA · 1999 · HBO · ★ 9.2</div>
+                    <div style="font-size:11.5px;color:var(--text-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">新泽西黑手党老大托尼·索普拉诺在家庭与帮派之间挣扎…</div>
+                  </div>
+                </div>
+                <div class="result-row-card" data-nav="03-media-detail.html">
+                  <div class="result-thumb art-cyberpunk"><span class="poster-badge-top">26</span></div>
+                  <div style="min-width:0;flex:1;">
+                    <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">
+                      <strong style="font-size:14.5px;">The Future Diary</strong>
+                      <span class="spec-pill" style="padding:1px 6px;font-size:10px;">WebDAV</span>
+                    </div>
+                    <div style="font-size:11.5px;color:var(--text-muted);margin-bottom:5px;">未来日记 · 2011 · 24 分钟 · asread.</div>
+                  </div>
+                </div>
+                <div class="result-row-card" data-nav="03-media-detail.html">
+                  <div class="result-thumb art-1917"><span class="poster-badge-top">23</span></div>
+                  <div style="min-width:0;flex:1;">
+                    <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">
+                      <strong style="font-size:14.5px;">The Promised Neverland</strong>
+                      <span class="spec-pill" style="padding:1px 6px;font-size:10px;">Emby</span>
+                    </div>
+                    <div style="font-size:11.5px;color:var(--text-muted);margin-bottom:5px;">约定的梦幻岛 · 2019 · CloverWorks</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ==================== MOBILE ==================== -->
+      <section class="stage-panel" data-platform="mobile">
+        <div class="device-mobile">
+          <div class="mobile-statusbar"><span>9:41</span><div class="dynamic-island"></div><span>5G 🔋</span></div>
+          <div style="padding:52px 16px 12px;">
+            <h2 style="font-size:22px;font-weight:800;margin-bottom:10px;">搜索</h2>
+            <div class="glass-search-bar" style="padding:10px 14px;border-radius:14px;">
+              <span>🔍</span>
+              <input type="text" value="the" style="font-size:14px;">
+              <span style="opacity:0.6;font-size:13px;">✕</span>
+            </div>
+            <div style="display:flex;gap:6px;margin-top:10px;overflow-x:auto;" data-pill-group>
+              <button class="glass-pill active" data-pill style="padding:4px 10px;font-size:11px;">全部</button>
+              <button class="glass-pill" data-pill style="padding:4px 10px;font-size:11px;">☁ 夸克</button>
+              <button class="glass-pill" data-pill style="padding:4px 10px;font-size:11px;">📁 SMB</button>
+              <button class="glass-pill" data-pill style="padding:4px 10px;font-size:11px;">Emby</button>
+            </div>
+          </div>
+          <div style="flex:1;overflow-y:auto;padding:4px 16px 96px;display:flex;flex-direction:column;gap:10px;">
+            <div class="result-row-card" style="padding:10px;" data-nav="03-media-detail.html">
+              <div class="result-thumb art-bcs" style="width:62px;"><span class="poster-badge-top">86</span></div>
+              <div style="min-width:0;">
+                <strong style="font-size:13.5px;">The Sopranos</strong>
+                <div style="font-size:11px;color:var(--text-muted);margin:3px 0;">TV-MA · 1999 · 📁 SMB</div>
+                <div style="font-size:11px;color:var(--text-secondary);">新泽西黑帮教父的双重生活…</div>
+              </div>
+            </div>
+            <div class="result-row-card" style="padding:10px;" data-nav="03-media-detail.html">
+              <div class="result-thumb art-apothecary" style="width:62px;"><span class="poster-badge-top">48</span></div>
+              <div style="min-width:0;">
+                <strong style="font-size:13.5px;">The Apothecary Diaries</strong>
+                <div style="font-size:11px;color:var(--text-muted);margin:3px 0;">TV-14 · 2023 · ☁ 夸克</div>
+                <div style="font-size:11px;color:var(--text-secondary);">药屋少女猫猫破解宫廷谜案…</div>
+              </div>
+            </div>
+            <div class="result-row-card" style="padding:10px;" data-nav="03-media-detail.html">
+              <div class="result-thumb art-cyberpunk" style="width:62px;"><span class="poster-badge-top">26</span></div>
+              <div style="min-width:0;">
+                <strong style="font-size:13.5px;">The Future Diary</strong>
+                <div style="font-size:11px;color:var(--text-muted);margin:3px 0;">TV-MA · 2011 · WebDAV</div>
+                <div style="font-size:11px;color:var(--text-secondary);">十二位未来日记持有者的生存游戏…</div>
+              </div>
+            </div>
+          </div>
+          <nav class="mobile-glass-dock">
+            <div class="dock-tab" data-nav="01-home-discover.html"><span>🏠</span><span>首页</span></div>
+            <div class="dock-tab" data-nav="02-library-browse.html"><span>🎬</span><span>媒体库</span></div>
+            <div class="dock-tab active" data-nav="05-search.html"><span>🔍</span><span>搜索</span></div>
+            <div class="dock-tab" data-nav="06-storage-sources.html"><span>☁</span><span>存储</span></div>
+            <div class="dock-tab" data-nav="07-downloads-settings-profile.html"><span>⚙</span><span>设置</span></div>
+          </nav>
+        </div>
+      </section>
+
+      <!-- ==================== COMPARE ==================== -->
+      <section class="stage-panel" data-platform="compare">
+        <div class="compare-grid">
+          <div class="compare-box"><div class="compare-label"><span>现版 · Phone Search</span><span class="compare-tag">screenshots/phone-search.png</span></div><img class="screenshot-img" src="screenshots/phone-search.png" alt="Phone Search"></div>
+        </div>
+      </section>
+    </div>
+  </main>
+  <script src="scripts/showcase.js"></script>
+  <script>
+    (function () {
+      const input = document.getElementById('tvSearchInput');
+      const title = document.getElementById('tvSearchTitle');
+      const syncTitle = () => {
+        if (!title || !input) return;
+        const val = input.value.trim();
+        title.textContent = val ? `影视库匹配 · “${val}” (4)` : '影视库推荐 · 请输入关键词';
+      };
+      document.querySelectorAll('#tvKbd .tv-kbd-key').forEach((key) => {
+        key.addEventListener('click', () => {
+          document.querySelectorAll('#tvKbd .tv-kbd-key').forEach((k) => k.classList.remove('tv-focused'));
+          key.classList.add('tv-focused');
+          const act = key.getAttribute('data-kbd-action');
+          if (act === 'backspace') input.value = input.value.slice(0, -1);
+          else if (act === 'space') input.value += ' ';
+          else if (act === 'clear') input.value = '';
+          else if (act === 'num') window.plezyProto?.showToast('已切换数字/符号键盘');
+          else input.value += key.textContent.trim();
+          syncTitle();
+        });
+      });
+      document.querySelectorAll('.tv-quick-term').forEach((pill) => {
+        pill.addEventListener('click', () => {
+          input.value = pill.textContent.trim();
+          syncTitle();
+        });
+      });
+    })();
+  </script>
+</body>
+</html>

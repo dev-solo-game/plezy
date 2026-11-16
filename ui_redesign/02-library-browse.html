@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-accent="glacier">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>02 媒体库与海报墙 · Plezy UI 重设计</title>
+  <link rel="stylesheet" href="styles/design-system.css" />
+  <style>
+    .lib-workspace {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      background: radial-gradient(circle at 80% 0%, rgba(92,184,255,0.08), transparent 45%), #0b0d12;
+      overflow: hidden;
+    }
+    .lib-header-glass {
+      padding: 16px 24px 12px;
+      background: rgba(12, 14, 20, 0.72);
+      backdrop-filter: var(--blur-md);
+      border-bottom: 1px solid var(--border-subtle);
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      z-index: 10;
+    }
+    .lib-header-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .lib-grid-scroll {
+      flex: 1;
+      overflow-y: auto;
+      padding: 18px 24px 28px;
+      position: relative;
+    }
+    .poster-wall-6 {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+      gap: 16px 14px;
+    }
+    .poster-wall-5 {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 16px 14px;
+    }
+    .poster-wall-3 {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px 10px;
+    }
+    .alpha-rail {
+      position: absolute;
+      right: 8px;
+      top: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      padding: 6px 4px;
+      border-radius: 999px;
+      background: rgba(20, 23, 32, 0.55);
+      border: 1px solid var(--border-subtle);
+      font-size: 9.5px;
+      font-weight: 700;
+      color: var(--text-muted);
+      align-items: center;
+    }
+    .alpha-rail span.active {
+      color: var(--accent);
+      transform: scale(1.2);
+    }
+    .unmatched-banner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 14px;
+      margin-bottom: 16px;
+      border-radius: 14px;
+      background: rgba(251, 191, 36, 0.1);
+      border: 1px solid rgba(251, 191, 36, 0.28);
+      font-size: 12.5px;
+      color: #fde68a;
+    }
+  </style>
+</head>
+<body>
+  <header class="showcase-topbar">
+    <div class="showcase-brand">
+      <a href="index.html" class="brand-mark">P</a>
+      <div>
+        <div class="brand-title">02 · 媒体库与海报墙 (Libraries & Browse)</div>
+        <div class="brand-sub">对比现版：desktop-library.png · tablet-library.png · phone-library.png · tv-library.png</div>
+      </div>
+    </div>
+    <nav class="showcase-nav">
+      <a class="nav-pill" href="index.html">总览</a>
+      <a class="nav-pill" href="01-home-discover.html">01 首页发现</a>
+      <a class="nav-pill active" href="02-library-browse.html">02 媒体库</a>
+      <a class="nav-pill" href="03-media-detail.html">03 详情页</a>
+      <a class="nav-pill" href="04-video-player.html">04 播放器</a>
+      <a class="nav-pill" href="05-search.html">05 搜索</a>
+      <a class="nav-pill" href="06-storage-sources.html">06 存储与刮削</a>
+      <a class="nav-pill" href="07-downloads-settings-profile.html">07 下载/设置</a>
+    </nav>
+    <div class="showcase-controls">
+      <div class="seg-group">
+        <button class="seg-btn active" data-platform="desktop">💻 Desktop</button>
+        <button class="seg-btn" data-platform="tablet">📱 Tablet</button>
+        <button class="seg-btn" data-platform="mobile">📲 Mobile</button>
+        <button class="seg-btn" data-platform="tv">📺 TV</button>
+        <button class="seg-btn" data-platform="compare">⚖ 现版对比</button>
+      </div>
+      <div class="accent-dots">
+        <button class="accent-dot" data-accent="glacier" style="background:#5cb8ff"></button>
+        <button class="accent-dot" data-accent="neutral" style="background:#ffffff"></button>
+        <button class="accent-dot" data-accent="ember" style="background:#ff8a5b"></button>
+        <button class="accent-dot" data-accent="plum" style="background:#c084fc"></button>
+      </div>
+    </div>
+  </header>
+
+  <main class="page-container">
+    <div class="design-notes-bar">
+      <div class="note-card">
+        <strong>① 告别刺眼纯白数字圆标</strong>
+        <span>现版右上角 <code>87 / 63 / 5</code> 白底黑字圆圈非常抢眼；新版改用 <strong>暗色毛玻璃胶囊</strong>，未看集数克制融于海报。</span>
+      </div>
+      <div class="note-card">
+        <strong>② 支持五大自动分类 + 多源筛选</strong>
+        <span>贴合你分支规划：顶部/侧边清晰区分「电影 · 电视剧 · 动漫 · 综艺 · 纪录片」与「夸克 / SMB / WebDAV / Emby」来源过滤。</span>
+      </div>
+      <div class="note-card">
+        <strong>③ 显性「未匹配」纠偏入口</strong>
+        <span>刮削失败的文件不再静默丢失，媒体库顶部提供轻量 Amber 提示条，一键跳去手动匹配 TMDB / Bangumi。</span>
+      </div>
+      <div class="note-card">
+        <strong>④ Infuse 式悬浮筛选与字母快跳</strong>
+        <span>把「推荐 / 浏览 / 合集 / 片单 / 类型」收敛为玻璃胶囊 Tab，右侧保留优雅半透明字母快跳条。</span>
+      </div>
+    </div>
+
+    <div class="stage-wrapper">
+      <!-- ==================== DESKTOP / TABLET / TV (统一宽屏布局) ==================== -->
+      <section class="stage-panel active" data-platform="desktop tablet tv">
+        <div class="device-desktop">
+          <aside class="glass-sidebar">
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:4px 8px 14px;">
+              <div class="traffic-lights"><span class="tl r"></span><span class="tl y"></span><span class="tl g"></span></div>
+              <span style="font-size:11px;color:var(--text-muted);font-weight:600;">媒体库</span>
+            </div>
+            <div class="side-item" data-nav="01-home-discover.html">🏠 首页发现</div>
+            <div class="side-item" data-nav="05-search.html">🔍 全局搜索</div>
+            <div class="side-item" data-nav="06-storage-sources.html">☁ 媒体源与刮削</div>
+            <div class="sidebar-section-label">本地媒体库</div>
+            <div class="side-item" data-nav="02-library-browse.html">🎬 电影 <span class="side-badge">142</span></div>
+            <div class="side-item active" data-nav="02-library-browse.html">📺 电视剧 <span class="side-badge">38</span></div>
+            <div class="side-item" data-nav="02-library-browse.html">✨ 动漫番剧 <span class="side-badge">64</span></div>
+            <div class="side-item" data-nav="02-library-browse.html">🎙 综艺 <span class="side-badge">11</span></div>
+            <div class="side-item" data-nav="02-library-browse.html">🌍 纪录片 <span class="side-badge">8</span></div>
+            <div class="sidebar-section-label">外部服务器</div>
+            <div class="side-item" data-nav="02-library-browse.html">🟣 Emby · 客厅 NAS</div>
+            <div class="side-item" data-nav="02-library-browse.html">🔵 Jellyfin · 工作室</div>
+          </aside>
+
+          <div class="lib-workspace">
+            <div class="lib-header-glass">
+              <div class="lib-header-row">
+                <div style="display:flex;align-items:center;gap:12px;">
+                  <h2 style="font-size:19px;font-weight:800;">📺 电视剧 · 本地混合库</h2>
+                  <div class="seg-group" data-pill-group>
+                    <button class="seg-btn" data-pill>推荐</button>
+                    <button class="seg-btn active" data-pill>全部浏览</button>
+                    <button class="seg-btn" data-pill>合集</button>
+                    <button class="seg-btn" data-pill>类型</button>
+                  </div>
+                </div>
+                <div style="display:flex;gap:8px;align-items:center;">
+                  <span class="glass-pill tv-only-pill" style="font-size:11.5px;border-color:rgba(255,255,255,0.28);">📺 D-Pad 焦点模式</span>
+                  <button class="glass-pill" data-toast="已切换海报墙 / 列表视图">⊞ 视图: 海报墙</button>
+                  <button class="glass-pill" data-toast="正在增量扫描「电视剧」关联目录…">↻ 增量扫描</button>
+                </div>
+              </div>
+              <div class="lib-header-row">
+                <div style="display:flex;gap:8px;flex-wrap:wrap;" data-pill-group>
+                  <button class="glass-pill active" data-pill>来源: 全部 (38)</button>
+                  <button class="glass-pill" data-pill>☁ 夸克网盘</button>
+                  <button class="glass-pill" data-pill>📁 SMB NAS</button>
+                  <button class="glass-pill" data-pill>✨ 4K / HDR</button>
+                  <button class="glass-pill" data-open-modal="modalFilters">🏷 更多筛选 ▾</button>
+                </div>
+                <button class="glass-pill" data-open-modal="modalSort">⇅ 按入库时间 ▾</button>
+              </div>
+            </div>
+
+            <div class="lib-grid-scroll">
+              <div class="unmatched-banner">
+                <span>⚠ 有 <strong>3 个剧集文件夹</strong> 刮削未匹配（来自 <code>/夸克网盘/待整理/</code>），当前已从公开海报墙隐藏。</span>
+                <span class="glass-pill" style="padding:4px 12px;font-size:11.5px;" data-nav="06-storage-sources.html">去手动匹配 ›</span>
+              </div>
+
+              <div class="poster-wall-6">
+                <div class="poster-card" data-nav="03-media-detail.html"><div class="poster-art art-aot tv-focus-default"><span class="poster-badge-source">SMB</span><span class="poster-badge-top">87 集</span><div class="poster-art-title">进击的巨人</div></div><div class="poster-meta-title">进击的巨人</div><div class="poster-meta-sub">2013 · ★ 9.4</div></div>
+                <div class="poster-card" data-nav="03-media-detail.html"><div class="poster-art art-bcs"><span class="poster-badge-source">夸克</span><span class="poster-badge-top">63 集</span><div class="poster-art-title">风骚律师</div></div><div class="poster-meta-title">风骚律师</div><div class="poster-meta-sub">2015 · ★ 9.0</div></div>
+                <div class="poster-card" data-nav="03-media-detail.html"><div class="poster-art art-chernobyl"><span class="poster-badge-source">本地</span><span class="poster-badge-top">5 集</span><div class="poster-art-title">CHERNOBYL</div></div><div class="poster-meta-title">切尔诺贝利</div><div class="poster-meta-sub">2019 · ★ 9.5</div></div>
+                <div class="poster-card" data-nav="03-media-detail.html"><div class="poster-art art-curb"><span class="poster-badge-source">Emby</span><span class="poster-badge-top">100</span><div class="poster-art-title">抑制热情</div></div><div class="poster-meta-title">Curb Your Enthusiasm</div><div class="poster-meta-sub">2000 · ★ 8.8</div></div>
+                <div class="poster-card" data-nav="03-media-detail.html"><div class="poster-art art-frieren"><span class="poster-badge-source">夸克</span><span class="poster-badge-top">28 集</span><div class="poster-art-title">葬送的芙莉莲</div></div><div class="poster-meta-title">葬送的芙莉莲</div><div class="poster-meta-sub">2023 · ★ 9.2</div></div>
+                <div class="poster-card" data-nav="03-media-detail.html"><div class="poster-art art-severance"><span class="poster-badge-source">SMB</span><span class="poster-badge-top">19 集</span><div class="poster-art-title">SEVERANCE</div></div><div class="poster-meta-title">人生切割术</div><div class="poster-meta-sub">2022 · ★ 8.7</div></div>
+                <div class="poster-card" data-nav="03-media-detail.html"><div class="poster-art art-apothecary"><span class="poster-badge-source">夸克</span><span class="poster-badge-top">48 集</span><div class="poster-art-title">药屋少女</div></div><div class="poster-meta-title">药屋少女的呢喃</div><div class="poster-meta-sub">2023 · ★ 8.8</div></div>
+                <div class="poster-card" data-nav="03-media-detail.html"><div class="poster-art art-cyberpunk"><span class="poster-badge-source">WebDAV</span><span class="poster-badge-top">10 集</span><div class="poster-art-title">边缘行者</div></div><div class="poster-meta-title">赛博朋克：边缘行者</div><div class="poster-meta-sub">2022 · ★ 8.9</div></div>
+                <div class="poster-card" data-nav="03-media-detail.html"><div class="poster-art art-planet"><span class="poster-badge-source">SMB</span><span class="poster-badge-top">4K</span><div class="poster-art-title">地球脉动 III</div></div><div class="poster-meta-title">地球脉动 第三季</div><div class="poster-meta-sub">2023 · ★ 9.6</div></div>
+                <div class="poster-card" data-nav="03-media-detail.html"><div class="poster-art art-1917"><span class="poster-badge-source">本地</span><span class="poster-badge-top">DV</span><div class="poster-art-title">1917</div></div><div class="poster-meta-title">1917</div><div class="poster-meta-sub">2019 · ★ 8.5</div></div>
+                <div class="poster-card" data-nav="03-media-detail.html"><div class="poster-art art-dune"><span class="poster-badge-source">夸克</span><span class="poster-badge-top">4K</span><div class="poster-art-title">沙丘 2</div></div><div class="poster-meta-title">沙丘：第二部</div><div class="poster-meta-sub">2024 · ★ 8.6</div></div>
+                <div class="poster-card" data-nav="03-media-detail.html"><div class="poster-art art-oppenheimer"><span class="poster-badge-source">SMB</span><span class="poster-badge-top">HDR</span><div class="poster-art-title">奥本海默</div></div><div class="poster-meta-title">奥本海默</div><div class="poster-meta-sub">2023 · ★ 8.8</div></div>
+              </div>
+
+              <div class="alpha-rail">
+                <span class="active">#</span><span>A</span><span>B</span><span>C</span><span>D</span><span>F</span><span>H</span><span>J</span><span>O</span><span>S</span><span>Z</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ==================== MOBILE ==================== -->
+      <section class="stage-panel" data-platform="mobile">
+        <div class="device-mobile">
+          <div class="mobile-statusbar"><span>9:41</span><div class="dynamic-island"></div><span>5G 🔋</span></div>
+          <div style="padding:52px 16px 10px;background:rgba(12,14,20,0.8);backdrop-filter:var(--blur-md);border-bottom:1px solid var(--border-subtle);">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+              <button class="glass-pill" style="font-size:15px;font-weight:800;padding:5px 12px;" data-open-modal="modalLibPicker">📺 电视剧 ▾</button>
+              <div style="display:flex;gap:8px;">
+                <button class="btn-glass-icon" style="width:34px;height:34px;" data-nav="05-search.html">🔍</button>
+                <button class="btn-glass-icon" style="width:34px;height:34px;" data-toast="正在增量扫描当前媒体库…">↻</button>
+              </div>
+            </div>
+            <div style="display:flex;gap:6px;overflow-x:auto;padding-bottom:4px;" data-pill-group>
+              <button class="glass-pill active" data-pill style="padding:5px 11px;font-size:11.5px;">全部</button>
+              <button class="glass-pill" data-pill style="padding:5px 11px;font-size:11.5px;">☁ 夸克</button>
+              <button class="glass-pill" data-pill style="padding:5px 11px;font-size:11.5px;">📁 SMB</button>
+              <button class="glass-pill" style="padding:5px 11px;font-size:11.5px;" data-open-modal="modalFilters">⚡ 筛选</button>
+              <button class="glass-pill" style="padding:5px 11px;font-size:11.5px;" data-open-modal="modalSort">⇅ 排序</button>
+            </div>
+          </div>
+          <div style="flex:1;overflow-y:auto;padding:14px 16px 96px;">
+            <div class="poster-wall-3">
+              <div class="poster-card" data-nav="03-media-detail.html"><div class="poster-art art-aot"><span class="poster-badge-top">87</span><div class="poster-art-title" style="font-size:12px;">进击的巨人</div></div><div class="poster-meta-title">进击的巨人</div><div class="poster-meta-sub">2013</div></div>
+              <div class="poster-card" data-nav="03-media-detail.html"><div class="poster-art art-bcs"><span class="poster-badge-top">63</span><div class="poster-art-title" style="font-size:12px;">风骚律师</div></div><div class="poster-meta-title">风骚律师</div><div class="poster-meta-sub">2015</div></div>
+              <div class="poster-card" data-nav="03-media-detail.html"><div class="poster-art art-chernobyl"><span class="poster-badge-top">5</span><div class="poster-art-title" style="font-size:12px;">切尔诺贝利</div></div><div class="poster-meta-title">切尔诺贝利</div><div class="poster-meta-sub">2019</div></div>
+              <div class="poster-card" data-nav="03-media-detail.html"><div class="poster-art art-frieren"><span class="poster-badge-top">28</span><div class="poster-art-title" style="font-size:12px;">芙莉莲</div></div><div class="poster-meta-title">葬送的芙莉莲</div><div class="poster-meta-sub">2023</div></div>
+              <div class="poster-card" data-nav="03-media-detail.html"><div class="poster-art art-severance"><span class="poster-badge-top">19</span><div class="poster-art-title" style="font-size:12px;">切割术</div></div><div class="poster-meta-title">人生切割术</div><div class="poster-meta-sub">2022</div></div>
+              <div class="poster-card" data-nav="03-media-detail.html"><div class="poster-art art-apothecary"><span class="poster-badge-top">48</span><div class="poster-art-title" style="font-size:12px;">药屋少女</div></div><div class="poster-meta-title">药屋少女</div><div class="poster-meta-sub">2023</div></div>
+              <div class="poster-card" data-nav="03-media-detail.html"><div class="poster-art art-cyberpunk"><span class="poster-badge-top">10</span><div class="poster-art-title" style="font-size:12px;">边缘行者</div></div><div class="poster-meta-title">边缘行者</div><div class="poster-meta-sub">2022</div></div>
+              <div class="poster-card" data-nav="03-media-detail.html"><div class="poster-art art-dune"><span class="poster-badge-top">4K</span><div class="poster-art-title" style="font-size:12px;">沙丘 2</div></div><div class="poster-meta-title">沙丘 2</div><div class="poster-meta-sub">2024</div></div>
+              <div class="poster-card" data-nav="03-media-detail.html"><div class="poster-art art-1917"><span class="poster-badge-top">DV</span><div class="poster-art-title" style="font-size:12px;">1917</div></div><div class="poster-meta-title">1917</div><div class="poster-meta-sub">2019</div></div>
+            </div>
+          </div>
+          <nav class="mobile-glass-dock">
+            <div class="dock-tab" data-nav="01-home-discover.html"><span>🏠</span><span>首页</span></div>
+            <div class="dock-tab active" data-nav="02-library-browse.html"><span>🎬</span><span>媒体库</span></div>
+            <div class="dock-tab" data-nav="05-search.html"><span>🔍</span><span>搜索</span></div>
+            <div class="dock-tab" data-nav="06-storage-sources.html"><span>☁</span><span>存储</span></div>
+            <div class="dock-tab" data-nav="07-downloads-settings-profile.html"><span>⚙</span><span>设置</span></div>
+          </nav>
+        </div>
+      </section>
+
+      <!-- ==================== COMPARE ==================== -->
+      <section class="stage-panel" data-platform="compare">
+        <div class="compare-grid">
+          <div class="compare-box"><div class="compare-label"><span>现版 · Desktop Library</span><span class="compare-tag">screenshots/desktop-library.png</span></div><img class="screenshot-img" src="screenshots/desktop-library.png" alt="Desktop Library"></div>
+          <div class="compare-box"><div class="compare-label"><span>现版 · Mobile Library</span><span class="compare-tag">screenshots/phone-library.png</span></div><img class="screenshot-img" src="screenshots/phone-library.png" alt="Mobile Library"></div>
+          <div class="compare-box"><div class="compare-label"><span>现版 · Tablet Library</span><span class="compare-tag">screenshots/tablet-library.png</span></div><img class="screenshot-img" src="screenshots/tablet-library.png" alt="Tablet Library"></div>
+          <div class="compare-box"><div class="compare-label"><span>现版 · TV Library</span><span class="compare-tag">screenshots/tv-library.png</span></div><img class="screenshot-img" src="screenshots/tv-library.png" alt="TV Library"></div>
+        </div>
+      </section>
+    </div>
+  </main>
+  <!-- 筛选弹窗 (FiltersBottomSheet) -->
+  <div class="proto-modal" id="modalFilters">
+    <div class="proto-dialog" style="max-width:480px;">
+      <div class="proto-dialog-head">
+        <div class="proto-dialog-title">🏷 筛选条件 (Filters)</div>
+        <button class="btn-glass-icon" data-close-modal>✕</button>
+      </div>
+      <div class="proto-field">
+        <label class="proto-label">来源挂载 / 服务器</label>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;" data-pill-group>
+          <button class="glass-pill active" data-pill>全部</button>
+          <button class="glass-pill" data-pill>☁ 夸克网盘</button>
+          <button class="glass-pill" data-pill>📁 SMB NAS</button>
+          <button class="glass-pill" data-pill>🌐 WebDAV</button>
+          <button class="glass-pill" data-pill>🟣 Emby</button>
+        </div>
+      </div>
+      <div class="proto-field">
+        <label class="proto-label">类型标签 (TMDB / Bangumi)</label>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;" data-pill-group>
+          <button class="glass-pill active" data-pill>不限</button>
+          <button class="glass-pill" data-pill>剧情</button>
+          <button class="glass-pill" data-pill>科幻</button>
+          <button class="glass-pill" data-pill>悬疑</button>
+          <button class="glass-pill" data-pill>喜剧</button>
+          <button class="glass-pill" data-pill>奇幻</button>
+        </div>
+      </div>
+      <div class="proto-field">
+        <label class="proto-label">画质与观看状态</label>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;" data-pill-group>
+          <button class="glass-pill active" data-pill>4K / HDR</button>
+          <button class="glass-pill" data-pill>Dolby Vision</button>
+          <button class="glass-pill" data-pill>仅看未看</button>
+        </div>
+      </div>
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;">
+        <button class="glass-pill" data-close-modal>重置</button>
+        <button class="btn-play-hero" style="padding:8px 18px;font-size:13px;" data-close-modal data-toast="已应用筛选条件">应用筛选</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 排序弹窗 -->
+  <div class="proto-modal" id="modalSort">
+    <div class="proto-dialog" style="max-width:400px;">
+      <div class="proto-dialog-head">
+        <div class="proto-dialog-title">⇅ 排序方式</div>
+        <button class="btn-glass-icon" data-close-modal>✕</button>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:8px;">
+        <div class="proto-option-row active" data-close-modal data-toast="排序：按入库时间 (最新)"><span>按入库时间 (最新)</span><span>✓</span></div>
+        <div class="proto-option-row" data-close-modal data-toast="排序：按发行年份"><span>按发行年份</span><span></span></div>
+        <div class="proto-option-row" data-close-modal data-toast="排序：按 TMDB / Bangumi 评分"><span>按评分从高到低</span><span></span></div>
+        <div class="proto-option-row" data-close-modal data-toast="排序：按片名 A-Z"><span>按片名首字母</span><span></span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 快速切换媒体库 (LibraryQuickPickerSheet) -->
+  <div class="proto-modal" id="modalLibPicker">
+    <div class="proto-dialog" style="max-width:420px;">
+      <div class="proto-dialog-head">
+        <div class="proto-dialog-title">📚 切换媒体库</div>
+        <button class="btn-glass-icon" data-close-modal>✕</button>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:8px;">
+        <div class="proto-option-row" data-close-modal data-toast="已切换至「🎬 电影 (142)」"><span>🎬 电影 (本地混合)</span><span style="color:var(--text-muted);">142</span></div>
+        <div class="proto-option-row active" data-close-modal data-toast="当前：📺 电视剧 (38)"><span>📺 电视剧 (本地混合)</span><span>✓</span></div>
+        <div class="proto-option-row" data-close-modal data-toast="已切换至「✨ 动漫番剧 (64)」"><span>✨ 动漫番剧</span><span style="color:var(--text-muted);">64</span></div>
+        <div class="proto-option-row" data-close-modal data-toast="已切换至「🎙 综艺 (11)」"><span>🎙 综艺</span><span style="color:var(--text-muted);">11</span></div>
+        <div class="proto-option-row" data-close-modal data-toast="已切换至「🌍 纪录片 (8)」"><span>🌍 纪录片</span><span style="color:var(--text-muted);">8</span></div>
+        <div class="proto-option-row" data-close-modal data-toast="已切换至「🟣 Emby · 客厅 NAS」"><span>🟣 Emby · 客厅 NAS</span><span style="color:var(--text-muted);">外部</span></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="scripts/showcase.js"></script>
+</body>
+</html>

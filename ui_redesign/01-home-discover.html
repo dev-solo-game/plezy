@@ -1,0 +1,549 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-accent="glacier">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>01 首页与发现页 · Plezy UI 重设计</title>
+  <link rel="stylesheet" href="styles/design-system.css" />
+  <style>
+    /* Page-specific Home Prototype Styles */
+    .home-main {
+      flex: 1;
+      position: relative;
+      overflow-y: auto;
+      overflow-x: hidden;
+      background: #0b0d12;
+    }
+
+    .hero-cinema {
+      position: relative;
+      height: 390px;
+      padding: 20px 28px 28px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      background:
+        radial-gradient(circle at 74% 32%, rgba(124, 196, 255, 0.34), transparent 44%),
+        radial-gradient(circle at 52% 20%, rgba(52, 211, 153, 0.22), transparent 45%),
+        linear-gradient(125deg, #1b2845 0%, #274060 46%, #0f172a 100%);
+      overflow: hidden;
+    }
+
+    .hero-cinema::before {
+      /* Stylized landscape mountain / sky depth */
+      content: "";
+      position: absolute;
+      inset: 0;
+      background:
+        radial-gradient(ellipse at 70% 60%, rgba(255,255,255,0.08), transparent 55%),
+        linear-gradient(180deg, rgba(11,13,18,0.45) 0%, rgba(11,13,18,0.12) 45%, #0b0d12 100%);
+      z-index: 1;
+    }
+
+    .hero-cinema::after {
+      /* Left readability vignette for title & synopsis */
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(90deg, rgba(11,13,18,0.86) 0%, rgba(11,13,18,0.42) 48%, transparent 80%);
+      z-index: 1;
+    }
+
+    .hero-topbar {
+      position: relative;
+      z-index: 5;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .hero-body {
+      position: relative;
+      z-index: 5;
+      max-width: 540px;
+    }
+
+    .hero-logo-title {
+      font-size: 40px;
+      font-weight: 900;
+      letter-spacing: 0.08em;
+      line-height: 1;
+      text-shadow: 0 8px 30px rgba(0, 0, 0, 0.6);
+      margin-bottom: 6px;
+    }
+
+    .hero-logo-sub {
+      font-size: 14px;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      color: rgba(255, 255, 255, 0.85);
+      margin-bottom: 14px;
+    }
+
+    .hero-specs {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      flex-wrap: wrap;
+      margin-bottom: 12px;
+    }
+
+    .hero-desc {
+      font-size: 13px;
+      color: var(--text-secondary);
+      line-height: 1.55;
+      margin-bottom: 16px;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+
+    .hero-cta-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .hero-dots {
+      position: absolute;
+      right: 28px;
+      bottom: 28px;
+      z-index: 5;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: rgba(15, 17, 24, 0.56);
+      backdrop-filter: blur(16px);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+    }
+
+    .hero-dots i {
+      width: 6px;
+      height: 6px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.35);
+      display: block;
+    }
+    .hero-dots i.active {
+      width: 20px;
+      background: #fff;
+    }
+
+    .shelf-section {
+      padding: 8px 28px 22px;
+    }
+
+    .shelf-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px;
+    }
+
+    .shelf-title {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 15.5px;
+      font-weight: 700;
+    }
+
+    .shelf-more {
+      font-size: 12px;
+      color: var(--text-muted);
+      cursor: pointer;
+    }
+
+    .row-landscape {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .row-portrait {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .source-chip-bar {
+      display: flex;
+      gap: 8px;
+      padding: 12px 28px 6px;
+      flex-wrap: wrap;
+    }
+
+    /* Mobile overrides */
+    .mobile-hero {
+      position: relative;
+      height: 440px;
+      padding: 54px 18px 22px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      background:
+        radial-gradient(circle at 50% 25%, rgba(125, 211, 252, 0.32), transparent 48%),
+        linear-gradient(175deg, #1b3b4b 0%, #10202e 52%, #0b0d12 100%);
+    }
+    .mobile-hero::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(180deg, rgba(11,13,18,0.5) 0%, transparent 32%, rgba(11,13,18,0.88) 78%, #0b0d12 100%);
+      z-index: 1;
+    }
+    .mobile-scroll {
+      flex: 1;
+      overflow-y: auto;
+      padding-bottom: 92px;
+    }
+
+    /* TV overrides */
+    .tv-canvas {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      background:
+        radial-gradient(circle at 72% 28%, rgba(148, 163, 184, 0.25), transparent 45%),
+        linear-gradient(125deg, #2b3540 0%, #192028 45%, #07080b 100%);
+      padding: 86px 44px 28px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+    .tv-canvas::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background:
+        linear-gradient(90deg, rgba(7,8,11,0.9) 0%, rgba(7,8,11,0.45) 50%, transparent 82%),
+        linear-gradient(180deg, rgba(7,8,11,0.45) 0%, transparent 25%, rgba(7,8,11,0.94) 76%, #07080b 100%);
+      pointer-events: none;
+    }
+    .tv-z { position: relative; z-index: 5; }
+  </style>
+</head>
+<body>
+  <header class="showcase-topbar">
+    <div class="showcase-brand">
+      <a href="index.html" class="brand-mark">P</a>
+      <div>
+        <div class="brand-title">01 · 首页与发现页 (Discover / Home)</div>
+        <div class="brand-sub">对比现版：desktop-home.png · tablet-home.png · phone-home.png · tv-home.png</div>
+      </div>
+    </div>
+    <nav class="showcase-nav">
+      <a class="nav-pill" href="index.html">总览</a>
+      <a class="nav-pill active" href="01-home-discover.html">01 首页发现</a>
+      <a class="nav-pill" href="02-library-browse.html">02 媒体库</a>
+      <a class="nav-pill" href="03-media-detail.html">03 详情页</a>
+      <a class="nav-pill" href="04-video-player.html">04 播放器</a>
+      <a class="nav-pill" href="05-search.html">05 搜索</a>
+      <a class="nav-pill" href="06-storage-sources.html">06 存储与刮削</a>
+      <a class="nav-pill" href="07-downloads-settings-profile.html">07 下载/设置</a>
+    </nav>
+    <div class="showcase-controls">
+      <div class="seg-group">
+        <button class="seg-btn active" data-platform="desktop">💻 Desktop</button>
+        <button class="seg-btn" data-platform="tablet">📱 Tablet</button>
+        <button class="seg-btn" data-platform="mobile">📲 Mobile</button>
+        <button class="seg-btn" data-platform="tv">📺 TV</button>
+        <button class="seg-btn" data-platform="compare">⚖ 现版对比</button>
+      </div>
+      <div class="accent-dots">
+        <button class="accent-dot" data-accent="glacier" style="background:#5cb8ff"></button>
+        <button class="accent-dot" data-accent="neutral" style="background:#ffffff"></button>
+        <button class="accent-dot" data-accent="ember" style="background:#ff8a5b"></button>
+        <button class="accent-dot" data-accent="plum" style="background:#c084fc"></button>
+      </div>
+    </div>
+  </header>
+
+  <main class="page-container">
+    <div class="design-notes-bar">
+      <div class="note-card">
+        <strong>① 解决 Hero 标题可读性痛点</strong>
+        <span>现版 <code>FRIEREN</code> 白色 Logo 直接叠在亮色天空上对比度不足；新版增加左下角径向渐变暗角 + 底部自然融黑遮罩。</span>
+      </div>
+      <div class="note-card">
+        <strong>② VidHub 式左侧源树 + Infuse 元数据胶囊</strong>
+        <span>Desktop 侧栏直接展开「本地五大分类 + 挂载存储 + Emby 服务器」，Hero 增加 <code>4K · HDR · 夸克原画</code> 与进度胶囊。</span>
+      </div>
+      <div class="note-card">
+        <strong>③ 多端差异化导航</strong>
+        <span>Mobile 改用底部悬浮液态毛玻璃胶囊 Dock；Tablet 顶栏胶囊 + 4 列横图；TV 顶部透明胶囊栏 + 1.06x 发光焦点框。</span>
+      </div>
+      <div class="note-card">
+        <strong>④ 最近新增按来源分栏展示</strong>
+        <span>遵循 <code>fork-plan.md</code>：本地刮削库（动漫/电影）与 Emby 服务器各自独立成栏，既不混乱又清晰区分。</span>
+      </div>
+    </div>
+
+    <div class="stage-wrapper">
+      <!-- ==================== DESKTOP / TABLET / TV (统一宽屏布局) ==================== -->
+      <section class="stage-panel active" data-platform="desktop tablet tv">
+        <div class="device-desktop">
+          <aside class="glass-sidebar">
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:4px 8px 14px;">
+              <div class="traffic-lights"><span class="tl r"></span><span class="tl y"></span><span class="tl g"></span></div>
+              <span style="font-size:11px;color:var(--text-muted);font-weight:600;">Plezy Next</span>
+            </div>
+            <div class="side-item active" data-nav="01-home-discover.html">🏠 首页发现</div>
+            <div class="side-item" data-nav="05-search.html">🔍 全局搜索 <span class="side-badge">⌘K</span></div>
+            <div class="side-item" data-nav="06-storage-sources.html">☁ 媒体源与刮削 <span class="side-badge">4</span></div>
+            <div class="side-item" data-nav="07-downloads-settings-profile.html">⬇ 离线下载 <span class="side-badge">2</span></div>
+
+            <div class="sidebar-section-label">本地媒体库 (已刮削)</div>
+            <div class="side-item" data-nav="02-library-browse.html">🎬 电影 <span class="side-badge">142</span></div>
+            <div class="side-item" data-nav="02-library-browse.html">📺 电视剧 <span class="side-badge">38</span></div>
+            <div class="side-item" data-nav="02-library-browse.html">✨ 动漫番剧 <span class="side-badge">64</span></div>
+            <div class="side-item" data-nav="02-library-browse.html">🎙 综艺 & 纪录片 <span class="side-badge">19</span></div>
+            <div class="side-item" style="color:var(--badge-amber);" data-nav="06-storage-sources.html">⚠ 未匹配 <span class="side-badge">3</span></div>
+
+            <div class="sidebar-section-label">外部服务器</div>
+            <div class="side-item" data-nav="02-library-browse.html">🟣 Emby · 客厅 NAS</div>
+            <div class="side-item" data-nav="02-library-browse.html">🔵 Jellyfin · 工作室</div>
+
+            <div style="margin-top:auto;padding-top:10px;border-top:1px solid var(--border-subtle);">
+              <div class="side-item" data-nav="07-downloads-settings-profile.html">⚙ 偏好设置</div>
+            </div>
+          </aside>
+
+          <div class="home-main">
+            <div class="hero-cinema">
+              <div class="hero-topbar">
+                <div class="seg-group" data-pill-group>
+                  <button class="seg-btn active" data-pill>全部内容</button>
+                  <button class="seg-btn" data-pill>本地库</button>
+                  <button class="seg-btn" data-pill>夸克网盘</button>
+                  <button class="seg-btn" data-pill>Emby</button>
+                </div>
+                <div style="display:flex;align-items:center;gap:8px;">
+                  <span class="glass-pill tv-only-pill" style="font-size:11.5px;border-color:rgba(255,255,255,0.28);">📺 10-Foot 遥控焦点模式</span>
+                  <button class="btn-glass-icon" title="扫描更新" data-toast="已触发增量扫描：正在检查 4 个存储源变更…">↻</button>
+                  <button class="btn-glass-icon" title="手机遥控" data-open-modal="modalRemote">📱</button>
+                  <button class="glass-pill" data-nav="07-downloads-settings-profile.html">👤 客厅主机 ▾</button>
+                </div>
+              </div>
+
+              <div class="hero-body">
+                <div class="hero-logo-title">FRIEREN</div>
+                <div class="hero-logo-sub">葬送的芙莉莲 · Beyond Journey's End</div>
+                <div class="hero-specs">
+                  <span class="spec-pill tmdb">TMDB 8.9</span>
+                  <span class="spec-pill dv">4K · HDR10</span>
+                  <span class="spec-pill">动漫 · 2023</span>
+                  <span class="spec-pill">☁ 夸克网盘 · 挂载</span>
+                </div>
+                <p class="hero-desc">S1 E2 · 魔法使芙莉莲教导菲伦基础魔法，同时解读海塔托付的古老魔导书。旅程在平静而温柔的时光中重新启程。</p>
+                <div class="hero-cta-row">
+                  <button class="btn-play-hero tv-focus-default" data-nav="04-video-player.html">▶ 继续播放 S1E2 · 剩余 24 分钟</button>
+                  <button class="btn-glass-icon" title="加入片单" data-toast="已加入「稍后观看」">＋</button>
+                  <button class="btn-glass-icon" title="影片详情" data-nav="03-media-detail.html">ℹ</button>
+                </div>
+              </div>
+
+              <div class="hero-dots"><i></i><i class="active"></i><i></i><i></i><i></i></div>
+            </div>
+
+            <div class="shelf-section">
+              <div class="shelf-head">
+                <div class="shelf-title">▶ 继续观看 <span style="font-size:12px;color:var(--text-muted);font-weight:500;">跨源进度同步</span></div>
+                <span class="shelf-more" data-nav="02-library-browse.html">查看全部 ›</span>
+              </div>
+              <div class="row-landscape">
+                <div class="poster-card" data-nav="03-media-detail.html">
+                  <div class="poster-art landscape art-severance">
+                    <span class="poster-badge-source">SMB</span>
+                    <span class="poster-badge-top">剩 33m</span>
+                    <div class="poster-art-title">人生切割术</div>
+                    <div class="poster-progress"><i style="width:42%"></i></div>
+                  </div>
+                  <div class="poster-meta-title">Severance · S1E1</div>
+                  <div class="poster-meta-sub">Good News About Hell</div>
+                </div>
+                <div class="poster-card" data-nav="03-media-detail.html">
+                  <div class="poster-art landscape art-frieren">
+                    <span class="poster-badge-source">夸克</span>
+                    <span class="poster-badge-top">剩 12m</span>
+                    <div class="poster-art-title">葬送的芙莉莲</div>
+                    <div class="poster-progress"><i style="width:68%"></i></div>
+                  </div>
+                  <div class="poster-meta-title">Frieren · S1E2</div>
+                  <div class="poster-meta-sub">没必要是魔法什么的…</div>
+                </div>
+                <div class="poster-card" data-nav="03-media-detail.html">
+                  <div class="poster-art landscape art-bcs">
+                    <span class="poster-badge-source">Emby</span>
+                    <span class="poster-badge-top">剩 18m</span>
+                    <div class="poster-art-title">风骚律师</div>
+                    <div class="poster-progress"><i style="width:60%"></i></div>
+                  </div>
+                  <div class="poster-meta-title">Better Call Saul · S2E2</div>
+                  <div class="poster-meta-sub">Cobbler</div>
+                </div>
+                <div class="poster-card" data-nav="03-media-detail.html">
+                  <div class="poster-art landscape art-1917">
+                    <span class="poster-badge-source">本地</span>
+                    <span class="poster-badge-top">剩 49m</span>
+                    <div class="poster-art-title">1917</div>
+                    <div class="poster-progress"><i style="width:58%"></i></div>
+                  </div>
+                  <div class="poster-meta-title">1917 (2019)</div>
+                  <div class="poster-meta-sub">4K Dolby Vision · REMUX</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="shelf-section">
+              <div class="shelf-head">
+                <div class="shelf-title">✨ 最近新增 · 本地动漫库</div>
+                <span class="shelf-more" data-nav="02-library-browse.html">进入动漫库 ›</span>
+              </div>
+              <div class="row-portrait">
+                <div class="poster-card" data-nav="03-media-detail.html"><div class="poster-art art-frieren"><span class="poster-badge-source">夸克</span><span class="poster-badge-top">28</span><div class="poster-art-title">葬送的芙莉莲</div></div><div class="poster-meta-title">葬送的芙莉莲</div><div class="poster-meta-sub">2023 · ★ 9.2</div></div>
+                <div class="poster-card" data-nav="03-media-detail.html"><div class="poster-art art-apothecary"><span class="poster-badge-source">夸克</span><span class="poster-badge-top">48</span><div class="poster-art-title">药屋少女的呢喃</div></div><div class="poster-meta-title">药屋少女的呢喃</div><div class="poster-meta-sub">2023 · ★ 8.8</div></div>
+                <div class="poster-card" data-nav="03-media-detail.html"><div class="poster-art art-aot"><span class="poster-badge-source">SMB</span><span class="poster-badge-top">87</span><div class="poster-art-title">进击的巨人</div></div><div class="poster-meta-title">进击的巨人</div><div class="poster-meta-sub">2013 · ★ 9.4</div></div>
+                <div class="poster-card" data-nav="03-media-detail.html"><div class="poster-art art-cyberpunk"><span class="poster-badge-source">WebDAV</span><span class="poster-badge-top">10</span><div class="poster-art-title">边缘行者</div></div><div class="poster-meta-title">赛博朋克：边缘行者</div><div class="poster-meta-sub">2022 · ★ 8.9</div></div>
+                <div class="poster-card" data-nav="03-media-detail.html"><div class="poster-art art-dune"><span class="poster-badge-source">本地</span><span class="poster-badge-top">4K</span><div class="poster-art-title">沙丘 2</div></div><div class="poster-meta-title">沙丘：第二部</div><div class="poster-meta-sub">2024 · ★ 8.6</div></div>
+                <div class="poster-card" data-nav="03-media-detail.html"><div class="poster-art art-chernobyl"><span class="poster-badge-source">Emby</span><span class="poster-badge-top">5</span><div class="poster-art-title">切尔诺贝利</div></div><div class="poster-meta-title">切尔诺贝利</div><div class="poster-meta-sub">2019 · ★ 9.5</div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ==================== MOBILE ==================== -->
+      <section class="stage-panel" data-platform="mobile">
+        <div class="device-mobile">
+          <div class="mobile-statusbar">
+            <span>9:41</span>
+            <div class="dynamic-island"></div>
+            <span>5G 🔋</span>
+          </div>
+
+          <div class="mobile-scroll">
+            <div class="mobile-hero">
+              <div style="position:relative;z-index:5;display:flex;align-items:center;justify-content:space-between;">
+                <span style="font-size:19px;font-weight:800;">发现</span>
+                <div style="display:flex;gap:8px;">
+                  <button class="btn-glass-icon" style="width:34px;height:34px;" data-nav="06-storage-sources.html">☁</button>
+                  <button class="btn-glass-icon" style="width:34px;height:34px;" data-toast="已触发增量扫描：正在检查存储源变更…">↻</button>
+                  <div style="width:34px;height:34px;border-radius:50%;background:linear-gradient(135deg,#f59e0b,#ea580c);display:grid;place-items:center;font-weight:700;font-size:13px;" data-nav="07-downloads-settings-profile.html">T</div>
+                </div>
+              </div>
+
+              <div style="position:relative;z-index:5;text-align:center;">
+                <div style="font-size:34px;font-weight:900;letter-spacing:-0.02em;margin-bottom:6px;">Severance</div>
+                <div style="display:flex;justify-content:center;gap:6px;margin-bottom:12px;">
+                  <span class="spec-pill">剧集 · 2022</span>
+                  <span class="spec-pill dv">4K DV</span>
+                  <span class="spec-pill">SMB</span>
+                </div>
+                <button class="btn-play-hero" style="width:100%;justify-content:center;margin-bottom:10px;" data-nav="04-video-player.html">
+                  ▶ 继续观看 · S1E1 剩 33 分钟
+                </button>
+                <p style="font-size:11.5px;color:var(--text-secondary);line-height:1.45;">
+                  S1 E1 · 马克带领团队进行将工作与生活记忆完全分离的实验性工作…
+                </p>
+              </div>
+            </div>
+
+            <div style="padding:8px 16px 16px;">
+              <div class="shelf-head"><div class="shelf-title" style="font-size:14.5px;">▶ 继续观看</div><span class="shelf-more" data-nav="02-library-browse.html">更多 ›</span></div>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+                <div class="poster-card" data-nav="03-media-detail.html">
+                  <div class="poster-art landscape art-bcs"><span class="poster-badge-source">Emby</span><div class="poster-art-title" style="font-size:13px;">风骚律师</div><div class="poster-progress"><i style="width:45%"></i></div></div>
+                  <div class="poster-meta-title">S2 E2 · Cobbler</div>
+                </div>
+                <div class="poster-card" data-nav="03-media-detail.html">
+                  <div class="poster-art landscape art-frieren"><span class="poster-badge-source">夸克</span><div class="poster-art-title" style="font-size:13px;">葬送的芙莉莲</div><div class="poster-progress"><i style="width:76%"></i></div></div>
+                  <div class="poster-meta-title">S1 E2 · 魔法书</div>
+                </div>
+              </div>
+            </div>
+
+            <div style="padding:4px 16px 16px;">
+              <div class="shelf-head"><div class="shelf-title" style="font-size:14.5px;">🎬 最近新增 · 本地电影</div><span class="shelf-more" data-nav="02-library-browse.html">更多 ›</span></div>
+              <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;">
+                <div class="poster-card" data-nav="03-media-detail.html"><div class="poster-art art-1917"><span class="poster-badge-top">4K</span><div class="poster-art-title" style="font-size:12px;">1917</div></div><div class="poster-meta-title">1917</div></div>
+                <div class="poster-card" data-nav="03-media-detail.html"><div class="poster-art art-dune"><span class="poster-badge-top">DV</span><div class="poster-art-title" style="font-size:12px;">沙丘 2</div></div><div class="poster-meta-title">沙丘 2</div></div>
+                <div class="poster-card" data-nav="03-media-detail.html"><div class="poster-art art-oppenheimer"><span class="poster-badge-top">HDR</span><div class="poster-art-title" style="font-size:12px;">奥本海默</div></div><div class="poster-meta-title">奥本海默</div></div>
+              </div>
+            </div>
+          </div>
+
+          <nav class="mobile-glass-dock">
+            <div class="dock-tab active" data-nav="01-home-discover.html"><span>🏠</span><span>首页</span></div>
+            <div class="dock-tab" data-nav="02-library-browse.html"><span>🎬</span><span>媒体库</span></div>
+            <div class="dock-tab" data-nav="05-search.html"><span>🔍</span><span>搜索</span></div>
+            <div class="dock-tab" data-nav="06-storage-sources.html"><span>☁</span><span>存储</span></div>
+            <div class="dock-tab" data-nav="07-downloads-settings-profile.html"><span>⚙</span><span>设置</span></div>
+          </nav>
+        </div>
+      </section>
+
+      <!-- ==================== COMPARE ==================== -->
+      <section class="stage-panel" data-platform="compare">
+        <div class="compare-grid">
+          <div class="compare-box">
+            <div class="compare-label"><span>现版 · Desktop Home</span><span class="compare-tag">screenshots/desktop-home.png</span></div>
+            <img class="screenshot-img" src="screenshots/desktop-home.png" alt="Current Desktop Home" />
+          </div>
+          <div class="compare-box">
+            <div class="compare-label"><span>现版 · Mobile Home</span><span class="compare-tag">screenshots/phone-home.png</span></div>
+            <img class="screenshot-img" src="screenshots/phone-home.png" alt="Current Phone Home" />
+          </div>
+          <div class="compare-box">
+            <div class="compare-label"><span>现版 · Tablet Home</span><span class="compare-tag">screenshots/tablet-home.png</span></div>
+            <img class="screenshot-img" src="screenshots/tablet-home.png" alt="Current Tablet Home" />
+          </div>
+          <div class="compare-box">
+            <div class="compare-label"><span>现版 · TV Home</span><span class="compare-tag">screenshots/tv-home.png</span></div>
+            <img class="screenshot-img" src="screenshots/tv-home.png" alt="Current TV Home" />
+          </div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <!-- 手机遥控器配对弹窗 (Companion Remote) -->
+  <div class="proto-modal" id="modalRemote">
+    <div class="proto-dialog" style="max-width:460px;">
+      <div class="proto-dialog-head">
+        <div>
+          <div class="proto-dialog-title">📱 手机伴侣遥控 (Companion Remote)</div>
+          <div style="font-size:12px;color:var(--text-muted);margin-top:3px;">局域网 mDNS / HTTP 直连 TV 端 · 无需额外服务器</div>
+        </div>
+        <button class="btn-glass-icon" data-close-modal>✕</button>
+      </div>
+      <div style="display:flex;gap:14px;align-items:center;padding:12px;border-radius:14px;background:rgba(255,255,255,0.03);border:1px solid var(--border-subtle);margin-bottom:14px;">
+        <div style="width:76px;height:76px;border-radius:12px;background:#fff;color:#111;display:grid;place-items:center;font-size:11px;font-weight:800;flex-shrink:0;">QR 配对码</div>
+        <div style="font-size:12.5px;line-height:1.6;">
+          <div style="font-weight:700;">客厅 Sony TV · 已就绪</div>
+          <div style="color:var(--text-muted);">地址：192.168.1.48:58291</div>
+          <div style="color:var(--accent);font-weight:600;">配对 PIN：4829</div>
+        </div>
+      </div>
+      <div class="proto-field">
+        <label class="proto-label">向 TV 搜索框发送文本 (替代遥控器打字)</label>
+        <div style="display:flex;gap:8px;">
+          <input class="proto-input" type="text" value="葬送的芙莉莲" />
+          <button class="btn-play-hero" style="padding:8px 14px;font-size:12.5px;" data-toast="已将「葬送的芙莉莲」发送到 TV 搜索框" data-close-modal>发送</button>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:12px;">
+        <button class="glass-pill" style="justify-content:center;" data-toast="已发送 D-Pad 方向指令">◀ 方向控制</button>
+        <button class="glass-pill" style="justify-content:center;" data-toast="已发送 播放/暂停 指令">⏯ 播放/暂停</button>
+        <button class="glass-pill" style="justify-content:center;" data-toast="已切换字幕轨">💬 切字幕</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="scripts/showcase.js"></script>
+</body>
+</html>

@@ -1,0 +1,434 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-accent="glacier">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>07 离线下载 / 设置 / 工作区切换 · Plezy UI 重设计</title>
+  <link rel="stylesheet" href="styles/design-system.css" />
+  <style>
+    .subview-content { display: none; flex-direction: column; gap: 18px; }
+    .subview-content.active { display: flex; }
+    .subview-content.tv-settings-split { flex-direction: row; gap: 36px; align-items: center; }
+    .settings-group {
+      background: rgba(255, 255, 255, 0.035);
+      border: 1px solid var(--border-subtle);
+      border-radius: 18px;
+      overflow: hidden;
+    }
+    .settings-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 13px 16px;
+      border-bottom: 1px solid var(--border-subtle);
+      font-size: 13.5px;
+    }
+    .settings-row:last-child { border-bottom: none; }
+    .settings-row:hover { background: rgba(255,255,255,0.03); }
+    .toggle-pill {
+      width: 40px;
+      height: 22px;
+      border-radius: 999px;
+      background: var(--accent);
+      position: relative;
+    }
+    .toggle-pill::after {
+      content: "";
+      position: absolute;
+      right: 3px;
+      top: 3px;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: #0b0d12;
+    }
+    .profile-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 18px;
+      margin-top: 12px;
+    }
+    .profile-card {
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid var(--border-subtle);
+      border-radius: 22px;
+      padding: 26px 18px;
+      text-align: center;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+      cursor: pointer;
+      transition: transform 0.16s ease, border-color 0.16s ease;
+    }
+    .profile-card:hover { transform: translateY(-3px); border-color: var(--border-glass); }
+    .profile-card.current { border-color: var(--accent); background: rgba(92,184,255,0.08); }
+    .profile-avatar-lg {
+      width: 72px;
+      height: 72px;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      font-size: 26px;
+      font-weight: 800;
+      box-shadow: 0 12px 24px rgba(0,0,0,0.45);
+    }
+    .dl-task {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 12px 14px;
+      border-radius: 16px;
+      background: rgba(255,255,255,0.035);
+      border: 1px solid var(--border-subtle);
+    }
+    .dl-bar {
+      height: 6px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.12);
+      overflow: hidden;
+      margin-top: 7px;
+    }
+    .dl-bar > i { display: block; height: 100%; background: var(--accent); }
+  </style>
+</head>
+<body>
+  <header class="showcase-topbar">
+    <div class="showcase-brand">
+      <a href="index.html" class="brand-mark">P</a>
+      <div>
+        <div class="brand-title">07 · 离线下载 / 偏好设置 / 工作区切换</div>
+        <div class="brand-sub">重构源码：downloads_screen.dart · settings_screen.dart · profile_switch_screen.dart</div>
+      </div>
+    </div>
+    <nav class="showcase-nav">
+      <a class="nav-pill" href="index.html">总览</a>
+      <a class="nav-pill" href="01-home-discover.html">01 首页发现</a>
+      <a class="nav-pill" href="02-library-browse.html">02 媒体库</a>
+      <a class="nav-pill" href="03-media-detail.html">03 详情页</a>
+      <a class="nav-pill" href="04-video-player.html">04 播放器</a>
+      <a class="nav-pill" href="05-search.html">05 搜索</a>
+      <a class="nav-pill" href="06-storage-sources.html">06 存储与刮削</a>
+      <a class="nav-pill active" href="07-downloads-settings-profile.html">07 下载/设置</a>
+    </nav>
+    <div class="showcase-controls">
+      <div class="seg-group">
+        <button class="seg-btn active" data-platform="desktop">💻 Desktop</button>
+        <button class="seg-btn" data-platform="mobile">📲 Mobile</button>
+        <button class="seg-btn" data-platform="tv">📺 TV</button>
+      </div>
+      <div class="accent-dots">
+        <button class="accent-dot" data-accent="glacier" style="background:#5cb8ff"></button>
+        <button class="accent-dot" data-accent="neutral" style="background:#ffffff"></button>
+        <button class="accent-dot" data-accent="ember" style="background:#ff8a5b"></button>
+        <button class="accent-dot" data-accent="plum" style="background:#c084fc"></button>
+      </div>
+    </div>
+  </header>
+
+  <main class="page-container">
+    <div class="design-notes-bar">
+      <div class="note-card">
+        <strong>① 离线下载：分片速度 + 本地空间可视化</strong>
+        <span>清晰区分「夸克多线程下载队列」与「Emby/Jellyfin 离线缓存」，顶部增加设备剩余存储条。</span>
+      </div>
+      <div class="note-card">
+        <strong>② 设置中心：Infuse 式毛玻璃分组双栏</strong>
+        <span>Desktop 端采用左分组目录 + 右侧毛玻璃表单卡，替代原来单列冗长滚动；内置数据导入/导出备份入口。</span>
+      </div>
+      <div class="note-card">
+        <strong>③ 多工作区切换：居中影院头像墙</strong>
+        <span>延续 <code>profile_switch_screen</code> 的隔离语义，展示每个工作区绑定的 Emby / 挂载源徽章与安全锁标识。</span>
+      </div>
+    </div>
+
+    <!-- Sub-module switcher -->
+    <div style="display:flex;justify-content:center;margin-bottom:18px;">
+      <div class="seg-group" id="subViewTabs">
+        <button class="seg-btn active" data-sub="downloads">⬇ 离线下载 (Downloads)</button>
+        <button class="seg-btn" data-sub="settings">⚙ 偏好设置 (Settings)</button>
+        <button class="seg-btn" data-sub="profiles">👤 工作区切换 (Profiles)</button>
+      </div>
+    </div>
+
+    <div class="stage-wrapper">
+      <!-- ==================== DESKTOP / TABLET / TV (统一宽屏下载/设置/工作区) ==================== -->
+      <section class="stage-panel active" data-platform="desktop tablet tv">
+        <div class="device-desktop">
+          <aside class="glass-sidebar">
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:4px 8px 14px;">
+              <div class="traffic-lights"><span class="tl r"></span><span class="tl y"></span><span class="tl g"></span></div>
+              <span style="font-size:11px;color:var(--text-muted);font-weight:600;">Plezy Next</span>
+            </div>
+            <div class="side-item" data-nav="01-home-discover.html">🏠 首页发现</div>
+            <div class="side-item" data-nav="05-search.html">🔍 全局搜索</div>
+            <div class="side-item" data-nav="06-storage-sources.html">☁ 媒体源与刮削</div>
+            <div class="side-item active" data-jump-sub="downloads">⬇ 离线下载 <span class="side-badge">2</span></div>
+            <div class="side-item" data-jump-sub="settings">⚙ 偏好设置</div>
+            <div class="side-item" data-jump-sub="profiles">👤 工作区切换</div>
+          </aside>
+
+          <div style="flex:1;overflow-y:auto;padding:24px 30px;background:radial-gradient(circle at 80% 0%,rgba(92,184,255,0.08),transparent 45%),#0b0d12;">
+            <!-- SUBVIEW: DOWNLOADS -->
+            <div class="subview-content active" data-subview="downloads">
+              <div style="display:flex;justify-content:space-between;align-items:center;">
+                <div>
+                  <h2 style="font-size:21px;font-weight:800;">离线下载与缓存</h2>
+                  <p style="font-size:12.5px;color:var(--text-secondary);">支持夸克多线程直下与 Emby 离线缓存，断网时自动切入离线视图</p>
+                </div>
+                <div class="glass-pill">💾 已缓存 42.6 GB / 可用 418 GB</div>
+              </div>
+
+              <div class="seg-group" style="align-self:flex-start;" data-pill-group>
+                <button class="seg-btn active" data-pill>下载队列 (2)</button>
+                <button class="seg-btn" data-pill>剧集 (6)</button>
+                <button class="seg-btn" data-pill>电影 (4)</button>
+              </div>
+
+              <div class="dl-task">
+                <div class="poster-art art-frieren" style="width:58px;border-radius:8px;"></div>
+                <div style="flex:1;">
+                  <div style="display:flex;justify-content:space-between;">
+                    <strong style="font-size:14px;">葬送的芙莉莲 · S1E03 杀人魔法</strong>
+                    <span style="font-size:12px;color:var(--accent);font-weight:700;">18.4 MB/s · 64%</span>
+                  </div>
+                  <div style="font-size:11.5px;color:var(--text-muted);">☁ 夸克网盘 (4 线程分片) · 1.1 GB / 1.7 GB · 剩余 32s</div>
+                  <div class="dl-bar"><i style="width:64%"></i></div>
+                </div>
+                <button class="btn-glass-icon" style="width:34px;height:34px;" data-toast="已暂停当前下载任务">⏸</button>
+              </div>
+
+              <div class="dl-task">
+                <div class="poster-art art-1917" style="width:58px;border-radius:8px;"></div>
+                <div style="flex:1;">
+                  <div style="display:flex;justify-content:space-between;">
+                    <strong style="font-size:14px;">1917 (2019) · 4K Dolby Vision</strong>
+                    <span style="font-size:12px;color:var(--badge-green);font-weight:700;">✓ 已完成 (18.2 GB)</span>
+                  </div>
+                  <div style="font-size:11.5px;color:var(--text-muted);">📁 SMB 客厅 NAS · 本地离线随时可播</div>
+                </div>
+                <button class="glass-pill" data-nav="04-video-player.html">▶ 播放</button>
+              </div>
+            </div>
+
+            <!-- SUBVIEW: SETTINGS -->
+            <div class="subview-content" data-subview="settings">
+              <h2 style="font-size:21px;font-weight:800;">偏好设置</h2>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+                <div class="settings-group">
+                  <div class="settings-row" data-open-modal="modalAppearance"><div><strong>外观与毛玻璃材质</strong><div style="font-size:11.5px;color:var(--text-muted);">Cinematic Liquid Glass · 冰川蓝</div></div><span>›</span></div>
+                  <div class="settings-row" data-nav="06-storage-sources.html"><div><strong>媒体源与存储挂载</strong><div style="font-size:11.5px;color:var(--text-muted);">夸克网盘 / SMB / WebDAV / Emby</div></div><span>›</span></div>
+                  <div class="settings-row" data-nav="06-storage-sources.html"><div><strong>刮削引擎 (TMDB / Bangumi / 豆瓣)</strong><div style="font-size:11.5px;color:var(--text-muted);">中文优先 · 代理已连通</div></div><span>›</span></div>
+                  <div class="settings-row" data-toast="已导出工作区配置 JSON (plezy-backup.json)"><div><strong>手动配置备份 (导入 / 导出)</strong><div style="font-size:11.5px;color:var(--text-muted);">本地工作区跨设备迁移 JSON</div></div><span>›</span></div>
+                </div>
+                <div class="settings-group">
+                  <div class="settings-row" data-open-modal="modalPlayback"><div><strong>硬件解码与 HDR 直通 (mpv)</strong><div style="font-size:11.5px;color:var(--text-muted);">自动匹配帧率与 Dolby Vision 色调映射</div></div><div class="toggle-pill"></div></div>
+                  <div class="settings-row" data-toast="Companion Remote 局域网配对状态：已开启"><div><strong>Companion Remote 局域网遥控</strong><div style="font-size:11.5px;color:var(--text-muted);">允许同局域网手机发现并操控本机播放</div></div><div class="toggle-pill"></div></div>
+                  <div class="settings-row" data-open-modal="modalSubtitleStyle"><div><strong>字幕外观与默认语言</strong><div style="font-size:11.5px;color:var(--text-muted);">PingFang SC · 简体中文优先</div></div><span>›</span></div>
+                  <div class="settings-row" data-open-modal="modalLogs"><div><strong>应用日志与本地诊断</strong><div style="font-size:11.5px;color:var(--text-muted);">离线脱敏导出（已关闭官方遥测）</div></div><span>›</span></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- SUBVIEW: PROFILES -->
+            <div class="subview-content" data-subview="profiles">
+              <div style="text-align:center;margin-top:20px;">
+                <h2 style="font-size:26px;font-weight:800;">选择工作区 (Profile)</h2>
+                <p style="font-size:13px;color:var(--text-secondary);margin-top:4px;">每个工作区的挂载源、Emby 凭据、观影记录与下载内容完全隔离</p>
+              </div>
+              <div class="profile-grid">
+                <div class="profile-card current" data-nav="01-home-discover.html">
+                  <div class="profile-avatar-lg" style="background:linear-gradient(135deg,#38bdf8,#6366f1);">T</div>
+                  <strong style="font-size:16px;">主力观影库</strong>
+                  <span class="status-dot status-ok">● 当前激活</span>
+                  <div style="display:flex;gap:5px;flex-wrap:wrap;justify-content:center;">
+                    <span class="spec-pill">☁ 夸克</span>
+                    <span class="spec-pill">📁 SMB</span>
+                    <span class="spec-pill">🟣 Emby</span>
+                  </div>
+                </div>
+                <div class="profile-card" data-toast="请输入「家庭 / 儿童模式」4 位 PIN 码">
+                  <div class="profile-avatar-lg" style="background:linear-gradient(135deg,#f59e0b,#ea580c);">K</div>
+                  <strong style="font-size:16px;">家庭 / 儿童模式</strong>
+                  <span style="font-size:11.5px;color:var(--text-muted);">🔒 PIN 锁定管理</span>
+                  <div style="display:flex;gap:5px;flex-wrap:wrap;justify-content:center;">
+                    <span class="spec-pill">📁 动画专库</span>
+                  </div>
+                </div>
+                <div class="profile-card" style="border-style:dashed;" data-toast="已打开新建隔离工作区向导">
+                  <div class="profile-avatar-lg" style="background:rgba(255,255,255,0.08);">＋</div>
+                  <strong style="font-size:15px;">新建本地工作区</strong>
+                  <span style="font-size:12px;color:var(--text-muted);">独立配置网盘与媒体库</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ==================== MOBILE ==================== -->
+      <section class="stage-panel" data-platform="mobile">
+        <div class="device-mobile">
+          <div class="mobile-statusbar"><span>9:41</span><div class="dynamic-island"></div><span>5G 🔋</span></div>
+          <div style="flex:1;overflow-y:auto;padding:52px 16px 96px;">
+            <div class="subview-content active" data-subview="downloads">
+              <h2 style="font-size:22px;font-weight:800;">离线下载</h2>
+              <div class="glass-panel" style="padding:12px 14px;">
+                <div style="display:flex;justify-content:space-between;font-size:12px;"><span>已用缓存 42.6 GB</span><span style="color:var(--text-muted);">可用 128 GB</span></div>
+                <div class="dl-bar"><i style="width:26%"></i></div>
+              </div>
+              <div class="dl-task" style="padding:10px;">
+                <div class="poster-art art-frieren" style="width:48px;border-radius:8px;"></div>
+                <div style="flex:1;min-width:0;">
+                  <strong style="font-size:13px;">芙莉莲 S1E03</strong>
+                  <div style="font-size:11px;color:var(--accent);">14.2 MB/s · 64%</div>
+                  <div class="dl-bar"><i style="width:64%"></i></div>
+                </div>
+              </div>
+              <div class="dl-task" style="padding:10px;">
+                <div class="poster-art art-1917" style="width:48px;border-radius:8px;"></div>
+                <div style="flex:1;min-width:0;">
+                  <strong style="font-size:13px;">1917 (4K DV)</strong>
+                  <div style="font-size:11px;color:var(--badge-green);">✓ 已离线 · 18.2 GB</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="subview-content" data-subview="settings">
+              <h2 style="font-size:22px;font-weight:800;">设置</h2>
+              <div class="settings-group">
+                <div class="settings-row" data-toast="点击上方「工作区切换」Tab 预览切换"><span>👤 工作区：主力观影库</span><span>切换 ›</span></div>
+                <div class="settings-row" data-nav="06-storage-sources.html"><span>☁ 媒体源与夸克挂载</span><span>4 个 ›</span></div>
+                <div class="settings-row" data-nav="06-storage-sources.html"><span>✨ 刮削设置 (TMDB/Bangumi)</span><span>›</span></div>
+                <div class="settings-row" data-open-modal="modalAppearance"><span>🎨 外观与毛玻璃</span><span>冰川蓝 ›</span></div>
+                <div class="settings-row" data-open-modal="modalPlayback"><span>▶ 播放器与硬解</span><span>›</span></div>
+                <div class="settings-row" data-toast="已开启手机伴侣遥控器扫描"><span>📱 手机遥控器模式</span><span>›</span></div>
+              </div>
+            </div>
+
+            <div class="subview-content" data-subview="profiles">
+              <h2 style="font-size:22px;font-weight:800;text-align:center;">切换工作区</h2>
+              <div class="profile-card current" style="padding:18px;" data-nav="01-home-discover.html">
+                <div class="profile-avatar-lg" style="width:56px;height:56px;font-size:20px;background:linear-gradient(135deg,#38bdf8,#6366f1);">T</div>
+                <strong>主力观影库</strong>
+                <span class="status-dot status-ok">当前使用</span>
+              </div>
+              <div class="profile-card" style="padding:18px;" data-toast="请输入家庭模式 PIN 码">
+                <div class="profile-avatar-lg" style="width:56px;height:56px;font-size:20px;background:linear-gradient(135deg,#f59e0b,#ea580c);">K</div>
+                <strong>家庭模式 (PIN)</strong>
+              </div>
+            </div>
+          </div>
+          <nav class="mobile-glass-dock">
+            <div class="dock-tab" data-nav="01-home-discover.html"><span>🏠</span><span>首页</span></div>
+            <div class="dock-tab" data-nav="02-library-browse.html"><span>🎬</span><span>媒体库</span></div>
+            <div class="dock-tab" data-nav="05-search.html"><span>🔍</span><span>搜索</span></div>
+            <div class="dock-tab" data-nav="06-storage-sources.html"><span>☁</span><span>存储</span></div>
+            <div class="dock-tab active" data-nav="07-downloads-settings-profile.html"><span>⚙</span><span>设置</span></div>
+          </nav>
+        </div>
+      </section>
+
+    </div>
+  </main>
+
+  <!-- 外观设置弹窗 (AppearanceSettingsScreen) -->
+  <div class="proto-modal" id="modalAppearance">
+    <div class="proto-dialog" style="max-width:460px;">
+      <div class="proto-dialog-head">
+        <div class="proto-dialog-title">🎨 外观与布局设置</div>
+        <button class="btn-glass-icon" data-close-modal>✕</button>
+      </div>
+      <div class="proto-field">
+        <label class="proto-label">主题模式</label>
+        <div style="display:flex;gap:8px;" data-pill-group>
+          <button class="glass-pill active" data-pill>深色玻璃</button>
+          <button class="glass-pill" data-pill>OLED 纯黑</button>
+          <button class="glass-pill" data-pill>跟随系统</button>
+        </div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:8px;">
+        <div class="proto-option-row active" data-toast="已切换：海报墙显示来源角标"><span>海报墙显示来源角标 (夸克/SMB/Emby)</span><span>✓</span></div>
+        <div class="proto-option-row" data-toast="已切换：隐藏未看剧集剧透缩略图"><span>隐藏未看剧集剧透简介与缩略图</span><span></span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 播放与硬解设置弹窗 (PlaybackSettingsScreen) -->
+  <div class="proto-modal" id="modalPlayback">
+    <div class="proto-dialog" style="max-width:480px;">
+      <div class="proto-dialog-head">
+        <div class="proto-dialog-title">▶ 播放器与硬件解码 (mpv)</div>
+        <button class="btn-glass-icon" data-close-modal>✕</button>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:8px;">
+        <div class="proto-option-row active" data-toast="硬件解码：已启用"><span>硬件加速解码 (Hardware Decoding)</span><span>开启</span></div>
+        <div class="proto-option-row active" data-toast="帧率匹配：已启用"><span>自动匹配显示器帧率 (23.976 / 24 / 60Hz)</span><span>开启</span></div>
+        <div class="proto-option-row active" data-toast="HDR 色调映射：已启用"><span>HDR / Dolby Vision 色调映射与直通</span><span>开启</span></div>
+        <div class="proto-option-row" data-toast="自动跳过片头/片尾：已设为提示胶囊"><span>片头 / 片尾章节自动跳过策略</span><span style="color:var(--text-muted);">提示胶囊 ▾</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 字幕样式设置弹窗 (SubtitleStylingScreen) -->
+  <div class="proto-modal" id="modalSubtitleStyle">
+    <div class="proto-dialog" style="max-width:460px;">
+      <div class="proto-dialog-head">
+        <div class="proto-dialog-title">💬 字幕外观与 ASS 渲染</div>
+        <button class="btn-glass-icon" data-close-modal>✕</button>
+      </div>
+      <div style="padding:18px;border-radius:14px;background:rgba(0,0,0,0.45);text-align:center;margin-bottom:14px;border:1px solid var(--border-subtle);">
+        <span style="font-size:17px;font-weight:700;text-shadow:0 2px 6px rgba(0,0,0,0.9);">「这是字幕大小与描边预览效果」</span>
+      </div>
+      <div class="proto-field">
+        <label class="proto-label">字号大小</label>
+        <div style="display:flex;gap:8px;" data-pill-group>
+          <button class="glass-pill" data-pill>小</button>
+          <button class="glass-pill active" data-pill>标准 (44px)</button>
+          <button class="glass-pill" data-pill>大</button>
+          <button class="glass-pill" data-pill>特大</button>
+        </div>
+      </div>
+      <div class="proto-option-row active" data-toast="已切换 ASS 特效字体覆盖开关"><span>保留 ASS 特效字幕原生排版与字体</span><span>✓</span></div>
+    </div>
+  </div>
+
+  <!-- 应用日志弹窗 (LogsScreen) -->
+  <div class="proto-modal" id="modalLogs">
+    <div class="proto-dialog" style="max-width:520px;">
+      <div class="proto-dialog-head">
+        <div class="proto-dialog-title">🧾 应用日志与本地诊断</div>
+        <button class="btn-glass-icon" data-close-modal>✕</button>
+      </div>
+      <pre style="padding:12px;border-radius:12px;background:rgba(0,0,0,0.45);border:1px solid var(--border-subtle);font-size:11px;color:var(--text-secondary);overflow-x:auto;line-height:1.5;margin-bottom:12px;">[10:02:14] INFO  QuarkMount: incremental scan 96 items (rate=1200ms)
+[10:02:18] INFO  Scraper: TMDB #87108 matched (zh-CN, 42ms)
+[10:02:21] INFO  CompanionRemote: mDNS listening on :58291
+[10:02:25] INFO  mpv: hwdec=auto-safe, hdr-compute-peak=yes</pre>
+      <div style="display:flex;justify-content:flex-end;gap:8px;">
+        <button class="glass-pill" data-toast="已清空本地内存日志">清空</button>
+        <button class="btn-play-hero" style="padding:8px 16px;font-size:12.5px;" data-close-modal data-toast="已导出脱敏诊断日志 plezy-logs.txt">导出脱敏日志</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="scripts/showcase.js"></script>
+  <script>
+    (function () {
+      function setSubView(name) {
+        document.querySelectorAll('#subViewTabs .seg-btn').forEach((b) => b.classList.toggle('active', b.dataset.sub === name));
+        document.querySelectorAll('.subview-content').forEach((el) => el.classList.toggle('active', el.dataset.subview === name));
+      }
+      document.querySelectorAll('#subViewTabs .seg-btn').forEach((btn) => {
+        btn.addEventListener('click', () => setSubView(btn.dataset.sub));
+      });
+      document.querySelectorAll('[data-jump-sub]').forEach((item) => {
+        item.addEventListener('click', () => {
+          document.querySelectorAll('[data-jump-sub]').forEach((i) => i.classList.remove('active'));
+          item.classList.add('active');
+          setSubView(item.dataset.jumpSub);
+        });
+      });
+    })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-accent="glacier">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>06 存储挂载与刮削中心 · Plezy UI 重设计</title>
+  <link rel="stylesheet" href="styles/design-system.css" />
+  <style>
+    .storage-main {
+      flex: 1;
+      overflow-y: auto;
+      padding: 22px 28px;
+      background: radial-gradient(circle at 80% 10%, rgba(92,184,255,0.1), transparent 46%), #0b0d12;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+    .source-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+    }
+    .source-card {
+      background: rgba(255, 255, 255, 0.035);
+      border: 1px solid var(--border-subtle);
+      border-radius: 18px;
+      padding: 16px 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      transition: border-color 0.16s ease, background 0.16s ease;
+    }
+    .source-card:hover {
+      background: rgba(255, 255, 255, 0.055);
+      border-color: var(--border-glass);
+    }
+    .source-icon-box {
+      width: 44px;
+      height: 44px;
+      border-radius: 12px;
+      display: grid;
+      place-items: center;
+      font-size: 20px;
+      flex-shrink: 0;
+    }
+    .status-dot {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 3px 8px;
+      border-radius: 999px;
+    }
+    .status-ok { background: rgba(52, 211, 153, 0.14); color: #34d399; }
+    .status-warn { background: rgba(251, 191, 36, 0.14); color: #fbbf24; }
+    .scraper-panel {
+      display: grid;
+      grid-template-columns: 1.2fr 1fr;
+      gap: 14px;
+    }
+    .glass-panel {
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid var(--border-subtle);
+      border-radius: 18px;
+      padding: 18px;
+    }
+    .unmatched-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 10px 12px;
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.035);
+      border: 1px solid var(--border-subtle);
+      margin-top: 8px;
+    }
+    .qr-box {
+      width: 140px;
+      height: 140px;
+      border-radius: 16px;
+      background: #fff;
+      padding: 10px;
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 4px;
+    }
+    .qr-cell { background: #111; border-radius: 2px; }
+    .qr-cell.w { background: #fff; }
+  </style>
+</head>
+<body>
+  <header class="showcase-topbar">
+    <div class="showcase-brand">
+      <a href="index.html" class="brand-mark">P</a>
+      <div>
+        <div class="brand-title">06 · 存储挂载与刮削中心 (Sources & Scraper)</div>
+        <div class="brand-sub">重构源码：mounts_screen.dart · mount_edit_screen.dart · scraper_settings_screen.dart · manual_match_dialog.dart</div>
+      </div>
+    </div>
+    <nav class="showcase-nav">
+      <a class="nav-pill" href="index.html">总览</a>
+      <a class="nav-pill" href="01-home-discover.html">01 首页发现</a>
+      <a class="nav-pill" href="02-library-browse.html">02 媒体库</a>
+      <a class="nav-pill" href="03-media-detail.html">03 详情页</a>
+      <a class="nav-pill" href="04-video-player.html">04 播放器</a>
+      <a class="nav-pill" href="05-search.html">05 搜索</a>
+      <a class="nav-pill active" href="06-storage-sources.html">06 存储与刮削</a>
+      <a class="nav-pill" href="07-downloads-settings-profile.html">07 下载/设置</a>
+    </nav>
+    <div class="showcase-controls">
+      <div class="seg-group">
+        <button class="seg-btn active" data-platform="desktop">💻 Desktop</button>
+        <button class="seg-btn" data-platform="mobile">📲 Mobile</button>
+        <button class="seg-btn" data-platform="tv">📺 TV (含夸克扫码)</button>
+      </div>
+      <div class="accent-dots">
+        <button class="accent-dot" data-accent="glacier" style="background:#5cb8ff"></button>
+        <button class="accent-dot" data-accent="neutral" style="background:#ffffff"></button>
+        <button class="accent-dot" data-accent="ember" style="background:#ff8a5b"></button>
+        <button class="accent-dot" data-accent="plum" style="background:#c084fc"></button>
+      </div>
+    </div>
+  </header>
+
+  <main class="page-container">
+    <div class="design-notes-bar">
+      <div class="note-card">
+        <strong>① VidHub 式多源可视化卡片</strong>
+        <span>把原本 640px 窄列表升级为全宽毛玻璃源管理台：夸克网盘、SMB、WebDAV、本地磁盘与 Emby/Jellyfin 各自独立成卡，状态一目了然。</span>
+      </div>
+      <div class="note-card">
+        <strong>② 夸克限速与增量扫描可视反馈</strong>
+        <span>贴合你文档里的 Quark 限速需求：在源卡片内直接呈现请求间隔、并发限流、最近增量扫描时间与文件浏览入口。</span>
+      </div>
+      <div class="note-card">
+        <strong>③ 刮削引擎 + 未匹配纠偏同屏联动</strong>
+        <span>TMDB / Bangumi / 豆瓣 连通测试绿灯，下方直接列出 3 个刮削失败文件，点「手动匹配」即可完成归类入库。</span>
+      </div>
+      <div class="note-card">
+        <strong>④ TV 端大屏扫码绑定夸克</strong>
+        <span>针对遥控器打字痛点，TV 端添加网盘直接弹出高对比度二维码卡片，手机扫一扫即刻挂载。</span>
+      </div>
+    </div>
+
+    <div class="stage-wrapper">
+      <!-- ==================== DESKTOP / TABLET / TV (统一宽屏存储中心) ==================== -->
+      <section class="stage-panel active" data-platform="desktop tablet tv">
+        <div class="device-desktop">
+          <aside class="glass-sidebar">
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:4px 8px 14px;">
+              <div class="traffic-lights"><span class="tl r"></span><span class="tl y"></span><span class="tl g"></span></div>
+              <span style="font-size:11px;color:var(--text-muted);font-weight:600;">媒体源</span>
+            </div>
+            <div class="side-item" data-nav="01-home-discover.html">🏠 首页发现</div>
+            <div class="side-item" data-nav="05-search.html">🔍 全局搜索</div>
+            <div class="side-item active" data-nav="06-storage-sources.html">☁ 媒体源与刮削 <span class="side-badge">5</span></div>
+            <div class="side-item" data-nav="07-downloads-settings-profile.html">⬇ 离线下载</div>
+            <div class="sidebar-section-label">本地媒体库</div>
+            <div class="side-item" data-nav="02-library-browse.html">🎬 电影 <span class="side-badge">142</span></div>
+            <div class="side-item" data-nav="02-library-browse.html">📺 电视剧 <span class="side-badge">38</span></div>
+            <div class="side-item" data-nav="02-library-browse.html">✨ 动漫番剧 <span class="side-badge">64</span></div>
+            <div class="side-item" style="color:var(--badge-amber);" data-open-modal="modalManualMatch">⚠ 未匹配 <span class="side-badge">3</span></div>
+          </aside>
+
+          <div class="storage-main">
+            <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
+              <div>
+                <h2 style="font-size:21px;font-weight:800;">媒体源与刮削中心</h2>
+                <p style="font-size:12.5px;color:var(--text-secondary);">管理本地挂载（自动扫描刮削入库）与外部 Emby / Jellyfin 服务器连接</p>
+              </div>
+              <div style="display:flex;gap:8px;">
+                <button class="glass-pill" data-toast="已启动全部 4 个存储源的增量扫描…">↻ 全部增量扫描</button>
+                <button class="btn-play-hero tv-focus-default" style="padding:8px 16px;font-size:12.5px;" data-open-modal="modalAddSource">＋ 添加存储源 / 服务器</button>
+              </div>
+            </div>
+
+            <div class="source-grid">
+              <div class="source-card">
+                <div style="display:flex;align-items:center;gap:12px;">
+                  <div class="source-icon-box" style="background:rgba(92,184,255,0.16);color:#5cb8ff;">☁</div>
+                  <div style="flex:1;min-width:0;">
+                    <div style="display:flex;align-items:center;gap:8px;">
+                      <strong style="font-size:14.5px;">夸克网盘 · 主力追番库</strong>
+                      <span class="status-dot status-ok">● 已授权 (扫码)</span>
+                    </div>
+                    <div style="font-size:11.5px;color:var(--text-muted);margin-top:2px;">目录：/影视收藏/ · 限速保护：1200ms 间隔 · 增量模式</div>
+                  </div>
+                </div>
+                <div style="display:flex;align-items:center;justify-content:space-between;font-size:12px;color:var(--text-secondary);padding-top:8px;border-top:1px solid var(--border-subtle);">
+                  <span>已入库 96 部 · 12 分钟前扫描</span>
+                  <div style="display:flex;gap:6px;">
+                    <button class="glass-pill" style="padding:4px 10px;font-size:11.5px;" data-open-modal="modalFileBrowser">📂 浏览文件</button>
+                    <button class="glass-pill" style="padding:4px 10px;font-size:11.5px;" data-toast="正在增量扫描「夸克网盘 · 主力追番库」…">↻ 扫描</button>
+                    <button class="glass-pill" style="padding:4px 10px;font-size:11.5px;" data-open-modal="modalAddSource">⚙</button>
+                  </div>
+                </div>
+              </div>
+
+              <div class="source-card">
+                <div style="display:flex;align-items:center;gap:12px;">
+                  <div class="source-icon-box" style="background:rgba(52,211,153,0.16);color:#34d399;">📁</div>
+                  <div style="flex:1;min-width:0;">
+                    <div style="display:flex;align-items:center;gap:8px;">
+                      <strong style="font-size:14.5px;">SMB · 客厅 Synology NAS</strong>
+                      <span class="status-dot status-ok">● 局域网直连</span>
+                    </div>
+                    <div style="font-size:11.5px;color:var(--text-muted);margin-top:2px;">smb://192.168.1.10/Media/4K · 启动时自动扫描</div>
+                  </div>
+                </div>
+                <div style="display:flex;align-items:center;justify-content:space-between;font-size:12px;color:var(--text-secondary);padding-top:8px;border-top:1px solid var(--border-subtle);">
+                  <span>已入库 142 部 · 4K 原盘为主</span>
+                  <div style="display:flex;gap:6px;">
+                    <button class="glass-pill" style="padding:4px 10px;font-size:11.5px;" data-open-modal="modalFileBrowser">📂 浏览文件</button>
+                    <button class="glass-pill" style="padding:4px 10px;font-size:11.5px;" data-toast="正在增量扫描「SMB · 客厅 Synology NAS」…">↻ 扫描</button>
+                    <button class="glass-pill" style="padding:4px 10px;font-size:11.5px;" data-open-modal="modalAddSource">⚙</button>
+                  </div>
+                </div>
+              </div>
+
+              <div class="source-card">
+                <div style="display:flex;align-items:center;gap:12px;">
+                  <div class="source-icon-box" style="background:rgba(168,85,247,0.18);color:#c084fc;">🟣</div>
+                  <div style="flex:1;min-width:0;">
+                    <div style="display:flex;align-items:center;gap:8px;">
+                      <strong style="font-size:14.5px;">Emby · 客厅服务器</strong>
+                      <span class="status-dot status-ok">● 在线</span>
+                    </div>
+                    <div style="font-size:11.5px;color:var(--text-muted);margin-top:2px;">https://emby.home.arpa · 直接使用服务器元数据（不本地刮削）</div>
+                  </div>
+                </div>
+                <div style="display:flex;align-items:center;justify-content:space-between;font-size:12px;color:var(--text-secondary);padding-top:8px;border-top:1px solid var(--border-subtle);">
+                  <span>包含 3 个服务器库 · Live TV 可用</span>
+                  <div style="display:flex;gap:6px;">
+                    <button class="glass-pill" style="padding:4px 10px;font-size:11.5px;" data-nav="02-library-browse.html">管理可见库</button>
+                    <button class="glass-pill" style="padding:4px 10px;font-size:11.5px;" data-open-modal="modalAddSource">编辑</button>
+                  </div>
+                </div>
+              </div>
+
+              <div class="source-card">
+                <div style="display:flex;align-items:center;gap:12px;">
+                  <div class="source-icon-box" style="background:rgba(251,191,36,0.15);color:#fbbf24;">🌐</div>
+                  <div style="flex:1;min-width:0;">
+                    <div style="display:flex;align-items:center;gap:8px;">
+                      <strong style="font-size:14.5px;">WebDAV · 工作室存储</strong>
+                      <span class="status-dot status-warn">● 定时每 6h</span>
+                    </div>
+                    <div style="font-size:11.5px;color:var(--text-muted);margin-top:2px;">https://dav.example.com/anime · 允许内网自签证书</div>
+                  </div>
+                </div>
+                <div style="display:flex;align-items:center;justify-content:space-between;font-size:12px;color:var(--text-secondary);padding-top:8px;border-top:1px solid var(--border-subtle);">
+                  <span>已入库 25 部 · 仅元数据刮削</span>
+                  <div style="display:flex;gap:6px;">
+                    <button class="glass-pill" style="padding:4px 10px;font-size:11.5px;" data-open-modal="modalFileBrowser">📂 浏览</button>
+                    <button class="glass-pill" style="padding:4px 10px;font-size:11.5px;" data-toast="正在增量扫描「WebDAV · 工作室存储」…">↻ 扫描</button>
+                    <button class="glass-pill" style="padding:4px 10px;font-size:11.5px;" data-open-modal="modalAddSource">⚙</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="scraper-panel">
+              <div class="glass-panel">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+                  <strong style="font-size:14px;">⚠ 未匹配文件队列 (3)</strong>
+                  <span style="font-size:11.5px;color:var(--text-muted);">未匹配项暂不进入海报墙与搜索</span>
+                </div>
+                <div class="unmatched-row">
+                  <div style="min-width:0;">
+                    <div style="font-size:12.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">[VCB-Studio] 剧场版 某科学的超电磁炮 10bit.mkv</div>
+                    <div style="font-size:11px;color:var(--text-muted);">☁ 夸克网盘 · 猜测：动漫 / 电影</div>
+                  </div>
+                  <button class="glass-pill" style="padding:5px 12px;font-size:11.5px;color:var(--accent);" data-open-modal="modalManualMatch">手动匹配</button>
+                </div>
+                <div class="unmatched-row">
+                  <div style="min-width:0;">
+                    <div style="font-size:12.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">三国的星空第一部.2025.2160p.WEB-DL.mp4</div>
+                    <div style="font-size:11px;color:var(--text-muted);">📁 SMB NAS · 猜测：电影</div>
+                  </div>
+                  <button class="glass-pill" style="padding:5px 12px;font-size:11.5px;color:var(--accent);" data-open-modal="modalManualMatch">手动匹配</button>
+                </div>
+              </div>
+
+              <div class="glass-panel">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+                  <strong style="font-size:14px;">✨ 刮削引擎配置</strong>
+                  <span class="status-dot status-ok">TMDB 连通正常 (42ms)</span>
+                </div>
+                <div style="display:flex;flex-direction:column;gap:8px;font-size:12.5px;color:var(--text-secondary);">
+                  <div style="display:flex;justify-content:space-between;"><span>首选语言</span><strong style="color:#fff;">zh-CN (简体中文)</strong></div>
+                  <div style="display:flex;justify-content:space-between;"><span>动漫优先源</span><strong style="color:#fff;">Bangumi + TMDB 回退</strong></div>
+                  <div style="display:flex;justify-content:space-between;"><span>豆瓣补充简介/评分</span><strong style="color:var(--badge-green);">已开启</strong></div>
+                  <div style="display:flex;justify-content:space-between;"><span>API 代理域名</span><strong style="color:#fff;">tmdb-mirror.local</strong></div>
+                </div>
+                <button class="glass-pill" style="width:100%;justify-content:center;margin-top:12px;" data-open-modal="modalScraperSettings">测试 TMDB / Bangumi 连通性 & 编辑规则</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ==================== MOBILE ==================== -->
+      <section class="stage-panel" data-platform="mobile">
+        <div class="device-mobile">
+          <div class="mobile-statusbar"><span>9:41</span><div class="dynamic-island"></div><span>5G 🔋</span></div>
+          <div style="padding:52px 16px 12px;display:flex;justify-content:space-between;align-items:center;">
+            <h2 style="font-size:21px;font-weight:800;">存储源与刮削</h2>
+            <button class="glass-pill" style="padding:5px 12px;font-size:12px;" data-open-modal="modalAddSource">＋ 添加</button>
+          </div>
+          <div style="flex:1;overflow-y:auto;padding:4px 16px 96px;display:flex;flex-direction:column;gap:12px;">
+            <div class="source-card" style="padding:14px;">
+              <div style="display:flex;gap:10px;align-items:center;">
+                <div class="source-icon-box" style="width:38px;height:38px;background:rgba(92,184,255,0.16);color:#5cb8ff;">☁</div>
+                <div style="flex:1;"><strong style="font-size:13.5px;">夸克网盘</strong><div style="font-size:11px;color:var(--text-muted);">96 部 · 已扫码授权</div></div>
+                <button class="glass-pill" style="padding:4px 10px;font-size:11px;" data-toast="正在增量扫描夸克网盘…">扫描</button>
+              </div>
+            </div>
+            <div class="source-card" style="padding:14px;">
+              <div style="display:flex;gap:10px;align-items:center;">
+                <div class="source-icon-box" style="width:38px;height:38px;background:rgba(52,211,153,0.16);color:#34d399;">📁</div>
+                <div style="flex:1;"><strong style="font-size:13.5px;">SMB · 客厅 NAS</strong><div style="font-size:11px;color:var(--text-muted);">142 部 · 192.168.1.10</div></div>
+                <button class="glass-pill" style="padding:4px 10px;font-size:11px;" data-open-modal="modalFileBrowser">浏览</button>
+              </div>
+            </div>
+            <div class="source-card" style="padding:14px;">
+              <div style="display:flex;gap:10px;align-items:center;">
+                <div class="source-icon-box" style="width:38px;height:38px;background:rgba(168,85,247,0.18);color:#c084fc;">🟣</div>
+                <div style="flex:1;"><strong style="font-size:13.5px;">Emby · 客厅服务器</strong><div style="font-size:11px;color:var(--text-muted);">在线 · 3 个媒体库</div></div>
+                <button class="glass-pill" style="padding:4px 10px;font-size:11px;" data-open-modal="modalAddSource">管理</button>
+              </div>
+            </div>
+
+            <div class="glass-panel" style="padding:14px;">
+              <strong style="font-size:13px;color:var(--badge-amber);">⚠ 待手动匹配 (3)</strong>
+              <div class="unmatched-row" style="padding:8px 10px;">
+                <div style="font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">[VCB-Studio] 超电磁炮剧场版.mkv</div>
+                <button class="glass-pill" style="padding:3px 9px;font-size:11px;" data-open-modal="modalManualMatch">匹配</button>
+              </div>
+            </div>
+
+            <div class="glass-panel" style="padding:14px;cursor:pointer;" data-open-modal="modalScraperSettings">
+              <strong style="font-size:13px;">✨ 刮削设置 · TMDB + Bangumi ▾</strong>
+              <div style="font-size:11.5px;color:var(--text-secondary);margin-top:6px;">已启用中文优先 + 豆瓣简介补充 · 连通正常</div>
+            </div>
+          </div>
+          <nav class="mobile-glass-dock">
+            <div class="dock-tab" data-nav="01-home-discover.html"><span>🏠</span><span>首页</span></div>
+            <div class="dock-tab" data-nav="02-library-browse.html"><span>🎬</span><span>媒体库</span></div>
+            <div class="dock-tab" data-nav="05-search.html"><span>🔍</span><span>搜索</span></div>
+            <div class="dock-tab active" data-nav="06-storage-sources.html"><span>☁</span><span>存储</span></div>
+            <div class="dock-tab" data-nav="07-downloads-settings-profile.html"><span>⚙</span><span>设置</span></div>
+          </nav>
+        </div>
+      </section>
+
+    </div>
+  </main>
+  <!-- 添加 / 编辑存储源与服务器弹窗 (MountEditScreen + AddConnectionScreen) -->
+  <div class="proto-modal" id="modalAddSource">
+    <div class="proto-dialog" style="max-width:540px;">
+      <div class="proto-dialog-head">
+        <div class="proto-dialog-title">＋ 添加 / 编辑存储源或外部服务器</div>
+        <button class="btn-glass-icon" data-close-modal>✕</button>
+      </div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;" data-pill-group>
+        <button class="glass-pill active" data-pill data-tab-target="smb">📁 SMB</button>
+        <button class="glass-pill" data-pill data-tab-target="webdav">🌐 WebDAV</button>
+        <button class="glass-pill" data-pill data-tab-target="quark">☁ 夸克网盘</button>
+        <button class="glass-pill" data-pill data-tab-target="local">💾 本地路径</button>
+        <button class="glass-pill" data-pill data-tab-target="emby">🟣 Emby / Jellyfin</button>
+      </div>
+      <div data-tab-panel="smb">
+        <div class="proto-field"><label class="proto-label">SMB 服务器地址</label><input class="proto-input" value="smb://192.168.1.10/Media/4K" /></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+          <div class="proto-field"><label class="proto-label">用户名</label><input class="proto-input" value="media_reader" /></div>
+          <div class="proto-field"><label class="proto-label">密码</label><input class="proto-input" type="password" value="••••••••" /></div>
+        </div>
+      </div>
+      <div data-tab-panel="webdav" hidden>
+        <div class="proto-field"><label class="proto-label">WebDAV URL</label><input class="proto-input" value="https://dav.example.com/anime" /></div>
+        <div class="proto-field"><label class="proto-label">HTTPS 证书策略</label><input class="proto-input" value="允许内网自签名证书 (Self-signed)" /></div>
+      </div>
+      <div data-tab-panel="quark" hidden>
+        <div class="proto-field"><label class="proto-label">授权方式</label><input class="proto-input" value="夸克 App 扫码登录 (已启用 1200ms 限流保护)" /></div>
+        <div class="proto-field"><label class="proto-label">扫描根目录</label><input class="proto-input" value="/影视收藏/" /></div>
+      </div>
+      <div data-tab-panel="local" hidden>
+        <div class="proto-field"><label class="proto-label">本地文件夹路径</label><input class="proto-input" value="D:\Media\Movies" /></div>
+      </div>
+      <div data-tab-panel="emby" hidden>
+        <div class="proto-field"><label class="proto-label">Emby / Jellyfin 服务器地址</label><input class="proto-input" value="https://emby.home.arpa" /></div>
+        <div class="proto-field"><label class="proto-label">账号 / API Token</label><input class="proto-input" value="livingroom_tv" /></div>
+      </div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:12px;">
+        <button class="glass-pill" data-toast="连通性测试成功：延迟 14ms，读取权限正常">⚡ 测试连接</button>
+        <div style="display:flex;gap:8px;">
+          <button class="glass-pill" data-close-modal>取消</button>
+          <button class="btn-play-hero" style="padding:8px 18px;font-size:12.5px;" data-close-modal data-toast="已保存挂载源并触发后台增量扫描">保存并扫描</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 存储文件浏览器弹窗 (StorageBrowserScreen) -->
+  <div class="proto-modal" id="modalFileBrowser">
+    <div class="proto-dialog" style="max-width:520px;">
+      <div class="proto-dialog-head">
+        <div class="proto-dialog-title">📂 文件浏览 · /夸克网盘/影视收藏/</div>
+        <button class="btn-glass-icon" data-close-modal>✕</button>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:8px;">
+        <div class="proto-option-row" data-toast="已打开子目录：/美剧/"><span>📁 美剧 (18 个文件夹)</span><span style="color:var(--text-muted);">›</span></div>
+        <div class="proto-option-row" data-toast="已打开子目录：/动漫番剧/"><span>📁 动漫番剧 (64 个文件夹)</span><span style="color:var(--text-muted);">›</span></div>
+        <div class="proto-option-row" data-close-modal data-nav="04-video-player.html"><span>🎬 1917.2019.2160p.DV.mkv (48.2 GB)</span><span class="spec-pill">直接播放 ▶</span></div>
+        <div class="proto-option-row" data-close-modal data-nav="04-video-player.html"><span>🎬 Dune.Part.Two.2024.4K.HDR.mp4 (24.1 GB)</span><span class="spec-pill">直接播放 ▶</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 手动匹配弹窗 (ManualMatchDialog) -->
+  <div class="proto-modal" id="modalManualMatch">
+    <div class="proto-dialog" style="max-width:520px;">
+      <div class="proto-dialog-head">
+        <div class="proto-dialog-title">🔗 未匹配文件手动匹配</div>
+        <button class="btn-glass-icon" data-close-modal>✕</button>
+      </div>
+      <div style="font-size:12px;color:var(--badge-amber);margin-bottom:10px;">当前文件：[VCB-Studio] 剧场版 某科学的超电磁炮 10bit.mkv</div>
+      <div class="proto-field">
+        <div style="display:flex;gap:8px;">
+          <input class="proto-input" value="某科学的超电磁炮" />
+          <button class="btn-play-hero" style="padding:8px 14px;font-size:12px;" data-toast="已从 Bangumi & TMDB 检索候选结果">检索</button>
+        </div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:8px;">
+        <div class="proto-option-row active" data-close-modal data-toast="已绑定并移入「✨ 动漫番剧」海报墙"><span>某科学的超电磁炮 (Bangumi #2585)</span><span class="spec-pill tmdb">选择并入库</span></div>
+        <div class="proto-option-row" data-close-modal data-toast="已忽略该文件"><span>仅在文件浏览器保留（不显示到海报墙）</span><span style="color:var(--text-muted);">忽略</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 刮削器设置弹窗 (ScraperSettingsScreen) -->
+  <div class="proto-modal" id="modalScraperSettings">
+    <div class="proto-dialog" style="max-width:500px;">
+      <div class="proto-dialog-head">
+        <div class="proto-dialog-title">✨ 刮削引擎配置 (TMDB / Bangumi / 豆瓣)</div>
+        <button class="btn-glass-icon" data-close-modal>✕</button>
+      </div>
+      <div class="proto-field"><label class="proto-label">TMDB API Key / 镜像代理</label><input class="proto-input" value="https://tmdb-mirror.local/3" /></div>
+      <div class="proto-field"><label class="proto-label">首选元数据语言</label><input class="proto-input" value="zh-CN (简体中文优先，缺失回退 en-US)" /></div>
+      <div class="proto-option-row active" style="margin-bottom:12px;" data-toast="已切换豆瓣简介/评分补充状态"><span>动漫优先 Bangumi，普通影视优先 TMDB + 豆瓣补充</span><span>✓</span></div>
+      <div style="display:flex;justify-content:space-between;">
+        <button class="glass-pill" data-toast="TMDB (42ms) · Bangumi (68ms) · 豆瓣 (85ms) 全部连通正常">⚡ 测试全部连通性</button>
+        <button class="btn-play-hero" style="padding:8px 18px;font-size:12.5px;" data-close-modal data-toast="刮削引擎配置已保存">保存配置</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="scripts/showcase.js"></script>
+</body>
+</html>

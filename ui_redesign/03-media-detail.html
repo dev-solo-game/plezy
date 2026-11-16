@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-accent="glacier">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>03 影视详情页 · Plezy UI 重设计</title>
+  <link rel="stylesheet" href="styles/design-system.css" />
+  <style>
+    .detail-canvas {
+      width: 100%;
+      height: 100%;
+      overflow-y: auto;
+      background: #090b10;
+      position: relative;
+    }
+    .detail-backdrop {
+      position: relative;
+      padding: 20px 32px 28px;
+      background:
+        radial-gradient(circle at 76% 24%, rgba(148, 179, 168, 0.34), transparent 46%),
+        linear-gradient(135deg, #2d3b37 0%, #17201e 50%, #090b10 100%);
+    }
+    .detail-backdrop::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(180deg, rgba(9,11,16,0.28) 0%, rgba(9,11,16,0.6) 60%, #090b10 100%);
+      pointer-events: none;
+    }
+    .detail-inner { position: relative; z-index: 4; }
+    .detail-hero-grid {
+      display: grid;
+      grid-template-columns: 180px 1fr;
+      gap: 24px;
+      align-items: end;
+      margin-top: 20px;
+    }
+    .version-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin: 12px 0 14px;
+    }
+    .version-pill {
+      padding: 6px 12px;
+      border-radius: 10px;
+      font-size: 11.5px;
+      font-weight: 600;
+      background: rgba(255, 255, 255, 0.07);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      color: var(--text-secondary);
+      cursor: pointer;
+    }
+    .version-pill.active {
+      background: var(--accent-soft);
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+    .detail-body {
+      padding: 12px 32px 32px;
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+    }
+    .info-glass-strip {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+      padding: 14px 18px;
+      border-radius: 16px;
+      background: rgba(255, 255, 255, 0.035);
+      border: 1px solid var(--border-subtle);
+    }
+    .info-kv small { display: block; font-size: 11px; color: var(--text-muted); margin-bottom: 2px; }
+    .info-kv strong { font-size: 13px; color: var(--text-primary); }
+
+    .episode-list {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .ep-card {
+      display: flex;
+      gap: 12px;
+      padding: 10px;
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid var(--border-subtle);
+      align-items: center;
+      cursor: pointer;
+      transition: background 0.15s ease;
+    }
+    .ep-card:hover { background: rgba(255, 255, 255, 0.07); }
+    .ep-thumb {
+      width: 142px;
+      aspect-ratio: 16/9;
+      border-radius: 9px;
+      flex-shrink: 0;
+      position: relative;
+      overflow: hidden;
+    }
+    .cast-row {
+      display: flex;
+      gap: 14px;
+      overflow-x: auto;
+    }
+    .cast-item {
+      width: 86px;
+      flex-shrink: 0;
+      text-align: center;
+    }
+    .cast-avatar {
+      width: 64px;
+      height: 64px;
+      border-radius: 50%;
+      margin: 0 auto 6px;
+      background: linear-gradient(135deg, #334155, #1e293b);
+      border: 1px solid rgba(255,255,255,0.16);
+      display: grid;
+      place-items: center;
+      font-weight: 700;
+      font-size: 18px;
+    }
+  </style>
+</head>
+<body>
+  <header class="showcase-topbar">
+    <div class="showcase-brand">
+      <a href="index.html" class="brand-mark">P</a>
+      <div>
+        <div class="brand-title">03 · 影视详情页 (Media Detail)</div>
+        <div class="brand-sub">对比现版：desktop-md.png · tablet-md.png · phone-md.png · tv-md.png</div>
+      </div>
+    </div>
+    <nav class="showcase-nav">
+      <a class="nav-pill" href="index.html">总览</a>
+      <a class="nav-pill" href="01-home-discover.html">01 首页发现</a>
+      <a class="nav-pill" href="02-library-browse.html">02 媒体库</a>
+      <a class="nav-pill active" href="03-media-detail.html">03 详情页</a>
+      <a class="nav-pill" href="04-video-player.html">04 播放器</a>
+      <a class="nav-pill" href="05-search.html">05 搜索</a>
+      <a class="nav-pill" href="06-storage-sources.html">06 存储与刮削</a>
+      <a class="nav-pill" href="07-downloads-settings-profile.html">07 下载/设置</a>
+    </nav>
+    <div class="showcase-controls">
+      <div class="seg-group">
+        <button class="seg-btn active" data-platform="desktop">💻 Desktop</button>
+        <button class="seg-btn" data-platform="tablet">📱 Tablet</button>
+        <button class="seg-btn" data-platform="mobile">📲 Mobile</button>
+        <button class="seg-btn" data-platform="tv">📺 TV</button>
+        <button class="seg-btn" data-platform="compare">⚖ 现版对比</button>
+      </div>
+      <div class="accent-dots">
+        <button class="accent-dot" data-accent="glacier" style="background:#5cb8ff"></button>
+        <button class="accent-dot" data-accent="neutral" style="background:#ffffff"></button>
+        <button class="accent-dot" data-accent="ember" style="background:#ff8a5b"></button>
+        <button class="accent-dot" data-accent="plum" style="background:#c084fc"></button>
+      </div>
+    </div>
+  </header>
+
+  <main class="page-container">
+    <div class="design-notes-bar">
+      <div class="note-card">
+        <strong>① Infuse 双层质感：剧照 Backdrop + 悬浮海报</strong>
+        <span>Desktop/Tablet 左侧展示立式海报与顶部剧照呼应，层次远胜现版单调的黑灰半截背景。</span>
+      </div>
+      <div class="note-card">
+        <strong>② 多版本与来源切换前置</strong>
+        <span>针对你的多挂载合并能力，直接在播放按钮上方提供 <code>☁ 夸克 4K DV</code> / <code>📁 SMB REMUX</code> 切换胶囊。</span>
+      </div>
+      <div class="note-card">
+        <strong>③ 影迷级媒体信息栏</strong>
+        <span>清晰展示编码、音轨、容器体积、刮削来源（TMDB/豆瓣/Bangumi），并提供「重新匹配」快捷入口。</span>
+      </div>
+      <div class="note-card">
+        <strong>④ TV 端焦点直达分集卡片</strong>
+        <span>延续 <code>tv-md.png</code> 优秀的高区大图设计，强化季/集切换与遥控器白光聚焦态。</span>
+      </div>
+    </div>
+
+    <div class="stage-wrapper">
+      <!-- ==================== DESKTOP / TABLET / TV (统一宽屏详情页) ==================== -->
+      <section class="stage-panel active" data-platform="desktop tablet tv">
+        <div class="device-desktop">
+          <div class="detail-canvas" style="background:
+            radial-gradient(circle at 82% 16%, rgba(148, 179, 168, 0.2), transparent 44%),
+            radial-gradient(circle at 18% 80%, rgba(92, 184, 255, 0.08), transparent 45%),
+            linear-gradient(180deg, #171e1c 0%, #0b0d12 48%, #06070a 100%);">
+            <div style="padding:20px 32px 28px;display:flex;flex-direction:column;gap:20px;">
+              <div style="display:flex;align-items:center;justify-content:space-between;">
+                <div style="display:flex;align-items:center;gap:12px;">
+                  <div class="traffic-lights"><span class="tl r"></span><span class="tl y"></span><span class="tl g"></span></div>
+                  <button class="btn-glass-icon" style="width:34px;height:34px;" data-nav="01-home-discover.html">←</button>
+                  <span style="font-size:12px;color:var(--text-muted);">切尔诺贝利 · 详情</span>
+                </div>
+                <div style="display:flex;gap:8px;align-items:center;">
+                  <span class="glass-pill tv-only-pill" style="font-size:11.5px;border-color:rgba(255,255,255,0.28);">📺 10-Foot 遥控焦点</span>
+                  <button class="glass-pill" data-open-modal="modalManualMatch">🔗 重新匹配 (TMDB)</button>
+                  <button class="glass-pill" data-open-modal="modalEditMeta">✎ 编辑元数据</button>
+                </div>
+              </div>
+
+              <!-- Compact Split Hero (Left Vertical Poster + Right Info) -->
+              <div style="display:grid;grid-template-columns:172px 1fr;gap:26px;align-items:center;">
+                <div class="poster-art art-chernobyl" style="width:172px;border-radius:16px;box-shadow:0 22px 46px rgba(0,0,0,0.68);">
+                  <span class="poster-badge-top">5 集全</span>
+                  <div class="poster-art-title" style="font-size:19px;">CHERNOBYL</div>
+                </div>
+                <div style="min-width:0;display:flex;flex-direction:column;gap:10px;">
+                  <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+                    <span style="font-size:11.5px;font-weight:700;letter-spacing:0.1em;color:var(--accent);">MINI-SERIES · HBO · 2019</span>
+                    <span style="font-size:11.5px;color:var(--text-muted);">TMDB #87108 · 豆瓣已同步</span>
+                  </div>
+                  <h2 style="font-size:36px;font-weight:900;letter-spacing:-0.02em;line-height:1.06;">切尔诺贝利 · CHERNOBYL</h2>
+                  <div style="display:flex;gap:7px;flex-wrap:wrap;">
+                    <span class="spec-pill imdb">IMDb 9.3</span>
+                    <span class="spec-pill tmdb">豆瓣 9.6</span>
+                    <span class="spec-pill dv">4K · Dolby Vision</span>
+                    <span class="spec-pill hdr">DTS-HD MA 5.1</span>
+                    <span class="spec-pill">TV-MA</span>
+                  </div>
+                  <p style="font-size:13px;color:var(--text-secondary);line-height:1.55;max-width:840px;">
+                    1986 年 4 月 26 日凌晨，苏联乌克兰境内的切尔诺贝利核电站四号反应堆发生爆炸。科学家、消防员与清理人在危机与掩盖中奋力拯救欧洲。
+                  </p>
+                  <div class="version-bar" style="margin:2px 0;" data-pill-group>
+                    <span style="font-size:11.5px;color:var(--text-muted);">片源版本：</span>
+                    <button class="version-pill active" data-pill>☁ 夸克网盘 · 4K HDR10 (28.4 GB)</button>
+                    <button class="version-pill" data-pill>📁 SMB NAS · 1080p BluRay (14.1 GB)</button>
+                  </div>
+                  <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:2px;">
+                    <button class="btn-play-hero tv-focus-default" data-nav="04-video-player.html">▶ 播放 S1E1 · 1:23:45</button>
+                    <button class="btn-glass-icon" title="切换版本" data-open-modal="modalVersions">🗂</button>
+                    <button class="btn-glass-icon" title="随机播放" data-nav="04-video-player.html">🔀</button>
+                    <button class="btn-glass-icon" title="下载到本地" data-toast="已加入离线下载队列">⬇</button>
+                    <button class="btn-glass-icon" title="标记为已看" data-toast="已标记「切尔诺贝利」为已观看">✓</button>
+                    <button class="btn-glass-icon" title="完整媒体信息" data-open-modal="modalFullInfo">⋯</button>
+                  </div>
+                </div>
+              </div>
+
+              <div class="info-glass-strip" data-open-modal="modalFullInfo">
+                <div class="info-kv"><small>视频流</small><strong>HEVC 3840×2160 · 10bit</strong></div>
+                <div class="info-kv"><small>音频与字幕</small><strong>英语 DTS-HD · 内置简中 ASS</strong></div>
+                <div class="info-kv"><small>存储位置</small><strong>/夸克网盘/美剧/Chernobyl/</strong></div>
+                <div class="info-kv"><small>刮削数据</small><strong>TMDB #87108 · 豆瓣已同步</strong></div>
+              </div>
+
+              <div>
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+                  <div style="display:flex;align-items:center;gap:10px;" data-pill-group>
+                    <h3 style="font-size:15px;font-weight:700;">剧集列表</h3>
+                    <button class="glass-pill active" data-pill style="padding:4px 12px;font-size:12px;">第 1 季 (5 集)</button>
+                    <button class="glass-pill" data-pill style="padding:4px 12px;font-size:12px;">花絮特典</button>
+                  </div>
+                  <span style="font-size:12px;color:var(--text-muted);">共 5 集 · 全部可用</span>
+                </div>
+                <div class="row-landscape" style="gap:14px;">
+                  <div class="poster-card" data-nav="04-video-player.html">
+                    <div class="poster-art landscape art-chernobyl"><span class="poster-badge-top">1:23:45</span><div class="poster-art-title">E1 · 1:23:45</div><div class="poster-progress"><i style="width:30%"></i></div></div>
+                    <div class="poster-meta-title">1 · 1:23:45</div>
+                    <div class="poster-meta-sub">反应堆爆炸之夜</div>
+                  </div>
+                  <div class="poster-card" data-nav="04-video-player.html">
+                    <div class="poster-art landscape art-1917"><span class="poster-badge-top">1:05:12</span><div class="poster-art-title">E2 · Please Remain Calm</div></div>
+                    <div class="poster-meta-title">2 · Please Remain Calm</div>
+                    <div class="poster-meta-sub">物理学家赶赴现场</div>
+                  </div>
+                  <div class="poster-card" data-nav="04-video-player.html">
+                    <div class="poster-art landscape art-severance"><span class="poster-badge-top">1:08:40</span><div class="poster-art-title">E3 · Open Wide, O Earth</div></div>
+                    <div class="poster-meta-title">3 · Open Wide, O Earth</div>
+                    <div class="poster-meta-sub">地下挖掘与辐射危机</div>
+                  </div>
+                  <div class="poster-card" data-nav="04-video-player.html">
+                    <div class="poster-art landscape art-bcs"><span class="poster-badge-top">1:07:19</span><div class="poster-art-title">E4 · The Happiness</div></div>
+                    <div class="poster-meta-title">4 · The Happiness of All Mankind</div>
+                    <div class="poster-meta-sub">疏散区清理行动</div>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <h3 style="font-size:15px;font-weight:700;margin-bottom:12px;">演职员</h3>
+                <div class="cast-row">
+                  <div class="cast-item"><div class="cast-avatar">JH</div><div style="font-size:12px;font-weight:600;">Jared Harris</div><div style="font-size:10.5px;color:var(--text-muted);">列加索夫</div></div>
+                  <div class="cast-item"><div class="cast-avatar">SS</div><div style="font-size:12px;font-weight:600;">Stellan Skarsgård</div><div style="font-size:10.5px;color:var(--text-muted);">谢尔比纳</div></div>
+                  <div class="cast-item"><div class="cast-avatar">EW</div><div style="font-size:12px;font-weight:600;">Emily Watson</div><div style="font-size:10.5px;color:var(--text-muted);">霍缪克</div></div>
+                  <div class="cast-item"><div class="cast-avatar">JB</div><div style="font-size:12px;font-weight:600;">Jessie Buckley</div><div style="font-size:10.5px;color:var(--text-muted);">柳德米拉</div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ==================== MOBILE ==================== -->
+      <section class="stage-panel" data-platform="mobile">
+        <div class="device-mobile">
+          <div class="mobile-statusbar"><span>9:41</span><div class="dynamic-island"></div><span>5G 🔋</span></div>
+          <div style="flex:1;overflow-y:auto;padding-bottom:32px;background:#090b10;">
+            <div style="position:relative;height:380px;padding:52px 18px 20px;display:flex;flex-direction:column;justify-content:space-between;background:radial-gradient(circle at 60% 25%,rgba(244,114,182,0.34),transparent 50%),linear-gradient(165deg,#3b1d52,#141624 65%,#090b10);">
+              <div style="display:flex;justify-content:space-between;">
+                <button class="btn-glass-icon" style="width:34px;height:34px;" data-nav="01-home-discover.html">←</button>
+                <button class="btn-glass-icon" style="width:34px;height:34px;" data-open-modal="modalFullInfo">⋯</button>
+              </div>
+              <div>
+                <h2 style="font-size:30px;font-weight:900;margin-bottom:8px;">药屋少女的呢喃</h2>
+                <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;">
+                  <span class="spec-pill tmdb">Bangumi 8.6</span>
+                  <span class="spec-pill dv">1080p Hi10P</span>
+                  <span class="spec-pill">☁ 夸克</span>
+                </div>
+                <div class="version-bar" style="margin:0 0 12px;" data-pill-group>
+                  <button class="version-pill active" data-pill style="font-size:11px;padding:4px 9px;">夸克 · 简繁外挂</button>
+                  <button class="version-pill" data-pill style="font-size:11px;padding:4px 9px;">SMB · BDRip</button>
+                </div>
+                <div style="display:flex;gap:8px;align-items:center;">
+                  <button class="btn-play-hero" style="flex:1;justify-content:center;" data-nav="04-video-player.html">▶ 播放 S1E1</button>
+                  <button class="btn-glass-icon" data-toast="已加入离线下载队列">⬇</button>
+                  <button class="btn-glass-icon" data-toast="已标记为已观看">✓</button>
+                </div>
+              </div>
+            </div>
+            <div style="padding:14px 18px;display:flex;flex-direction:column;gap:14px;">
+              <p style="font-size:12.5px;color:var(--text-secondary);line-height:1.55;">出身花街的药师少女猫猫被掳入后宫，凭借敏锐推理与药学知识揭开皇宫内频发的诡异悬案。</p>
+              <div style="display:flex;gap:8px;overflow-x:auto;" data-pill-group>
+                <button class="glass-pill active" data-pill>第 1 季 (24)</button>
+                <button class="glass-pill" data-pill>第 2 季 (24)</button>
+              </div>
+              <div class="ep-card" style="padding:8px;" data-nav="04-video-player.html">
+                <div class="ep-thumb art-apothecary" style="width:110px;"><div class="poster-progress"><i style="width:65%"></i></div></div>
+                <div><strong style="font-size:12.5px;">E1 · 猫猫</strong><p style="font-size:11px;color:var(--text-muted);">24 分钟 · 已看 65%</p></div>
+              </div>
+              <div class="ep-card" style="padding:8px;" data-nav="04-video-player.html">
+                <div class="ep-thumb art-frieren" style="width:110px;"></div>
+                <div><strong style="font-size:12.5px;">E2 · 严厉的侍女</strong><p style="font-size:11px;color:var(--text-muted);">24 分钟 · 未播放</p></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ==================== COMPARE ==================== -->
+      <section class="stage-panel" data-platform="compare">
+        <div class="compare-grid">
+          <div class="compare-box"><div class="compare-label"><span>现版 · Desktop Detail</span><span class="compare-tag">screenshots/desktop-md.png</span></div><img class="screenshot-img" src="screenshots/desktop-md.png" alt="Desktop Detail"></div>
+          <div class="compare-box"><div class="compare-label"><span>现版 · Mobile Detail</span><span class="compare-tag">screenshots/phone-md.png</span></div><img class="screenshot-img" src="screenshots/phone-md.png" alt="Mobile Detail"></div>
+          <div class="compare-box"><div class="compare-label"><span>现版 · Tablet Detail</span><span class="compare-tag">screenshots/tablet-md.png</span></div><img class="screenshot-img" src="screenshots/tablet-md.png" alt="Tablet Detail"></div>
+          <div class="compare-box"><div class="compare-label"><span>现版 · TV Detail</span><span class="compare-tag">screenshots/tv-md.png</span></div><img class="screenshot-img" src="screenshots/tv-md.png" alt="TV Detail"></div>
+        </div>
+      </section>
+    </div>
+  </main>
+  <!-- 切换片源版本弹窗 (VersionQualitySheet) -->
+  <div class="proto-modal" id="modalVersions">
+    <div class="proto-dialog" style="max-width:480px;">
+      <div class="proto-dialog-head">
+        <div class="proto-dialog-title">🗂 选择片源版本 (多源合并)</div>
+        <button class="btn-glass-icon" data-close-modal>✕</button>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:8px;">
+        <div class="proto-option-row active" data-close-modal data-toast="已切换至：夸克网盘 · 4K HDR10 (28.4 GB)">
+          <div>
+            <div style="font-weight:700;">☁ 夸克网盘 · 4K HDR10</div>
+            <div style="font-size:11.5px;color:var(--text-muted);">HEVC 10bit · DTS-HD MA 5.1 · 28.4 GB</div>
+          </div>
+          <span>✓</span>
+        </div>
+        <div class="proto-option-row" data-close-modal data-toast="已切换至：SMB NAS · 1080p BluRay (14.1 GB)">
+          <div>
+            <div style="font-weight:700;">📁 SMB NAS · 1080p BluRay</div>
+            <div style="font-size:11.5px;color:var(--text-muted);">H.264 8bit · AC3 5.1 · 14.1 GB</div>
+          </div>
+          <span style="color:var(--text-muted);">选择</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 手动匹配弹窗 (ManualMatchDialog) -->
+  <div class="proto-modal" id="modalManualMatch">
+    <div class="proto-dialog" style="max-width:520px;">
+      <div class="proto-dialog-head">
+        <div class="proto-dialog-title">🔗 手动匹配元数据 (TMDB / Bangumi)</div>
+        <button class="btn-glass-icon" data-close-modal>✕</button>
+      </div>
+      <div class="proto-field">
+        <label class="proto-label">搜索关键词 / TMDB ID / Bangumi Subject ID</label>
+        <div style="display:flex;gap:8px;">
+          <input class="proto-input" type="text" value="Chernobyl 2019" />
+          <button class="btn-play-hero" style="padding:8px 16px;font-size:12.5px;" data-toast="已检索 TMDB 与 Bangumi 候选结果">搜索</button>
+        </div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:8px;">
+        <div class="proto-option-row active" data-close-modal data-toast="已重新绑定 TMDB #87108「切尔诺贝利」">
+          <div>
+            <div style="font-weight:700;">切尔诺贝利 · Chernobyl (2019)</div>
+            <div style="font-size:11.5px;color:var(--text-muted);">TMDB #87108 · HBO 迷你剧 · ★ 9.3</div>
+          </div>
+          <span class="spec-pill tmdb">最佳匹配</span>
+        </div>
+        <div class="proto-option-row" data-close-modal data-toast="已切换绑定记录">
+          <div>
+            <div style="font-weight:700;">切尔诺贝利：禁区 (2014)</div>
+            <div style="font-size:11.5px;color:var(--text-muted);">TMDB #62455 · 剧集 · ★ 7.5</div>
+          </div>
+          <span style="color:var(--text-muted);">选择</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 编辑元数据弹窗 (MetadataEditScreen) -->
+  <div class="proto-modal" id="modalEditMeta">
+    <div class="proto-dialog" style="max-width:480px;">
+      <div class="proto-dialog-head">
+        <div class="proto-dialog-title">✎ 编辑本地元数据</div>
+        <button class="btn-glass-icon" data-close-modal>✕</button>
+      </div>
+      <div class="proto-field"><label class="proto-label">标题</label><input class="proto-input" value="切尔诺贝利 · CHERNOBYL" /></div>
+      <div class="proto-field"><label class="proto-label">年份 / 分类</label><input class="proto-input" value="2019 · 电视剧" /></div>
+      <div class="proto-field"><label class="proto-label">简介</label><textarea class="proto-input" rows="3">1986 年 4 月 26 日凌晨，苏联乌克兰境内的切尔诺贝利核电站发生人类历史上最严重的核事故之一…</textarea></div>
+      <div style="display:flex;justify-content:flex-end;gap:8px;">
+        <button class="glass-pill" data-close-modal>取消</button>
+        <button class="btn-play-hero" style="padding:8px 18px;font-size:12.5px;" data-close-modal data-toast="已保存本地元数据覆盖">保存修改</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 完整技术流与媒体信息弹窗 -->
+  <div class="proto-modal" id="modalFullInfo">
+    <div class="proto-dialog" style="max-width:520px;">
+      <div class="proto-dialog-head">
+        <div class="proto-dialog-title">ℹ 完整媒体信息 (Media Info)</div>
+        <button class="btn-glass-icon" data-close-modal>✕</button>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;font-size:12.5px;">
+        <div class="info-kv"><small>文件路径</small><strong>/夸克网盘/美剧/Chernobyl/S01E01.mkv</strong></div>
+        <div class="info-kv"><small>容器与体积</small><strong>Matroska (MKV) · 5.82 GB</strong></div>
+        <div class="info-kv"><small>视频流</small><strong>HEVC Main10 · 3840×2160 · 23.976fps</strong></div>
+        <div class="info-kv"><small>HDR 元数据</small><strong>Dolby Vision Profile 8.1 / HDR10</strong></div>
+        <div class="info-kv"><small>音频轨道</small><strong>#1 英语 DTS-HD MA 5.1 / #2 国语 AC3</strong></div>
+        <div class="info-kv"><small>字幕轨道</small><strong>#1 简中 ASS / #2 简英双语 SRT</strong></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="scripts/showcase.js"></script>
+</body>
+</html>

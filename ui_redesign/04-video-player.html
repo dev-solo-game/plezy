@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-accent="glacier">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>04 影院级播放器 HUD · Plezy UI 重设计</title>
+  <link rel="stylesheet" href="styles/design-system.css" />
+  <style>
+    .player-stage {
+      width: 100%;
+      height: 100%;
+      position: relative;
+      background:
+        radial-gradient(circle at 60% 42%, rgba(251, 191, 36, 0.25), transparent 44%),
+        radial-gradient(circle at 25% 60%, rgba(56, 189, 248, 0.2), transparent 50%),
+        linear-gradient(155deg, #27221d 0%, #1a1b22 50%, #0d0f14 100%);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 20px 24px 22px;
+    }
+    .cinema-subtitle {
+      position: absolute;
+      bottom: 122px;
+      left: 50%;
+      transform: translateX(-50%);
+      text-align: center;
+      font-size: 20px;
+      font-weight: 700;
+      color: #fff;
+      text-shadow: 0 2px 6px rgba(0,0,0,0.95), 0 0 18px rgba(0,0,0,0.8);
+      letter-spacing: 0.02em;
+      pointer-events: none;
+    }
+    .player-top-hud {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      z-index: 10;
+    }
+    .player-title-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 12px;
+      padding: 7px 14px 7px 8px;
+      border-radius: 999px;
+      background: rgba(14, 16, 22, 0.62);
+      backdrop-filter: var(--blur-lg);
+      border: 1px solid rgba(255, 255, 255, 0.14);
+    }
+    .player-bottom-dock {
+      z-index: 10;
+      margin: 0 auto;
+      width: min(940px, 100%);
+      padding: 14px 20px 16px;
+      border-radius: 24px;
+      background: rgba(14, 16, 24, 0.72);
+      backdrop-filter: var(--blur-lg);
+      -webkit-backdrop-filter: var(--blur-lg);
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      box-shadow: 0 24px 55px rgba(0, 0, 0, 0.65);
+    }
+    .timeline-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-variant-numeric: tabular-nums;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-secondary);
+      margin-bottom: 12px;
+    }
+    .timeline-track {
+      flex: 1;
+      height: 6px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.18);
+      position: relative;
+      display: flex;
+      gap: 4px;
+    }
+    .timeline-fill {
+      position: absolute;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      width: 44%;
+      background: var(--accent);
+      border-radius: 999px;
+      box-shadow: 0 0 12px var(--accent-glow);
+    }
+    .timeline-thumb {
+      position: absolute;
+      left: 44%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background: #fff;
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.7);
+    }
+    .skip-pill {
+      position: absolute;
+      right: 28px;
+      bottom: 132px;
+      z-index: 12;
+      padding: 9px 16px;
+      border-radius: 999px;
+      background: rgba(20, 24, 34, 0.76);
+      backdrop-filter: var(--blur-md);
+      border: 1px solid rgba(255, 255, 255, 0.24);
+      color: #fff;
+      font-size: 12.5px;
+      font-weight: 700;
+      cursor: pointer;
+      box-shadow: 0 10px 26px rgba(0, 0, 0, 0.5);
+    }
+    .controls-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .player-drawer {
+      position: absolute;
+      right: 24px;
+      top: 74px;
+      bottom: 132px;
+      width: 310px;
+      border-radius: 20px;
+      background: rgba(15, 18, 26, 0.86);
+      backdrop-filter: var(--blur-lg);
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      padding: 16px;
+      z-index: 20;
+      display: none;
+      flex-direction: column;
+      gap: 14px;
+      overflow-y: auto;
+      box-shadow: var(--shadow-float);
+    }
+    .player-drawer.open { display: flex; }
+    .drawer-option {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 9px 12px;
+      border-radius: 11px;
+      font-size: 12.5px;
+      background: rgba(255,255,255,0.04);
+      border: 1px solid transparent;
+      cursor: pointer;
+    }
+    .drawer-option.active {
+      background: var(--accent-soft);
+      border-color: var(--accent);
+      color: var(--accent);
+      font-weight: 600;
+    }
+  </style>
+</head>
+<body>
+  <header class="showcase-topbar">
+    <div class="showcase-brand">
+      <a href="index.html" class="brand-mark">P</a>
+      <div>
+        <div class="brand-title">04 · 影院级播放器 HUD (Video Player)</div>
+        <div class="brand-sub">对比现版：desktop-player.png · tablet-player.png · tv-player.png</div>
+      </div>
+    </div>
+    <nav class="showcase-nav">
+      <a class="nav-pill" href="index.html">总览</a>
+      <a class="nav-pill" href="01-home-discover.html">01 首页发现</a>
+      <a class="nav-pill" href="02-library-browse.html">02 媒体库</a>
+      <a class="nav-pill" href="03-media-detail.html">03 详情页</a>
+      <a class="nav-pill active" href="04-video-player.html">04 播放器</a>
+      <a class="nav-pill" href="05-search.html">05 搜索</a>
+      <a class="nav-pill" href="06-storage-sources.html">06 存储与刮削</a>
+      <a class="nav-pill" href="07-downloads-settings-profile.html">07 下载/设置</a>
+    </nav>
+    <div class="showcase-controls">
+      <div class="seg-group">
+        <button class="seg-btn active" data-platform="desktop">💻 Desktop</button>
+        <button class="seg-btn" data-platform="tablet">📱 Tablet</button>
+        <button class="seg-btn" data-platform="mobile">📲 Mobile</button>
+        <button class="seg-btn" data-platform="tv">📺 TV</button>
+        <button class="seg-btn" data-platform="compare">⚖ 现版对比</button>
+      </div>
+      <div class="accent-dots">
+        <button class="accent-dot" data-accent="glacier" style="background:#5cb8ff"></button>
+        <button class="accent-dot" data-accent="neutral" style="background:#ffffff"></button>
+        <button class="accent-dot" data-accent="ember" style="background:#ff8a5b"></button>
+        <button class="accent-dot" data-accent="plum" style="background:#c084fc"></button>
+      </div>
+    </div>
+  </header>
+
+  <main class="page-container">
+    <div class="design-notes-bar">
+      <div class="note-card">
+        <strong>① 悬浮毛玻璃控制岛 (Floating HUD)</strong>
+        <span>Infuse 标志性设计：控制栏不再铺满屏幕左右两侧，而是收敛为居中的圆角磨砂胶囊，大幅释放边缘观影视野。</span>
+      </div>
+      <div class="note-card">
+        <strong>② 实时流信息 & 片源直切</strong>
+        <span>右上角浮标显示 <code>mpv · 4K HDR10 · 32.4 Mbps · 夸克直连</code>；点击「字幕/音轨/设置」可打开右侧悬浮抽屉（可在原型中点击试看）。</span>
+      </div>
+      <div class="note-card">
+        <strong>③ 章节分段与跳过片头胶囊</strong>
+        <span>保留 Plezy 原版章节断点刻度与「结束于 17:10」贴心提示，增加「⏭ 跳过片头」悬浮毛玻璃胶囊。</span>
+      </div>
+      <div class="note-card">
+        <strong>④ Mobile 手势与锁屏体验</strong>
+        <span>手机端支持左侧亮度 / 右侧音量半透明竖条、倍速长按提示与防误触锁屏按钮。</span>
+      </div>
+    </div>
+
+    <div class="stage-wrapper">
+      <!-- ==================== DESKTOP / TABLET / TV (统一宽屏播放器 HUD) ==================== -->
+      <section class="stage-panel active" data-platform="desktop tablet tv">
+        <div class="device-desktop">
+          <div class="player-stage">
+            <div class="player-top-hud">
+              <div class="player-title-pill">
+                <div class="traffic-lights" style="padding:0 6px;"><span class="tl r"></span><span class="tl y"></span><span class="tl g"></span></div>
+                <button class="btn-glass-icon" style="width:30px;height:30px;" data-nav="03-media-detail.html">←</button>
+                <div>
+                  <div style="font-size:13px;font-weight:700;">日常 · Nichijou</div>
+                  <div style="font-size:11px;color:var(--text-muted);">S1 E1 · 平凡的日常 · 结束于 17:10</div>
+                </div>
+              </div>
+              <div style="display:flex;gap:8px;align-items:center;">
+                <span class="spec-pill dv">4K · HDR10</span>
+                <span class="spec-pill">mpv · 32.4 Mbps · ☁ 夸克</span>
+                <button class="glass-pill" data-toggle-target="desktopPlayerDrawer">🎛 音轨 / 字幕 / 版本</button>
+              </div>
+            </div>
+
+            <div class="cinema-subtitle">「因为今天是星期天，阪本先生也稍微休息一下吧。」</div>
+            <button class="skip-pill" data-toast="已跳过片头 (01:25)">⏭ 跳过片头 · 1:25</button>
+
+            <!-- Interactive Drawer -->
+            <div class="player-drawer open" id="desktopPlayerDrawer">
+              <div style="display:flex;justify-content:space-between;align-items:center;">
+                <strong style="font-size:13.5px;">播放控制台 (点击右上按钮可收起)</strong>
+              </div>
+              <div>
+                <div style="font-size:11px;color:var(--text-muted);margin-bottom:6px;">音轨选择</div>
+                <div style="display:flex;flex-direction:column;gap:5px;" data-pill-group>
+                  <div class="drawer-option active" data-pill><span>日语 · FLAC 2.0 (原声)</span><span>✓</span></div>
+                  <div class="drawer-option" data-pill><span>日语 · AAC 2.0</span><span></span></div>
+                </div>
+              </div>
+              <div>
+                <div style="font-size:11px;color:var(--text-muted);margin-bottom:6px;">字幕轨 (ASS 特效)</div>
+                <div style="display:flex;flex-direction:column;gap:5px;" data-pill-group>
+                  <div class="drawer-option active" data-pill><span>简日双语 · 诸神字幕组.ass</span><span>✓</span></div>
+                  <div class="drawer-option" data-pill><span>简体中文 · 字幕库在线</span><span></span></div>
+                  <div class="drawer-option" data-pill><span>关闭字幕</span><span></span></div>
+                </div>
+              </div>
+              <div>
+                <div style="font-size:11px;color:var(--text-muted);margin-bottom:6px;">播放倍速</div>
+                <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;" data-pill-group>
+                  <button class="glass-pill" data-pill style="justify-content:center;padding:5px;">1.0x</button>
+                  <button class="glass-pill active" data-pill style="justify-content:center;padding:5px;">1.25x</button>
+                  <button class="glass-pill" data-pill style="justify-content:center;padding:5px;">1.5x</button>
+                  <button class="glass-pill" data-pill style="justify-content:center;padding:5px;">2.0x</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="player-bottom-dock">
+              <div class="timeline-row">
+                <span>12:39</span>
+                <div class="timeline-track">
+                  <div class="timeline-fill"></div>
+                  <div class="timeline-thumb"></div>
+                </div>
+                <span>-10:02</span>
+              </div>
+              <div class="controls-row">
+                <div style="display:flex;align-items:center;gap:8px;">
+                  <button class="btn-glass-icon" style="width:34px;height:34px;" data-toast="已是第 1 集">⏮</button>
+                  <button class="btn-glass-icon" style="width:34px;height:34px;" data-toast="后退 10 秒">↺10</button>
+                  <button class="btn-play-hero" style="padding:8px 18px;" data-toast="播放 / 暂停切换">⏸ 暂停</button>
+                  <button class="btn-glass-icon" style="width:34px;height:34px;" data-toast="快进 10 秒">10↻</button>
+                  <button class="btn-glass-icon" style="width:34px;height:34px;" data-toast="已切换至 S1E2">⏭</button>
+                </div>
+                <div style="display:flex;align-items:center;gap:10px;">
+                  <span style="font-size:12px;color:var(--text-secondary);">🔊 ▬▬▬▬○</span>
+                  <button class="glass-pill" style="padding:5px 11px;font-size:12px;" data-open-modal="modalVideoSettings">⚙ 1.0x / 画面</button>
+                  <button class="glass-pill" style="padding:5px 11px;font-size:12px;" data-open-modal="modalChapters">📑 章节</button>
+                  <button class="glass-pill" style="padding:5px 11px;font-size:12px;" data-open-modal="modalEpisodes">📺 选集</button>
+                  <button class="btn-glass-icon" style="width:34px;height:34px;" data-toast="已切换全屏模式">⛶</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ==================== MOBILE ==================== -->
+      <section class="stage-panel" data-platform="mobile">
+        <div class="device-mobile" style="width:780px;height:380px;border-radius:42px;">
+          <div class="player-stage" style="padding:16px 26px;">
+            <div class="player-top-hud">
+              <div class="player-title-pill">
+                <button class="btn-glass-icon" style="width:28px;height:28px;" data-nav="03-media-detail.html">←</button>
+                <span style="font-size:12.5px;font-weight:700;">葬送的芙莉莲 · S1E2</span>
+              </div>
+              <div style="display:flex;gap:6px;">
+                <span class="spec-pill">1080p · 夸克</span>
+                <button class="btn-glass-icon" style="width:32px;height:32px;" data-toast="屏幕已锁定">🔒</button>
+              </div>
+            </div>
+
+            <!-- Left brightness indicator -->
+            <div style="position:absolute;left:22px;top:50%;transform:translateY(-50%);padding:10px 7px;border-radius:999px;background:rgba(14,16,24,0.65);backdrop-filter:blur(16px);border:1px solid rgba(255,255,255,0.14);display:flex;flex-direction:column;align-items:center;gap:6px;">
+              <span style="font-size:11px;">☀</span>
+              <div style="width:4px;height:68px;background:rgba(255,255,255,0.2);border-radius:999px;overflow:hidden;display:flex;align-items:flex-end;">
+                <div style="width:100%;height:70%;background:#fff;"></div>
+              </div>
+            </div>
+
+            <div class="player-bottom-dock" style="padding:10px 16px;">
+              <div class="timeline-row" style="margin-bottom:8px;"><span>11:04</span><div class="timeline-track"><div class="timeline-fill" style="width:48%"></div><div class="timeline-thumb" style="left:48%"></div></div><span>-12:46</span></div>
+              <div class="controls-row">
+                <div style="display:flex;gap:8px;align-items:center;">
+                  <button class="btn-glass-icon" style="width:32px;height:32px;" data-toast="后退 10 秒">↺10</button>
+                  <button class="btn-play-hero" style="padding:6px 16px;" data-toast="播放 / 暂停切换">⏸</button>
+                  <button class="btn-glass-icon" style="width:32px;height:32px;" data-toast="快进 10 秒">10↻</button>
+                </div>
+                <div style="display:flex;gap:6px;">
+                  <button class="glass-pill" style="padding:4px 10px;font-size:11.5px;" data-open-modal="modalVideoSettings">2.0x</button>
+                  <button class="glass-pill" style="padding:4px 10px;font-size:11.5px;" data-open-modal="modalTracks">💬 字幕</button>
+                  <button class="glass-pill" style="padding:4px 10px;font-size:11.5px;" data-open-modal="modalEpisodes">📺 选集</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ==================== COMPARE ==================== -->
+      <section class="stage-panel" data-platform="compare">
+        <div class="compare-grid">
+          <div class="compare-box"><div class="compare-label"><span>现版 · Desktop Player</span><span class="compare-tag">screenshots/desktop-player.png</span></div><img class="screenshot-img" src="screenshots/desktop-player.png" alt="Desktop Player"></div>
+          <div class="compare-box"><div class="compare-label"><span>现版 · Tablet Player</span><span class="compare-tag">screenshots/tablet-player.png</span></div><img class="screenshot-img" src="screenshots/tablet-player.png" alt="Tablet Player"></div>
+          <div class="compare-box"><div class="compare-label"><span>现版 · TV Player</span><span class="compare-tag">screenshots/tv-player.png</span></div><img class="screenshot-img" src="screenshots/tv-player.png" alt="TV Player"></div>
+        </div>
+      </section>
+    </div>
+  </main>
+  <!-- 音轨与字幕 / 在线搜字幕弹窗 (TrackSheet + SubtitleSearchSheet) -->
+  <div class="proto-modal" id="modalTracks">
+    <div class="proto-dialog" style="max-width:500px;">
+      <div class="proto-dialog-head">
+        <div class="proto-dialog-title">🎛 音轨与字幕控制</div>
+        <button class="btn-glass-icon" data-close-modal>✕</button>
+      </div>
+      <div style="display:flex;gap:8px;margin-bottom:14px;" data-pill-group>
+        <button class="glass-pill active" data-pill data-tab-target="sub">字幕轨</button>
+        <button class="glass-pill" data-pill data-tab-target="audio">音轨</button>
+        <button class="glass-pill" data-pill data-tab-target="online">在线搜字幕</button>
+      </div>
+      <div data-tab-panel="sub">
+        <div style="display:flex;flex-direction:column;gap:8px;">
+          <div class="proto-option-row active" data-close-modal data-toast="字幕：简中 ASS (诸神字幕组)"><span>简日双语 · 诸神字幕组.ass (内置)</span><span>✓</span></div>
+          <div class="proto-option-row" data-close-modal data-toast="字幕：简体中文 SRT"><span>简体中文 · 外挂.srt</span><span></span></div>
+          <div class="proto-option-row" data-close-modal data-toast="已关闭字幕"><span>关闭字幕</span><span></span></div>
+        </div>
+      </div>
+      <div data-tab-panel="audio" hidden>
+        <div style="display:flex;flex-direction:column;gap:8px;">
+          <div class="proto-option-row active" data-close-modal data-toast="音轨：日语 FLAC 2.0"><span>日语 · FLAC 2.0 (原声)</span><span>✓</span></div>
+          <div class="proto-option-row" data-close-modal data-toast="音轨：英语 DTS-HD MA 5.1"><span>英语 · DTS-HD MA 5.1</span><span></span></div>
+        </div>
+      </div>
+      <div data-tab-panel="online" hidden>
+        <div class="proto-field">
+          <div style="display:flex;gap:8px;">
+            <input class="proto-input" value="Nichijou S01E01" />
+            <button class="btn-play-hero" style="padding:8px 14px;font-size:12px;" data-toast="已从 Shooter / OpenSubtitles 检索到 4 条匹配字幕">搜索</button>
+          </div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:8px;">
+          <div class="proto-option-row" data-close-modal data-toast="已下载并加载「诸神字幕组简繁双语.ass」"><span>[Shooter] 日常 S01E01 简繁双语.ass</span><span class="spec-pill tmdb">匹配 98%</span></div>
+          <div class="proto-option-row" data-close-modal data-toast="已下载并加载「OpenSubtitles 简中.srt」"><span>[OpenSubtitles] Nichijou.E01.zh-CN.srt</span><span class="spec-pill">SRT</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 章节跳转弹窗 (ChapterSheet) -->
+  <div class="proto-modal" id="modalChapters">
+    <div class="proto-dialog" style="max-width:440px;">
+      <div class="proto-dialog-head">
+        <div class="proto-dialog-title">📑 章节跳转 (Chapters)</div>
+        <button class="btn-glass-icon" data-close-modal>✕</button>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:8px;">
+        <div class="proto-option-row" data-close-modal data-toast="已跳转至：00:00 片头曲"><span>第 1 章 · 片头曲 (OP)</span><span style="color:var(--text-muted);">00:00</span></div>
+        <div class="proto-option-row active" data-close-modal data-toast="当前处于：01:30 正片 Part A"><span>第 2 章 · 正片 Part A</span><span style="color:var(--accent);">01:30</span></div>
+        <div class="proto-option-row" data-close-modal data-toast="已跳转至：11:45 过场与 Part B"><span>第 3 章 · 过场与 Part B</span><span style="color:var(--text-muted);">11:45</span></div>
+        <div class="proto-option-row" data-close-modal data-toast="已跳转至：21:10 片尾曲"><span>第 4 章 · 片尾曲 (ED)</span><span style="color:var(--text-muted);">21:10</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 选集队列弹窗 (QueueSheet) -->
+  <div class="proto-modal" id="modalEpisodes">
+    <div class="proto-dialog" style="max-width:460px;">
+      <div class="proto-dialog-head">
+        <div class="proto-dialog-title">📺 播放队列与选集</div>
+        <button class="btn-glass-icon" data-close-modal>✕</button>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:8px;">
+        <div class="proto-option-row active" data-close-modal data-toast="当前正在播放 E1"><span>E1 · 平凡的日常 (23m)</span><span>正在播放</span></div>
+        <div class="proto-option-row" data-close-modal data-toast="已切集至 E2 · 接下来的日常"><span>E2 · 接下来的日常 (23m)</span><span style="color:var(--text-muted);">未看</span></div>
+        <div class="proto-option-row" data-close-modal data-toast="已切集至 E3 · 东云研究所"><span>E3 · 东云研究所 (23m)</span><span style="color:var(--text-muted);">未看</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 视频与画面设置弹窗 (VideoSettingsSheet) -->
+  <div class="proto-modal" id="modalVideoSettings">
+    <div class="proto-dialog" style="max-width:460px;">
+      <div class="proto-dialog-head">
+        <div class="proto-dialog-title">⚙ 视频与画面设置</div>
+        <button class="btn-glass-icon" data-close-modal>✕</button>
+      </div>
+      <div class="proto-field">
+        <label class="proto-label">播放倍速</label>
+        <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:6px;" data-pill-group>
+          <button class="glass-pill" data-pill style="justify-content:center;" data-toast="倍速：0.75x">0.75x</button>
+          <button class="glass-pill active" data-pill style="justify-content:center;" data-toast="倍速：1.0x">1.0x</button>
+          <button class="glass-pill" data-pill style="justify-content:center;" data-toast="倍速：1.25x">1.25x</button>
+          <button class="glass-pill" data-pill style="justify-content:center;" data-toast="倍速：1.5x">1.5x</button>
+          <button class="glass-pill" data-pill style="justify-content:center;" data-toast="倍速：2.0x">2.0x</button>
+        </div>
+      </div>
+      <div class="proto-field">
+        <label class="proto-label">画面比例 (BoxFit)</label>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;" data-pill-group>
+          <button class="glass-pill active" data-pill data-toast="画面：适应屏幕 (Contain)">适应屏幕</button>
+          <button class="glass-pill" data-pill data-toast="画面：铺满裁剪 (Cover)">铺满裁剪</button>
+          <button class="glass-pill" data-pill data-toast="画面：拉伸填满">拉伸</button>
+        </div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:8px;">
+        <div class="proto-option-row" data-toast="睡眠定时：已设为 30 分钟后停止"><span>⏰ 睡眠定时器</span><span style="color:var(--text-muted);">关闭 ▾</span></div>
+        <div class="proto-option-row" data-toast="已切换 mpv 性能监控浮窗"><span>📊 性能监控浮窗 (FPS / 丢帧 / 码率)</span><span style="color:var(--accent);">开启</span></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="scripts/showcase.js"></script>
+</body>
+</html>
