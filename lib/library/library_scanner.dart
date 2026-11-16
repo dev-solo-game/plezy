@@ -167,6 +167,7 @@ class LibraryScanner {
         await _saveQueue(mount.id, queue);
       }
     } on Object catch (e) {
+      if (cancel?.isCancelled == true) return _cancelled;
       await _saveQueue(mount.id, queue);
       await (_db.update(_db.libraryScanStates)..where((t) => t.mountId.equals(mount.id))).write(
         LibraryScanStatesCompanion(

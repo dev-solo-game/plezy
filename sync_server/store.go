@@ -798,6 +798,9 @@ func (s *SyncStore) applySourceLocked(u *UserSyncState, incoming *SyncSource, ba
 	// Update / merge non-deleted (or resurrected) source.
 	existing.IsDeleted = incoming.IsDeleted
 	existing.QuarkCheckpoint = mergeQuarkCheckpoint(existing.QuarkCheckpoint, incoming.QuarkCheckpoint)
+	if incoming.ScanFinishedAt > existing.ScanFinishedAt {
+		existing.ScanFinishedAt = incoming.ScanFinishedAt
+	}
 	if incoming.EncryptedAuth != "" && (incoming.ForceAuthOverride || incoming.AuthUpdatedAt >= existing.AuthUpdatedAt || existing.EncryptedAuth == "") {
 		existing.EncryptedAuth = incoming.EncryptedAuth
 		if incoming.AuthUpdatedAt > existing.AuthUpdatedAt {

@@ -129,6 +129,7 @@ class LibraryScanService extends ChangeNotifier {
 
   final Map<String, MountScanStatus> _status = {};
   final Map<String, ScanCancelToken> _running = {};
+  final Map<String, Completer<void>> _scanCompleters = {};
   LibraryScrapeStatus _scrapeStatus = const LibraryScrapeStatus();
   Future<void>? _scrapeRun;
   bool _scrapeAgain = false;
@@ -373,6 +374,7 @@ class LibraryScanService extends ChangeNotifier {
     final silent = mode == LibraryUpdateMode.incremental;
     final job = _update;
     _running[mount.id] = token;
+    final done = _scanCompleters[mount.id] = Completer<void>();
     if (job != null) {
       job.filesSeen = 0;
       if (silent && !_disposed) notifyListeners();
@@ -411,7 +413,11 @@ class LibraryScanService extends ChangeNotifier {
               restart: mode == LibraryUpdateMode.full,
             );
       _running.remove(mount.id);
-      if (!result.cancelled) _automaticFailures.remove(mount.id);
+      if (result.cancelled) {
+        if (!silent) _publish(mount.id, const MountScanStatus());
+        return result;
+      }
+      _automaticFailures.remove(mount.id);
       if (!silent || result.hasChanges) _publish(mount.id, MountScanStatus(lastResult: result));
       if (job?._refreshWhenFinished != true && (!silent || result.hasChanges)) _libraryChanged();
       if (result.hasChanges) onCatalogChanged?.call({mount.id});
@@ -441,6 +447,12 @@ class LibraryScanService extends ChangeNotifier {
       }
       if (!silent) _publish(mount.id, MountScanStatus(error: message));
       return null;
+    } finally {
+      _running.remove(mount.id);
+      if (identical(_scanCompleters[mount.id], done)) {
+        _scanCompleters.remove(mount.id);
+      }
+      if (!done.isCompleted) done.complete();
     }
   }
 
@@ -459,6 +471,23 @@ class LibraryScanService extends ChangeNotifier {
 
   /// Asks a running scan to stop after the directory it is on.
   void cancel(String mountId) => _running[mountId]?.cancel();
+
+  /// Cancels any active scan on [mountId] and waits until its current
+  /// directory step exits cleanly.
+  Future<void> cancelAndAwaitMount(String mountId) async {
+    _running[mountId]?.cancel();
+    final job = _update;
+    if (job != null && job.mountIds.contains(mountId)) {
+      job.scrapingMounts.remove(mountId);
+      if (job.mountIds.length == 1) {
+        job.cancel.cancel();
+      }
+    }
+    final done = _scanCompleters[mountId];
+    if (done != null) {
+      await done.future;
+    }
+  }
 
   /// Looks up every title waiting for metadata. Only the metadata sources
   /// are asked; no mount is read. A call while a run is going makes it run

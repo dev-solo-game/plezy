@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:clock/clock.dart';
 import 'package:crypto/crypto.dart';
@@ -29,12 +30,14 @@ class SyncMapper {
     required this.repo,
     required this.syncStore,
     required this.mountManager,
+    this.onPreemptMountScan,
   });
 
   final AppDatabase db;
   final LibraryRepository repo;
   final SyncLocalStore syncStore;
   final MountManager mountManager;
+  final Future<void> Function(String mountId)? onPreemptMountScan;
 
   static int _nowMs() => clock.now().millisecondsSinceEpoch;
 
@@ -90,6 +93,7 @@ class SyncMapper {
       'auth_updated_at': authUpdatedAt,
       if (forceAuthOverride) 'force_auth_override': true,
       'quark_checkpoint': scanRow?.quarkCheckpoint,
+      'scan_finished_at': scanRow?.finishedAt,
       'created_at': mount.createdAt?.millisecondsSinceEpoch ?? ts,
       'client_updated_at': ts,
       'is_deleted': false,
@@ -549,6 +553,10 @@ class SyncMapper {
       }
     }
 
+    if (onPreemptMountScan != null && sources.isNotEmpty) {
+      await _preemptConflictingScans(sources, deterministicP2pSourceTieBreak: deterministicP2pSourceTieBreak);
+    }
+
     final rehomedMounts = <(String, String)>[];
     final deletedMountIds = <String>[];
     final touchedItemIds = <int>{};
@@ -612,18 +620,106 @@ class SyncMapper {
     required String newMountId,
     StorageMount? targetMount,
     String? remoteCheckpoint,
+    int? remoteFinishedAt,
   }) async {
     if (oldMountId == newMountId) return;
+    await onPreemptMountScan?.call(oldMountId);
     await db.transaction(() async {
       await _rehomeMountTx(
         oldMountId: oldMountId,
         newMountId: newMountId,
         targetMount: targetMount,
         remoteCheckpoint: remoteCheckpoint,
+        remoteFinishedAt: remoteFinishedAt,
       );
     });
     await mountManager.dropCachedDriver(oldMountId);
     await syncStore.rekeyOutboxForRemappedSource(oldMountId, newMountId);
+  }
+
+  Future<void> _preemptConflictingScans(
+    List<Map<String, dynamic>> rawSources, {
+    required bool deterministicP2pSourceTieBreak,
+  }) async {
+    final preemptCallback = onPreemptMountScan;
+    if (preemptCallback == null) return;
+
+    final currentMounts = await mountManager.registry.list();
+    final byId = {for (final m in currentMounts) m.id: m};
+    final byCanonical = {for (final m in currentMounts) DeterministicKeys.canonicalSourceKey(m): m};
+    final toPreempt = <String>{};
+
+    for (final src in rawSources) {
+      final sourceId = src['source_id'] as String?;
+      if (sourceId == null || sourceId.isEmpty) continue;
+
+      if (src['is_deleted'] == true) {
+        if (byId.containsKey(sourceId)) toPreempt.add(sourceId);
+        continue;
+      }
+
+      final canonicalKey = src['canonical_key'] as String? ?? '';
+      final existing = byId[sourceId] ?? (canonicalKey.isNotEmpty ? byCanonical[canonicalKey] : null);
+      if (existing == null) continue;
+
+      final remoteCreatedAt = (src['created_at'] as num?)?.toInt();
+      if (existing.id != sourceId) {
+        final remoteWins =
+            !deterministicP2pSourceTieBreak ||
+            _remoteSourceWinsTieBreak(remoteId: sourceId, remoteCreatedAt: remoteCreatedAt, local: existing);
+        if (remoteWins) {
+          toPreempt.add(existing.id);
+          continue;
+        }
+      }
+
+      final curScan = await (db.select(
+        db.libraryScanStates,
+      )..where((t) => t.mountId.equals(existing.id))).getSingleOrNull();
+      final remoteCp = src['quark_checkpoint'] as String?;
+      final remoteFinishedAt = (src['scan_finished_at'] as num?)?.toInt();
+      final hasNewerCp =
+          remoteCp != null &&
+          remoteCp.isNotEmpty &&
+          mergeQuarkCheckpoint(curScan?.quarkCheckpoint, remoteCp) != curScan?.quarkCheckpoint;
+      final peerFinishedNewer =
+          remoteFinishedAt != null &&
+          remoteFinishedAt > 0 &&
+          (curScan?.finishedAt == null || remoteFinishedAt > curScan!.finishedAt!) &&
+          (curScan?.startedAt == null || remoteFinishedAt >= curScan!.startedAt!);
+      if (hasNewerCp || peerFinishedNewer) {
+        toPreempt.add(existing.id);
+      }
+    }
+
+    for (final mountId in toPreempt) {
+      await preemptCallback(mountId);
+    }
+  }
+
+  Future<void> _persistSyncedScanState(
+    String mountId, {
+    String? mergedCheckpoint,
+    int? oldFinishedAt,
+    int? curFinishedAt,
+    int? remoteFinishedAt,
+  }) async {
+    final maxLocal = math.max(oldFinishedAt ?? 0, curFinishedAt ?? 0);
+    final fallbackRemote = mergedCheckpoint != null && mergedCheckpoint.isNotEmpty ? _nowMs() : 0;
+    final effectiveFinishedAt = math.max(maxLocal, remoteFinishedAt ?? fallbackRemote);
+    if (mergedCheckpoint == null && effectiveFinishedAt <= 0) return;
+    await db
+        .into(db.libraryScanStates)
+        .insertOnConflictUpdate(
+          LibraryScanStatesCompanion.insert(
+            mountId: mountId,
+            status: const Value('idle'),
+            pending: const Value(null),
+            lastError: const Value(null),
+            finishedAt: effectiveFinishedAt > 0 ? Value(effectiveFinishedAt) : const Value.absent(),
+            quarkCheckpoint: mergedCheckpoint != null ? Value(mergedCheckpoint) : const Value.absent(),
+          ),
+        );
   }
 
   Future<void> _rehomeMountTx({
@@ -631,6 +727,7 @@ class SyncMapper {
     required String newMountId,
     StorageMount? targetMount,
     String? remoteCheckpoint,
+    int? remoteFinishedAt,
   }) async {
     final oldMountRow = await (db.select(db.mounts)..where((t) => t.id.equals(oldMountId))).getSingleOrNull();
     final existingTargetRow = await (db.select(db.mounts)..where((t) => t.id.equals(newMountId))).getSingleOrNull();
@@ -721,18 +818,18 @@ class SyncMapper {
       );
     }
 
-    // Merge Quark checkpoints cleanly.
+    // Merge Quark checkpoints & scan completion baseline cleanly.
     final oldScan = await (db.select(db.libraryScanStates)..where((t) => t.mountId.equals(oldMountId))).getSingleOrNull();
     final newScan = await (db.select(db.libraryScanStates)..where((t) => t.mountId.equals(newMountId))).getSingleOrNull();
     var mergedCp = mergeQuarkCheckpoint(oldScan?.quarkCheckpoint, newScan?.quarkCheckpoint);
     mergedCp = mergeQuarkCheckpoint(mergedCp, remoteCheckpoint);
-    if (mergedCp != null) {
-      await db
-          .into(db.libraryScanStates)
-          .insertOnConflictUpdate(
-            LibraryScanStatesCompanion.insert(mountId: newMountId, quarkCheckpoint: Value(mergedCp)),
-          );
-    }
+    await _persistSyncedScanState(
+      newMountId,
+      mergedCheckpoint: mergedCp,
+      oldFinishedAt: oldScan?.finishedAt,
+      curFinishedAt: newScan?.finishedAt,
+      remoteFinishedAt: remoteFinishedAt,
+    );
     await (db.delete(db.libraryScanStates)..where((t) => t.mountId.equals(oldMountId))).go();
 
     // Remove the superseded old Mount row last (zero foreign-key children remain).
@@ -818,6 +915,7 @@ class SyncMapper {
       );
 
       final remoteCp = src['quark_checkpoint'] as String?;
+      final remoteFinishedAt = (src['scan_finished_at'] as num?)?.toInt();
       var resolvedMountId = sourceId;
       if (existingByCanonical != null && existingByCanonical.id != sourceId) {
         final remoteWins = !deterministicP2pSourceTieBreak ||
@@ -833,6 +931,7 @@ class SyncMapper {
             newMountId: sourceId,
             targetMount: incomingMount,
             remoteCheckpoint: remoteCp,
+            remoteFinishedAt: remoteFinishedAt,
           );
           byId.remove(existingByCanonical.id);
           byId[sourceId] = incomingMount;
@@ -849,36 +948,34 @@ class SyncMapper {
             createdAt: existingByCanonical.createdAt,
           );
           await mountManager.registry.upsert(mergedLocal);
-          if (remoteCp != null && remoteCp.isNotEmpty) {
+          if ((remoteCp != null && remoteCp.isNotEmpty) || (remoteFinishedAt != null && remoteFinishedAt > 0)) {
             final curScan = await (db.select(
               db.libraryScanStates,
             )..where((t) => t.mountId.equals(resolvedMountId))).getSingleOrNull();
             final mergedCp = mergeQuarkCheckpoint(curScan?.quarkCheckpoint, remoteCp);
-            if (mergedCp != null) {
-              await db
-                  .into(db.libraryScanStates)
-                  .insertOnConflictUpdate(
-                    LibraryScanStatesCompanion.insert(mountId: resolvedMountId, quarkCheckpoint: Value(mergedCp)),
-                  );
-            }
+            await _persistSyncedScanState(
+              resolvedMountId,
+              mergedCheckpoint: mergedCp,
+              curFinishedAt: curScan?.finishedAt,
+              remoteFinishedAt: remoteFinishedAt,
+            );
           }
           byId[resolvedMountId] = mergedLocal;
           if (canonicalKey.isNotEmpty) byCanonical[canonicalKey] = mergedLocal;
         }
       } else {
         await mountManager.registry.upsert(incomingMount);
-        if (remoteCp != null && remoteCp.isNotEmpty) {
+        if ((remoteCp != null && remoteCp.isNotEmpty) || (remoteFinishedAt != null && remoteFinishedAt > 0)) {
           final curScan = await (db.select(
             db.libraryScanStates,
           )..where((t) => t.mountId.equals(sourceId))).getSingleOrNull();
           final mergedCp = mergeQuarkCheckpoint(curScan?.quarkCheckpoint, remoteCp);
-          if (mergedCp != null) {
-            await db
-                .into(db.libraryScanStates)
-                .insertOnConflictUpdate(
-                  LibraryScanStatesCompanion.insert(mountId: sourceId, quarkCheckpoint: Value(mergedCp)),
-                );
-          }
+          await _persistSyncedScanState(
+            sourceId,
+            mergedCheckpoint: mergedCp,
+            curFinishedAt: curScan?.finishedAt,
+            remoteFinishedAt: remoteFinishedAt,
+          );
         }
         byId[sourceId] = incomingMount;
         if (canonicalKey.isNotEmpty) byCanonical[canonicalKey] = incomingMount;
@@ -1139,6 +1236,15 @@ class SyncMapper {
   }) async {
     var count = 0;
     final rowIdBySyncFileId = <String, int>{};
+    final runningScanIdByMount = <String, int>{};
+
+    Future<int> activeScanIdFor(String mountId) async {
+      final cached = runningScanIdByMount[mountId];
+      if (cached != null) return cached;
+      final row = await (db.select(db.libraryScanStates)..where((t) => t.mountId.equals(mountId))).getSingleOrNull();
+      final activeId = (row != null && row.status == 'running') ? row.scanId : 0;
+      return runningScanIdByMount[mountId] = activeId;
+    }
 
     final videos = [
       for (final f in rawFiles)
@@ -1151,7 +1257,14 @@ class SyncMapper {
 
     for (final f in videos) {
       count++;
-      final rowId = await _applySingleFile(f, workItemByKey: workItemByKey, touchedItemIds: touchedItemIds);
+      final mountId = f['source_id'] as String?;
+      final activeScanId = mountId == null ? 0 : await activeScanIdFor(mountId);
+      final rowId = await _applySingleFile(
+        f,
+        workItemByKey: workItemByKey,
+        touchedItemIds: touchedItemIds,
+        activeMountScanId: activeScanId,
+      );
       final fileId = f['file_id'] as String?;
       if (rowId != null && fileId != null) {
         rowIdBySyncFileId[fileId] = rowId;
@@ -1160,10 +1273,10 @@ class SyncMapper {
 
     for (final f in subtitles) {
       count++;
+      final mountId = f['source_id'] as String?;
       final ownerSyncId = f['owner_file_id'] as String?;
       int? ownerRowId = ownerSyncId == null ? null : rowIdBySyncFileId[ownerSyncId];
       if (ownerRowId == null && ownerSyncId != null) {
-        final mountId = f['source_id'] as String?;
         if (mountId != null) {
           final candidates = await (db.select(
             db.libraryFiles,
@@ -1176,11 +1289,13 @@ class SyncMapper {
           }
         }
       }
+      final activeScanId = mountId == null ? 0 : await activeScanIdFor(mountId);
       await _applySingleFile(
         f,
         workItemByKey: workItemByKey,
         touchedItemIds: touchedItemIds,
         ownerRowIdOverride: ownerRowId,
+        activeMountScanId: activeScanId,
       );
     }
 
@@ -1192,6 +1307,7 @@ class SyncMapper {
     required Map<String, int> workItemByKey,
     required Set<int> touchedItemIds,
     int? ownerRowIdOverride,
+    int activeMountScanId = 0,
   }) async {
     final mountId = f['source_id'] as String?;
     final rawPath = f['relative_path'] as String?;
@@ -1229,11 +1345,12 @@ class SyncMapper {
       return null;
     }
 
+    final preservedScanId = math.max(existing?.seenInScan ?? 0, activeMountScanId);
     final fileRowId = await repo.upsertFile(
       mountId: mountId,
       path: path,
       role: role,
-      scanId: 0,
+      scanId: preservedScanId,
       remoteId: f['remote_id'] as String?,
       size: (f['file_size'] as num?)?.toInt(),
       modifiedAt: (f['file_mtime'] as num?)?.toInt(),

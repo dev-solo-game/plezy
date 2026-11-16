@@ -34,7 +34,13 @@ class SyncAndScanCoordinator extends ChangeNotifier {
   }) : syncStore = SyncLocalStore(db),
        apiClient = apiClient ?? SyncApiClient(),
        _ownsApiClient = apiClient == null {
-    mapper = SyncMapper(db: db, repo: repo, syncStore: syncStore, mountManager: mountManager);
+    mapper = SyncMapper(
+      db: db,
+      repo: repo,
+      syncStore: syncStore,
+      mountManager: mountManager,
+      onPreemptMountScan: (mountId) async => await scanService?.cancelAndAwaitMount(mountId),
+    );
     lanService = LanPeerSyncService(
       syncStore: syncStore,
       mapper: mapper,

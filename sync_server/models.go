@@ -37,6 +37,7 @@ type SyncSource struct {
 	AuthUpdatedAt     int64          `json:"auth_updated_at"`
 	ForceAuthOverride bool           `json:"force_auth_override,omitempty"`
 	QuarkCheckpoint   *string        `json:"quark_checkpoint,omitempty"`
+	ScanFinishedAt    int64          `json:"scan_finished_at,omitempty"`
 	ScanLeaseOwner    *string        `json:"scan_lease_owner,omitempty"`
 	ScanLeaseUntil    int64          `json:"scan_lease_until,omitempty"`
 	ClientUpdatedAt   int64          `json:"client_updated_at"`

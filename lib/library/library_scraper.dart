@@ -172,6 +172,13 @@ class LibraryScraper {
       if (isCancelled?.call() ?? false) break;
       onProgress?.call(index, queue.length);
       try {
+        if (!refreshMatched && item.metadataSource == null) {
+          final latest = await (_db.select(_db.libraryItems)..where((t) => t.id.equals(item.id))).getSingleOrNull();
+          if (latest == null || latest.locked || latest.metadataSource != null) {
+            skipped++;
+            continue;
+          }
+        }
         final outcome = item.metadataSource != null
             ? await _refreshKnown(item, refreshMatched: refreshMatched)
             : await scrapeItem(item.id);

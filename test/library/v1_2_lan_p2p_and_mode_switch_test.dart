@@ -58,15 +58,51 @@ class _NoScanMockDriver implements StorageDriver {
   Future<void> close() async {}
 }
 
+class _GatedStorageDriver implements StorageDriver {
+  _GatedStorageDriver(this.kind, {required this.entriesByDir, this.blockedDir, this.onEnterBlockedDir, this.blockedGate});
+
+  @override
+  final StorageKind kind;
+  final Map<String, List<StorageEntry>> entriesByDir;
+  final String? blockedDir;
+  final Completer<void>? onEnterBlockedDir;
+  final Future<List<StorageEntry>>? blockedGate;
+
+  @override
+  Future<void> check() async {}
+
+  @override
+  Future<List<StorageEntry>> list(String path, {StorageEntry? parent}) async {
+    if (path == blockedDir) {
+      if (onEnterBlockedDir != null && !onEnterBlockedDir!.isCompleted) {
+        onEnterBlockedDir!.complete();
+      }
+      if (blockedGate != null) {
+        return await blockedGate!;
+      }
+    }
+    return entriesByDir[path] ?? const [];
+  }
+
+  @override
+  Future<StorageEntry> stat(String path) async => StorageEntry(path: path, name: path, isDirectory: false, size: 0);
+
+  @override
+  Stream<List<int>> openRead(StorageEntry entry, {int start = 0, int? end}) => const Stream.empty();
+
+  @override
+  Future<void> close() async {}
+}
+
 class _PeerDevice {
-  _PeerDevice({required this.name, this.failOnRemoteList = false})
+  _PeerDevice({required this.name, this.failOnRemoteList = false, StorageDriver Function(StorageMount)? customDriver})
     : db = AppDatabase.forTesting(NativeDatabase.memory()) {
     repo = LibraryRepository(db);
     registry = MountRegistry(db);
     mountManager = MountManager(
       registry,
       driverFactory: (mount, {bool useFallback = false}) =>
-          _NoScanMockDriver(mount.kind, failOnList: failOnRemoteList),
+          customDriver?.call(mount) ?? _NoScanMockDriver(mount.kind, failOnList: failOnRemoteList),
     );
     client = LocalLibraryClient(repository: repo, mounts: mountManager);
     scans = LibraryScanService(repository: repo, scanner: LibraryScanner(db, repo), mounts: mountManager);
@@ -530,5 +566,232 @@ void main() {
     expect((await phoneA.registry.list()).single.id, 'm_switch');
     final phoneMovies = await phoneA.repo.queryTitles(const LibraryQuery(libraryType: LibraryTypes.movie));
     expect(phoneMovies.items.map((v) => v.item.title), ['流浪地球2']);
+  });
+
+  test('mid-scan loser mount is preempted cleanly without FK error when earlier peer pairs and syncs', () async {
+    final enteredDir2 = Completer<void>();
+    final dir2Gate = Completer<List<StorageEntry>>();
+
+    final devA = _PeerDevice(name: 'PC-A');
+    final devB = _PeerDevice(
+      name: 'PC-B',
+      customDriver: (_) => _GatedStorageDriver(
+        StorageKind.quark,
+        entriesByDir: {
+          '/': const [
+            StorageEntry(path: '/Dir3', name: 'Dir3', isDirectory: true),
+            StorageEntry(path: '/Dir2', name: 'Dir2', isDirectory: true),
+            StorageEntry(path: '/Dir1', name: 'Dir1', isDirectory: true),
+          ],
+          '/Dir1': const [StorageEntry(path: '/Dir1/Movie1.mkv', name: 'Movie1.mkv', isDirectory: false, size: 1000)],
+        },
+        blockedDir: '/Dir2',
+        onEnterBlockedDir: enteredDir2,
+        blockedGate: dir2Gate.future,
+      ),
+    );
+    addTearDown(devA.dispose);
+    addTearDown(devB.dispose);
+
+    await devA.initLan();
+    await devB.initLan();
+
+    final mountA = StorageMount(
+      id: 'uuid-early-A',
+      kind: StorageKind.quark,
+      displayName: 'Quark A',
+      config: const {MountKeys.rootFolderId: '0'},
+      secrets: const {MountKeys.secretCookie: 'uid=777111; __pus=ok'},
+      createdAt: DateTime.fromMillisecondsSinceEpoch(1000),
+    );
+    final mountB = StorageMount(
+      id: 'uuid-late-B',
+      kind: StorageKind.quark,
+      displayName: 'Quark B',
+      config: const {MountKeys.rootFolderId: '0'},
+      secrets: const {MountKeys.secretCookie: 'uid=777111; __pus=ok'},
+      createdAt: DateTime.fromMillisecondsSinceEpoch(2000),
+    );
+    await devA.registry.upsert(mountA);
+    await devB.registry.upsert(mountB);
+    devB.mountManager.setStatus('uuid-late-B', MountOnlineStatus.onlinePrimary);
+
+    // PC-A has already finished full scan + scrape with checkpoint 0:8000.
+    for (final (path, tmdbId, title) in [
+      ('/Dir1/Movie1.mkv', '27205', '盗梦空间'),
+      ('/Dir2/Movie2.mkv', '157336', '星际穿越'),
+      ('/Dir3/Movie3.mkv', '603', '黑客帝国'),
+    ]) {
+      final itemId = await devA.repo.insertItem(
+        LibraryItemsCompanion.insert(
+          kind: LibraryKinds.movie,
+          libraryType: LibraryTypes.movie,
+          title: title,
+          sortTitle: title,
+          tmdbId: Value(tmdbId),
+          metadataSource: const Value('tmdb'),
+          scrapedAt: const Value(5000),
+          addedAt: 5000,
+          updatedAt: 5000,
+        ),
+      );
+      final fileId = await devA.repo.upsertFile(mountId: 'uuid-early-A', path: path, role: LibraryFileRoles.video, scanId: 1);
+      await devA.repo.linkFile(fileId, itemId);
+      await devA.repo.updateFile(fileId, const LibraryFilesCompanion(matchState: Value(LibraryMatchStates.matched)));
+    }
+    await devA.db.into(devA.db.libraryScanStates).insertOnConflictUpdate(
+      LibraryScanStatesCompanion.insert(
+        mountId: 'uuid-early-A',
+        scanId: const Value(1),
+        finishedAt: const Value(5000),
+        quarkCheckpoint: const Value('0:8000'),
+      ),
+    );
+
+    // PC-B starts scanning locally and pauses while listing /Dir2 after /Dir1 is written.
+    final scanFuture = devB.scans.scan(mountB);
+    await enteredDir2.future;
+    expect(devB.scans.isScanning('uuid-late-B'), isTrue);
+
+    final peerB = LanDiscoveredPeer(
+      deviceId: devB.sync.lanService.deviceId!,
+      deviceName: 'PC-B',
+      platform: 'windows',
+      host: '127.0.0.1',
+      httpPort: devB.sync.lanService.listeningPort!,
+      pubKeyBase64: devB.sync.lanService.publicKeyBase64!,
+      revision: 0,
+      lastSeen: clock.now(),
+    );
+    await devA.sync.lanService.requestPairWithPeer(peerB);
+    final acceptFuture = devB.sync.lanService.acceptPairRequest(devB.sync.lanService.incomingPairRequests.single);
+    await Future<void>.delayed(const Duration(milliseconds: 25));
+    // Unblock in-flight /Dir2 request after preemption cancelled the local scan.
+    dir2Gate.complete(const [StorageEntry(path: '/Dir2/Movie2.mkv', name: 'Movie2.mkv', isDirectory: false, size: 1000)]);
+
+    await scanFuture;
+    await acceptFuture;
+    await devB.sync.lanService.syncWithAllTrustedPeers();
+
+    // Zero scan errors (no FOREIGN KEY constraint failure!), source unified to uuid-early-A, full library intact.
+    expect(devB.scans.statusOf('uuid-late-B').error, isNull);
+    expect(devB.scans.statusOf('uuid-early-A').error, isNull);
+    final mountsB = await devB.registry.list();
+    expect(mountsB.map((m) => m.id), ['uuid-early-A']);
+    expect(await devB.scans.hasIncrementalBaseline(mountsB.single), isTrue);
+    final moviesB = (await devB.repo.queryTitles(const LibraryQuery(libraryType: LibraryTypes.movie))).items.map((e) => e.item.title).toSet();
+    expect(moviesB, {'盗梦空间', '星际穿越', '黑客帝国'});
+  });
+
+  test('mid-scan sync never clobbers seenInScan or loses already-scanned files when local mount wins', () async {
+    final enteredDir2 = Completer<void>();
+    final dir2Gate = Completer<List<StorageEntry>>();
+
+    final devB = _PeerDevice(
+      name: 'PC-B-Winner',
+      customDriver: (_) => _GatedStorageDriver(
+        StorageKind.quark,
+        entriesByDir: {
+          '/': const [
+            StorageEntry(path: '/Dir2', name: 'Dir2', isDirectory: true),
+            StorageEntry(path: '/Dir1', name: 'Dir1', isDirectory: true),
+          ],
+          '/Dir1': const [StorageEntry(path: '/Dir1/Movie1.mkv', name: 'Movie1.mkv', isDirectory: false, size: 1000)],
+        },
+        blockedDir: '/Dir2',
+        onEnterBlockedDir: enteredDir2,
+        blockedGate: dir2Gate.future,
+      ),
+    );
+    addTearDown(devB.dispose);
+
+    final mountB = StorageMount(
+      id: 'uuid-winner-B',
+      kind: StorageKind.quark,
+      displayName: 'Quark B',
+      config: const {MountKeys.rootFolderId: '0'},
+      secrets: const {MountKeys.secretCookie: 'uid=777222; __pus=ok'},
+      createdAt: DateTime.fromMillisecondsSinceEpoch(1000),
+    );
+    await devB.registry.upsert(mountB);
+    devB.mountManager.setStatus('uuid-winner-B', MountOnlineStatus.onlinePrimary);
+
+    // Start scanning mountB; /Dir1 writes Movie1.mkv with seenInScan = 1, then pauses at /Dir2.
+    final scanFuture = devB.scans.scan(mountB);
+    await enteredDir2.future;
+
+    // While paused mid-scan, a partial sync from a later-created peer upgrades Movie1.mkv to matched
+    // (without any newer quark_checkpoint / scan_finished_at, so mountB's own scan continues).
+    final dummyKey = SyncCrypto.generateMasterKey();
+    await devB.sync.mapper.applyPullBatch(
+      masterKey: dummyKey,
+      sources: [
+        {
+          'source_id': 'uuid-loser-A',
+          'canonical_key': 'quark:777222:0',
+          'name': 'Quark A',
+          'protocol': 'quark',
+          'is_lan_only': false,
+          'primary_url': 'quark://0',
+          'config_json': const {'rootFolderId': '0'},
+          'include_paths': const <String>[],
+          'exclude_paths': const <String>[],
+          'encrypted_auth': '',
+          'auth_updated_at': 0,
+          'created_at': 2000,
+          'client_updated_at': 3000,
+          'is_deleted': false,
+        },
+      ],
+      works: [
+        {
+          'work_key': 'work:movie:tmdb:27205',
+          'kind': LibraryKinds.movie,
+          'library_type': LibraryTypes.movie,
+          'provider': 'tmdb',
+          'external_id': '27205',
+          'match_status': 3,
+          'metadata_json': const {
+            'title': '盗梦空间',
+            'sort_title': 'dao meng kong jian',
+            'tmdb_id': '27205',
+          },
+          'client_updated_at': 3000,
+          'is_deleted': false,
+        },
+      ],
+      files: [
+        {
+          'file_id': 'file-from-A',
+          'source_id': 'uuid-loser-A',
+          'relative_path': '/Dir1/Movie1.mkv',
+          'role': LibraryFileRoles.video,
+          'file_name': 'Movie1.mkv',
+          'file_size': 1000,
+          'work_key': 'work:movie:tmdb:27205',
+          'season_num': -1,
+          'episode_num': -1,
+          'match_status': 3,
+          'client_updated_at': 3000,
+          'is_deleted': false,
+        },
+      ],
+      workPrefs: const [],
+      watchProgress: const [],
+      userSettings: const {},
+      nextSeq: 0,
+      updateCloudCursor: false,
+      deterministicP2pSourceTieBreak: true,
+    );
+
+    // Resume /Dir2 so scan finishes and invokes removeFilesNotSeen('uuid-winner-B', scanId=1).
+    dir2Gate.complete(const [StorageEntry(path: '/Dir2/Movie2.mkv', name: 'Movie2.mkv', isDirectory: false, size: 2000)]);
+    await scanFuture;
+
+    final filesB = await (devB.db.select(devB.db.libraryFiles)..where((t) => t.mountId.equals('uuid-winner-B'))).get();
+    expect(filesB.map((f) => f.path).toSet(), {'/Dir1/Movie1.mkv', '/Dir2/Movie2.mkv'});
+    final movie1 = filesB.singleWhere((f) => f.path == '/Dir1/Movie1.mkv');
+    expect(movie1.matchState, LibraryMatchStates.matched);
+    expect(movie1.seenInScan, 1);
   });
 }
