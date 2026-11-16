@@ -23,6 +23,7 @@ class LanDiscoveredPeer {
     required this.pubKeyBase64,
     required this.revision,
     required this.lastSeen,
+    this.remotePort,
   });
 
   final String deviceId;
@@ -33,6 +34,7 @@ class LanDiscoveredPeer {
   final String pubKeyBase64;
   final int revision;
   final DateTime lastSeen;
+  final int? remotePort;
 
   String pairingCodeFor(String myPubKeyBase64) => SyncCrypto.computePairingCode(myPubKeyBase64, pubKeyBase64);
 }
@@ -47,6 +49,7 @@ class LanPairRequest {
     required this.pubKeyBase64,
     required this.pairingCode,
     required this.requestedAt,
+    this.remotePort,
   });
 
   final String deviceId;
@@ -57,6 +60,7 @@ class LanPairRequest {
   final String pubKeyBase64;
   final String pairingCode;
   final DateTime requestedAt;
+  final int? remotePort;
 }
 
 /// Zero-server LAN P2P discovery, Trust-On-First-Use (TOFU) 4-digit pairing,
@@ -106,16 +110,30 @@ class LanPeerSyncService extends ChangeNotifier {
   bool _running = false;
   bool _disposed = false;
   bool _syncing = false;
+  int? _advertisedRemotePort;
   SyncProgress _progress = SyncProgress.idle;
   String? _lastError;
 
   bool get isRunning => _running;
   bool get isSyncing => _syncing || _activePeerSyncs.isNotEmpty || _progress.isActive;
+  int? get advertisedRemotePort => _advertisedRemotePort;
   SyncProgress get progress => _progress;
   int? get listeningPort => _httpServer?.port;
   String? get publicKeyBase64 => _pubKeyB64;
   String? get deviceId => _deviceId;
   String? get lastError => _lastError;
+
+  void setAdvertisedRemotePort(int? port) {
+    final normalized = (port != null && port > 0) ? port : null;
+    if (_advertisedRemotePort == normalized) return;
+    _advertisedRemotePort = normalized;
+    if (_running && !_disposed) {
+      if (enableUdpBroadcast) {
+        unawaited(_sendBeacon());
+      }
+      notifyListeners();
+    }
+  }
 
   void _setProgress(SyncProgress next) {
     if (_disposed || _progress == next) return;
@@ -275,6 +293,7 @@ class LanPeerSyncService extends ChangeNotifier {
         'http_port': port,
         'pub_key': pubKey,
         'revision': rev,
+        if (_advertisedRemotePort != null) 'remote_port': _advertisedRemotePort,
       }),
     );
     sockSet.send(payload, UdpBroadcastSockets.limitedBroadcastAddress, discoveryPort);
@@ -291,6 +310,8 @@ class LanPeerSyncService extends ChangeNotifier {
       if (peerId == null || peerId.isEmpty || peerId == _deviceId || peerPub == null || port == null || port <= 0) {
         return;
       }
+      final rawRemotePort = (decoded['remote_port'] as num?)?.toInt();
+      final remotePort = (rawRemotePort != null && rawRemotePort > 0) ? rawRemotePort : null;
       registerDiscoveredPeer(
         LanDiscoveredPeer(
           deviceId: peerId,
@@ -301,6 +322,7 @@ class LanPeerSyncService extends ChangeNotifier {
           pubKeyBase64: peerPub,
           revision: (decoded['revision'] as num?)?.toInt() ?? 0,
           lastSeen: clock.now(),
+          remotePort: remotePort,
         ),
       );
     } catch (_) {
@@ -324,12 +346,17 @@ class LanPeerSyncService extends ChangeNotifier {
     final idx = _trustedPeers.indexWhere((t) => t.deviceId == peer.deviceId && t.pubKeyBase64 == peer.pubKeyBase64);
     if (idx >= 0) {
       final trusted = _trustedPeers[idx];
-      final endpointChanged = trusted.lastHost != peer.host || trusted.lastPort != peer.httpPort;
+      final endpointChanged =
+          trusted.lastHost != peer.host ||
+          trusted.lastPort != peer.httpPort ||
+          trusted.lastRemotePort != peer.remotePort;
       if (endpointChanged || trusted.deviceName != peer.deviceName) {
         _trustedPeers[idx] = trusted.copyWith(
           deviceName: peer.deviceName,
           lastHost: peer.host,
           lastPort: peer.httpPort,
+          lastRemotePort: peer.remotePort,
+          clearLastRemotePort: peer.remotePort == null,
         );
         unawaited(syncStore.saveTrustedLanPeers(_trustedPeers));
       }
@@ -363,6 +390,7 @@ class LanPeerSyncService extends ChangeNotifier {
             'http_port': _httpServer!.port,
             'pub_key': _pubKeyB64,
             'host': '127.0.0.1',
+            if (_advertisedRemotePort != null) 'remote_port': _advertisedRemotePort,
           }),
         )
         .timeout(const Duration(seconds: 5));
@@ -389,6 +417,7 @@ class LanPeerSyncService extends ChangeNotifier {
       pairedAtMs: clock.now().millisecondsSinceEpoch,
       lastHost: req.host,
       lastPort: req.httpPort,
+      lastRemotePort: req.remotePort,
     );
 
     _trustedPeers.removeWhere((p) => p.deviceId == trusted.deviceId);
@@ -398,6 +427,9 @@ class LanPeerSyncService extends ChangeNotifier {
     _dismissedIncomingRequestAt.remove(req.deviceId);
     await syncStore.saveTrustedLanPeers(_trustedPeers);
     await _recordPromptedPeer(req.deviceId);
+    // Notify before confirming over HTTP so host-side listeners (such as Companion Remote)
+    // can begin deriving and installing credentials before the initiator connects back.
+    if (!_disposed) notifyListeners();
 
     final ts = clock.now().millisecondsSinceEpoch;
     final mac = SyncCrypto.hmacSha256Base64(key: sharedKey, message: 'PAIR:${req.deviceId}:$_deviceId:$ts');
@@ -413,6 +445,7 @@ class LanPeerSyncService extends ChangeNotifier {
             'http_port': _httpServer!.port,
             'timestamp': ts,
             'hmac': mac,
+            if (_advertisedRemotePort != null) 'remote_port': _advertisedRemotePort,
           }),
         )
         .timeout(const Duration(seconds: 5));
@@ -612,6 +645,7 @@ class LanPeerSyncService extends ChangeNotifier {
           'platform': Platform.operatingSystem,
           'pub_key': _pubKeyB64,
           'revision': rev,
+          if (_advertisedRemotePort != null) 'remote_port': _advertisedRemotePort,
         });
         return;
       }
@@ -676,6 +710,8 @@ class LanPeerSyncService extends ChangeNotifier {
     final platform = body['platform'] as String? ?? 'unknown';
     final peerPub = body['pub_key'] as String?;
     final httpPort = (body['http_port'] as num?)?.toInt();
+    final rawRemotePort = (body['remote_port'] as num?)?.toInt();
+    final remotePort = (rawRemotePort != null && rawRemotePort > 0) ? rawRemotePort : null;
     final host = req.connectionInfo?.remoteAddress.address ?? body['host'] as String?;
 
     if (peerId == null ||
@@ -704,6 +740,7 @@ class LanPeerSyncService extends ChangeNotifier {
       pubKeyBase64: peerPub,
       pairingCode: code,
       requestedAt: clock.now(),
+      remotePort: remotePort,
     );
 
     if (already != null || isMutual) {
@@ -723,6 +760,8 @@ class LanPeerSyncService extends ChangeNotifier {
     final peerName = body['device_name'] as String? ?? 'Device';
     final peerPub = body['pub_key'] as String?;
     final httpPort = (body['http_port'] as num?)?.toInt();
+    final rawRemotePort = (body['remote_port'] as num?)?.toInt();
+    final remotePort = (rawRemotePort != null && rawRemotePort > 0) ? rawRemotePort : null;
     final ts = (body['timestamp'] as num?)?.toInt() ?? 0;
     final mac = body['hmac'] as String? ?? '';
     final host = req.connectionInfo?.remoteAddress.address;
@@ -767,6 +806,7 @@ class LanPeerSyncService extends ChangeNotifier {
       pairedAtMs: clock.now().millisecondsSinceEpoch,
       lastHost: host ?? pending!.host,
       lastPort: httpPort ?? pending!.httpPort,
+      lastRemotePort: remotePort ?? pending?.remotePort,
     );
     _outgoingPairTargets.remove(peerId);
     _incomingRequests.remove(peerId);
@@ -828,8 +868,10 @@ class LanPeerSyncService extends ChangeNotifier {
   @visibleForTesting
   void debugSeedStateForTesting({
     bool running = true,
+    String? deviceId,
     String? deviceName,
     String? publicKeyBase64,
+    int? advertisedRemotePort,
     List<LanDiscoveredPeer> discovered = const [],
     List<LanPairRequest> incomingRequests = const [],
     List<LanTrustedPeer> trusted = const [],
@@ -839,8 +881,10 @@ class LanPeerSyncService extends ChangeNotifier {
     bool clearError = false,
   }) {
     _running = running;
+    if (deviceId != null) _deviceId = deviceId;
     if (deviceName != null) _deviceName = deviceName;
     if (publicKeyBase64 != null) _pubKeyB64 = publicKeyBase64;
+    if (advertisedRemotePort != null) _advertisedRemotePort = advertisedRemotePort;
     if (promptedPeerIds != null) _promptedPeerIds = Set<String>.from(promptedPeerIds);
     if (progress != null) _progress = progress;
     if (clearError) {

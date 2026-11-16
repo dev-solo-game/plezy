@@ -1,5 +1,6 @@
 import '../library/library_scan_service.dart';
 import '../library/local_library_client.dart';
+import '../library/sync/sync_coordinator.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -335,14 +336,21 @@ class _ProfileSessionScreenState extends State<ProfileSessionScreen> {
               ChangeNotifierProvider(
                 create: (context) {
                   final provider = CompanionRemoteProvider();
+                  SyncAndScanCoordinator? sync;
+                  try {
+                    sync = context.read<SyncAndScanCoordinator>();
+                  } on ProviderNotFoundException {
+                    sync = null;
+                  }
                   // Keep a running host's crypto identity live: a home user
-                  // removed or a borrowed connection revoked mid-session must
-                  // stop controlling the broadcast.
+                  // removed, a borrowed connection revoked, or LAN trust /
+                  // sync mode changed mid-session updates or revokes access.
                   provider.bindProfileServices(
                     connections: context.read<ConnectionRegistry>(),
                     activeProfile: context.read<ActiveProfileProvider>(),
                     profileConnections: context.read<ProfileConnectionRegistry>(),
                     plexHome: context.read<PlexHomeService>(),
+                    sync: sync,
                   );
                   return provider;
                 },

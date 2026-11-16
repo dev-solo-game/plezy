@@ -7,6 +7,7 @@ import 'package:cryptography/cryptography.dart';
 
 import '../../models/plex/plex_home.dart';
 import '../../utils/app_logger.dart';
+import 'remote_auth_context.dart';
 
 /// Cryptographic authentication service for companion remote.
 ///
@@ -108,6 +109,82 @@ class RemoteAuthService {
 
     appLogger.d('RemoteAuth: Derived MediaBrowser secret');
     return _cachedSecret!;
+  }
+
+  /// Derive a deterministic companion remote secret for a trusted LAN P2P pair
+  /// from their X25519-derived 32-byte [sharedKey].
+  Future<List<int>> deriveLanPeerSecret(List<int> sharedKey) async {
+    final secretKey = await _hkdf.deriveKey(
+      secretKey: SecretKey(sharedKey),
+      nonce: utf8.encode('plezy-remote-v2'),
+      info: utf8.encode('lan-p2p-remote'),
+    );
+    return secretKey.extractBytes();
+  }
+
+  /// Derive a deterministic companion remote secret for same-account Cloud Sync
+  /// devices from their Go Sync Server URL, user ID, and 32-byte E2EE [masterKey].
+  Future<List<int>> deriveCloudSyncSecret({
+    required String serverUrl,
+    required String userId,
+    required List<int> masterKey,
+  }) async {
+    final normalizedUrl = serverUrl.trim().replaceAll(RegExp(r'/+$'), '').toLowerCase();
+    final normalizedUserId = userId.trim().toLowerCase();
+
+    final buf = BytesWriter();
+    _writeLengthPrefixed(buf, utf8.encode('cloud-sync'));
+    _writeLengthPrefixed(buf, utf8.encode(normalizedUrl));
+    _writeLengthPrefixed(buf, utf8.encode(normalizedUserId));
+
+    final secretKey = await _hkdf.deriveKey(
+      secretKey: SecretKey(masterKey),
+      nonce: utf8.encode('plezy-remote-v2'),
+      info: buf.toBytes(),
+    );
+    return secretKey.extractBytes();
+  }
+
+  Future<RemoteAuthContext> createLanPeerAuthContext({
+    required String myDeviceId,
+    required String peerDeviceId,
+    required List<int> sharedKey,
+  }) async {
+    final homeSecret = await deriveLanPeerSecret(sharedKey);
+    return RemoteAuthContext(
+      id: computeAuthContextId(homeSecret),
+      backend: 'lan_p2p',
+      connectionId: 'lan:$peerDeviceId',
+      homeSecret: homeSecret,
+      discoveryKey: await deriveDiscoveryKey(homeSecret),
+      clientIdentifier: myDeviceId,
+      userUuid: myDeviceId,
+      allowedUserUuids: [peerDeviceId, myDeviceId],
+    );
+  }
+
+  Future<RemoteAuthContext> createCloudSyncAuthContext({
+    required String myDeviceId,
+    required String serverUrl,
+    required String userId,
+    required List<int> masterKey,
+  }) async {
+    final normalizedUserId = userId.trim().toLowerCase();
+    final homeSecret = await deriveCloudSyncSecret(
+      serverUrl: serverUrl,
+      userId: normalizedUserId,
+      masterKey: masterKey,
+    );
+    return RemoteAuthContext(
+      id: computeAuthContextId(homeSecret),
+      backend: 'cloud_sync',
+      connectionId: 'cloud:$normalizedUserId',
+      homeSecret: homeSecret,
+      discoveryKey: await deriveDiscoveryKey(homeSecret),
+      clientIdentifier: myDeviceId,
+      userUuid: normalizedUserId,
+      allowedUserUuids: [normalizedUserId],
+    );
   }
 
   /// Derive per-session encryption key from homeSecret + both nonces.

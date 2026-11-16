@@ -80,6 +80,7 @@ import 'settings/settings_screen.dart';
 import 'profile/profile_switch_screen.dart';
 import 'video_player_screen.dart';
 import '../library/library_scan_service.dart';
+import '../library/sync/sync_coordinator.dart';
 import 'profile/profile_teardown.dart';
 import '../watch_together/watch_together.dart';
 
@@ -946,6 +947,8 @@ class _MainScreenState extends State<MainScreen>
   }
 
   bool _companionRemoteSetup = false;
+  bool _autoStartingCompanionRemote = false;
+  SyncAndScanCoordinator? _syncForCompanionRemote;
   WatchTogetherProvider? _watchTogether;
 
   @override
@@ -1005,6 +1008,17 @@ class _MainScreenState extends State<MainScreen>
 
   void _setupCompanionRemote() {
     final companionRemote = context.read<CompanionRemoteProvider>();
+    try {
+      final sync = Provider.of<SyncAndScanCoordinator?>(context, listen: false);
+      if (sync != null && !identical(_syncForCompanionRemote, sync)) {
+        _syncForCompanionRemote?.removeListener(_onSyncChangedForCompanionRemote);
+        _syncForCompanionRemote = sync;
+        companionRemote.bindSyncCoordinator(sync);
+        sync.addListener(_onSyncChangedForCompanionRemote);
+      }
+    } on ProviderNotFoundException {
+      // Tests without SyncAndScanCoordinator don't wire sync auto-start.
+    }
     companionRemote.onCommandReceived = (command) {
       if (mounted) {
         CompanionRemoteReceiver.instance.handleCommand(command, context);
@@ -1050,7 +1064,18 @@ class _MainScreenState extends State<MainScreen>
     };
   }
 
+  void _onSyncChangedForCompanionRemote() {
+    if (!mounted || _isOffline || _autoStartingCompanionRemote) return;
+    final sync = _syncForCompanionRemote;
+    if (sync == null || (!sync.isSignedIn && !sync.onboardingCompleted)) return;
+    final companionRemote = context.read<CompanionRemoteProvider>();
+    if (companionRemote.isHostServerRunning) return;
+    unawaited(_autoStartCompanionRemoteServer());
+  }
+
   Future<void> _autoStartCompanionRemoteServer() async {
+    if (_autoStartingCompanionRemote) return;
+    _autoStartingCompanionRemote = true;
     try {
       final settings = await SettingsService.getInstance();
       if (!settings.read(SettingsService.enableCompanionRemoteServer)) return;
@@ -1058,6 +1083,8 @@ class _MainScreenState extends State<MainScreen>
       await startCompanionRemoteHost(context);
     } catch (e) {
       appLogger.e('CompanionRemote: Failed to auto-start server', error: e);
+    } finally {
+      _autoStartingCompanionRemote = false;
     }
   }
 
@@ -1075,6 +1102,8 @@ class _MainScreenState extends State<MainScreen>
     _multiServerProvider?.removeListener(_handleLiveTvChanged);
     _catalogSourcesProvider?.removeListener(_handleCatalogSourcesChanged);
     _showExploreTabListenable?.removeListener(_handleCatalogSourcesChanged);
+    _syncForCompanionRemote?.removeListener(_onSyncChangedForCompanionRemote);
+    _syncForCompanionRemote = null;
     if (_bindingSettleListener != null) {
       _activeProfileForListener?.removeListener(_bindingSettleListener!);
     }

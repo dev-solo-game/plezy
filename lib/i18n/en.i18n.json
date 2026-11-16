@@ -2140,7 +2140,7 @@
       "manualAddressHint": "Manual connection address:"
     },
     "pairing": {
-      "discoveryDescription": "Plezy devices with the same Plex account appear here",
+      "discoveryDescription": "Devices on your local network with Remote Server enabled appear here",
       "hostAddressHint": "192.168.1.100:48632",
       "connecting": "Connecting...",
       "searchingForDevices": "Looking for devices...",
@@ -2148,13 +2148,17 @@
       "noDevicesHint": "Open Plezy on desktop and use the same Wi-Fi",
       "availableDevices": "Available Devices",
       "manualConnection": "Manual Connection",
-      "cryptoInitFailed": "Couldn't start secure connection. Sign in to Plex first.",
+      "cryptoInitFailed": "Couldn't start secure connection. Enable LAN sync or sign in to a sync server first.",
       "validationHostRequired": "Please enter host address",
       "validationHostFormat": "Format must be IP:port (e.g., 192.168.1.100:48632)",
       "connectionTimedOut": "Connection timed out. Use the same network on both devices.",
       "sessionNotFound": "Device not found. Make sure Plezy is running on the host.",
-      "authFailed": "Authentication failed. Both devices need the same Plex account.",
-      "failedToConnect": "Failed to connect: ${error}"
+      "authFailed": "Authentication failed. Trust this device on your LAN or sign in to the same sync account.",
+      "failedToConnect": "Failed to connect: ${error}",
+      "tapToTrustAndConnect": "Untrusted · Tap to trust & connect",
+      "waitingForTrust": "Waiting for host to confirm trust...",
+      "waitingForTrustWithCode": "Confirm trust on host (Code: ${code})...",
+      "trustTimedOut": "Timed out waiting for trust confirmation"
     },
     "remote": {
       "disconnectConfirm": "Do you want to disconnect from the remote session?",

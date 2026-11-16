@@ -131,6 +131,7 @@ class CompanionRemotePeerService with KeepaliveMixin {
 
   // Server-side (host) fields
   HttpServer? _server;
+  List<RemoteAuthContext> _hostAuthContexts = const [];
   // The socket is closed through its owning admission during disconnect/dispose.
   // ignore: close_sinks
   WebSocket? _clientSocket;
@@ -239,12 +240,24 @@ class CompanionRemotePeerService with KeepaliveMixin {
     String deviceName,
     String platform,
     List<RemoteAuthContext> authContexts,
-  ) async {
+  ) => _createHostSession(deviceName, platform, authContexts, allowEmptyContexts: false);
+
+  /// Create a host standby session bound to the remote port without initial
+  /// auth contexts until [updateHostAuthContexts] supplies trusted identities.
+  Future<({List<String> addresses, int port})> createStandbySession(String deviceName, String platform) =>
+      _createHostSession(deviceName, platform, const [], allowEmptyContexts: true);
+
+  Future<({List<String> addresses, int port})> _createHostSession(
+    String deviceName,
+    String platform,
+    List<RemoteAuthContext> authContexts, {
+    required bool allowEmptyContexts,
+  }) async {
     if (_disposed) {
       throw StateError('CompanionRemotePeerService is disposed');
     }
 
-    if (authContexts.isEmpty) {
+    if (authContexts.isEmpty && !allowEmptyContexts) {
       throw RemotePeerError(
         type: RemotePeerErrorType.authFailed,
         message: t.companionRemote.errors.authenticationFailed,
@@ -257,6 +270,7 @@ class CompanionRemotePeerService with KeepaliveMixin {
 
     _role = RemoteSessionRole.host;
     _myPeerId = 'host';
+    _hostAuthContexts = List<RemoteAuthContext>.unmodifiable(authContexts);
 
     try {
       const int preferredPort = 48632;
@@ -281,7 +295,7 @@ class CompanionRemotePeerService with KeepaliveMixin {
       appLogger.d('CompanionRemote: Host server started, addresses: $addresses');
 
       server.listen((request) {
-        unawaited(_serveHostRequest(request, server, deviceName, platform, authContexts));
+        unawaited(_serveHostRequest(request, server, deviceName, platform));
       });
 
       _connectionStateController.add(RemoteSessionStatus.connected);
@@ -289,6 +303,7 @@ class CompanionRemotePeerService with KeepaliveMixin {
       return (addresses: addresses, port: port);
     } catch (e) {
       _acceptingHostConnections = false;
+      _hostAuthContexts = const [];
       final failedServer = _server;
       _server = null;
       await _runDisconnectCleanup(failedServer?.close(force: true), 'failed server');
@@ -304,12 +319,27 @@ class CompanionRemotePeerService with KeepaliveMixin {
     }
   }
 
+  /// Replaces accepted auth contexts for a running host server in place,
+  /// closing the active client if its identity was revoked.
+  Future<void> updateHostAuthContexts(List<RemoteAuthContext> authContexts) async {
+    _hostAuthContexts = List<RemoteAuthContext>.unmodifiable(authContexts);
+    if (_disposed || _server == null) return;
+
+    final active = _currentHostAdmission;
+    final activeContextId = _selectedAuthContextId;
+    if (active != null &&
+        activeContextId != null &&
+        !_hostAuthContexts.any((context) => context.id == activeContextId)) {
+      appLogger.d('CompanionRemote: Revoking active client session after auth context removal');
+      await _closeHostAdmissionSocket(active, code: 4003, reason: 'Authorization revoked');
+    }
+  }
+
   Future<void> _serveHostRequest(
     HttpRequest request,
     HttpServer server,
     String hostDeviceName,
     String hostPlatform,
-    List<RemoteAuthContext> authContexts,
   ) async {
     if (request.uri.path != '/ws') {
       request.response.statusCode = HttpStatus.notFound;
@@ -339,7 +369,7 @@ class CompanionRemotePeerService with KeepaliveMixin {
         return;
       }
 
-      _handleNewWebSocketConnection(admission, hostDeviceName, hostPlatform, authContexts);
+      _handleNewWebSocketConnection(admission, hostDeviceName, hostPlatform, _hostAuthContexts);
     } catch (e) {
       admission.completeUpgrade();
       await _closeHostAdmissionSocket(admission);
@@ -401,6 +431,15 @@ class CompanionRemotePeerService with KeepaliveMixin {
     // The admission owns and closes this socket.
     // ignore: close_sinks
     final socket = admission.socket!;
+    if (authContexts.isEmpty) {
+      admission.phase = _HostAdmissionPhase.terminal;
+      try {
+        socket.add(jsonEncode({'type': 'authFailed'}));
+      } catch (_) {}
+      unawaited(_closeHostAdmissionSocket(admission, code: 4003, reason: 'Authentication failed'));
+      return;
+    }
+
     final auth = RemoteAuthService.instance;
     final hostNonce = auth.generateNonce();
     final primaryContext = authContexts.first;
@@ -1445,6 +1484,7 @@ class CompanionRemotePeerService with KeepaliveMixin {
       _hostAdmissions.clear();
       _hostAdmissionsBySource.clear();
       _hostAdmissionCount = 0;
+      _hostAuthContexts = const [];
       _currentHostAdmission = null;
       _clientSocket = null;
       _channel = null;

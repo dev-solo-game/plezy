@@ -8629,8 +8629,8 @@ class Translations$companionRemote$pairing$en {
 
 	// Translations
 
-	/// en: 'Plezy devices with the same Plex account appear here'
-	String get discoveryDescription => 'Plezy devices with the same Plex account appear here';
+	/// en: 'Devices on your local network with Remote Server enabled appear here'
+	String get discoveryDescription => 'Devices on your local network with Remote Server enabled appear here';
 
 	/// en: '192.168.1.100:48632'
 	String get hostAddressHint => '192.168.1.100:48632';
@@ -8653,8 +8653,8 @@ class Translations$companionRemote$pairing$en {
 	/// en: 'Manual Connection'
 	String get manualConnection => 'Manual Connection';
 
-	/// en: 'Couldn't start secure connection. Sign in to Plex first.'
-	String get cryptoInitFailed => 'Couldn\'t start secure connection. Sign in to Plex first.';
+	/// en: 'Couldn't start secure connection. Enable LAN sync or sign in to a sync server first.'
+	String get cryptoInitFailed => 'Couldn\'t start secure connection. Enable LAN sync or sign in to a sync server first.';
 
 	/// en: 'Please enter host address'
 	String get validationHostRequired => 'Please enter host address';
@@ -8668,11 +8668,23 @@ class Translations$companionRemote$pairing$en {
 	/// en: 'Device not found. Make sure Plezy is running on the host.'
 	String get sessionNotFound => 'Device not found. Make sure Plezy is running on the host.';
 
-	/// en: 'Authentication failed. Both devices need the same Plex account.'
-	String get authFailed => 'Authentication failed. Both devices need the same Plex account.';
+	/// en: 'Authentication failed. Trust this device on your LAN or sign in to the same sync account.'
+	String get authFailed => 'Authentication failed. Trust this device on your LAN or sign in to the same sync account.';
 
 	/// en: 'Failed to connect: ${error}'
 	String failedToConnect({required Object error}) => 'Failed to connect: ${error}';
+
+	/// en: 'Untrusted · Tap to trust & connect'
+	String get tapToTrustAndConnect => 'Untrusted · Tap to trust & connect';
+
+	/// en: 'Waiting for host to confirm trust...'
+	String get waitingForTrust => 'Waiting for host to confirm trust...';
+
+	/// en: 'Confirm trust on host (Code: ${code})...'
+	String waitingForTrustWithCode({required Object code}) => 'Confirm trust on host (Code: ${code})...';
+
+	/// en: 'Timed out waiting for trust confirmation'
+	String get trustTimedOut => 'Timed out waiting for trust confirmation';
 }
 
 // Path: companionRemote.remote
@@ -10965,7 +10977,7 @@ extension on Translations {
 			'companionRemote.session.stopServer' => 'Stop Server',
 			'companionRemote.session.minimize' => 'Minimize',
 			'companionRemote.session.manualAddressHint' => 'Manual connection address:',
-			'companionRemote.pairing.discoveryDescription' => 'Plezy devices with the same Plex account appear here',
+			'companionRemote.pairing.discoveryDescription' => 'Devices on your local network with Remote Server enabled appear here',
 			'companionRemote.pairing.hostAddressHint' => '192.168.1.100:48632',
 			'companionRemote.pairing.connecting' => 'Connecting...',
 			'companionRemote.pairing.searchingForDevices' => 'Looking for devices...',
@@ -10973,13 +10985,17 @@ extension on Translations {
 			'companionRemote.pairing.noDevicesHint' => 'Open Plezy on desktop and use the same Wi-Fi',
 			'companionRemote.pairing.availableDevices' => 'Available Devices',
 			'companionRemote.pairing.manualConnection' => 'Manual Connection',
-			'companionRemote.pairing.cryptoInitFailed' => 'Couldn\'t start secure connection. Sign in to Plex first.',
+			'companionRemote.pairing.cryptoInitFailed' => 'Couldn\'t start secure connection. Enable LAN sync or sign in to a sync server first.',
 			'companionRemote.pairing.validationHostRequired' => 'Please enter host address',
 			'companionRemote.pairing.validationHostFormat' => 'Format must be IP:port (e.g., 192.168.1.100:48632)',
 			'companionRemote.pairing.connectionTimedOut' => 'Connection timed out. Use the same network on both devices.',
 			'companionRemote.pairing.sessionNotFound' => 'Device not found. Make sure Plezy is running on the host.',
-			'companionRemote.pairing.authFailed' => 'Authentication failed. Both devices need the same Plex account.',
+			'companionRemote.pairing.authFailed' => 'Authentication failed. Trust this device on your LAN or sign in to the same sync account.',
 			'companionRemote.pairing.failedToConnect' => ({required Object error}) => 'Failed to connect: ${error}',
+			'companionRemote.pairing.tapToTrustAndConnect' => 'Untrusted · Tap to trust & connect',
+			'companionRemote.pairing.waitingForTrust' => 'Waiting for host to confirm trust...',
+			'companionRemote.pairing.waitingForTrustWithCode' => ({required Object code}) => 'Confirm trust on host (Code: ${code})...',
+			'companionRemote.pairing.trustTimedOut' => 'Timed out waiting for trust confirmation',
 			'companionRemote.remote.disconnectConfirm' => 'Do you want to disconnect from the remote session?',
 			'companionRemote.remote.reconnecting' => 'Reconnecting...',
 			'companionRemote.remote.attemptOf' => ({required Object current}) => 'Attempt ${current} of 5',
@@ -11069,12 +11085,12 @@ extension on Translations {
 			'performanceOverlay.renderFps' => 'Render FPS',
 			'performanceOverlay.displayFps' => 'Display FPS',
 			'performanceOverlay.avSync' => 'A/V Sync',
+			_ => null,
+		} ?? switch (path) {
 			'performanceOverlay.dropped' => 'Dropped',
 			'performanceOverlay.dvRpus' => 'DV RPUs',
 			'performanceOverlay.dvRpuAverage' => 'DV RPU Avg',
 			'performanceOverlay.dvSampleAverage' => 'DV Sample Avg',
-			_ => null,
-		} ?? switch (path) {
 			'performanceOverlay.maxLuma' => 'Max Luma',
 			'performanceOverlay.minLuma' => 'Min Luma',
 			'performanceOverlay.maxCll' => 'MaxCLL',
@@ -11583,12 +11599,12 @@ extension on Translations {
 			'sync.lanSyncNow' => 'Sync LAN Now',
 			'sync.lanPairingCode' => ({required Object code}) => 'Pairing code: ${code}',
 			'sync.lanSettingsSubtitle' => ({required Object count}) => 'LAN P2P (${count} trusted device(s))',
+			_ => null,
+		} ?? switch (path) {
 			'sync.cloudSettingsSubtitle' => ({required Object name}) => 'Sync Server: ${name}',
 			'sync.serverUrl' => 'Sync Server URL',
 			'sync.username' => 'Username',
 			'sync.password' => 'Password',
-			_ => null,
-		} ?? switch (path) {
 			'sync.register' => 'Create Account',
 			'sync.login' => 'Sign In',
 			'sync.qrLoginTitle' => 'TV / Big-Screen Quick Login',

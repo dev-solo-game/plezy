@@ -5,6 +5,8 @@ import 'package:flutter/widgets.dart';
 import '../connection/connection.dart';
 import '../connection/connection_registry.dart';
 import '../i18n/strings.g.dart';
+import '../library/sync/lan_peer_sync_service.dart';
+import '../library/sync/sync_coordinator.dart';
 import '../models/companion_remote/remote_command.dart';
 import '../models/companion_remote/remote_session.dart';
 import '../models/plex/plex_home.dart';
@@ -22,7 +24,12 @@ import '../utils/device_identity.dart';
 import '../utils/serial_future_queue.dart';
 import '../mixins/disposable_change_notifier_mixin.dart';
 
+export '../library/sync/lan_peer_sync_service.dart' show LanDiscoveredPeer;
 export '../services/companion_remote/lan_discovery_service.dart' show DiscoveredHost;
+
+class CompanionRemoteTrustCancelledException implements Exception {
+  const CompanionRemoteTrustCancelledException();
+}
 
 typedef CommandReceivedCallback = void Function(RemoteCommand command);
 typedef PlexHomeResolver = Future<PlexHome?> Function(String connectionId);
@@ -90,15 +97,18 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
 
   // Crypto context (derived in memory, never persisted)
   List<RemoteAuthContext> _authContexts = const [];
+  bool _lanStandbyReady = false;
+  int? _hostServerPort;
   String? _cryptoProfileId;
+  Completer<void>? _pendingTrustCancel;
 
-  // Profile-scoped services watched so a running host's crypto identity tracks
-  // home-user / connection changes (a removed home user or revoked borrowed
-  // connection must stop controlling an already-broadcasting host).
+  // Profile-scoped & app-scoped services watched so a running host's crypto
+  // identity tracks home-user, connection, LAN-trust, and sync-account changes.
   ConnectionRegistry? _boundConnections;
   ActiveProfileProvider? _boundActiveProfile;
   ProfileConnectionRegistry? _boundProfileConnections;
   PlexHomeService? _boundPlexHome;
+  SyncAndScanCoordinator? _boundSync;
   final List<StreamSubscription<void>> _profileServiceSubs = [];
   bool _authRefreshScheduled = false;
 
@@ -136,16 +146,20 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
     safeNotifyListeners();
   }
 
-  /// Bind the profile-scoped services whose changes must keep a running host's
-  /// crypto identity current: a removed home user or revoked borrowed
-  /// connection has to stop controlling an already-broadcasting host. Wired
-  /// once when the provider is created; a second call is a no-op.
+  /// Bind the profile-scoped services (and optional sync coordinator) whose
+  /// changes must keep a running host's crypto identity current: a removed home
+  /// user, revoked borrowed connection, or revoked LAN trust has to stop
+  /// controlling an already-broadcasting host.
   void bindProfileServices({
     required ConnectionRegistry connections,
     required ActiveProfileProvider activeProfile,
     required ProfileConnectionRegistry profileConnections,
     required PlexHomeService plexHome,
+    SyncAndScanCoordinator? sync,
   }) {
+    if (sync != null) {
+      bindSyncCoordinator(sync);
+    }
     if (_boundActiveProfile != null) return;
     _boundConnections = connections;
     _boundActiveProfile = activeProfile;
@@ -158,11 +172,27 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
     activeProfile.addListener(_scheduleAuthContextRefresh);
   }
 
-  /// Coalesce a burst of stream events into a single rebuild. Only a running
-  /// host needs live identity updates — discovery/remote sessions resolve
-  /// crypto at connect time.
+  /// Bind the app-scoped [SyncAndScanCoordinator] so LAN P2P trust changes and
+  /// Sync Server sessions automatically drive companion remote discovery/host auth.
+  void bindSyncCoordinator(SyncAndScanCoordinator? sync) {
+    if (identical(_boundSync, sync)) return;
+    _boundSync?.removeListener(_onBoundSyncChanged);
+    _boundSync = sync;
+    _boundSync?.addListener(_onBoundSyncChanged);
+  }
+
+  void _onBoundSyncChanged() {
+    if (isDisposed) return;
+    if (isHostServerRunning || isCryptoReady) {
+      _scheduleAuthContextRefresh();
+    }
+    safeNotifyListeners();
+  }
+
+  /// Coalesce a burst of stream events into a single rebuild. Only an active
+  /// host or initialized sync-bound discovery view needs live identity updates.
   void _scheduleAuthContextRefresh() {
-    if (!isHostServerRunning) return;
+    if (!isHostServerRunning && !(isCryptoReady && _boundSync != null)) return;
     if (_authRefreshScheduled) return;
     _authRefreshScheduled = true;
     scheduleMicrotask(() {
@@ -176,29 +206,30 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
     final activeProfile = _boundActiveProfile;
     final profileConnections = _boundProfileConnections;
     final plexHome = _boundPlexHome;
-    if (connections == null || activeProfile == null || profileConnections == null || plexHome == null) {
+    final sync = _boundSync;
+    final hasProfileServices = connections != null && activeProfile != null && profileConnections != null;
+    if (!hasProfileServices && sync == null) {
       return;
     }
-    if (!isHostServerRunning) return;
+    final wasHostRunning = isHostServerRunning;
+    if (!wasHostRunning && !(isCryptoReady && sync != null)) return;
 
     await _serializeLifecycle(() async {
-      if (isDisposed || !isHostServerRunning) return;
+      if (isDisposed) return;
       final generation = _remoteGeneration;
       final ok = await _ensureCryptoReadyLocked(
         null,
         connections: connections,
         activeProfile: activeProfile,
         profileConnections: profileConnections,
-        plexHomeForConnection: plexHome.materializePlexHomeForConnection,
+        plexHomeForConnection: plexHome?.materializePlexHomeForConnection,
+        sync: sync,
       );
       // Unchanged identities leave the host running (no restart). When they
-      // change, the rebuild tore the host down — bring it back so the new set
-      // is what's broadcasting. When every identity is gone the host stays
-      // down by design (`ok` is false). Nor is it restarted when the provider
-      // was disposed (a profile switch replaces it) or the session moved on
-      // while the rebuild ran: a server and a LAN broadcast started now would
-      // belong to no one.
-      if (ok && !isHostServerRunning && !isDisposed && generation == _remoteGeneration) {
+      // change across profile switches, the rebuild tore the host down — bring it
+      // back so the new set is what's broadcasting. When every identity is gone
+      // the host stays down by design (`ok` is false).
+      if (wasHostRunning && ok && !isHostServerRunning && !isDisposed && generation == _remoteGeneration) {
         await _startHostServerLocked();
       }
     });
@@ -211,11 +242,27 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
 
   RemoteAuthContext? get _primaryAuthContext => _authContexts.isEmpty ? null : _authContexts.first;
 
-  bool get isCryptoReady => _authContexts.isNotEmpty;
+  bool get isCryptoReady => _authContexts.isNotEmpty || _lanStandbyReady;
+
+  /// Ensure crypto is initialized for Sync Server / LAN P2P without requiring
+  /// profile services (useful for sync-first flows and unit tests).
+  Future<bool> ensureSyncCryptoReady(SyncAndScanCoordinator sync, {void Function()? checkCurrent}) {
+    return _serializeLifecycle(
+      () => _ensureCryptoReadyLocked(
+        null,
+        connections: _boundConnections,
+        activeProfile: _boundActiveProfile,
+        profileConnections: _boundProfileConnections,
+        plexHomeForConnection: _boundPlexHome?.materializePlexHomeForConnection,
+        sync: sync,
+        checkCurrent: checkCurrent,
+      ),
+    );
+  }
 
   /// Ensure crypto is initialized for every remote identity attached to the
-  /// active profile. Serialized against host start/stop so a live refresh and
-  /// a user-driven start can't interleave.
+  /// active profile and/or active sync coordinator. Serialized against host
+  /// start/stop so a live refresh and a user-driven start can't interleave.
   /// Returns true if crypto is ready (already initialized or just initialized).
   Future<bool> ensureCryptoReady(
     PlexHome? home, {
@@ -225,6 +272,7 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
     ActivePlexIdentity? identity,
     PlexAccountConnection? account,
     PlexHomeResolver? plexHomeForConnection,
+    SyncAndScanCoordinator? sync,
     void Function()? checkCurrent,
   }) {
     return _serializeLifecycle(
@@ -236,6 +284,7 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
         identity: identity,
         account: account,
         plexHomeForConnection: plexHomeForConnection,
+        sync: sync,
         checkCurrent: checkCurrent,
       ),
     );
@@ -243,49 +292,166 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
 
   Future<bool> _ensureCryptoReadyLocked(
     PlexHome? home, {
-    required ConnectionRegistry connections,
-    required ActiveProfileProvider activeProfile,
-    required ProfileConnectionRegistry profileConnections,
+    ConnectionRegistry? connections,
+    ActiveProfileProvider? activeProfile,
+    ProfileConnectionRegistry? profileConnections,
     ActivePlexIdentity? identity,
     PlexAccountConnection? account,
     PlexHomeResolver? plexHomeForConnection,
+    SyncAndScanCoordinator? sync,
     void Function()? checkCurrent,
   }) async {
     checkCurrent?.call();
-    await activeProfile.initialize();
-    checkCurrent?.call();
-    final profile = activeProfile.active;
-    if (profile == null) {
+    final effectiveSync = sync ?? _boundSync;
+    if (effectiveSync != null) {
+      bindSyncCoordinator(effectiveSync);
+      await effectiveSync.initialize();
+      checkCurrent?.call();
+      final customName = (await effectiveSync.syncStore.getDeviceName()).trim();
+      if (customName.isNotEmpty) {
+        _deviceName = customName;
+      } else if (_deviceName == t.companionRemote.unknownDevice) {
+        final lanName = effectiveSync.lanService.deviceName.trim();
+        if (lanName.isNotEmpty) {
+          _deviceName = lanName;
+        }
+      }
+      checkCurrent?.call();
+    }
+
+    Profile? profile;
+    if (activeProfile != null) {
+      await activeProfile.initialize();
+      checkCurrent?.call();
+      profile = activeProfile.active;
+    }
+
+    if (profile == null && effectiveSync == null) {
       appLogger.w('CompanionRemote: Cannot init crypto — no active profile');
       return false;
     }
 
-    final nextContexts = await _buildAuthContextsForProfile(
-      profile: profile,
-      connections: connections,
-      profileConnections: profileConnections,
-      fallbackHome: home,
-      identity: identity,
-      preferredAccount: account,
-      plexHomeForConnection: plexHomeForConnection,
-    );
-    checkCurrent?.call();
+    final nextContexts = <RemoteAuthContext>[];
+    final seenIds = <String>{};
+    void addUniqueContext(RemoteAuthContext context) {
+      if (seenIds.add(context.id)) {
+        nextContexts.add(context);
+      }
+    }
 
-    if (nextContexts.isEmpty) {
+    var nextLanStandby = false;
+    if (effectiveSync != null) {
+      final auth = RemoteAuthService.instance;
+      final session = effectiveSync.session;
+      if (session != null) {
+        final myDeviceId = effectiveSync.deviceId.isNotEmpty
+            ? effectiveSync.deviceId
+            : (await effectiveSync.syncStore.getOrCreateDeviceId());
+        checkCurrent?.call();
+        addUniqueContext(
+          await auth.createCloudSyncAuthContext(
+            myDeviceId: myDeviceId,
+            serverUrl: session.serverUrl,
+            userId: session.userId,
+            masterKey: session.masterKey,
+          ),
+        );
+      } else if (!effectiveSync.isSignedIn &&
+          (effectiveSync.onboardingCompleted || effectiveSync.lanService.isRunning)) {
+        if (!effectiveSync.lanService.isRunning && effectiveSync.autoStartLanService) {
+          await effectiveSync.lanService.start();
+          checkCurrent?.call();
+        }
+        final lanDeviceId = effectiveSync.lanService.deviceId;
+        final myDeviceId = (lanDeviceId != null && lanDeviceId.isNotEmpty)
+            ? lanDeviceId
+            : (effectiveSync.deviceId.isNotEmpty
+                  ? effectiveSync.deviceId
+                  : await effectiveSync.syncStore.getOrCreateDeviceId());
+        checkCurrent?.call();
+        for (final trusted in effectiveSync.lanService.trustedPeers) {
+          addUniqueContext(
+            await auth.createLanPeerAuthContext(
+              myDeviceId: myDeviceId,
+              peerDeviceId: trusted.deviceId,
+              sharedKey: trusted.sharedKey,
+            ),
+          );
+        }
+        nextLanStandby = true;
+      }
+    }
+
+    if (profile != null && connections != null && profileConnections != null) {
+      final profileContexts = await _buildAuthContextsForProfile(
+        profile: profile,
+        connections: connections,
+        profileConnections: profileConnections,
+        fallbackHome: home,
+        identity: identity,
+        preferredAccount: account,
+        plexHomeForConnection: plexHomeForConnection,
+      );
+      checkCurrent?.call();
+      for (final context in profileContexts) {
+        addUniqueContext(context);
+      }
+    } else {
+      checkCurrent?.call();
+    }
+
+    final nextProfileKey = profile?.id ?? '__sync__';
+
+    if (nextContexts.isEmpty && !nextLanStandby) {
       if (isCryptoReady) await _prepareForCryptoRebuild();
-      appLogger.w('CompanionRemote: Cannot init crypto — no active profile identities');
+      appLogger.w('CompanionRemote: Cannot init crypto — no active remote identities');
       return false;
     }
 
-    if (_cryptoProfileId == profile.id && _sameAuthContexts(_authContexts, nextContexts)) {
+    if (_cryptoProfileId == nextProfileKey &&
+        _lanStandbyReady == nextLanStandby &&
+        _sameAuthContexts(_authContexts, nextContexts)) {
+      if (isHostServerRunning && _hostServerPort != null) {
+        effectiveSync?.lanService.setAdvertisedRemotePort(nextLanStandby ? _hostServerPort : null);
+      }
+      return true;
+    }
+
+    // When only the auth context set (e.g., LAN peer trusted/revoked or sync mode switch)
+    // changed within the same profile scope while hosting, hot-update the running server
+    // in place instead of closing its listening port.
+    if (isHostServerRunning && _cryptoProfileId == nextProfileKey && _peerService != null) {
+      _authContexts = nextContexts;
+      _lanStandbyReady = nextLanStandby;
+      await _peerService!.updateHostAuthContexts(nextContexts);
+      checkCurrent?.call();
+      final port = _hostServerPort;
+      effectiveSync?.lanService.setAdvertisedRemotePort(nextLanStandby ? port : null);
+      if (nextContexts.isEmpty) {
+        await _discoveryService?.stopBroadcasting();
+      } else if (port != null && _hostServerAddresses.isNotEmpty) {
+        _discoveryService ??= _discoveryServiceFactory();
+        final localIps = _hostServerAddresses.map((a) => a.split(':').first).toList();
+        await _discoveryService!.startBroadcastingForContexts(
+          contexts: nextContexts,
+          deviceName: _deviceName,
+          platform: _platform,
+          wsPort: port,
+          ips: localIps,
+        );
+      }
+      safeNotifyListeners();
+      appLogger.d('CompanionRemote: Hot-updated host crypto contexts (${nextContexts.length})');
       return true;
     }
 
     await _prepareForCryptoRebuild();
     checkCurrent?.call();
     _authContexts = nextContexts;
-    _cryptoProfileId = profile.id;
-    appLogger.d('CompanionRemote: Crypto contexts initialized (${nextContexts.length})');
+    _lanStandbyReady = nextLanStandby;
+    _cryptoProfileId = nextProfileKey;
+    safeNotifyListeners();
+    appLogger.d('CompanionRemote: Crypto contexts initialized (${nextContexts.length}, standby=$nextLanStandby)');
     return true;
   }
 
@@ -458,6 +624,8 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
 
   void _clearCryptoContext() {
     _authContexts = const [];
+    _lanStandbyReady = false;
+    _hostServerPort = null;
     _cryptoProfileId = null;
   }
 
@@ -488,6 +656,7 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
     _resumeReconnectPending = false;
+    cancelPendingTrust();
 
     final pending = _pendingRemotePeer;
     final current = _session?.isRemote == true ? _peerService : null;
@@ -606,7 +775,9 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
 
     try {
       final contexts = List<RemoteAuthContext>.unmodifiable(_authContexts);
-      final result = await _peerService!.createSessionForContexts(_deviceName, _platform, contexts);
+      final result = (contexts.isEmpty && _lanStandbyReady)
+          ? await _peerService!.createStandbySession(_deviceName, _platform)
+          : await _peerService!.createSessionForContexts(_deviceName, _platform, contexts);
       try {
         checkCurrent?.call();
       } catch (_) {
@@ -616,6 +787,8 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
         rethrow;
       }
       _hostServerAddresses = result.addresses;
+      _hostServerPort = result.port;
+      _boundSync?.lanService.setAdvertisedRemotePort(_lanStandbyReady ? result.port : null);
 
       _session = RemoteSession(
         role: RemoteSessionRole.host,
@@ -624,28 +797,32 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
       );
       safeNotifyListeners();
 
-      // Start LAN discovery broadcasting
-      _discoveryService ??= _discoveryServiceFactory();
-      final localIps = result.addresses.map((a) => a.split(':').first).toList();
-      await _discoveryService!.startBroadcastingForContexts(
-        contexts: contexts,
-        deviceName: _deviceName,
-        platform: _platform,
-        wsPort: result.port,
-        ips: localIps,
-      );
-      try {
-        checkCurrent?.call();
-      } catch (_) {
-        if (identical(_peerService, peer)) await _stopHostServerLocked();
-        rethrow;
+      if (contexts.isNotEmpty) {
+        // Start LAN discovery broadcasting
+        _discoveryService ??= _discoveryServiceFactory();
+        final localIps = result.addresses.map((a) => a.split(':').first).toList();
+        await _discoveryService!.startBroadcastingForContexts(
+          contexts: contexts,
+          deviceName: _deviceName,
+          platform: _platform,
+          wsPort: result.port,
+          ips: localIps,
+        );
+        try {
+          checkCurrent?.call();
+        } catch (_) {
+          if (identical(_peerService, peer)) await _stopHostServerLocked();
+          rethrow;
+        }
       }
 
-      appLogger.d('CompanionRemote: Host server running, broadcasting on LAN');
+      appLogger.d('CompanionRemote: Host server running (standby=${contexts.isEmpty})');
     } catch (e) {
       checkCurrent?.call();
       appLogger.e('CompanionRemote: Failed to start host server', error: e);
       _hostServerAddresses = const [];
+      _hostServerPort = null;
+      _boundSync?.lanService.setAdvertisedRemotePort(null);
       _session = RemoteSession(
         role: RemoteSessionRole.host,
         status: RemoteSessionStatus.error,
@@ -671,6 +848,8 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
       await _discoveryService?.stopBroadcasting();
       _discoveryService?.stopListening();
       _hostServerAddresses = const [];
+      _hostServerPort = null;
+      _boundSync?.lanService.setAdvertisedRemotePort(null);
 
       if (identical(_peerService, peer)) {
         _peerService = null;
@@ -698,8 +877,195 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
       return null;
     }
 
+    if (_authContexts.isEmpty && _lanStandbyReady) {
+      return Stream<List<DiscoveredHost>>.value(const []);
+    }
+
     _discoveryService ??= _discoveryServiceFactory();
-    return _discoveryService!.startListeningForContexts(_authContexts);
+    final raw = _discoveryService!.startListeningForContexts(_authContexts);
+    final myDeviceId = _boundSync?.deviceId ?? '';
+    return myDeviceId.isEmpty ? raw : raw.map((hosts) => hosts.where((h) => h.clientId != myDeviceId).toList());
+  }
+
+  /// Discovered LAN P2P peers that are already trusted and advertising a remote host port.
+  List<DiscoveredHost> get trustedLanRemoteHosts {
+    final sync = _boundSync;
+    if (sync == null || sync.isSignedIn) return const [];
+    final lan = sync.lanService;
+    if (!lan.isRunning) return const [];
+    final result = <DiscoveredHost>[];
+    for (final peer in lan.discoveredPeers) {
+      final remotePort = peer.remotePort;
+      if (remotePort == null || remotePort <= 0 || !lan.isPeerTrusted(peer.deviceId)) continue;
+      final ctx = _authContexts.where((c) => c.connectionId == 'lan:${peer.deviceId}').firstOrNull;
+      if (ctx == null) continue;
+      result.add(
+        DiscoveredHost(
+          authContextId: ctx.id,
+          clientId: peer.deviceId,
+          name: peer.deviceName,
+          platform: peer.platform,
+          port: remotePort,
+          ips: [peer.host],
+          lastSeen: peer.lastSeen,
+        ),
+      );
+    }
+    return result;
+  }
+
+  /// Discovered nearby LAN P2P peers running a remote server that have not yet been trusted.
+  List<LanDiscoveredPeer> get untrustedLanRemotePeers {
+    final sync = _boundSync;
+    if (sync == null || sync.isSignedIn) return const [];
+    final lan = sync.lanService;
+    if (!lan.isRunning) return const [];
+    return [
+      for (final peer in lan.discoveredPeers)
+        if (peer.remotePort != null && peer.remotePort! > 0 && !lan.isPeerTrusted(peer.deviceId)) peer,
+    ];
+  }
+
+  /// 4-digit SAS verification code between this device and [peer], if LAN P2P is initialized.
+  String? pairingCodeForLanPeer(LanDiscoveredPeer peer) {
+    final myPub = _boundSync?.lanService.publicKeyBase64;
+    if (myPub == null || myPub.isEmpty) return null;
+    return peer.pairingCodeFor(myPub);
+  }
+
+  /// Aborts any in-flight [trustAndConnectLanPeer] wait.
+  void cancelPendingTrust() {
+    final pending = _pendingTrustCancel;
+    _pendingTrustCancel = null;
+    if (pending != null && !pending.isCompleted) {
+      pending.complete();
+    }
+  }
+
+  /// Initiates a LAN trust request to [peer], waits for trust confirmation on the
+  /// host, refreshes derived remote credentials, and connects automatically.
+  Future<void> trustAndConnectLanPeer(
+    LanDiscoveredPeer peer, {
+    Duration trustTimeout = const Duration(seconds: 20),
+  }) async {
+    final sync = _boundSync;
+    if (sync == null || sync.isSignedIn) {
+      throw RemotePeerError(type: RemotePeerErrorType.authFailed, message: t.companionRemote.pairing.cryptoInitFailed);
+    }
+    final initialRemotePort = peer.remotePort;
+    if (initialRemotePort == null || initialRemotePort <= 0) {
+      throw RemotePeerError(
+        type: RemotePeerErrorType.connectionFailed,
+        message: t.companionRemote.pairing.sessionNotFound,
+      );
+    }
+
+    final lan = sync.lanService;
+    if (!lan.isRunning) {
+      await lan.start();
+    }
+
+    if (!lan.isPeerTrusted(peer.deviceId)) {
+      cancelPendingTrust();
+      final cancelCompleter = Completer<void>();
+      _pendingTrustCancel = cancelCompleter;
+      try {
+        await lan.requestPairWithPeer(peer);
+        if (cancelCompleter.isCompleted || isDisposed) {
+          throw const CompanionRemoteTrustCancelledException();
+        }
+        if (!lan.isPeerTrusted(peer.deviceId)) {
+          final trustDone = Completer<void>();
+          late final Timer timer;
+          void onLanChanged() {
+            if (trustDone.isCompleted) return;
+            if (lan.isPeerTrusted(peer.deviceId)) {
+              trustDone.complete();
+            } else if (!lan.isRunning || isDisposed) {
+              trustDone.completeError(
+                RemotePeerError(
+                  type: RemotePeerErrorType.connectionFailed,
+                  message: t.companionRemote.pairing.sessionNotFound,
+                ),
+              );
+            }
+          }
+
+          timer = Timer(trustTimeout, () {
+            if (!trustDone.isCompleted) {
+              trustDone.completeError(
+                RemotePeerError(type: RemotePeerErrorType.timeout, message: t.companionRemote.pairing.trustTimedOut),
+              );
+            }
+          });
+          lan.addListener(onLanChanged);
+          try {
+            await Future.any([trustDone.future, cancelCompleter.future]);
+            if (cancelCompleter.isCompleted || isDisposed) {
+              throw const CompanionRemoteTrustCancelledException();
+            }
+          } finally {
+            lan.removeListener(onLanChanged);
+            timer.cancel();
+          }
+        }
+      } finally {
+        if (identical(_pendingTrustCancel, cancelCompleter)) {
+          _pendingTrustCancel = null;
+        }
+      }
+    }
+
+    if (isDisposed) return;
+
+    // Rebuild crypto contexts so `lan:<peer.deviceId>` is present before connecting.
+    await _serializeLifecycle(
+      () => _ensureCryptoReadyLocked(
+        null,
+        connections: _boundConnections,
+        activeProfile: _boundActiveProfile,
+        profileConnections: _boundProfileConnections,
+        plexHomeForConnection: _boundPlexHome?.materializePlexHomeForConnection,
+        sync: sync,
+      ),
+    );
+    if (isDisposed) return;
+
+    final ctx = _authContexts.where((c) => c.connectionId == 'lan:${peer.deviceId}').firstOrNull;
+    if (ctx == null) {
+      throw RemotePeerError(type: RemotePeerErrorType.authFailed, message: t.companionRemote.pairing.authFailed);
+    }
+
+    final liveDiscovered = lan.discoveredPeers.where((p) => p.deviceId == peer.deviceId).firstOrNull;
+    final liveTrusted = lan.trustedPeers.where((t) => t.deviceId == peer.deviceId).firstOrNull;
+    final targetHost = liveDiscovered?.host ?? liveTrusted?.lastHost ?? peer.host;
+    final liveDiscoveredPort = liveDiscovered?.remotePort;
+    final liveTrustedPort = liveTrusted?.lastRemotePort;
+    final targetPort = (liveDiscoveredPort != null && liveDiscoveredPort > 0)
+        ? liveDiscoveredPort
+        : ((liveTrustedPort != null && liveTrustedPort > 0) ? liveTrustedPort : initialRemotePort);
+
+    final discoveredHost = DiscoveredHost(
+      authContextId: ctx.id,
+      clientId: peer.deviceId,
+      name: liveDiscovered?.deviceName ?? peer.deviceName,
+      platform: liveDiscovered?.platform ?? peer.platform,
+      port: targetPort,
+      ips: [targetHost],
+    );
+
+    // Retry briefly on authFailed in case the host's async HKDF update is still committing.
+    for (var attempt = 0; attempt < 3; attempt++) {
+      try {
+        await connectToDiscoveredHost(discoveredHost);
+        return;
+      } on PeerError catch (e) {
+        if (e.type != PeerErrorType.authFailed || attempt == 2 || isDisposed) {
+          rethrow;
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 150));
+      }
+    }
   }
 
   /// Stop listening for host beacons.
@@ -760,6 +1126,19 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
   Future<void> connectToManualHost(String hostAddress) async {
     if (!isCryptoReady) {
       throw RemotePeerError(type: RemotePeerErrorType.authFailed, message: t.companionRemote.pairing.cryptoInitFailed);
+    }
+
+    if (_authContexts.isEmpty && _lanStandbyReady) {
+      final targetIp = hostAddress.split(':').first.trim();
+      final matched = untrustedLanRemotePeers.where((p) {
+        final full = '${p.host}:${p.remotePort}';
+        return full == hostAddress || p.host == targetIp;
+      }).firstOrNull;
+      if (matched != null) {
+        await trustAndConnectLanPeer(matched);
+        return;
+      }
+      throw RemotePeerError(type: RemotePeerErrorType.authFailed, message: t.companionRemote.pairing.authFailed);
     }
 
     final request = _beginRemoteConnectRequest();
@@ -1204,6 +1583,12 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
     _remoteGeneration++;
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
+    cancelPendingTrust();
+    if (_hostServerPort != null) {
+      _boundSync?.lanService.setAdvertisedRemotePort(null);
+      _hostServerPort = null;
+    }
+    _boundSync?.removeListener(_onBoundSyncChanged);
     final current = _peerService;
     final pending = _pendingRemotePeer;
     _peerService = null;

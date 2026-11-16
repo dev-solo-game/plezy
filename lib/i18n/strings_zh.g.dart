@@ -3557,7 +3557,7 @@ class Translations$companionRemote$pairing$zh extends Translations$companionRemo
 	final TranslationsZh _root; // ignore: unused_field
 
 	// Translations
-	@override String get discoveryDescription => '使用同一 Plex 账号的 Plezy 设备会显示在这里';
+	@override String get discoveryDescription => '同一局域网中开启远程控制的设备会显示在这里';
 	@override String get hostAddressHint => '192.168.1.100:48632';
 	@override String get connecting => '正在连接…';
 	@override String get searchingForDevices => '正在搜索设备…';
@@ -3565,13 +3565,17 @@ class Translations$companionRemote$pairing$zh extends Translations$companionRemo
 	@override String get noDevicesHint => '请在桌面端打开 Plezy，并确保设备连接到同一 Wi-Fi 网络';
 	@override String get availableDevices => '可用设备';
 	@override String get manualConnection => '手动连接';
-	@override String get cryptoInitFailed => '无法启动安全连接。请先登录 Plex。';
+	@override String get cryptoInitFailed => '无法启动安全连接。请先启用局域网同步或登录同步服务器。';
 	@override String get validationHostRequired => '请输入主机地址';
 	@override String get validationHostFormat => '格式必须为 IP:端口（例如 192.168.1.100:48632）';
 	@override String get connectionTimedOut => '连接超时。请在两台设备上使用同一网络。';
 	@override String get sessionNotFound => '未找到设备。请确认 Plezy 正在主机上运行。';
-	@override String get authFailed => '认证失败。两台设备需要使用同一 Plex 账号。';
+	@override String get authFailed => '认证失败。请先与该设备建立局域网信任，或登录同一同步账号。';
 	@override String failedToConnect({required Object error}) => '连接失败：${error}';
+	@override String get tapToTrustAndConnect => '未信任 · 点击发起信任并连接';
+	@override String get waitingForTrust => '正在等待对方设备确认信任…';
+	@override String waitingForTrustWithCode({required Object code}) => '请在对方设备上确认信任（配对码：${code}）…';
+	@override String get trustTimedOut => '等待对方确认信任超时，请重试';
 }
 
 // Path: companionRemote.remote
@@ -5699,7 +5703,7 @@ extension on TranslationsZh {
 			'companionRemote.session.stopServer' => '停止服务器',
 			'companionRemote.session.minimize' => '最小化',
 			'companionRemote.session.manualAddressHint' => '手动连接地址：',
-			'companionRemote.pairing.discoveryDescription' => '使用同一 Plex 账号的 Plezy 设备会显示在这里',
+			'companionRemote.pairing.discoveryDescription' => '同一局域网中开启远程控制的设备会显示在这里',
 			'companionRemote.pairing.hostAddressHint' => '192.168.1.100:48632',
 			'companionRemote.pairing.connecting' => '正在连接…',
 			'companionRemote.pairing.searchingForDevices' => '正在搜索设备…',
@@ -5707,13 +5711,17 @@ extension on TranslationsZh {
 			'companionRemote.pairing.noDevicesHint' => '请在桌面端打开 Plezy，并确保设备连接到同一 Wi-Fi 网络',
 			'companionRemote.pairing.availableDevices' => '可用设备',
 			'companionRemote.pairing.manualConnection' => '手动连接',
-			'companionRemote.pairing.cryptoInitFailed' => '无法启动安全连接。请先登录 Plex。',
+			'companionRemote.pairing.cryptoInitFailed' => '无法启动安全连接。请先启用局域网同步或登录同步服务器。',
 			'companionRemote.pairing.validationHostRequired' => '请输入主机地址',
 			'companionRemote.pairing.validationHostFormat' => '格式必须为 IP:端口（例如 192.168.1.100:48632）',
 			'companionRemote.pairing.connectionTimedOut' => '连接超时。请在两台设备上使用同一网络。',
 			'companionRemote.pairing.sessionNotFound' => '未找到设备。请确认 Plezy 正在主机上运行。',
-			'companionRemote.pairing.authFailed' => '认证失败。两台设备需要使用同一 Plex 账号。',
+			'companionRemote.pairing.authFailed' => '认证失败。请先与该设备建立局域网信任，或登录同一同步账号。',
 			'companionRemote.pairing.failedToConnect' => ({required Object error}) => '连接失败：${error}',
+			'companionRemote.pairing.tapToTrustAndConnect' => '未信任 · 点击发起信任并连接',
+			'companionRemote.pairing.waitingForTrust' => '正在等待对方设备确认信任…',
+			'companionRemote.pairing.waitingForTrustWithCode' => ({required Object code}) => '请在对方设备上确认信任（配对码：${code}）…',
+			'companionRemote.pairing.trustTimedOut' => '等待对方确认信任超时，请重试',
 			'companionRemote.remote.disconnectConfirm' => '确定要断开遥控会话吗？',
 			'companionRemote.remote.reconnecting' => '正在重新连接…',
 			'companionRemote.remote.attemptOf' => ({required Object current}) => '第 ${current} 次尝试，共 5 次',
@@ -5810,12 +5818,12 @@ extension on TranslationsZh {
 			'performanceOverlay.maxLuma' => '最大亮度',
 			'performanceOverlay.minLuma' => '最小亮度',
 			'performanceOverlay.maxCll' => 'MaxCLL',
+			_ => null,
+		} ?? switch (path) {
 			'performanceOverlay.maxFall' => 'MaxFALL',
 			'performanceOverlay.cacheUsed' => '已用缓存',
 			'performanceOverlay.cacheLimit' => '缓存限制',
 			'performanceOverlay.speed' => '速度',
-			_ => null,
-		} ?? switch (path) {
 			'performanceOverlay.player' => '播放器',
 			'performanceOverlay.memory' => '内存',
 			'performanceOverlay.uiFps' => 'UI FPS',
@@ -6324,12 +6332,12 @@ extension on TranslationsZh {
 			'sync.login' => '密码登录',
 			'sync.qrLoginTitle' => '电视 / 大屏快捷登录',
 			'sync.qrGenerate' => '生成登录二维码',
+			_ => null,
+		} ?? switch (path) {
 			'sync.qrHint' => '使用已登录同账号的手机或电脑确认授权，即可零密码安全移交加密主密钥。',
 			'sync.qrAuthorizeTitle' => '授权电视端登录',
 			'sync.qrAuthorizeHint' => '粘贴电视端展示的配对链接（plezy://qr-auth?...）。',
 			'sync.qrAuthorizeButton' => '确认授权给该设备',
-			_ => null,
-		} ?? switch (path) {
 			'sync.qrAuthorized' => '已发送授权与加密密钥。',
 			'sync.syncNow' => '立即同步',
 			'sync.syncing' => '同步中…',

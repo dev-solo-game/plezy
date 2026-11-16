@@ -2128,7 +2128,7 @@
       "manualAddressHint": "手动连接地址："
     },
     "pairing": {
-      "discoveryDescription": "使用同一 Plex 账号的 Plezy 设备会显示在这里",
+      "discoveryDescription": "同一局域网中开启远程控制的设备会显示在这里",
       "hostAddressHint": "192.168.1.100:48632",
       "connecting": "正在连接…",
       "searchingForDevices": "正在搜索设备…",
@@ -2136,13 +2136,17 @@
       "noDevicesHint": "请在桌面端打开 Plezy，并确保设备连接到同一 Wi-Fi 网络",
       "availableDevices": "可用设备",
       "manualConnection": "手动连接",
-      "cryptoInitFailed": "无法启动安全连接。请先登录 Plex。",
+      "cryptoInitFailed": "无法启动安全连接。请先启用局域网同步或登录同步服务器。",
       "validationHostRequired": "请输入主机地址",
       "validationHostFormat": "格式必须为 IP:端口（例如 192.168.1.100:48632）",
       "connectionTimedOut": "连接超时。请在两台设备上使用同一网络。",
       "sessionNotFound": "未找到设备。请确认 Plezy 正在主机上运行。",
-      "authFailed": "认证失败。两台设备需要使用同一 Plex 账号。",
-      "failedToConnect": "连接失败：${error}"
+      "authFailed": "认证失败。请先与该设备建立局域网信任，或登录同一同步账号。",
+      "failedToConnect": "连接失败：${error}",
+      "tapToTrustAndConnect": "未信任 · 点击发起信任并连接",
+      "waitingForTrust": "正在等待对方设备确认信任…",
+      "waitingForTrustWithCode": "请在对方设备上确认信任（配对码：${code}）…",
+      "trustTimedOut": "等待对方确认信任超时，请重试"
     },
     "remote": {
       "disconnectConfirm": "确定要断开遥控会话吗？",

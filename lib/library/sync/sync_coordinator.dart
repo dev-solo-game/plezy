@@ -68,6 +68,7 @@ class SyncAndScanCoordinator extends ChangeNotifier {
   String? _deviceId;
   bool _onboardingCompleted = false;
   bool _initialized = false;
+  Future<void>? _initializeFuture;
   bool _isSyncing = false;
   bool _disposed = false;
   SyncProgress _progress = SyncProgress.idle;
@@ -99,12 +100,20 @@ class SyncAndScanCoordinator extends ChangeNotifier {
     if (!_disposed) notifyListeners();
   }
 
-  Future<void> initialize() async {
+  Future<void> initialize() {
+    if (_initialized || _disposed) return Future.value();
+    return _initializeFuture ??= _doInitialize().whenComplete(() {
+      _initializeFuture = null;
+    });
+  }
+
+  Future<void> _doInitialize() async {
     if (_initialized || _disposed) return;
     _deviceId = await syncStore.getOrCreateDeviceId();
     _session = await syncStore.loadSession();
     _onboardingCompleted = await syncStore.isOnboardingCompleted();
     _pendingOutboxCount = (await syncStore.readPendingOutbox(limit: 1000)).length;
+    if (_disposed) return;
     _initialized = true;
 
     if (_session != null) {

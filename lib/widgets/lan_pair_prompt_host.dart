@@ -82,13 +82,16 @@ class _LanPairPromptHostState extends State<LanPairPromptHost> {
     if (sync == null || sync.isSignedIn) return;
     final lan = sync.lanService;
     if (!lan.isRunning) return;
-    // Defer prompting while fullscreen video playback is active so remote/keyboard playback isn't interrupted.
-    if (VideoPlayerScreenState.activeGlobalKey != null) return;
+
+    final incoming = lan.unpromptedIncomingRequests.firstOrNull;
+    // Defer passive discovery prompting while fullscreen video playback is active so
+    // remote/keyboard playback isn't interrupted, while still letting an explicit
+    // incoming trust request (e.g. from companion remote) surface.
+    if (incoming == null && VideoPlayerScreenState.activeGlobalKey != null) return;
 
     final navigator = Navigator.maybeOf(context, rootNavigator: true);
     if (navigator == null) return;
 
-    final incoming = lan.unpromptedIncomingRequests.firstOrNull;
     final discovered = incoming == null ? lan.unpromptedDiscoveredPeers.firstOrNull : null;
     final targetDeviceId = incoming?.deviceId ?? discovered?.deviceId;
     if (targetDeviceId == null) return;

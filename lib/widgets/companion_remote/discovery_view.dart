@@ -64,16 +64,47 @@ class _DiscoveryViewState extends State<DiscoveryView> with ControllerDisposerMi
 
   late final CompanionRemoteProvider _provider;
   StreamSubscription<List<DiscoveredHost>>? _discoverySubscription;
-  List<DiscoveredHost> _hosts = [];
+  List<DiscoveredHost> _udpHosts = [];
   bool _isSearching = true;
   Timer? _searchTimeout;
+  String? _trustingPeerId;
+  bool _trustCancelledByUser = false;
+
+  List<DiscoveredHost> get _readyHosts {
+    final merged = <String, DiscoveredHost>{
+      for (final host in _udpHosts) host.clientId: host,
+    };
+    for (final host in _provider.trustedLanRemoteHosts) {
+      merged.putIfAbsent(host.clientId, () => host);
+    }
+    return merged.values.toList();
+  }
+
+  List<LanDiscoveredPeer> get _untrustedPeers {
+    final readyIds = {for (final h in _readyHosts) h.clientId};
+    return [
+      for (final peer in _provider.untrustedLanRemotePeers)
+        if (!readyIds.contains(peer.deviceId)) peer,
+    ];
+  }
 
   @override
   void initState() {
     super.initState();
     _provider = context.read<CompanionRemoteProvider>();
+    _provider.addListener(_onProviderChanged);
     unawaited(_loadSavedManualHostAddress());
     _initCryptoAndDiscover();
+  }
+
+  void _onProviderChanged() {
+    if (!mounted || _initializing) return;
+    setState(() {
+      _cryptoReady = _provider.isCryptoReady;
+      if (_readyHosts.isNotEmpty || _untrustedPeers.isNotEmpty) {
+        _isSearching = false;
+      }
+    });
   }
 
   Future<void> _loadSavedManualHostAddress() async {
@@ -102,6 +133,9 @@ class _DiscoveryViewState extends State<DiscoveryView> with ControllerDisposerMi
       setState(() {
         _cryptoReady = true;
         _initializing = false;
+        if (_readyHosts.isNotEmpty || _untrustedPeers.isNotEmpty) {
+          _isSearching = false;
+        }
       });
       _startDiscovery();
     } else {
@@ -120,14 +154,16 @@ class _DiscoveryViewState extends State<DiscoveryView> with ControllerDisposerMi
     _discoverySubscription = stream.listen((hosts) {
       if (mounted) {
         setState(() {
-          _hosts = hosts;
-          if (hosts.isNotEmpty) _isSearching = false;
+          _udpHosts = hosts;
+          if (_readyHosts.isNotEmpty || _untrustedPeers.isNotEmpty) {
+            _isSearching = false;
+          }
         });
       }
     });
 
     _searchTimeout = Timer(const Duration(seconds: 10), () {
-      if (mounted && _hosts.isEmpty) {
+      if (mounted && _readyHosts.isEmpty && _untrustedPeers.isEmpty) {
         setState(() => _isSearching = false);
       }
     });
@@ -135,6 +171,8 @@ class _DiscoveryViewState extends State<DiscoveryView> with ControllerDisposerMi
 
   @override
   void dispose() {
+    _provider.removeListener(_onProviderChanged);
+    _provider.cancelPendingTrust();
     _discoverySubscription?.cancel();
     _searchTimeout?.cancel();
     _provider.stopDiscovery();
@@ -144,7 +182,7 @@ class _DiscoveryViewState extends State<DiscoveryView> with ControllerDisposerMi
     super.dispose();
   }
 
-  Future<void> _connect(Future<void> Function() action) async {
+  Future<void> _connect(Future<void> Function() action, {bool ignoreCancel = false}) async {
     setState(() {
       _isConnecting = true;
       _errorMessage = null;
@@ -154,9 +192,16 @@ class _DiscoveryViewState extends State<DiscoveryView> with ControllerDisposerMi
       _provider.stopDiscovery();
       await action();
     } catch (e) {
-      appLogger.e('Failed to connect', error: e);
+      final cancelled = ignoreCancel && (_trustCancelledByUser || e is CompanionRemoteTrustCancelledException);
+      if (!cancelled) {
+        appLogger.e('Failed to connect', error: e);
+      }
       if (!mounted) return;
-      setState(() => _errorMessage = companionRemotePairingErrorMessage(e));
+      setState(() {
+        if (!cancelled) {
+          _errorMessage = companionRemotePairingErrorMessage(e);
+        }
+      });
       // The attempt stopped discovery and cleared the host list; without a
       // restart the view would sit on "No devices found" even though the
       // host is still broadcasting (#2077).
@@ -164,6 +209,29 @@ class _DiscoveryViewState extends State<DiscoveryView> with ControllerDisposerMi
     } finally {
       setStateIfMounted(() => _isConnecting = false);
     }
+  }
+
+  Future<void> _trustAndConnect(LanDiscoveredPeer peer) async {
+    _trustingPeerId = peer.deviceId;
+    _trustCancelledByUser = false;
+    try {
+      await _connect(() => _provider.trustAndConnectLanPeer(peer), ignoreCancel: true);
+    } finally {
+      if (mounted) {
+        setState(() {
+          _trustingPeerId = null;
+          _trustCancelledByUser = false;
+        });
+      } else {
+        _trustingPeerId = null;
+        _trustCancelledByUser = false;
+      }
+    }
+  }
+
+  void _cancelTrustAttempt() {
+    _trustCancelledByUser = true;
+    _provider.cancelPendingTrust();
   }
 
   void _restartDiscovery() {
@@ -287,7 +355,10 @@ class _DiscoveryViewState extends State<DiscoveryView> with ControllerDisposerMi
       );
     }
 
-    if (_isSearching && _hosts.isEmpty) {
+    final readyHosts = _readyHosts;
+    final untrustedPeers = _untrustedPeers;
+
+    if (_isSearching && readyHosts.isEmpty && untrustedPeers.isEmpty) {
       return Card(
         child: Padding(
           padding: const EdgeInsets.all(24.0),
@@ -302,7 +373,7 @@ class _DiscoveryViewState extends State<DiscoveryView> with ControllerDisposerMi
       );
     }
 
-    if (_hosts.isEmpty) {
+    if (readyHosts.isEmpty && untrustedPeers.isEmpty) {
       return Card(
         child: Padding(
           padding: const EdgeInsets.all(24.0),
@@ -332,7 +403,7 @@ class _DiscoveryViewState extends State<DiscoveryView> with ControllerDisposerMi
       children: [
         Text(t.companionRemote.pairing.availableDevices, style: Theme.of(context).textTheme.titleMedium),
         const SizedBox(height: 8),
-        ..._hosts.map(
+        ...readyHosts.map(
           (host) => Card(
             child: ListTile(
               leading: AppIcon(_platformIcon(host.platform), size: 32),
@@ -345,6 +416,36 @@ class _DiscoveryViewState extends State<DiscoveryView> with ControllerDisposerMi
             ),
           ),
         ),
+        ...untrustedPeers.map((peer) {
+          final isTrustingThis = _isConnecting && _trustingPeerId == peer.deviceId;
+          final code = _provider.pairingCodeForLanPeer(peer);
+          final subtitle = isTrustingThis
+              ? (code != null
+                    ? t.companionRemote.pairing.waitingForTrustWithCode(code: code)
+                    : t.companionRemote.pairing.waitingForTrust)
+              : '${peer.platform} · ${t.companionRemote.pairing.tapToTrustAndConnect}';
+
+          return Card(
+            child: ListTile(
+              leading: AppIcon(_platformIcon(peer.platform), size: 32),
+              title: Text(peer.deviceName),
+              subtitle: Text(subtitle),
+              trailing: isTrustingThis
+                  ? Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const LoadingIndicatorBox(size: 20),
+                        const SizedBox(width: 8),
+                        TextButton(onPressed: _cancelTrustAttempt, child: Text(t.common.cancel)),
+                      ],
+                    )
+                  : (_isConnecting
+                        ? const LoadingIndicatorBox(size: 24)
+                        : const AppIcon(Symbols.handshake_rounded)),
+              onTap: _isConnecting ? null : () => _trustAndConnect(peer),
+            ),
+          );
+        }),
       ],
     );
   }

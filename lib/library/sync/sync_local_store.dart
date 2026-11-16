@@ -25,6 +25,7 @@ class LanTrustedPeer {
     required this.pairedAtMs,
     this.lastHost,
     this.lastPort,
+    this.lastRemotePort,
   });
 
   final String deviceId;
@@ -35,6 +36,7 @@ class LanTrustedPeer {
   final int pairedAtMs;
   final String? lastHost;
   final int? lastPort;
+  final int? lastRemotePort;
 
   Uint8List get sharedKey => Uint8List.fromList(base64Decode(sharedKeyBase64));
 
@@ -43,6 +45,8 @@ class LanTrustedPeer {
     int? lastSyncedRevision,
     String? lastHost,
     int? lastPort,
+    int? lastRemotePort,
+    bool clearLastRemotePort = false,
   }) => LanTrustedPeer(
     deviceId: deviceId,
     deviceName: deviceName ?? this.deviceName,
@@ -52,6 +56,7 @@ class LanTrustedPeer {
     pairedAtMs: pairedAtMs,
     lastHost: lastHost ?? this.lastHost,
     lastPort: lastPort ?? this.lastPort,
+    lastRemotePort: clearLastRemotePort ? null : (lastRemotePort ?? this.lastRemotePort),
   );
 
   Map<String, Object?> toJson() => {
@@ -63,6 +68,7 @@ class LanTrustedPeer {
     'paired_at_ms': pairedAtMs,
     if (lastHost != null) 'last_host': lastHost,
     if (lastPort != null) 'last_port': lastPort,
+    if (lastRemotePort != null) 'last_remote_port': lastRemotePort,
   };
 
   factory LanTrustedPeer.fromJson(Map<String, dynamic> json) => LanTrustedPeer(
@@ -74,6 +80,7 @@ class LanTrustedPeer {
     pairedAtMs: (json['paired_at_ms'] as num?)?.toInt() ?? 0,
     lastHost: json['last_host'] as String?,
     lastPort: (json['last_port'] as num?)?.toInt(),
+    lastRemotePort: (json['last_remote_port'] as num?)?.toInt(),
   );
 }
 
