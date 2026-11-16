@@ -30,6 +30,7 @@ class LibraryWatchStateStore {
       kind: work.kind,
       tmdbId: work.tmdbId,
       imdbId: work.imdbId,
+      bangumiId: work.bangumiId,
     );
   }
 
@@ -59,6 +60,7 @@ class LibraryWatchStateStore {
       kind: work.kind,
       tmdbId: work.tmdbId,
       imdbId: work.imdbId,
+      bangumiId: work.bangumiId,
     );
     return identity == null ? null : (work: identity, season: season, episode: episode);
   }
@@ -110,21 +112,31 @@ class LibraryWatchStateStore {
     return item != null && await _restore(item) != null;
   }
 
-  /// A newly supplied TMDB id can refine a known IMDb match. Carry state only
-  /// when the unchanged IMDb id explicitly identifies the same scraped work.
+  /// A newly supplied TMDB id can refine a known IMDb or Bangumi match. Carry
+  /// state only when the unchanged secondary id explicitly identifies the same
+  /// scraped work.
   Future<void> addTmdbIdentity(LibraryItemRow previous, LibraryItemRow current) async {
     if (previous.kind != current.kind ||
         previous.tmdbId?.isNotEmpty == true ||
-        previous.imdbId == null ||
-        previous.imdbId != current.imdbId ||
+        current.tmdbId?.isNotEmpty != true ||
         previous.scrapedAt == null ||
         current.scrapedAt == null) {
       return;
     }
+    final sameImdb =
+        previous.imdbId != null && previous.imdbId!.isNotEmpty && previous.imdbId == current.imdbId;
+    final sameBangumi =
+        !sameImdb &&
+        previous.bangumiId != null &&
+        previous.bangumiId!.isNotEmpty &&
+        previous.bangumiId == current.bangumiId;
+    if (!sameImdb && !sameBangumi) return;
+
     final oldIdentity = WorkIdentity.resolve(
       source: WorkIdentity.localSource,
       kind: previous.kind,
-      imdbId: previous.imdbId,
+      imdbId: sameImdb ? previous.imdbId : null,
+      bangumiId: sameBangumi ? previous.bangumiId : null,
     );
     final newIdentity = WorkIdentity.resolve(
       source: WorkIdentity.localSource,

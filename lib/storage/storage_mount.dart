@@ -1,3 +1,5 @@
+import 'storage_path.dart';
+
 /// Which driver backs a mount.
 enum StorageKind {
   local('local'),
@@ -72,6 +74,63 @@ class StorageMount {
     final value = secrets[key];
     return value != null && value.isNotEmpty ? value : null;
   }
+
+  List<String> configStringList(String key) {
+    final value = config[key];
+    if (value is! List) return const [];
+    return [
+      for (final entry in value)
+        if (entry is String && entry.trim().isNotEmpty) entry.trim(),
+    ];
+  }
+
+  bool isExcludedPath(String mountRelativePath) {
+    final excludes = configStringList(MountKeys.excludePaths);
+    if (excludes.isEmpty) return false;
+    final norm = StoragePath.normalize(mountRelativePath);
+    for (final raw in excludes) {
+      final ex = StoragePath.normalize(raw);
+      if (ex == StoragePath.root) return true;
+      if (norm == ex || norm.startsWith('$ex/')) return true;
+    }
+    return false;
+  }
+
+  /// Whether scanning may descend into [dirPath], allowing ancestor directories
+  /// along the way to any configured [MountKeys.includePaths] prefix.
+  bool canTraverseDirectory(String dirPath) {
+    final normDir = StoragePath.normalize(dirPath);
+    if (isExcludedPath(normDir)) return false;
+    final includes = configStringList(MountKeys.includePaths);
+    if (includes.isEmpty) return true;
+    if (normDir == StoragePath.root) return true;
+    for (final raw in includes) {
+      final inc = StoragePath.normalize(raw);
+      if (inc == StoragePath.root ||
+          normDir == inc ||
+          normDir.startsWith('$inc/') ||
+          inc.startsWith('$normDir/')) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /// Whether a file at [filePath] belongs to the configured include/exclude
+  /// filters for this mount.
+  bool isFileAllowed(String filePath) {
+    final normFile = StoragePath.normalize(filePath);
+    if (isExcludedPath(normFile)) return false;
+    final includes = configStringList(MountKeys.includePaths);
+    if (includes.isEmpty) return true;
+    for (final raw in includes) {
+      final inc = StoragePath.normalize(raw);
+      if (inc == StoragePath.root || normFile == inc || normFile.startsWith('$inc/')) {
+        return true;
+      }
+    }
+    return false;
+  }
 }
 
 /// Config and secret keys shared between the drivers and the mount editor.
@@ -87,6 +146,13 @@ abstract final class MountKeys {
 
   /// WebDAV: collection URL, e.g. `https://nas.example/dav/media`.
   static const String baseUrl = 'baseUrl';
+
+  /// Optional external fallback URL (WebDAV) or host/DDNS (SMB) when primary is unreachable.
+  static const String fallbackUrl = 'fallbackUrl';
+  static const String isLanOnly = 'isLanOnly';
+  static const String includePaths = 'includePaths';
+  static const String excludePaths = 'excludePaths';
+
   static const String username = 'username';
   static const String allowInsecureTls = 'allowInsecureTls';
 

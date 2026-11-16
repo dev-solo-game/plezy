@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:clock/clock.dart';
 import 'package:crypto/crypto.dart';
 import '../database/app_database.dart';
 import '../media/artist_discography.dart';
@@ -50,6 +51,17 @@ import 'library_repository.dart' as lib;
 import 'library_scanner.dart';
 import 'media_probe.dart';
 import 'scrapers/bangumi_provider.dart';
+import 'sync/sync_local_store.dart';
+
+class _PlaybackSyncSession {
+  _PlaybackSyncSession({required this.lastPosMs, required this.lastReportWallMs, required this.lastOutboxWallMs});
+
+  int lastPosMs;
+  int lastReportWallMs;
+  int lastOutboxWallMs;
+  bool wasPaused = false;
+  Timer? seekDebounce;
+}
 
 /// The local media library, presented to the app as a media server.
 ///
@@ -57,9 +69,12 @@ import 'scrapers/bangumi_provider.dart';
 /// library database and the mounts instead of from HTTP. Items take the
 /// neutral MediaBrowser item shape, with library row ids as their ids.
 class LocalLibraryClient implements MediaServerClient {
-  LocalLibraryClient({required lib.LibraryRepository repository, required MountManager mounts})
-    : _repo = repository,
-      _mountManager = mounts;
+  LocalLibraryClient({
+    required lib.LibraryRepository repository,
+    required MountManager mounts,
+    this.seekDebounceDuration = const Duration(seconds: 3),
+  }) : _repo = repository,
+       _mountManager = mounts;
 
   static const String localServerId = 'local-library';
 
@@ -73,7 +88,11 @@ class LocalLibraryClient implements MediaServerClient {
 
   final lib.LibraryRepository _repo;
   final MountManager _mountManager;
+  final Duration seekDebounceDuration;
+  late final SyncLocalStore _syncStore = SyncLocalStore(_repo.database);
+  final Map<int, _PlaybackSyncSession> _playbackSyncSessions = {};
   Map<String, StorageMount> _mountsById = const {};
+  bool _closed = false;
 
   /// Shelf titles are shown by the UI; the owner sets them from localized
   /// strings so this class stays free of presentation.
@@ -139,7 +158,13 @@ class LocalLibraryClient implements MediaServerClient {
   }
 
   @override
-  void close() {}
+  void close() {
+    _closed = true;
+    for (final session in _playbackSyncSessions.values) {
+      session.seekDebounce?.cancel();
+    }
+    _playbackSyncSessions.clear();
+  }
 
   @override
   Future<HealthStatus> checkHealth() async => HealthStatus.online;
@@ -215,7 +240,7 @@ class LocalLibraryClient implements MediaServerClient {
       directors = [for (final c in credits.where((c) => c.job == 'director')) c.person.name];
       writers = [for (final c in credits.where((c) => c.job == 'writer')) c.person.name];
       if (row.kind == lib.LibraryKinds.movie || isEpisode) {
-        versions = [for (final file in await _repo.versionsOf(row.id)) _toVersion(file)];
+        versions = [for (final file in await _orderedVersions(row.id)) _toVersion(file)];
       }
     }
 
@@ -286,7 +311,7 @@ class LocalLibraryClient implements MediaServerClient {
           sizeBytes: file.size,
           container: file.container ?? (extension.isEmpty ? null : extension),
           durationMs: file.durationMs,
-          accessible: true,
+          accessible: _mountManager.isMountOnline(file.mountId),
           exists: true,
         ),
       ],
@@ -664,19 +689,26 @@ class LocalLibraryClient implements MediaServerClient {
   @override
   Future<void> markWatched(MediaItem item) async {
     final id = _id(item.id);
-    if (id != null) await _repo.markWatched(id, watched: true);
+    if (id == null) return;
+    await _repo.markWatched(id, watched: true);
+    await _syncStore.enqueueWatchProgressForItemId(id);
   }
 
   @override
   Future<void> markUnwatched(MediaItem item) async {
     final id = _id(item.id);
-    if (id != null) await _repo.markWatched(id, watched: false);
+    if (id == null) return;
+    await _repo.markWatched(id, watched: false);
+    await _syncStore.enqueueWatchProgressForItemId(id);
   }
 
   @override
   Future<void> removeFromContinueWatching(MediaItem item) async {
     final id = _id(item.id);
-    if (id != null) await _repo.hideFromContinueWatching(id);
+    if (id == null) return;
+    await _repo.hideFromContinueWatching(id);
+    await _syncStore.enqueueWatchProgressForItemId(id);
+    await _syncStore.enqueueWorkPrefsForItemId(id);
   }
 
   @override
@@ -685,7 +717,9 @@ class LocalLibraryClient implements MediaServerClient {
   @override
   Future<void> setFavorite(MediaItem item, bool isFavorite) async {
     final id = _id(item.id);
-    if (id != null) await _repo.setFavorite(id, favorite: isFavorite);
+    if (id == null) return;
+    await _repo.setFavorite(id, favorite: isFavorite);
+    await _syncStore.enqueueWorkPrefsForItemId(id);
   }
 
   @override
@@ -699,7 +733,18 @@ class LocalLibraryClient implements MediaServerClient {
     String? mediaSourceId,
     int? audioStreamIndex,
     int? subtitleStreamIndex,
-  }) => _saveProgress(itemId, position, duration);
+  }) async {
+    await _saveProgress(itemId, position, duration);
+    final id = _id(itemId);
+    if (id == null) return;
+    _playbackSyncSessions.remove(id)?.seekDebounce?.cancel();
+    final now = clock.now().millisecondsSinceEpoch;
+    _playbackSyncSessions[id] = _PlaybackSyncSession(
+      lastPosMs: position.inMilliseconds,
+      lastReportWallMs: now,
+      lastOutboxWallMs: now,
+    );
+  }
 
   @override
   Future<void> reportPlaybackProgress({
@@ -713,7 +758,54 @@ class LocalLibraryClient implements MediaServerClient {
     String? mediaSourceId,
     int? audioStreamIndex,
     int? subtitleStreamIndex,
-  }) => _saveProgress(itemId, position, duration);
+  }) async {
+    await _saveProgress(itemId, position, duration);
+    final id = _id(itemId);
+    if (id == null) return;
+
+    final now = clock.now().millisecondsSinceEpoch;
+    final posMs = position.inMilliseconds;
+    final session = _playbackSyncSessions.putIfAbsent(
+      id,
+      () => _PlaybackSyncSession(lastPosMs: posMs, lastReportWallMs: now, lastOutboxWallMs: now),
+    );
+
+    if (isPaused && !session.wasPaused) {
+      session.seekDebounce?.cancel();
+      session.seekDebounce = null;
+      session.wasPaused = true;
+      session.lastPosMs = posMs;
+      session.lastReportWallMs = now;
+      session.lastOutboxWallMs = now;
+      await _syncStore.enqueueWatchProgressForItemId(id);
+      return;
+    }
+    if (!isPaused) session.wasPaused = false;
+
+    final wallDelta = now - session.lastReportWallMs;
+    final expectedAdvance = isPaused ? 0 : wallDelta;
+    final drift = (posMs - session.lastPosMs) - expectedAdvance;
+    session.lastPosMs = posMs;
+    session.lastReportWallMs = now;
+
+    if (drift.abs() >= 15000) {
+      session.seekDebounce?.cancel();
+      session.seekDebounce = Timer(seekDebounceDuration, () {
+        session.seekDebounce = null;
+        if (_closed) return;
+        session.lastOutboxWallMs = clock.now().millisecondsSinceEpoch;
+        unawaited(_syncStore.enqueueWatchProgressForItemId(id));
+      });
+      return;
+    }
+
+    if (!isPaused && (now - session.lastOutboxWallMs) >= 90000) {
+      session.seekDebounce?.cancel();
+      session.seekDebounce = null;
+      session.lastOutboxWallMs = now;
+      await _syncStore.enqueueWatchProgressForItemId(id);
+    }
+  }
 
   @override
   Future<void> reportPlaybackStopped({
@@ -726,7 +818,13 @@ class LocalLibraryClient implements MediaServerClient {
     int? audioStreamIndex,
     int? subtitleStreamIndex,
     PlaybackReportMetadata report = const PlaybackReportMetadata.live(),
-  }) => _saveProgress(itemId, position, duration);
+  }) async {
+    await _saveProgress(itemId, position, duration);
+    final id = _id(itemId);
+    if (id == null) return;
+    _playbackSyncSessions.remove(id)?.seekDebounce?.cancel();
+    await _syncStore.enqueueWatchProgressForItemId(id);
+  }
 
   Future<void> _saveProgress(String itemId, Duration position, Duration? duration) async {
     final id = _id(itemId);
@@ -925,7 +1023,9 @@ class LocalLibraryClient implements MediaServerClient {
     final rest = path.substring('mount:'.length);
     final separator = rest.indexOf(':');
     if (separator <= 0) return '';
-    final mount = _mountsById[rest.substring(0, separator)];
+    final mountId = rest.substring(0, separator);
+    if (!_mountManager.isMountOnline(mountId)) return '';
+    final mount = _mountsById[mountId];
     if (mount == null) return '';
     final url = _mountManager.proxy.urlForPath(
       mountId: mount.id,
@@ -1003,7 +1103,34 @@ class LocalLibraryClient implements MediaServerClient {
 
   Future<List<LibraryFileRow>> _versions(String itemId) async {
     final id = _id(itemId);
-    return id == null ? const [] : _repo.versionsOf(id);
+    return id == null ? const [] : _orderedVersions(id);
+  }
+
+  Future<List<LibraryFileRow>> _orderedVersions(int itemId) async {
+    final files = await _repo.versionsOf(itemId);
+    if (files.length <= 1) return files;
+    if (_mountsById.isEmpty) {
+      _mountsById = {for (final mount in await _mountManager.registry.list()) mount.id: mount};
+    }
+    final sorted = List<LibraryFileRow>.from(files)
+      ..sort((a, b) {
+        final priority = _mountPriority(a.mountId).compareTo(_mountPriority(b.mountId));
+        if (priority != 0) return priority;
+        return (b.size ?? 0).compareTo(a.size ?? 0);
+      });
+    return sorted;
+  }
+
+  int _mountPriority(String mountId) {
+    final status = _mountManager.statusOf(mountId);
+    if (status == MountOnlineStatus.offline) return 99;
+    final mount = _mountsById[mountId];
+    if (mount == null) return 50;
+    return switch (mount.kind) {
+      StorageKind.local => 0,
+      StorageKind.smb || StorageKind.webdav => status == MountOnlineStatus.onlineFallback ? 2 : 1,
+      StorageKind.quark => 3,
+    };
   }
 
   ({LibraryFileRow file, int index})? _pickVersion(
@@ -1113,6 +1240,12 @@ class LocalLibraryClient implements MediaServerClient {
       throw const PlaybackException(
         'No file is available for this title',
         reason: PlaybackFailureReason.noPlayableSource,
+      );
+    }
+    if (!_mountManager.isMountOnline(picked.file.mountId)) {
+      throw const PlaybackException(
+        'Storage source is currently offline',
+        reason: PlaybackFailureReason.localFileUnavailable,
       );
     }
     final String url;

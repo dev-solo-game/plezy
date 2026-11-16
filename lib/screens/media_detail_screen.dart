@@ -51,6 +51,7 @@ import '../widgets/optimized_media_image.dart';
 import '../utils/media_image_helper.dart';
 import '../utils/media_quality_labels.dart';
 import '../utils/quality_preset_labels.dart';
+import '../library/library_scan_service.dart';
 import '../library/local_library_client.dart';
 import '../media/stream_quality.dart';
 import '../storage/stream_variant.dart';
@@ -1750,8 +1751,27 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
         });
         return;
       }
-      if (prefetchSubtitles && client is LocalLibraryClient && (_metadata.isMovie || _metadata.isEpisode)) {
-        unawaited(client.prefetchSubtitles(_metadata.id));
+      if (prefetchSubtitles && client is LocalLibraryClient) {
+        if (_metadata.isMovie || _metadata.isEpisode) {
+          unawaited(client.prefetchSubtitles(_metadata.id));
+        } else if (_metadata.isShow || _metadata.isSeason) {
+          final itemId = int.tryParse(_metadata.id);
+          LibraryScanService? scans;
+          try {
+            scans = context.read<LibraryScanService>();
+          } on ProviderNotFoundException {
+            scans = null;
+          }
+          if (itemId != null && scans != null) {
+            unawaited(
+              scans.refreshShowDirectories(itemId).then((changed) {
+                if (changed && mounted && _canUseDetail) {
+                  unawaited(_loadFullMetadata());
+                }
+              }),
+            );
+          }
+        }
       }
 
       // Normalises a freshly fetched item against the row we navigated from

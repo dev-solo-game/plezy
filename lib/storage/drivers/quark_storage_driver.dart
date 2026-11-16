@@ -453,6 +453,7 @@ class QuarkStorageDriver implements StorageDriver, StreamVariantSource, Parallel
     // A name that would change meaning when normalized cannot be addressed by path.
     if (name == '.' || name == '..' || name.contains('/') || name.contains('\\')) return null;
     final isFile = row['dir'] is bool ? row['dir'] == false : row['file'] == true;
+    final createdAt = row['created_at'];
     final updatedAt = row['updated_at'];
     final size = row['size'];
     final md5 = row['md5'];
@@ -461,6 +462,7 @@ class QuarkStorageDriver implements StorageDriver, StreamVariantSource, Parallel
       name: name,
       isDirectory: !isFile,
       size: isFile && size is num ? size.toInt() : null,
+      createdAt: createdAt is num && createdAt > 0 ? DateTime.fromMillisecondsSinceEpoch(createdAt.toInt()) : null,
       modifiedAt: updatedAt is num ? DateTime.fromMillisecondsSinceEpoch(updatedAt.toInt()) : null,
       id: fid,
       contentHash: isFile && md5 is String && md5.isNotEmpty ? md5 : null,
@@ -565,7 +567,14 @@ class QuarkStorageDriver implements StorageDriver, StreamVariantSource, Parallel
       if (!failed) return json;
 
       final message = json?['message'] is String ? json!['message'] as String : 'HTTP $status';
-      throw StorageException(_errorKind(status, apiStatus, message), 'Quark: $message');
+      var detail = 'Quark: $message';
+      if (path == '/file/search' || path == '/file/sort') {
+        final page = query['_page'];
+        final operation = query['_fetch_full_path'] == '1' ? '$path (folder ancestry)' : path;
+        final context = [operation, if (page != null) 'page $page', 'HTTP $status', if (code is num) 'code $code'];
+        detail = '$detail [${context.join(', ')}]';
+      }
+      throw StorageException(_errorKind(status, apiStatus, message), detail);
     });
   }
 

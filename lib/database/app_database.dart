@@ -77,6 +77,8 @@ final class AppDatabaseBootstrap {
     LibraryListItems,
     LibraryScanStates,
     LibrarySettings,
+    SyncOutbox,
+    SyncMetadata,
   ],
 )
 class AppDatabase extends _$AppDatabase {
@@ -384,7 +386,7 @@ class AppDatabase extends _$AppDatabase {
   static const FormatException _invalidRecoveryImage = FormatException('Invalid tvOS database recovery image');
 
   @override
-  int get schemaVersion => 33;
+  int get schemaVersion => 35;
 
   @override
   MigrationStrategy get migration {
@@ -878,6 +880,22 @@ class AppDatabase extends _$AppDatabase {
               '(SELECT 1 FROM library_items c WHERE c.parent_id = library_items.id)',
             );
           }
+        }
+        if (from >= 27 && from < 34) {
+          await _ignoreAlreadyExists(
+            'LibraryItems.sourceAddedAt',
+            () => m.addColumn(libraryItems, libraryItems.sourceAddedAt),
+          );
+          await _ignoreAlreadyExists(
+            'LibraryFiles.sourceCreatedAt',
+            () => m.addColumn(libraryFiles, libraryFiles.sourceCreatedAt),
+          );
+        }
+        if (from < 35) {
+          appLogger.i('Adding SyncOutbox and SyncMetadata tables (v35 migration)');
+          await _ignoreAlreadyExists('SyncOutbox table', () => m.createTable(syncOutbox));
+          await _ignoreAlreadyExists('Index idx_sync_outbox_updated', () => m.create(idxSyncOutboxUpdated));
+          await _ignoreAlreadyExists('SyncMetadata table', () => m.createTable(syncMetadata));
         }
       },
     );

@@ -126,6 +126,11 @@ class LibraryRepository {
 
   final AppDatabase _db;
 
+  AppDatabase get database => _db;
+
+  /// Mount IDs hidden from browsing while offline. Empty by default.
+  Set<String> Function() hiddenMountIds = () => const {};
+
   late final LibraryWatchStateStore _watchStates = LibraryWatchStateStore(_db);
 
   /// A playback this far in counts as finished.
@@ -311,13 +316,39 @@ class LibraryRepository {
     return query.getSingleOrNull();
   }
 
+  static String _leafVisibleSql(String alias, String quotedHidden) =>
+      "(EXISTS (SELECT 1 FROM library_files f WHERE f.item_id = $alias.id AND f.role = 'video' "
+      'AND f.mount_id NOT IN ($quotedHidden)) '
+      "OR EXISTS (SELECT 1 FROM downloaded_media d WHERE d.server_id = 'local-library' "
+      'AND d.rating_key = CAST($alias.id AS TEXT) AND d.video_file_path IS NOT NULL))';
+
+  Expression<bool> _visibilityFilter() {
+    final hidden = hiddenMountIds();
+    if (hidden.isEmpty) return const Constant(true);
+    final quoted = hidden.map((id) => "'${id.replaceAll("'", "''")}'").join(', ');
+    final selfLeaf = _leafVisibleSql('library_items', quoted);
+    final childLeaf = _leafVisibleSql('ep', quoted);
+    return CustomExpression<bool>(
+      '(CASE '
+      "WHEN library_items.kind IN ('movie', 'episode') THEN $selfLeaf "
+      "WHEN library_items.kind = 'show' THEN EXISTS ("
+      "SELECT 1 FROM library_items ep WHERE ep.kind = 'episode' AND ep.show_id = library_items.id AND $childLeaf"
+      ') '
+      "WHEN library_items.kind = 'season' THEN EXISTS ("
+      "SELECT 1 FROM library_items ep WHERE ep.kind = 'episode' AND ep.parent_id = library_items.id AND $childLeaf"
+      ') '
+      'ELSE 1 END)',
+    );
+  }
+
   Expression<bool> _shelfFilter(LibraryQuery query) {
     final items = _db.libraryItems;
     final states = _db.libraryUserStates;
     final kind = query.kind;
     Expression<bool> filter =
         (kind == null ? items.kind.isIn([LibraryKinds.movie, LibraryKinds.show]) : items.kind.equals(kind)) &
-        items.libraryType.equals(query.libraryType);
+        items.libraryType.equals(query.libraryType) &
+        _visibilityFilter();
     if (query.genreId case final genreId?) {
       filter =
           filter &
@@ -379,7 +410,7 @@ class LibraryRepository {
     final items = _db.libraryItems;
     final rows =
         await (_viewSelect()
-              ..where(items.parentId.equals(parentId))
+              ..where(items.parentId.equals(parentId) & _visibilityFilter())
               ..orderBy([
                 OrderingTerm.asc(items.seasonNumber),
                 OrderingTerm.asc(items.episodeNumber),
@@ -395,7 +426,7 @@ class LibraryRepository {
     final items = _db.libraryItems;
     final rows =
         await (_viewSelect()
-              ..where(items.showId.equals(showId) & items.kind.equals(LibraryKinds.episode))
+              ..where(items.showId.equals(showId) & items.kind.equals(LibraryKinds.episode) & _visibilityFilter())
               ..orderBy([
                 OrderingTerm.asc(CustomExpression<int>('(COALESCE(library_items.season_number, 0) = 0)')),
                 OrderingTerm.asc(items.seasonNumber),
@@ -425,7 +456,8 @@ class LibraryRepository {
         await (_viewSelect()
               ..where(
                 items.kind.isIn([LibraryKinds.movie, LibraryKinds.show]) &
-                    items.libraryType.equals(LibraryTypes.pending),
+                    items.libraryType.equals(LibraryTypes.pending) &
+                    _visibilityFilter(),
               )
               ..orderBy([OrderingTerm.asc(items.sortTitle)])
               ..limit(limit))
@@ -444,6 +476,7 @@ class LibraryRepository {
               ..where(
                 items.kind.isIn([LibraryKinds.movie, LibraryKinds.show]) &
                     items.libraryType.equals(LibraryTypes.pending) &
+                    _visibilityFilter() &
                     filter,
               ))
             .map((row) => row.read(count) ?? 0)
@@ -471,7 +504,7 @@ class LibraryRepository {
     final items = _db.libraryItems;
     final rows =
         await (_viewSelect()
-              ..where(items.kind.isIn([LibraryKinds.movie, LibraryKinds.show]) & _matchesText(text))
+              ..where(items.kind.isIn([LibraryKinds.movie, LibraryKinds.show]) & _matchesText(text) & _visibilityFilter())
               ..orderBy([OrderingTerm.asc(items.sortTitle)])
               ..limit(limit))
             .get();
@@ -480,15 +513,44 @@ class LibraryRepository {
 
   Future<List<LibraryItemView>> recentlyAdded({String? libraryType, int limit = 20}) async {
     final items = _db.libraryItems;
-    Expression<bool> filter = items.kind.isIn([LibraryKinds.movie, LibraryKinds.show]) & _onAShelf;
+    Expression<bool> filter = items.kind.isIn([LibraryKinds.movie, LibraryKinds.show]) & _onAShelf & _visibilityFilter();
     if (libraryType != null) filter = filter & items.libraryType.equals(libraryType);
     final rows =
         await (_viewSelect()
               ..where(filter)
-              ..orderBy([OrderingTerm.desc(items.addedAt), OrderingTerm.desc(items.id)])
+              ..orderBy([
+                OrderingTerm.desc(coalesce([items.sourceAddedAt, const Constant(0)])),
+                OrderingTerm.desc(items.id),
+              ])
               ..limit(limit))
             .get();
     return rows.map(_toView).toList();
+  }
+
+  /// Freezes the source time for each movie or show first filed in the library.
+  Future<void> initializeSourceAddedTimes(String mountId, {int? scanId}) async {
+    await _db.customUpdate(
+      '''
+      WITH source_times AS (
+        SELECT title.id, COALESCE(MAX(CASE
+          WHEN f.source_created_at > 0 THEN f.source_created_at
+          WHEN f.modified_at > 0 THEN f.modified_at
+        END), 0) AS source_time
+        FROM library_files f
+        JOIN library_items leaf ON leaf.id = f.item_id
+        JOIN library_items title ON title.id = COALESCE(leaf.show_id, leaf.id)
+        WHERE f.mount_id = ? AND f.role = 'video'
+          AND title.kind IN ('movie', 'show') AND title.source_added_at IS NULL
+          ${scanId == null ? '' : 'AND f.seen_in_scan = ?'}
+        GROUP BY title.id
+      )
+      UPDATE library_items SET source_added_at = source_times.source_time
+      FROM source_times WHERE library_items.id = source_times.id
+      ''',
+      variables: [Variable.withString(mountId), if (scanId != null) Variable.withInt(scanId)],
+      updates: {_db.libraryItems},
+      updateKind: UpdateKind.update,
+    );
   }
 
   /// Movies and episodes that were started and not finished, most recent first.
@@ -501,7 +563,8 @@ class LibraryRepository {
                 items.kind.isIn([LibraryKinds.movie, LibraryKinds.episode]) &
                     states.positionMs.isBiggerThanValue(0) &
                     states.watched.equals(false) &
-                    states.hiddenFromContinue.equals(false),
+                    states.hiddenFromContinue.equals(false) &
+                    _visibilityFilter(),
               )
               ..orderBy([OrderingTerm.desc(states.lastPlayedAt)])
               ..limit(limit))
@@ -723,13 +786,14 @@ class LibraryRepository {
     final rows =
         await (_viewSelect()
               ..where(
-                existsQuery(
-                  _db.selectOnly(_db.libraryCredits)
-                    ..addColumns([_db.libraryCredits.itemId])
-                    ..where(
-                      _db.libraryCredits.itemId.equalsExp(items.id) & _db.libraryCredits.personId.equals(personId),
+                _visibilityFilter() &
+                    existsQuery(
+                      _db.selectOnly(_db.libraryCredits)
+                        ..addColumns([_db.libraryCredits.itemId])
+                        ..where(
+                          _db.libraryCredits.itemId.equalsExp(items.id) & _db.libraryCredits.personId.equals(personId),
+                        ),
                     ),
-                ),
               )
               ..orderBy([OrderingTerm.desc(items.year), OrderingTerm.asc(items.sortTitle)]))
             .get();
@@ -749,6 +813,7 @@ class LibraryRepository {
     String? remoteId,
     int? size,
     int? modifiedAt,
+    int? sourceCreatedAt,
     String? parsed,
     String? versionLabel,
     String? language,
@@ -769,6 +834,7 @@ class LibraryRepository {
               remoteId: Value(remoteId),
               size: Value(size),
               modifiedAt: Value(modifiedAt),
+              sourceCreatedAt: Value(sourceCreatedAt),
               parsed: Value(parsed),
               versionLabel: Value(versionLabel),
               language: Value(language),
@@ -787,6 +853,9 @@ class LibraryRepository {
         remoteId: Value(remoteId),
         size: Value(size),
         modifiedAt: Value(modifiedAt),
+        sourceCreatedAt: sourceCreatedAt == null && existing.remoteId == remoteId
+            ? const Value.absent()
+            : Value(sourceCreatedAt),
         parsed: Value(parsed),
         versionLabel: Value(versionLabel),
         language: Value(language),
@@ -1006,7 +1075,7 @@ class LibraryRepository {
             leftOuterJoin(states, states.itemId.equalsExp(items.id)),
           ])
           ..addColumns([_episodeCount, _watchedEpisodeCount])
-          ..where(links.listId.equals(listId))
+          ..where(links.listId.equals(listId) & _visibilityFilter())
           ..orderBy([OrderingTerm.asc(links.sortOrder)]);
     return (await query.get()).map(_toView).toList();
   }

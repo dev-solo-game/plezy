@@ -35,8 +35,8 @@ class SmbStorageDriver implements StorageDriver {
     : _connectSession = connect,
       _rootSegments = StoragePath.segments(rootPath);
 
-  factory SmbStorageDriver.fromMount(StorageMount mount) {
-    final host = mount.configString(MountKeys.host);
+  factory SmbStorageDriver.fromMount(StorageMount mount, {bool useFallback = false}) {
+    final host = (useFallback ? mount.configString(MountKeys.fallbackUrl) : null) ?? mount.configString(MountKeys.host);
     final share = mount.configString(MountKeys.share);
     if (host == null || share == null) {
       throw const StorageException(StorageErrorKind.other, 'SMB mount needs a host and a share');

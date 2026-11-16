@@ -2638,6 +2638,21 @@ class Translations$storage$zh extends Translations$storage$en {
 	@override String get noMatchResults => '没有结果';
 	@override String get mediaSources => '媒体来源';
 	@override String get scraperSettingsDescription => 'TMDB key、语言与刮削代理';
+	@override String get fallbackUrl => '备用地址（可选）';
+	@override String get fallbackUrlHelp => '主地址不可达时自动切换（例如外出时使用的外网 DDNS 地址）。';
+	@override String get smbFallbackHost => '备用服务器（可选）';
+	@override String get includePaths => '仅扫描目录（可选）';
+	@override String get includePathsHelp => '每行或逗号分隔一个目录（如 /Movies），留空则扫描整个挂载。';
+	@override String get excludePaths => '忽略目录（可选）';
+	@override String get excludePathsHelp => '跳过相册备份、录屏等无关文件夹（如 /Photos）。';
+	@override String get statusOnline => '在线';
+	@override String get statusFallback => '备用线路在线';
+	@override String get statusOffline => '离线';
+	@override String offlineMountsHidden({required Object count}) => '已隐藏 ${count} 个离线挂载源';
+	@override String offlineMountsShown({required Object count}) => '已显示 ${count} 个离线挂载源';
+	@override String get showOffline => '显示全部';
+	@override String get hideOffline => '隐藏离线';
+	@override String duplicateMount({required Object name}) => '该媒体来源已存在（“${name}”），请直接编辑已有来源。';
 }
 
 // Path: streamQuality
@@ -6155,6 +6170,21 @@ extension on TranslationsZh {
 			'storage.noMatchResults' => '没有结果',
 			'storage.mediaSources' => '媒体来源',
 			'storage.scraperSettingsDescription' => 'TMDB key、语言与刮削代理',
+			'storage.fallbackUrl' => '备用地址（可选）',
+			'storage.fallbackUrlHelp' => '主地址不可达时自动切换（例如外出时使用的外网 DDNS 地址）。',
+			'storage.smbFallbackHost' => '备用服务器（可选）',
+			'storage.includePaths' => '仅扫描目录（可选）',
+			'storage.includePathsHelp' => '每行或逗号分隔一个目录（如 /Movies），留空则扫描整个挂载。',
+			'storage.excludePaths' => '忽略目录（可选）',
+			'storage.excludePathsHelp' => '跳过相册备份、录屏等无关文件夹（如 /Photos）。',
+			'storage.statusOnline' => '在线',
+			'storage.statusFallback' => '备用线路在线',
+			'storage.statusOffline' => '离线',
+			'storage.offlineMountsHidden' => ({required Object count}) => '已隐藏 ${count} 个离线挂载源',
+			'storage.offlineMountsShown' => ({required Object count}) => '已显示 ${count} 个离线挂载源',
+			'storage.showOffline' => '显示全部',
+			'storage.hideOffline' => '隐藏离线',
+			'storage.duplicateMount' => ({required Object name}) => '该媒体来源已存在（“${name}”），请直接编辑已有来源。',
 			'streamQuality.preferred' => '首选画质',
 			'streamQuality.localPreference' => '本地媒体库画质',
 			'streamQuality.noneForFile' => '这个文件暂时没有转码画质，会播放原画',

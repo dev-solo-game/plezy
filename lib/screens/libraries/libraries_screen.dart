@@ -8,8 +8,10 @@ import 'package:provider/provider.dart';
 import '../../focus/focusable_action_bar.dart';
 import '../../focus/dpad_navigator.dart';
 import '../../focus/input_mode_tracker.dart';
+import '../../library/local_library_client.dart';
 import '../../mixins/tab_navigation_mixin.dart';
 import '../../mixins/tab_visibility_aware.dart';
+import '../../storage/mount_manager.dart';
 import '../../media/ids.dart';
 import '../../media/library_genre.dart';
 import '../../media/media_kind.dart';
@@ -956,6 +958,55 @@ class _LibrariesScreenState extends State<LibrariesScreen>
               ),
       );
     } else if (selectedLibrary != null) {
+      MountManager? optionalMountManager() {
+        if (selectedLibrary.serverId != LocalLibraryClient.localServerId) return null;
+        try {
+          return Provider.of<MountManager>(context, listen: false);
+        } on ProviderNotFoundException {
+          return null;
+        }
+      }
+
+      final mountManager = useTvRecommendedBackdrop ? null : optionalMountManager();
+
+      Widget buildOfflineMountStrip(MountManager manager) {
+        return ValueListenableBuilder<Map<String, MountOnlineStatus>>(
+          valueListenable: manager.onlineStatuses,
+          builder: (context, _, _) {
+            final offlineCount = manager.offlineMountIds.length;
+            if (offlineCount == 0) return const SizedBox.shrink();
+            final showing = manager.showOfflineMounts;
+            final theme = Theme.of(context);
+            return Container(
+              color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.6),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+              child: SafeArea(
+                top: false,
+                bottom: false,
+                child: Row(
+                  children: [
+                    AppIcon(Symbols.cloud_off_rounded, size: 16, color: theme.colorScheme.onSurfaceVariant),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        showing
+                            ? t.storage.offlineMountsShown(count: offlineCount)
+                            : t.storage.offlineMountsHidden(count: offlineCount),
+                        style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                      ),
+                    ),
+                    TextButton(
+                      onPressed: () => manager.setShowOfflineMounts(!showing),
+                      child: Text(showing ? t.storage.hideOffline : t.storage.showOffline),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      }
+
       Widget buildTab(int index) {
         final tabContent = _buildTabContent(
           _visibleTabs[index],
@@ -1035,6 +1086,7 @@ class _LibrariesScreenState extends State<LibrariesScreen>
                       ),
                     ),
                   ),
+                if (mountManager != null) SliverToBoxAdapter(child: buildOfflineMountStrip(mountManager)),
               ],
               body: tabs,
             ),

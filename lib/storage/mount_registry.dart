@@ -6,6 +6,7 @@ import 'package:drift/drift.dart';
 import 'package:uuid/uuid.dart';
 
 import '../database/app_database.dart';
+import '../library/sync/deterministic_keys.dart';
 import '../services/credential_vault.dart';
 import '../utils/app_logger.dart';
 import 'storage_mount.dart';
@@ -31,6 +32,19 @@ class MountRegistry {
   Future<StorageMount?> get(String id) async {
     final row = await (_db.select(_db.mounts)..where((t) => t.id.equals(id))).getSingleOrNull();
     return row == null ? null : _decode(row);
+  }
+
+  /// Returns an existing mount with the same [DeterministicKeys.canonicalSourceKey]
+  /// and a different [id], or null if none collides.
+  Future<StorageMount?> findDuplicate(StorageMount candidate) async {
+    final targetKey = DeterministicKeys.canonicalSourceKey(candidate);
+    for (final existing in await list()) {
+      if (existing.id == candidate.id) continue;
+      if (DeterministicKeys.canonicalSourceKey(existing) == targetKey) {
+        return existing;
+      }
+    }
+    return null;
   }
 
   /// Inserts or replaces [mount]. An existing row keeps its creation time so

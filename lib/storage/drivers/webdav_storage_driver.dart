@@ -43,8 +43,9 @@ class WebDavStorageDriver implements StorageDriver {
     _reader = HttpRangeReader(_client);
   }
 
-  factory WebDavStorageDriver.fromMount(StorageMount mount) {
-    final raw = mount.configString(MountKeys.baseUrl);
+  factory WebDavStorageDriver.fromMount(StorageMount mount, {bool useFallback = false}) {
+    final raw =
+        (useFallback ? mount.configString(MountKeys.fallbackUrl) : null) ?? mount.configString(MountKeys.baseUrl);
     final uri = raw == null ? null : Uri.tryParse(raw.trim());
     if (uri == null || !uri.hasScheme || uri.host.isEmpty || (uri.scheme != 'http' && uri.scheme != 'https')) {
       throw const StorageException(StorageErrorKind.other, 'WebDAV mount needs an http(s) URL');

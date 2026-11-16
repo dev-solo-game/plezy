@@ -7,10 +7,11 @@ import 'scraped_metadata.dart';
 /// tools needs no online lookup.
 abstract final class NfoReader {
   /// Parses a `<movie>` or `<tvshow>` document. Returns null when [content]
-  /// is not such a document or carries no title.
-  static ScrapedTitle? readTitle(String content) {
+  /// is not such a document, does not match [expectedRoot], or carries no title.
+  static ScrapedTitle? readTitle(String content, {String? expectedRoot}) {
     final root = _root(content);
     if (root == null || (root.name.local != 'movie' && root.name.local != 'tvshow')) return null;
+    if (expectedRoot != null && root.name.local != expectedRoot) return null;
     final title = _text(root, 'title');
     if (title == null) return null;
 

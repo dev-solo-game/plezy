@@ -62,9 +62,12 @@ class _MountEditScreenState extends State<MountEditScreen> {
   late final TextEditingController _name;
   late final TextEditingController _rootPath;
   late final TextEditingController _baseUrl;
+  late final TextEditingController _fallbackUrl;
   late final TextEditingController _username;
   late final TextEditingController _password;
   late final TextEditingController _cookie;
+  late final TextEditingController _includePaths;
+  late final TextEditingController _excludePaths;
 
   /// Quark's mount root: the folder id the API needs and the path shown for it.
   late String _quarkFolderId;
@@ -101,9 +104,12 @@ class _MountEditScreenState extends State<MountEditScreen> {
       text: mount?.kind == StorageKind.local ? mount?.configString(MountKeys.rootPath) ?? '' : '',
     );
     _baseUrl = TextEditingController(text: mount?.configString(MountKeys.baseUrl) ?? '');
+    _fallbackUrl = TextEditingController(text: mount?.configString(MountKeys.fallbackUrl) ?? '');
     _username = TextEditingController(text: mount?.configString(MountKeys.username) ?? '');
     _password = TextEditingController(text: mount?.secret(MountKeys.secretPassword) ?? '');
     _cookie = TextEditingController(text: mount?.secret(MountKeys.secretCookie) ?? '');
+    _includePaths = TextEditingController(text: mount?.configStringList(MountKeys.includePaths).join('\n') ?? '');
+    _excludePaths = TextEditingController(text: mount?.configStringList(MountKeys.excludePaths).join('\n') ?? '');
     _host = TextEditingController(text: mount?.configString(MountKeys.host) ?? '');
     _share = TextEditingController(text: mount?.configString(MountKeys.share) ?? '');
     _domain = TextEditingController(text: mount?.configString(MountKeys.domain) ?? '');
@@ -146,9 +152,12 @@ class _MountEditScreenState extends State<MountEditScreen> {
       _name,
       _rootPath,
       _baseUrl,
+      _fallbackUrl,
       _username,
       _password,
       _cookie,
+      _includePaths,
+      _excludePaths,
       _requestInterval,
       _host,
       _share,
@@ -160,14 +169,34 @@ class _MountEditScreenState extends State<MountEditScreen> {
     super.dispose();
   }
 
+  static List<String> _parsePaths(String raw) {
+    final paths = <String>[];
+    for (final segment in raw.split(RegExp(r'[\r\n,]+'))) {
+      final trimmed = segment.trim();
+      if (trimmed.isEmpty) continue;
+      final normalized = StoragePath.normalize(trimmed);
+      if (!paths.contains(normalized)) paths.add(normalized);
+    }
+    return paths;
+  }
+
   StorageMount _buildMount(StorageKind kind) {
+    final fallback = _fallbackUrl.text.trim();
+    final includes = _parsePaths(_includePaths.text);
+    final excludes = _parsePaths(_excludePaths.text);
+    final filterConfig = <String, Object?>{
+      if (includes.isNotEmpty) MountKeys.includePaths: includes,
+      if (excludes.isNotEmpty) MountKeys.excludePaths: excludes,
+    };
     final (Map<String, Object?> config, Map<String, String> secrets) = switch (kind) {
       StorageKind.local => ({MountKeys.rootPath: _rootPath.text.trim()}, const <String, String>{}),
       StorageKind.webdav => (
         {
           MountKeys.baseUrl: _baseUrl.text.trim(),
+          if (fallback.isNotEmpty) MountKeys.fallbackUrl: fallback,
           MountKeys.username: _username.text.trim(),
           MountKeys.allowInsecureTls: _allowInsecureTls,
+          ...filterConfig,
         },
         {if (_password.text.isNotEmpty) MountKeys.secretPassword: _password.text},
       ),
@@ -180,16 +209,19 @@ class _MountEditScreenState extends State<MountEditScreen> {
           MountKeys.quarkDownloadChunkMiB: _downloadChunkMiB,
           MountKeys.requestIntervalMs:
               int.tryParse(_requestInterval.text.trim()) ?? QuarkStorageDriver.defaultRequestInterval.inMilliseconds,
+          ...filterConfig,
         },
         {MountKeys.secretCookie: _cookie.text.trim()},
       ),
       StorageKind.smb => (
         {
           MountKeys.host: _host.text.trim(),
+          if (fallback.isNotEmpty) MountKeys.fallbackUrl: fallback,
           MountKeys.share: _share.text.trim(),
           MountKeys.rootPath: _subfolder.text.trim(),
           MountKeys.username: _username.text.trim(),
           MountKeys.domain: _domain.text.trim(),
+          ...filterConfig,
         },
         {if (_password.text.isNotEmpty) MountKeys.secretPassword: _password.text},
       ),
@@ -223,20 +255,19 @@ class _MountEditScreenState extends State<MountEditScreen> {
     String? error;
     try {
       final mount = _buildMount(kind);
-      if (_onlyQuarkDownloadOptionsChanged(mount)) {
+      final duplicate = await manager.registry.findDuplicate(mount);
+      if (duplicate != null) {
+        error = t.storage.duplicateMount(name: duplicate.displayName);
+      } else if (_onlyQuarkDownloadOptionsChanged(mount)) {
         await manager.saveQuarkDownloadOptions(
           mount.id,
           connections: _downloadConnections,
           chunkMiB: _downloadChunkMiB,
         );
       } else {
-        final probe = manager.createDriver(mount);
-        try {
-          await probe.check();
-        } finally {
-          await probe.close();
-        }
+        final resolvedStatus = await _probeOnSave(manager, mount);
         await manager.save(mount);
+        manager.setStatus(mount.id, resolvedStatus);
         // A new or changed mount is scanned straight away; the list shows progress.
         unawaited(scans.scan(mount));
       }
@@ -254,6 +285,30 @@ class _MountEditScreenState extends State<MountEditScreen> {
         _saving = false;
         _error = error;
       });
+    }
+  }
+
+  Future<MountOnlineStatus> _probeOnSave(MountManager manager, StorageMount mount) async {
+    final primary = manager.createDriver(mount, useFallback: false);
+    try {
+      await primary.check();
+      return MountOnlineStatus.onlinePrimary;
+    } on StorageException {
+      final fallbackUrl = mount.configString(MountKeys.fallbackUrl);
+      if (fallbackUrl == null || (mount.kind != StorageKind.webdav && mount.kind != StorageKind.smb)) {
+        rethrow;
+      }
+      final fallback = manager.createDriver(mount, useFallback: true);
+      try {
+        await fallback.check();
+        return MountOnlineStatus.onlineFallback;
+      } catch (_) {
+        rethrow;
+      } finally {
+        await fallback.close();
+      }
+    } finally {
+      await primary.close();
     }
   }
 
@@ -422,6 +477,25 @@ class _MountEditScreenState extends State<MountEditScreen> {
             },
           ),
           const SizedBox(height: _fieldGap),
+          FocusableTextFormField(
+            tvTextInputAutoOpenBehavior: TvTextInputAutoOpenBehavior.never,
+            controller: _fallbackUrl,
+            decoration: _decoration(
+              t.storage.fallbackUrl,
+              hint: 'https://ddns.example:5244/dav/media',
+              helper: t.storage.fallbackUrlHelp,
+            ),
+            keyboardType: TextInputType.url,
+            autocorrect: false,
+            validator: (value) {
+              final raw = value?.trim() ?? '';
+              if (raw.isEmpty) return null;
+              final uri = Uri.tryParse(raw);
+              final valid = uri != null && (uri.scheme == 'http' || uri.scheme == 'https') && uri.host.isNotEmpty;
+              return valid ? null : t.storage.urlInvalid;
+            },
+          ),
+          const SizedBox(height: _fieldGap),
           _credentials(),
         ];
       case StorageKind.smb:
@@ -452,6 +526,17 @@ class _MountEditScreenState extends State<MountEditScreen> {
                 ),
               ),
             ],
+          ),
+          const SizedBox(height: _fieldGap),
+          FocusableTextFormField(
+            tvTextInputAutoOpenBehavior: TvTextInputAutoOpenBehavior.never,
+            controller: _fallbackUrl,
+            decoration: _decoration(
+              t.storage.smbFallbackHost,
+              hint: 'ddns.example.com',
+              helper: t.storage.fallbackUrlHelp,
+            ),
+            autocorrect: false,
           ),
           const SizedBox(height: _fieldGap),
           _credentials(),
@@ -576,6 +661,37 @@ class _MountEditScreenState extends State<MountEditScreen> {
     ];
   }
 
+  List<Widget> _pathFilterFields() {
+    final maxLines = PlatformDetector.isTV() ? 1 : 3;
+    return [
+      FocusableTextFormField(
+        tvTextInputAutoOpenBehavior: TvTextInputAutoOpenBehavior.never,
+        controller: _includePaths,
+        decoration: _decoration(
+          t.storage.includePaths,
+          hint: '/Movies, /Anime',
+          helper: t.storage.includePathsHelp,
+        ),
+        minLines: 1,
+        maxLines: maxLines,
+        autocorrect: false,
+      ),
+      const SizedBox(height: _fieldGap),
+      FocusableTextFormField(
+        tvTextInputAutoOpenBehavior: TvTextInputAutoOpenBehavior.never,
+        controller: _excludePaths,
+        decoration: _decoration(
+          t.storage.excludePaths,
+          hint: '/Photos, /Recordings',
+          helper: t.storage.excludePathsHelp,
+        ),
+        minLines: 1,
+        maxLines: maxLines,
+        autocorrect: false,
+      ),
+    ];
+  }
+
   List<Widget> _advancedFields(StorageKind kind) {
     switch (kind) {
       case StorageKind.local:
@@ -589,6 +705,8 @@ class _MountEditScreenState extends State<MountEditScreen> {
             value: _allowInsecureTls,
             onChanged: (value) => setState(() => _allowInsecureTls = value),
           ),
+          const SizedBox(height: _fieldGap),
+          ..._pathFilterFields(),
         ];
       case StorageKind.smb:
         return [
@@ -598,9 +716,13 @@ class _MountEditScreenState extends State<MountEditScreen> {
             decoration: _decoration(t.storage.smbDomain),
             autocorrect: false,
           ),
+          const SizedBox(height: _fieldGap),
+          ..._pathFilterFields(),
         ];
       case StorageKind.quark:
         return [
+          ..._pathFilterFields(),
+          const SizedBox(height: _fieldGap),
           FocusableTextFormField(
             tvTextInputAutoOpenBehavior: TvTextInputAutoOpenBehavior.never,
             controller: _requestInterval,

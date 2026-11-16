@@ -224,6 +224,25 @@ void main() {
     expect(await checkpoint(), 'library:$next');
   });
 
+  test('recently added prefers the Quark creation time on both full and incremental scans', () async {
+    search = [
+      {..._file('old', 'Old Movie (2022).mkv', baseline), 'created_at': baseline - 1000},
+    ];
+    seasonFiles = [...search];
+    await scanner.scan(mount, driver);
+
+    final newMovie = {..._file('new', 'New Movie (2025).mkv', next), 'created_at': next - 500};
+    search = [newMovie, ...search];
+    seasonFiles = [...search];
+    await incremental();
+
+    final titles = await db.select(db.libraryItems).get();
+    expect(
+      titles.map((item) => (item.title, item.sourceAddedAt)),
+      unorderedEquals([('Old Movie', baseline - 1000), ('New Movie', next - 500)]),
+    );
+  });
+
   test('subtitle-only uploads are found on detail and direct playback, with a cached fallback', () async {
     seasonFiles.add(_file('sub-en', 'Old Movie (2022).en.srt', baseline));
     await scanner.scan(mount, driver);

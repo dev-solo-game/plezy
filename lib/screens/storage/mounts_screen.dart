@@ -303,6 +303,7 @@ class _MountCard extends StatelessWidget {
                         builder: (_, snapshot) => QuarkAccountDetails(snapshot: snapshot),
                       ),
                     if (location != null) Text(location, style: muted, maxLines: 1, overflow: TextOverflow.ellipsis),
+                    _MountReachabilityBadge(mountId: mount.id),
                     const SizedBox(height: 6),
                     _ScanLine(mountId: mount.id, status: status),
                   ],
@@ -330,6 +331,46 @@ class _MountCard extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Displays the current reachability badge for a mount when probed.
+class _MountReachabilityBadge extends StatelessWidget {
+  const _MountReachabilityBadge({required this.mountId});
+
+  final String mountId;
+
+  @override
+  Widget build(BuildContext context) {
+    final manager = context.read<MountManager>();
+    final scheme = Theme.of(context).colorScheme;
+    return ValueListenableBuilder<Map<String, MountOnlineStatus>>(
+      valueListenable: manager.onlineStatuses,
+      builder: (context, statuses, _) {
+        final status = statuses[mountId] ?? MountOnlineStatus.unknown;
+        final (String? label, Color? bg, Color? fg) = switch (status) {
+          MountOnlineStatus.onlinePrimary => (t.storage.statusOnline, scheme.primaryContainer, scheme.onPrimaryContainer),
+          MountOnlineStatus.onlineFallback => (
+            t.storage.statusFallback,
+            scheme.secondaryContainer,
+            scheme.onSecondaryContainer,
+          ),
+          MountOnlineStatus.offline => (t.storage.statusOffline, scheme.errorContainer, scheme.onErrorContainer),
+          MountOnlineStatus.unknown || MountOnlineStatus.probing => (null, null, null),
+        };
+        if (label == null || bg == null || fg == null) return const SizedBox.shrink();
+        return Padding(
+          padding: const EdgeInsets.only(top: 4),
+          child: DecoratedBox(
+            decoration: BoxDecoration(color: bg, borderRadius: const BorderRadius.all(Radius.circular(6))),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+              child: Text(label, style: Theme.of(context).textTheme.labelSmall?.copyWith(color: fg)),
+            ),
+          ),
+        );
+      },
     );
   }
 }

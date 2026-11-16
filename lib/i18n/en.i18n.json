@@ -2737,7 +2737,22 @@
     "manualMatch": "Match manually",
     "noMatchResults": "No results",
     "mediaSources": "Media sources",
-    "scraperSettingsDescription": "TMDB key, language and proxy for metadata"
+    "scraperSettingsDescription": "TMDB key, language and proxy for metadata",
+    "fallbackUrl": "Fallback URL (optional)",
+    "fallbackUrlHelp": "Used automatically when the primary address is unreachable (e.g. DDNS outside your home network).",
+    "smbFallbackHost": "Fallback server (optional)",
+    "includePaths": "Included folders (optional)",
+    "includePathsHelp": "One path per line or comma-separated (e.g. /Movies). Leave empty to scan the whole mount.",
+    "excludePaths": "Excluded folders (optional)",
+    "excludePathsHelp": "Ignore folders such as backups or recordings (e.g. /Photos).",
+    "statusOnline": "Online",
+    "statusFallback": "Fallback online",
+    "statusOffline": "Offline",
+    "offlineMountsHidden": "Hidden ${count} offline mount(s)",
+    "offlineMountsShown": "Showing ${count} offline mount(s)",
+    "showOffline": "Show all",
+    "hideOffline": "Hide offline",
+    "duplicateMount": "This media source is already added as \"${name}\". Please edit the existing source instead."
   },
   "streamQuality": {
     "preferred": "Preferred quality",

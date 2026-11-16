@@ -6,7 +6,10 @@ import '../database/app_database.dart';
 import '../storage/storage_path.dart';
 import '../utils/app_logger.dart';
 import 'library_repository.dart';
+import 'scrapers/nfo_reader.dart';
 import 'scrapers/scraped_metadata.dart';
+
+typedef MountTextReader = Future<String?> Function(String mountId, String path);
 
 class ScrapeSummary {
   const ScrapeSummary({this.matched = 0, this.unmatched = 0, this.merged = 0, this.skipped = 0, this.stoppedBy});
@@ -36,11 +39,13 @@ class ScrapeSummary {
 ///
 /// Scraping works from the database alone; it never reads from a mount.
 class LibraryScraper {
-  LibraryScraper(this._db, this._repo, {required List<MetadataProvider> providers}) : _metadataProviders = providers;
+  LibraryScraper(this._db, this._repo, {required List<MetadataProvider> providers, this._readText})
+    : _metadataProviders = providers;
 
   final AppDatabase _db;
   final LibraryRepository _repo;
   final List<MetadataProvider> _metadataProviders;
+  final MountTextReader? _readText;
 
   /// Below this a search hit is not trusted and the title stays unmatched.
   static const double _acceptScore = 0.72;
@@ -197,10 +202,17 @@ class LibraryScraper {
   }
 
   Future<ScrapeOutcome> _refreshKnown(LibraryItemRow item, {required bool refreshMatched}) async {
+    final isShow = item.kind == LibraryKinds.show;
+    if (item.metadataSource == 'nfo') {
+      if (isShow) {
+        await _fillEpisodesFromNfo(item, pendingOnly: !refreshMatched);
+      }
+      await _setFilesState(item, LibraryMatchStates.matched, locked: true);
+      return ScrapeOutcome.matched;
+    }
     final provider = _metadataProviders.where((p) => p.source == item.metadataSource).firstOrNull;
     final id = provider?.source == 'tmdb' ? item.tmdbId : item.bangumiId;
     if (provider == null || id == null) return ScrapeOutcome.skipped;
-    final isShow = item.kind == LibraryKinds.show;
     var title = item.title;
     if (refreshMatched) {
       final details = isShow ? await provider.show(id) : await provider.movie(id);
@@ -228,6 +240,9 @@ class LibraryScraper {
   Future<ScrapeOutcome> scrapeItem(int itemId) async {
     var item = await (_db.select(_db.libraryItems)..where((t) => t.id.equals(itemId))).getSingleOrNull();
     if (item == null || item.locked) return ScrapeOutcome.unmatched;
+
+    final nfoOutcome = await _tryScrapeFromNfo(item);
+    if (nfoOutcome != null) return nfoOutcome;
 
     // With nothing to ask, the title stays queued rather than being written
     // off as unmatched.
@@ -413,14 +428,125 @@ class LibraryScraper {
   static String _normalize(String text) =>
       text.toLowerCase().replaceAll(RegExp(r'''[\s\-_.:：,，!！?？'"“”‘’·•/\\()（）\[\]【】]+'''), '');
 
-  Future<LibraryItemRow?> _existingWithIds(LibraryItemRow item, {String? tmdbId, String? bangumiId}) async {
-    if (tmdbId == null && bangumiId == null) return null;
-    final existing = await _repo.findByExternalId(
-      kind: item.kind,
-      tmdbId: tmdbId,
-      bangumiId: tmdbId == null ? bangumiId : null,
-    );
+  Future<LibraryItemRow?> _existingWithIds(
+    LibraryItemRow item, {
+    String? tmdbId,
+    String? imdbId,
+    String? bangumiId,
+  }) async {
+    LibraryItemRow? existing;
+    if (tmdbId != null) {
+      existing = await _repo.findByExternalId(kind: item.kind, tmdbId: tmdbId);
+    }
+    if (existing == null && imdbId != null) {
+      existing = await _repo.findByExternalId(kind: item.kind, imdbId: imdbId);
+    }
+    if (existing == null && bangumiId != null) {
+      existing = await _repo.findByExternalId(kind: item.kind, bangumiId: bangumiId);
+    }
     return existing == null || existing.id == item.id ? null : existing;
+  }
+
+  Future<ScrapeOutcome?> _tryScrapeFromNfo(LibraryItemRow item) async {
+    final readText = _readText;
+    if (readText == null) return null;
+
+    if (item.kind == LibraryKinds.movie) {
+      final video = await _videoOf(item);
+      if (video == null) return null;
+      final dir = StoragePath.parent(video.path);
+      final nfos = await _filesIn(video.mountId, dir, LibraryFileRoles.nfo);
+      if (nfos.isEmpty) return null;
+
+      final videoBase = _baseName(StoragePath.name(video.path)).toLowerCase();
+      LibraryFileRow? nfoFile = nfos
+          .where((f) => _baseName(StoragePath.name(f.path)).toLowerCase() == videoBase)
+          .firstOrNull;
+      if (nfoFile == null) {
+        final videosInFolder = (await _filesIn(video.mountId, dir, LibraryFileRoles.video)).length;
+        final versions = (await _repo.versionsOf(item.id)).length;
+        if (videosInFolder == versions) {
+          nfoFile = nfos.where((f) => StoragePath.name(f.path).toLowerCase() == 'movie.nfo').firstOrNull;
+        }
+      }
+      if (nfoFile == null) return null;
+
+      final raw = await readText(nfoFile.mountId, nfoFile.path);
+      final details = raw == null ? null : NfoReader.readTitle(raw, expectedRoot: 'movie');
+      if (details == null) return null;
+
+      final target = await _existingWithIds(
+        item,
+        tmdbId: details.tmdbId,
+        imdbId: details.imdbId,
+        bangumiId: details.bangumiId,
+      );
+      if (target != null) {
+        final outcome = await _mergeInto(item, target);
+        await _repo.updateItem(target.id, const LibraryItemsCompanion(locked: Value(true)));
+        await _setFilesState(target, LibraryMatchStates.matched, locked: true);
+        return outcome;
+      }
+
+      await _apply(item, details, folder: await _folderOf(item), locked: true);
+      await _setFilesState(item, LibraryMatchStates.matched, locked: true);
+      return ScrapeOutcome.matched;
+    }
+
+    if (item.kind == LibraryKinds.show) {
+      final folder = await _folderOf(item);
+      if (folder == null) return null;
+      final [mountId, directory] = folder.split('\u0000');
+      final nfos = await _filesIn(mountId, directory, LibraryFileRoles.nfo);
+      final nfoFile = nfos.where((f) => StoragePath.name(f.path).toLowerCase() == 'tvshow.nfo').firstOrNull;
+      if (nfoFile == null) return null;
+
+      final raw = await readText(nfoFile.mountId, nfoFile.path);
+      final details = raw == null ? null : NfoReader.readTitle(raw, expectedRoot: 'tvshow');
+      if (details == null) return null;
+
+      final target = await _existingWithIds(
+        item,
+        tmdbId: details.tmdbId,
+        imdbId: details.imdbId,
+        bangumiId: details.bangumiId,
+      );
+      if (target != null) {
+        final outcome = await _mergeInto(item, target);
+        await _repo.updateItem(target.id, const LibraryItemsCompanion(locked: Value(true)));
+        await _fillEpisodesFromNfo(target, pendingOnly: true);
+        await _setFilesState(target, LibraryMatchStates.matched, locked: true);
+        return outcome;
+      }
+
+      await _apply(item, details, folder: folder, locked: true);
+      await _fillEpisodesFromNfo(item);
+      await _setFilesState(item, LibraryMatchStates.matched, locked: true);
+      return ScrapeOutcome.matched;
+    }
+
+    return null;
+  }
+
+  Future<void> _fillEpisodesFromNfo(LibraryItemRow show, {bool pendingOnly = false}) async {
+    final readText = _readText;
+    if (readText == null) return;
+    for (final epView in await _repo.episodesOfShow(show.id)) {
+      if (pendingOnly && epView.item.scrapedAt != null) continue;
+      final video = await _videoOf(epView.item);
+      if (video == null) continue;
+      final dir = StoragePath.parent(video.path);
+      final nfos = await _filesIn(video.mountId, dir, LibraryFileRoles.nfo);
+      if (nfos.isEmpty) continue;
+      final videoBase = _baseName(StoragePath.name(video.path)).toLowerCase();
+      final epNfo = nfos.where((f) => _baseName(StoragePath.name(f.path)).toLowerCase() == videoBase).firstOrNull;
+      if (epNfo == null) continue;
+      final raw = await readText(epNfo.mountId, epNfo.path);
+      final epDetails = raw == null ? null : NfoReader.readEpisode(raw);
+      if (epDetails != null) {
+        await _applyEpisode(epView.item, epDetails, 'nfo');
+      }
+    }
   }
 
   // ─── Applying ──────────────────────────────────────────────────────────
@@ -721,7 +847,10 @@ class LibraryScraper {
       };
       await _repo.updateItem(
         target.id,
-        LibraryItemsCompanion(aliases: Value(aliases.isEmpty ? null : aliases.join('\n'))),
+        LibraryItemsCompanion(
+          aliases: Value(aliases.isEmpty ? null : aliases.join('\n')),
+          sourceAddedAt: target.sourceAddedAt == null ? Value(duplicate.sourceAddedAt) : const Value.absent(),
+        ),
       );
       await _repo.deleteItem(duplicate.id);
     });

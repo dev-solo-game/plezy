@@ -1421,7 +1421,7 @@ class _MainAppState extends State<MainApp> with WidgetsBindingObserver {
     _mountManager = MountManager(
       MountRegistry(_appDatabase),
       bulkOptions: () => SettingsService.instanceOrNull?.bulkReadOptions ?? BulkReadOptions.defaults,
-    );
+    )..startReachabilityMonitor();
     _downloadManager = DownloadManagerService(
       database: _appDatabase,
       storageService: DownloadStorageService.instance,
@@ -1775,13 +1775,16 @@ class _MainAppState extends State<MainApp> with WidgetsBindingObserver {
         Provider<StorageService>.value(value: widget.storage),
         Provider<AppDatabase>.value(value: _appDatabase),
         Provider<MountManager>(create: (_) => _mountManager, dispose: (_, manager) => unawaited(manager.dispose())),
-        Provider<LibraryRepository>(create: (_) => LibraryRepository(_appDatabase)),
+        Provider<LibraryRepository>(
+          create: (_) => LibraryRepository(_appDatabase)..hiddenMountIds = () => _mountManager.hiddenOfflineMountIds,
+        ),
         Provider<LibrarySettingsStore>(create: (_) => LibrarySettingsStore(_appDatabase)),
         Provider<LibraryScrapeRunner>(
           create: (context) => LibraryScrapeRunner(
             database: _appDatabase,
             repository: context.read<LibraryRepository>(),
             settings: context.read<LibrarySettingsStore>(),
+            mounts: context.read<MountManager>(),
           ),
         ),
         Provider<LocalLibraryClient>(
@@ -1791,12 +1794,14 @@ class _MainAppState extends State<MainApp> with WidgetsBindingObserver {
         ChangeNotifierProvider<LibraryScanService>(
           create: (context) {
             final repository = context.read<LibraryRepository>();
-            return LibraryScanService(
+            final service = LibraryScanService(
               repository: repository,
               scanner: LibraryScanner(_appDatabase, repository),
-              mounts: context.read<MountManager>(),
+              mounts: _mountManager,
               scrape: context.read<LibraryScrapeRunner>().scrapePending,
             );
+            _mountManager.onReachabilityChanged = service.notifyLibraryChanged;
+            return service;
           },
         ),
         Provider<ConnectionRegistry>.value(value: _connections),

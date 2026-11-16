@@ -79,6 +79,11 @@ class LibraryItems extends Table {
   BoolColumn get locked => boolean().withDefault(const Constant(false))();
 
   IntColumn get addedAt => integer()();
+
+  /// The source time used by Recently Added for movies and whole shows.
+  /// Null before the initial scan finishes, zero if the source has no time.
+  IntColumn get sourceAddedAt => integer().nullable()();
+
   IntColumn get updatedAt => integer()();
   IntColumn get scrapedAt => integer().nullable()();
 }
@@ -106,6 +111,7 @@ class LibraryFiles extends Table {
   TextColumn get remoteId => text().nullable()();
   IntColumn get size => integer().nullable()();
   IntColumn get modifiedAt => integer().nullable()();
+  IntColumn get sourceCreatedAt => integer().nullable()();
 
   /// `'video'`, `'subtitle'`, `'artwork'` or `'nfo'`.
   TextColumn get role => text()();
@@ -307,6 +313,35 @@ class LibraryScanStates extends Table {
 /// key/value rows. Secret values are encrypted by `CredentialVault`.
 @DataClassName('LibrarySettingRow')
 class LibrarySettings extends Table {
+  TextColumn get key => text()();
+  TextColumn get value => text()();
+
+  @override
+  Set<Column> get primaryKey => {key};
+}
+
+/// Pending local mutations queued for incremental cloud synchronization.
+///
+/// Keyed by `(entityType, entityKey)` so repeated offline updates collapse to
+/// the latest snapshot, while [opId] rotates on each write so acknowledging an
+/// older in-flight push never deletes a newer local change.
+@DataClassName('SyncOutboxRow')
+@TableIndex(name: 'idx_sync_outbox_updated', columns: {#clientUpdatedAt})
+class SyncOutbox extends Table {
+  TextColumn get entityType => text()();
+  TextColumn get entityKey => text()();
+  TextColumn get opId => text()();
+  TextColumn get payloadJson => text()();
+  IntColumn get clientUpdatedAt => integer()();
+  IntColumn get createdAt => integer()();
+
+  @override
+  Set<Column> get primaryKey => {entityType, entityKey};
+}
+
+/// Key-value state for sync cursors, calibrated clock offset, and device identity.
+@DataClassName('SyncMetadataRow')
+class SyncMetadata extends Table {
   TextColumn get key => text()();
   TextColumn get value => text()();
 

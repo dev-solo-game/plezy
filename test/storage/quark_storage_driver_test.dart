@@ -19,6 +19,7 @@ class _FakeQuark {
   String? rotateCookieTo;
   bool addMalformedSetCookie = false;
   bool requireLogin = false;
+  bool failFileRequests = false;
   Map<String, Object?> member = {
     'member_type': 'SUPER_VIP',
     'use_capacity': 0,
@@ -85,6 +86,10 @@ class _FakeQuark {
       response.write(jsonEncode({'status': 401, 'code': 31001, 'message': 'require login [guest]'}));
       return response.close();
     }
+    if (failFileRequests && (path.endsWith('/file/search') || path.endsWith('/file/sort'))) {
+      response.write(jsonEncode({'code': 1, 'message': 'inner error, requestId test-request'}));
+      return response.close();
+    }
 
     Object? data;
     Map<String, Object?> metadata = {};
@@ -146,6 +151,26 @@ void main() {
   });
 
   Future<List<int>> readAll(Stream<List<int>> stream) => stream.expand((c) => c).toList();
+
+  test('identifies the failed file request while retaining the Quark request ID', () async {
+    fake.failFileRequests = true;
+    for (final (request, context) in [
+      (() => driver.searchUpdatedPage(2), '/file/search, page 2'),
+      (() => driver.folderAncestry('dir-movies'), '/file/sort (folder ancestry), page 1'),
+      (() => driver.list('/'), '/file/sort, page 1'),
+    ]) {
+      await expectLater(
+        request(),
+        throwsA(
+          isA<StorageException>().having(
+            (error) => error.message,
+            'message',
+            'Quark: inner error, requestId test-request [$context, HTTP 200, code 1]',
+          ),
+        ),
+      );
+    }
+  });
 
   test('download limits follow membership and retain the 64 MiB ceiling', () {
     final standard = QuarkDownloadTier.forAccount(const QuarkAccountInfo(memberType: 'VIP'));

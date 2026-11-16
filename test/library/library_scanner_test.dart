@@ -10,14 +10,16 @@ import 'package:plezy/storage/storage_driver.dart';
 import 'package:plezy/storage/storage_mount.dart';
 import 'package:plezy/storage/storage_path.dart';
 
-/// An in-memory mount: a set of file paths with sizes.
+/// An in-memory mount with file sizes and timestamps.
 class _TreeDriver implements StorageDriver {
-  final Map<String, int> files = {};
+  final Map<String, ({int size, int? modifiedAt})> files = {};
   final List<String> listed = [];
   String? failAt;
   StorageErrorKind failKind = StorageErrorKind.network;
 
-  void add(String path, {int size = 1000}) => files[StoragePath.normalize(path)] = size;
+  void add(String path, {int size = 1000, int? modifiedAt = 1}) {
+    files[StoragePath.normalize(path)] = (size: size, modifiedAt: modifiedAt);
+  }
 
   @override
   StorageKind get kind => StorageKind.local;
@@ -46,8 +48,10 @@ class _TreeDriver implements StorageDriver {
           path: childPath,
           name: name,
           isDirectory: !isFile,
-          size: isFile ? entry.value : null,
-          modifiedAt: isFile ? DateTime.fromMillisecondsSinceEpoch(1) : null,
+          size: isFile ? entry.value.size : null,
+          modifiedAt: isFile && entry.value.modifiedAt != null
+              ? DateTime.fromMillisecondsSinceEpoch(entry.value.modifiedAt!)
+              : null,
         ),
       );
     }
@@ -91,6 +95,33 @@ void main() {
 
   Future<LibraryFileRow> fileAt(String path) async =>
       (await db.select(db.libraryFiles).get()).firstWhere((f) => f.path == path);
+
+  test('recently added uses the latest video in the initial scan and keeps it after adding episodes', () async {
+    driver
+      ..add('/Breaking Bad/Season 1/Breaking.Bad.S01E01.mkv', modifiedAt: 100)
+      ..add('/Breaking Bad/Season 2/Breaking.Bad.S02E01.mkv', modifiedAt: 300)
+      ..add('/Severance/Severance.S01E01.mkv', modifiedAt: 200)
+      ..add('/The Wire/The.Wire.S01E01.mkv', modifiedAt: null);
+
+    await scanner.scan(mount(), driver);
+    for (final show in await items(LibraryKinds.show)) {
+      await repo.setLibraryType(show.id, LibraryTypes.show);
+    }
+
+    Future<Iterable<(String, int?)>> recentShows() async => (await repo.recentlyAdded(
+      libraryType: LibraryTypes.show,
+    )).map((view) => (view.item.title, view.item.sourceAddedAt));
+    const expected = [('Breaking Bad', 300), ('Severance', 200), ('The Wire', 0)];
+    expect(await recentShows(), expected);
+
+    driver
+      ..add('/Severance/Severance.S01E02.mkv', modifiedAt: 500)
+      ..add('/The Wire/The.Wire.S01E02.mkv', modifiedAt: 600);
+    await scanner.scan(mount(), driver, restart: true);
+
+    expect(await recentShows(), expected);
+    expect(await items(LibraryKinds.episode), hasLength(6));
+  });
 
   group('auto classification', () {
     test('guesses movies and shows from names, all waiting for a shelf', () async {

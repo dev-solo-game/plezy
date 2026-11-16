@@ -6632,6 +6632,51 @@ class Translations$storage$en {
 
 	/// en: 'TMDB key, language and proxy for metadata'
 	String get scraperSettingsDescription => 'TMDB key, language and proxy for metadata';
+
+	/// en: 'Fallback URL (optional)'
+	String get fallbackUrl => 'Fallback URL (optional)';
+
+	/// en: 'Used automatically when the primary address is unreachable (e.g. DDNS outside your home network).'
+	String get fallbackUrlHelp => 'Used automatically when the primary address is unreachable (e.g. DDNS outside your home network).';
+
+	/// en: 'Fallback server (optional)'
+	String get smbFallbackHost => 'Fallback server (optional)';
+
+	/// en: 'Included folders (optional)'
+	String get includePaths => 'Included folders (optional)';
+
+	/// en: 'One path per line or comma-separated (e.g. /Movies). Leave empty to scan the whole mount.'
+	String get includePathsHelp => 'One path per line or comma-separated (e.g. /Movies). Leave empty to scan the whole mount.';
+
+	/// en: 'Excluded folders (optional)'
+	String get excludePaths => 'Excluded folders (optional)';
+
+	/// en: 'Ignore folders such as backups or recordings (e.g. /Photos).'
+	String get excludePathsHelp => 'Ignore folders such as backups or recordings (e.g. /Photos).';
+
+	/// en: 'Online'
+	String get statusOnline => 'Online';
+
+	/// en: 'Fallback online'
+	String get statusFallback => 'Fallback online';
+
+	/// en: 'Offline'
+	String get statusOffline => 'Offline';
+
+	/// en: 'Hidden ${count} offline mount(s)'
+	String offlineMountsHidden({required Object count}) => 'Hidden ${count} offline mount(s)';
+
+	/// en: 'Showing ${count} offline mount(s)'
+	String offlineMountsShown({required Object count}) => 'Showing ${count} offline mount(s)';
+
+	/// en: 'Show all'
+	String get showOffline => 'Show all';
+
+	/// en: 'Hide offline'
+	String get hideOffline => 'Hide offline';
+
+	/// en: 'This media source is already added as "${name}". Please edit the existing source instead.'
+	String duplicateMount({required Object name}) => 'This media source is already added as "${name}". Please edit the existing source instead.';
 }
 
 // Path: streamQuality
@@ -11250,6 +11295,21 @@ extension on Translations {
 			'storage.noMatchResults' => 'No results',
 			'storage.mediaSources' => 'Media sources',
 			'storage.scraperSettingsDescription' => 'TMDB key, language and proxy for metadata',
+			'storage.fallbackUrl' => 'Fallback URL (optional)',
+			'storage.fallbackUrlHelp' => 'Used automatically when the primary address is unreachable (e.g. DDNS outside your home network).',
+			'storage.smbFallbackHost' => 'Fallback server (optional)',
+			'storage.includePaths' => 'Included folders (optional)',
+			'storage.includePathsHelp' => 'One path per line or comma-separated (e.g. /Movies). Leave empty to scan the whole mount.',
+			'storage.excludePaths' => 'Excluded folders (optional)',
+			'storage.excludePathsHelp' => 'Ignore folders such as backups or recordings (e.g. /Photos).',
+			'storage.statusOnline' => 'Online',
+			'storage.statusFallback' => 'Fallback online',
+			'storage.statusOffline' => 'Offline',
+			'storage.offlineMountsHidden' => ({required Object count}) => 'Hidden ${count} offline mount(s)',
+			'storage.offlineMountsShown' => ({required Object count}) => 'Showing ${count} offline mount(s)',
+			'storage.showOffline' => 'Show all',
+			'storage.hideOffline' => 'Hide offline',
+			'storage.duplicateMount' => ({required Object name}) => 'This media source is already added as "${name}". Please edit the existing source instead.',
 			'streamQuality.preferred' => 'Preferred quality',
 			'streamQuality.localPreference' => 'Local library quality',
 			'streamQuality.noneForFile' => 'This file has no transcoded qualities yet; it plays the original',

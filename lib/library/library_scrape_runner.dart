@@ -1,6 +1,11 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:typed_data';
 
 import '../database/app_database.dart';
+import '../storage/mount_manager.dart';
+import '../storage/storage_driver.dart';
+import '../storage/storage_path.dart';
 import 'library_repository.dart';
 import 'library_scraper.dart';
 import 'library_settings.dart';
@@ -13,13 +18,18 @@ import 'scrapers/tmdb_provider.dart';
 /// for the scan service, the manual-match UI and the retry action to get a
 /// scraper that reflects what the user configured.
 class LibraryScrapeRunner {
-  LibraryScrapeRunner({required AppDatabase database, required LibraryRepository repository, required this.settings})
-    : _db = database,
-      _repo = repository;
+  LibraryScrapeRunner({
+    required AppDatabase database,
+    required LibraryRepository repository,
+    required this.settings,
+    this.mounts,
+  }) : _db = database,
+       _repo = repository;
 
   final AppDatabase _db;
   final LibraryRepository _repo;
   final LibrarySettingsStore settings;
+  final MountManager? mounts;
 
   /// Returned by [scrapePending] when titles were left waiting because no
   /// TMDB key is set. The UI turns it into a localized prompt.
@@ -61,8 +71,31 @@ class LibraryScrapeRunner {
             timer.cancel();
             closeAll();
           });
+    Future<String?> readText(String mountId, String path) async {
+      final manager = mounts;
+      if (manager == null || !manager.isMountOnline(mountId)) return null;
+      try {
+        final mount = await manager.registry.get(mountId);
+        if (mount == null) return null;
+        final driver = manager.driverFor(mount);
+        final entry = StorageEntry(path: path, name: StoragePath.name(path), isDirectory: false);
+        const maxBytes = 512 * 1024;
+        final bytes = BytesBuilder(copy: false);
+        await for (final chunk in driver.openRead(entry, start: 0, end: maxBytes - 1)) {
+          bytes.add(chunk);
+          if (bytes.length >= maxBytes) break;
+        }
+        return utf8.decode(bytes.takeBytes(), allowMalformed: true);
+      } catch (_) {
+        return null;
+      }
+    }
+
     try {
-      return await action(LibraryScraper(_db, _repo, providers: providers), current);
+      return await action(
+        LibraryScraper(_db, _repo, providers: providers, readText: mounts == null ? null : readText),
+        current,
+      );
     } finally {
       watch?.cancel();
       closeAll();

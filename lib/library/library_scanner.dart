@@ -156,9 +156,11 @@ class LibraryScanner {
         }
 
         for (final entry in entries) {
-          if (entry.isDirectory && !_isSkippedFolder(entry.name)) queue.add(entry);
+          if (entry.isDirectory && !_isSkippedFolder(entry.name) && mount.canTraverseDirectory(entry.path)) {
+            queue.add(entry);
+          }
         }
-        final files = entries.where((e) => !e.isDirectory).toList();
+        final files = entries.where((e) => !e.isDirectory && mount.isFileAllowed(e.path)).toList();
         videos += await _recordDirectory(mount, directory.path, files, run.scanId);
         filesSeen += files.length;
         directoriesDone++;
@@ -179,6 +181,7 @@ class LibraryScanner {
       if (cancel?.isCancelled == true) return _cancelled;
       final removed = await _repo.removeFilesNotSeen(mount.id, run.scanId);
       await _repo.pruneEmptyTitles();
+      await _repo.initializeSourceAddedTimes(mount.id, scanId: run.scanId);
       await (_db.update(_db.libraryScanStates)..where((t) => t.mountId.equals(mount.id))).write(
         LibraryScanStatesCompanion(
           status: const Value('idle'),
@@ -247,11 +250,15 @@ class LibraryScanner {
           : paths[row.parentId] = await _quarkFolderPath(driver, row.parentId);
       if (parent == null) {
         movedOut.add(row.entry.id!);
-      } else if (!directories.containsKey(row.parentId)) {
+      } else {
         final path = StoragePath.join(parent, row.entry.name);
-        final existing = await _fileAt(mount.id, path);
-        if (existing?.remoteId != row.entry.id || existing?.modifiedAt != row.updatedAt) {
-          directories[row.parentId] = parent;
+        if (!mount.isFileAllowed(path)) {
+          movedOut.add(row.entry.id!);
+        } else if (!directories.containsKey(row.parentId)) {
+          final existing = await _fileAt(mount.id, path);
+          if (existing?.remoteId != row.entry.id || existing?.modifiedAt != row.updatedAt) {
+            directories[row.parentId] = parent;
+          }
         }
       }
     }
@@ -261,7 +268,7 @@ class LibraryScanner {
       if (cancel.isCancelled) return _cancelled;
       final folder = StorageEntry(id: id, path: path, name: StoragePath.name(path), isDirectory: true);
       final entries = await driver.list(path, parent: folder);
-      listings[path] = entries.where((entry) => !entry.isDirectory).toList();
+      listings[path] = entries.where((entry) => !entry.isDirectory && mount.isFileAllowed(entry.path)).toList();
       onProgress?.call(ScanProgress(directoriesDone: listings.length, filesSeen: changed.length, currentPath: path));
     }
 
@@ -281,6 +288,9 @@ class LibraryScanner {
           videos += await _recordDirectory(mount, directory.key, directory.value, state!.scanId);
         }
         if (removed > 0 || listings.isNotEmpty) await _repo.pruneEmptyTitles();
+        if (listings.isNotEmpty) {
+          await _repo.initializeSourceAddedTimes(mount.id, scanId: state!.scanId);
+        }
         _checkIncrementalCancellation(cancel);
         await (_db.update(_db.libraryScanStates)..where((t) => t.mountId.equals(mount.id))).write(
           LibraryScanStatesCompanion(
@@ -320,6 +330,65 @@ class LibraryScanner {
 
   static bool _isVideo(String name) =>
       videoExtensions.contains(StoragePath.extension(name)) && !_sampleName.hasMatch(_baseName(name));
+
+  /// Lists [directory] once and updates library rows only when direct child
+  /// files were added, modified, or removed.
+  Future<bool> refreshSingleDirectory(StorageMount mount, StorageDriver driver, String directory) async {
+    final dir = StoragePath.normalize(directory);
+    if (!mount.canTraverseDirectory(dir)) return false;
+
+    final entries = await driver.list(dir);
+    final files = entries.where((e) => !e.isDirectory && mount.isFileAllowed(e.path)).toList();
+    final trackedRemote = <(String, int?, int?, String?)>{
+      for (final f in files)
+        if (_isVideo(f.name) ||
+            StoragePath.extension(f.name) == 'nfo' ||
+            imageExtensions.contains(StoragePath.extension(f.name)))
+          (f.path, f.size, f.modifiedAt?.millisecondsSinceEpoch, f.id),
+      for (final m in matchSubtitles(files))
+        (m.subtitle.path, m.subtitle.size, m.subtitle.modifiedAt?.millisecondsSinceEpoch, m.subtitle.id),
+    };
+
+    final existingInDir = await _directFilesIn(mount.id, dir);
+    final trackedLocal = <(String, int?, int?, String?)>{
+      for (final row in existingInDir) (row.path, row.size, row.modifiedAt, row.remoteId),
+    };
+    if (const SetEquality<(String, int?, int?, String?)>().equals(trackedRemote, trackedLocal)) {
+      return false;
+    }
+
+    final state = await _state(mount.id);
+    final scanId = state?.scanId ?? 1;
+    final remotePaths = {for (final f in files) f.path};
+    final removedIds = [
+      for (final row in existingInDir)
+        if (!remotePaths.contains(row.path)) row.id,
+    ];
+
+    await _db.transaction(() async {
+      for (final batch in removedIds.slices(100)) {
+        await (_db.delete(_db.libraryFiles)..where((t) => t.id.isIn(batch))).go();
+      }
+      if (files.isNotEmpty) {
+        await _recordDirectory(mount, dir, files, scanId);
+      }
+      await _repo.pruneEmptyTitles();
+      if (files.isNotEmpty) {
+        await _repo.initializeSourceAddedTimes(mount.id, scanId: scanId);
+      }
+    });
+    return true;
+  }
+
+  Future<List<LibraryFileRow>> _directFilesIn(String mountId, String dir) async {
+    final prefix = dir == StoragePath.root ? '/' : '$dir/';
+    final rows = await (_db.select(_db.libraryFiles)..where((t) => t.mountId.equals(mountId) & t.path.like('$prefix%')))
+        .get();
+    return [
+      for (final row in rows)
+        if (StoragePath.parent(row.path) == dir) row,
+    ];
+  }
 
   // ─── Run bookkeeping ───────────────────────────────────────────────────
 
@@ -429,6 +498,7 @@ class LibraryScanner {
           remoteId: video.id,
           size: video.size,
           modifiedAt: video.modifiedAt?.millisecondsSinceEpoch,
+          sourceCreatedAt: video.createdAt?.millisecondsSinceEpoch,
           parsed: jsonEncode({...name.toJson(), 'key': classified.key}),
           versionLabel: classified.versionLabel,
         );
@@ -511,7 +581,10 @@ class LibraryScanner {
         }
       });
     }
-    if (moved > 0) await _repo.pruneEmptyTitles();
+    if (moved > 0) {
+      await _repo.pruneEmptyTitles();
+      await _repo.initializeSourceAddedTimes(mountId);
+    }
     return moved;
   }
 

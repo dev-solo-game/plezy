@@ -11,6 +11,7 @@ class StorageEntry {
     required this.name,
     required this.isDirectory,
     this.size,
+    this.createdAt,
     this.modifiedAt,
     this.id,
     this.contentHash,
@@ -22,6 +23,7 @@ class StorageEntry {
 
   /// Size in bytes. Null for directories and when the backend does not report it.
   final int? size;
+  final DateTime? createdAt;
   final DateTime? modifiedAt;
   final String? id;
   final String? contentHash;

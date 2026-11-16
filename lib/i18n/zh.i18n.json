@@ -2725,7 +2725,22 @@
     "manualMatch": "手动匹配",
     "noMatchResults": "没有结果",
     "mediaSources": "媒体来源",
-    "scraperSettingsDescription": "TMDB key、语言与刮削代理"
+    "scraperSettingsDescription": "TMDB key、语言与刮削代理",
+    "fallbackUrl": "备用地址（可选）",
+    "fallbackUrlHelp": "主地址不可达时自动切换（例如外出时使用的外网 DDNS 地址）。",
+    "smbFallbackHost": "备用服务器（可选）",
+    "includePaths": "仅扫描目录（可选）",
+    "includePathsHelp": "每行或逗号分隔一个目录（如 /Movies），留空则扫描整个挂载。",
+    "excludePaths": "忽略目录（可选）",
+    "excludePathsHelp": "跳过相册备份、录屏等无关文件夹（如 /Photos）。",
+    "statusOnline": "在线",
+    "statusFallback": "备用线路在线",
+    "statusOffline": "离线",
+    "offlineMountsHidden": "已隐藏 ${count} 个离线挂载源",
+    "offlineMountsShown": "已显示 ${count} 个离线挂载源",
+    "showOffline": "显示全部",
+    "hideOffline": "隐藏离线",
+    "duplicateMount": "该媒体来源已存在（“${name}”），请直接编辑已有来源。"
   },
   "streamQuality": {
     "preferred": "首选画质",

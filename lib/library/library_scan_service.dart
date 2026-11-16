@@ -7,6 +7,8 @@ import '../storage/drivers/quark_storage_driver.dart';
 import '../storage/mount_manager.dart';
 import '../storage/storage_driver.dart';
 import '../storage/storage_mount.dart';
+import '../storage/storage_path.dart';
+import '../utils/app_logger.dart';
 import 'library_repository.dart';
 import 'library_scanner.dart';
 
@@ -136,6 +138,7 @@ class LibraryScanService extends ChangeNotifier {
   bool _checkingAutomatic = false;
   DateTime? _automaticPausedUntil;
   final _automaticFailures = <String, ({int attempts, DateTime retryAt, String? rejectedCookie})>{};
+  final Map<int, DateTime> _lastShowJitRefresh = {};
 
   LibraryUpdate? get update => _update;
   ({LibraryUpdateMode mode, String message})? get updateError => _updateError;
@@ -166,6 +169,7 @@ class LibraryScanService extends ChangeNotifier {
       final mounts = await _mountManager.registry.list();
       _automaticFailures.removeWhere((id, _) => !mounts.any((mount) => mount.id == id));
       for (final mount in mounts) {
+        if (!_mountManager.isMountOnline(mount.id)) continue;
         final cookie = mount.secret(MountKeys.secretCookie);
         if (!supportsIncremental(mount) || cookie == null) continue;
         final lastScan = await _libraryScanner.quarkLastSuccessfulScan(mount);
@@ -222,7 +226,7 @@ class LibraryScanService extends ChangeNotifier {
         if (job.cancel.isCancelled || canRun?.call() == false) break;
         final current = await _mountManager.registry.get(mount.id);
         if (job.cancel.isCancelled || canRun?.call() == false) break;
-        if (current == null) continue;
+        if (current == null || !_mountManager.isMountOnline(current.id)) continue;
         if (mode == LibraryUpdateMode.incremental && !supportsIncremental(current)) continue;
         if (canRun != null && current.secret(MountKeys.secretCookie) != mount.secret(MountKeys.secretCookie)) continue;
         final result = await _scan(current, token: job.cancel, mode: mode);
@@ -285,10 +289,77 @@ class LibraryScanService extends ChangeNotifier {
     }
     if (_disposed) return null;
     if (!canScan(mount.id)) return null;
+    if (!_mountManager.isMountOnline(mount.id)) {
+      final probed = await _mountManager.probeMount(mount);
+      _mountManager.setStatus(mount.id, probed);
+      if (probed == MountOnlineStatus.offline) {
+        const message = 'Storage source is offline';
+        _publish(mount.id, const MountScanStatus(error: message));
+        return null;
+      }
+    }
     _updateError = null;
     final result = await _scan(mount, token: ScanCancelToken());
     if (result != null && !result.cancelled) unawaited(scrapeLibrary());
     return result;
+  }
+
+  /// Refreshes the directories holding episodes of [itemId] (a show or season)
+  /// on online mounts, scraping any newly discovered episodes immediately.
+  Future<bool> refreshShowDirectories(int itemId, {Duration cooldown = const Duration(seconds: 15)}) async {
+    if (_disposed || _update != null) return false;
+    final now = clock.now();
+    final previous = _lastShowJitRefresh[itemId];
+    if (previous != null && now.difference(previous) < cooldown) return false;
+    _lastShowJitRefresh[itemId] = now;
+
+    final item = (await repository.getItem(itemId))?.item;
+    if (item == null) return false;
+    final showId = item.kind == LibraryKinds.season ? (item.showId ?? item.parentId) : item.id;
+    if (showId == null) return false;
+
+    final episodes = await repository.episodesOfShow(showId);
+    final seenTargets = <(String, String)>{};
+    for (final episode in episodes.reversed) {
+      for (final file in await repository.versionsOf(episode.item.id)) {
+        if (!_mountManager.isMountOnline(file.mountId) || _running.containsKey(file.mountId)) continue;
+        seenTargets.add((file.mountId, StoragePath.parent(file.path)));
+        if (seenTargets.length >= 4) break;
+      }
+      if (seenTargets.length >= 4) break;
+    }
+    if (seenTargets.isEmpty) return false;
+
+    var anyChanged = false;
+    final changedMounts = <String>{};
+    for (final (mountId, dir) in seenTargets) {
+      if (_disposed) break;
+      final mount = await _mountManager.registry.get(mountId);
+      if (mount == null || !_mountManager.isMountOnline(mount.id)) continue;
+      final driver = _mountManager.driverFor(mount);
+      try {
+        final changed = await _libraryScanner
+            .refreshSingleDirectory(mount, driver, dir)
+            .timeout(const Duration(seconds: 5));
+        if (changed) {
+          anyChanged = true;
+          changedMounts.add(mount.id);
+        }
+      } catch (e) {
+        appLogger.d('JIT directory refresh failed for ${mount.displayName}:$dir', error: e);
+      }
+    }
+
+    if (!anyChanged || _disposed) return false;
+    if (scrape != null) {
+      if (_scrapeRun == null) {
+        await scrape!(mountIds: changedMounts, refreshMatched: false, isCancelled: () => _disposed);
+      } else {
+        await scrapeLibrary();
+      }
+    }
+    if (!_disposed) _libraryChanged();
+    return true;
   }
 
   Future<ScanResult?> _scan(StorageMount mount, {required ScanCancelToken token, LibraryUpdateMode? mode}) async {
