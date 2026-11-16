@@ -88,7 +88,7 @@ class _SyncSettingsScreenState extends State<SyncSettingsScreen> {
       _error = null;
     });
     try {
-      final res = await coordinator.startQrSession(serverUrl: server, deviceName: 'Plezy Client');
+      final res = await coordinator.startQrSession(serverUrl: server, deviceName: coordinator.lanService.deviceName);
       if (!mounted) return;
       setState(() {
         _qrSessionId = res.sessionId;
@@ -248,7 +248,7 @@ class _SyncSettingsScreenState extends State<SyncSettingsScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Text(t.sync.activeModeLan, style: theme.textTheme.titleMedium),
+                Text('${t.sync.activeModeLan} (${lan.deviceName})', style: theme.textTheme.titleMedium),
                 const SizedBox(height: 6),
                 Text(t.sync.modeLanDesc, style: theme.textTheme.bodySmall),
                 if (requests.isNotEmpty) ...[

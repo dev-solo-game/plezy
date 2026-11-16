@@ -111,6 +111,16 @@ class LanPeerSyncService extends ChangeNotifier {
   String? get deviceId => _deviceId;
   String? get lastError => _lastError;
 
+  String get deviceName {
+    final saved = _deviceName?.trim();
+    if (saved != null && saved.isNotEmpty) return saved;
+    try {
+      final host = Platform.localHostname.trim();
+      if (host.isNotEmpty) return host;
+    } catch (_) {}
+    return 'Plezy';
+  }
+
   List<LanDiscoveredPeer> get discoveredPeers => List.unmodifiable(_discovered.values);
   List<LanPairRequest> get incomingPairRequests => List.unmodifiable(_incomingRequests.values);
   List<LanTrustedPeer> get trustedPeers => List.unmodifiable(_trustedPeers);
@@ -131,11 +141,11 @@ class LanPeerSyncService extends ChangeNotifier {
       appLogger.w('[LanP2P] HTTP listener error', error: e);
     });
 
+    _running = true;
     if (enableUdpBroadcast) {
       await _startUdpDiscovery();
     }
 
-    _running = true;
     if (!_disposed) notifyListeners();
   }
 
@@ -188,7 +198,7 @@ class LanPeerSyncService extends ChangeNotifier {
       jsonEncode({
         'type': 'plezy_lan_sync_v1',
         'device_id': devId,
-        'device_name': _deviceName ?? 'Plezy',
+        'device_name': deviceName,
         'platform': Platform.operatingSystem,
         'http_port': port,
         'pub_key': pubKey,
@@ -268,7 +278,7 @@ class LanPeerSyncService extends ChangeNotifier {
           headers: {'Content-Type': 'application/json; charset=utf-8'},
           body: jsonEncode({
             'device_id': _deviceId,
-            'device_name': _deviceName ?? 'Plezy',
+            'device_name': deviceName,
             'platform': Platform.operatingSystem,
             'http_port': _httpServer!.port,
             'pub_key': _pubKeyB64,
@@ -315,7 +325,7 @@ class LanPeerSyncService extends ChangeNotifier {
           headers: {'Content-Type': 'application/json; charset=utf-8'},
           body: jsonEncode({
             'device_id': _deviceId,
-            'device_name': _deviceName ?? 'Plezy',
+            'device_name': deviceName,
             'pub_key': _pubKeyB64,
             'http_port': _httpServer!.port,
             'timestamp': ts,
@@ -481,7 +491,7 @@ class LanPeerSyncService extends ChangeNotifier {
         final rev = await syncStore.getLocalLanRevision();
         await _writeJson(req.response, HttpStatus.ok, {
           'device_id': _deviceId,
-          'device_name': _deviceName ?? 'Plezy',
+          'device_name': deviceName,
           'platform': Platform.operatingSystem,
           'pub_key': _pubKeyB64,
           'revision': rev,
