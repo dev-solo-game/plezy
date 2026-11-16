@@ -3,6 +3,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../../focus/input_mode_tracker.dart';
+import '../../../library/library_scan_service.dart';
+import '../../../library/local_library_client.dart';
 import '../../../media/library_change_event.dart';
 import '../../../media/media_library.dart';
 import '../../../utils/error_message_utils.dart';
@@ -91,6 +93,7 @@ abstract class BaseLibraryTabState<T, W extends BaseLibraryTab<T>> extends State
   StreamSubscription<void>? _refreshSubscription;
   int _loadGeneration = 0;
   StreamSubscription<LibraryChangeEvent>? _liveLibrarySubscription;
+  LibraryScanService? _scanService;
   late final RefreshPacer _livePacer;
   bool _inPlaceReload = false;
 
@@ -184,6 +187,7 @@ abstract class BaseLibraryTabState<T, W extends BaseLibraryTab<T>> extends State
   void didChangeDependencies() {
     super.didChangeDependencies();
     _updateTickerModeNotifier();
+    _updateScanServiceListener();
   }
 
   @override
@@ -191,6 +195,7 @@ abstract class BaseLibraryTabState<T, W extends BaseLibraryTab<T>> extends State
     super.activate();
     // Reparented: the TickerMode ancestor may have changed.
     _updateTickerModeNotifier();
+    _updateScanServiceListener();
   }
 
   @override
@@ -198,10 +203,31 @@ abstract class BaseLibraryTabState<T, W extends BaseLibraryTab<T>> extends State
     invalidateLibraryLoad();
     _refreshSubscription?.cancel();
     _liveLibrarySubscription?.cancel();
+    _scanService?.removeLibraryListener(_onLocalLibraryChanged);
+    _scanService = null;
     _tickerModeNotifier?.removeListener(_onSurfaceVisibilityChanged);
     _tickerModeNotifier = null;
     _livePacer.dispose();
     super.dispose();
+  }
+
+  void _updateScanServiceListener() {
+    LibraryScanService? next;
+    try {
+      next = Provider.of<LibraryScanService?>(context, listen: false);
+    } on ProviderNotFoundException {
+      next = null;
+    }
+    if (identical(next, _scanService)) return;
+    _scanService?.removeLibraryListener(_onLocalLibraryChanged);
+    _scanService = next;
+    _scanService?.addLibraryListener(_onLocalLibraryChanged);
+  }
+
+  void _onLocalLibraryChanged() {
+    if (!mounted || widget.library.serverId != LocalLibraryClient.localServerId) return;
+    if (!_isLiveSurfaceVisible || isLiveRefreshBlocked || VideoPlayerScreenState.activeGlobalKey != null) return;
+    unawaited(performLiveLibraryRefresh());
   }
 
   /// Mirrors [TickerProviderStateMixin]: [TickerMode.getValuesNotifier] reads

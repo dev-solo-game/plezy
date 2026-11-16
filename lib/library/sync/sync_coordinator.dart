@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:clock/clock.dart';
 import 'package:drift/drift.dart';
@@ -17,6 +18,7 @@ import 'sync_api_client.dart';
 import 'sync_crypto.dart';
 import 'sync_local_store.dart';
 import 'sync_mapper.dart';
+import 'sync_models.dart';
 
 /// Coordinates end-to-end encrypted multi-device synchronization in mutually
 /// exclusive modes: either serverless LAN P2P sync ([SyncMode.lanP2p]) or the
@@ -68,21 +70,30 @@ class SyncAndScanCoordinator extends ChangeNotifier {
   bool _initialized = false;
   bool _isSyncing = false;
   bool _disposed = false;
+  SyncProgress _progress = SyncProgress.idle;
   int _pendingOutboxCount = 0;
   DateTime? _lastSyncedAt;
   String? _lastError;
 
+  static const Duration liveRefreshInterval = Duration(milliseconds: 1200);
   static const String _kExportedUserKey = 'exported_baseline_user_id';
 
   bool get isSignedIn => _session != null;
   SyncMode get syncMode => _session != null ? SyncMode.cloudServer : SyncMode.lanP2p;
   bool get onboardingCompleted => _onboardingCompleted;
   SyncSessionCredentials? get session => _session;
-  bool get isSyncing => _isSyncing || lanService.isSyncing;
+  SyncProgress get progress => _progress.isActive ? _progress : lanService.progress;
+  bool get isSyncing => _isSyncing || _progress.isActive || lanService.isSyncing;
   int get pendingOutboxCount => _pendingOutboxCount;
   DateTime? get lastSyncedAt => _lastSyncedAt;
   String? get lastError => _lastError ?? lanService.lastError;
   String get deviceId => _deviceId ?? '';
+
+  void _setProgress(SyncProgress next) {
+    if (_disposed || _progress == next) return;
+    _progress = next;
+    notifyListeners();
+  }
 
   void _onLanServiceChanged() {
     if (!_disposed) notifyListeners();
@@ -410,6 +421,7 @@ class SyncAndScanCoordinator extends ChangeNotifier {
       appLogger.w('[SyncCoordinator] Background push failed (kept in outbox)', error: e);
     } finally {
       _isSyncing = false;
+      _progress = SyncProgress.idle;
       await refreshOutboxCount();
     }
   }
@@ -427,12 +439,12 @@ class SyncAndScanCoordinator extends ChangeNotifier {
 
     _isSyncing = true;
     _lastError = null;
+    _progress = const SyncProgress(phase: SyncPhase.pulling);
     if (!_disposed) notifyListeners();
 
-    var anyChanges = false;
     try {
-      // [Stage 2] Pull-Before-Scan
-      anyChanges |= await _pullAllDeltas(sess);
+      // [Stage 2] Pull-Before-Scan (_pullAllDeltas fires throttled + final live refreshes immediately).
+      await _pullAllDeltas(sess);
 
       // Export pre-login offline library baseline once so offline devices merge cleanly.
       final exportedRow = await (db.select(
@@ -448,10 +460,11 @@ class SyncAndScanCoordinator extends ChangeNotifier {
       // [Stage 5 / Push local mutations]
       final remapped = await _pushPendingOutbox(sess);
       if (remapped) {
-        anyChanges |= await _pullAllDeltas(sess);
+        await _pullAllDeltas(sess);
       }
 
       // [Stage 3] Protocol-level mount reachability probe
+      _setProgress(const SyncProgress(phase: SyncPhase.probingMounts));
       await mountManager.probeAll();
 
       // [Stage 4] Optional leased incremental scan on active manager devices
@@ -477,9 +490,6 @@ class SyncAndScanCoordinator extends ChangeNotifier {
         }
       }
 
-      if (anyChanges) {
-        scanService?.notifyLibraryChanged();
-      }
       _lastSyncedAt = clock.now();
       return true;
     } catch (e) {
@@ -488,6 +498,7 @@ class SyncAndScanCoordinator extends ChangeNotifier {
       return false;
     } finally {
       _isSyncing = false;
+      _progress = SyncProgress.idle;
       await refreshOutboxCount();
     }
   }
@@ -497,8 +508,20 @@ class SyncAndScanCoordinator extends ChangeNotifier {
     var hasMore = true;
     var anyChanges = false;
     var resetAttempted = false;
+    var appliedAcrossPages = 0;
+    DateTime? lastLiveNotify;
+
+    void maybeNotifyLive({bool force = false}) {
+      if (_disposed || scanService == null) return;
+      final now = clock.now();
+      if (force || lastLiveNotify == null || now.difference(lastLiveNotify!) >= liveRefreshInterval) {
+        lastLiveNotify = now;
+        scanService!.notifyLibraryChanged();
+      }
+    }
 
     while (hasMore && !_disposed) {
+      _setProgress(SyncProgress(phase: SyncPhase.pulling, processed: appliedAcrossPages));
       final resp = await apiClient.pullDelta(sess.serverUrl, sess.accessToken, sinceSeq: localSeq, limit: 500);
       if (resp.serverTimeMs > 0) {
         final offset = resp.serverTimeMs - clock.now().millisecondsSinceEpoch;
@@ -509,9 +532,16 @@ class SyncAndScanCoordinator extends ChangeNotifier {
         resetAttempted = true;
         await syncStore.resetSyncCursorsForFullRebuild();
         localSeq = 0;
+        appliedAcrossPages = 0;
         hasMore = true;
         continue;
       }
+
+      final pageTotal = resp.sources.length +
+          resp.works.length +
+          resp.files.length +
+          resp.workPrefs.length +
+          resp.watchProgress.length;
 
       final touched = await mapper.applyPullBatch(
         masterKey: sess.masterKey,
@@ -523,16 +553,37 @@ class SyncAndScanCoordinator extends ChangeNotifier {
         userSettings: resp.userSettings,
         nextSeq: resp.nextSeq,
         isFinalPage: !resp.hasMore,
+        onProgress: (done, total) => _setProgress(
+          SyncProgress(
+            phase: SyncPhase.applying,
+            processed: appliedAcrossPages + done,
+            total: resp.hasMore ? 0 : appliedAcrossPages + total,
+          ),
+        ),
+        onChunkApplied: () {
+          anyChanges = true;
+          maybeNotifyLive();
+        },
       );
       if (touched > 0) anyChanges = true;
+      appliedAcrossPages += pageTotal;
       localSeq = resp.nextSeq;
       hasMore = resp.hasMore;
+    }
+
+    if (anyChanges) {
+      maybeNotifyLive(force: true);
     }
     return anyChanges;
   }
 
   Future<bool> _pushPendingOutbox(SyncSessionCredentials sess) async {
     var remappedAny = false;
+    final initialTotal = (await syncStore.readPendingOutbox(limit: 10000)).length;
+    if (initialTotal == 0) return false;
+    var pushedSoFar = 0;
+    _setProgress(SyncProgress(phase: SyncPhase.pushing, processed: 0, total: initialTotal));
+
     while (!_disposed) {
       final batch = await syncStore.readPendingOutbox(limit: 200);
       if (batch.isEmpty) break;
@@ -551,6 +602,8 @@ class SyncAndScanCoordinator extends ChangeNotifier {
       }
       if (resp.acceptedOpIds.isNotEmpty) {
         await syncStore.deleteAcceptedOutbox(resp.acceptedOpIds);
+        pushedSoFar = math.min(initialTotal, pushedSoFar + resp.acceptedOpIds.length);
+        _setProgress(SyncProgress(phase: SyncPhase.pushing, processed: pushedSoFar, total: initialTotal));
       } else {
         break;
       }
@@ -559,9 +612,21 @@ class SyncAndScanCoordinator extends ChangeNotifier {
   }
 
   @visibleForTesting
-  void debugSetSessionForTesting(SyncSessionCredentials? session, {int pendingOutboxCount = 0}) {
+  void debugSetSessionForTesting(
+    SyncSessionCredentials? session, {
+    int pendingOutboxCount = 0,
+    SyncProgress? progress,
+    String? lastError,
+    bool clearError = false,
+  }) {
     _session = session;
     _pendingOutboxCount = pendingOutboxCount;
+    if (progress != null) _progress = progress;
+    if (clearError) {
+      _lastError = null;
+    } else if (lastError != null) {
+      _lastError = lastError;
+    }
     if (!_disposed) notifyListeners();
   }
 

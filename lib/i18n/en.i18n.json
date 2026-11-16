@@ -2840,6 +2840,23 @@
     "lanDiscoveryStopped": "LAN discovery stopped",
     "lanPeerOnline": "Online",
     "switchSyncMode": "Switch Sync Mode",
-    "userMenuTooltip": "Sync & Devices"
+    "userMenuTooltip": "Sync & Devices",
+    "progressLan": "LAN Sync",
+    "progressLanWithPeer": "LAN Sync (${peer})",
+    "progressCloud": "Cloud Sync",
+    "phaseFetching": "Fetching updates…",
+    "phaseApplying": "Updating library…",
+    "phaseApplyingProgress": "Updating ${done}/${total}",
+    "phaseApplyingCount": "Updated ${count} items",
+    "phasePushing": "Uploading changes…",
+    "phasePushingProgress": "Uploading ${done}/${total}",
+    "phaseProbingMounts": "Checking sources…",
+    "lanPopupDiscoverTitle": "Nearby Plezy Device Found",
+    "lanPopupDiscoverBody": "Trust \"${device}\" (${platform}) to sync your media library and watch progress automatically over Wi-Fi?",
+    "lanPopupRequestTitle": "Device Trust Request",
+    "lanPopupRequestBody": "\"${device}\" (${platform}) wants to trust and sync with this device.",
+    "lanPopupWaitingBody": "Waiting for \"${device}\" to confirm trust…",
+    "lanPopupCancelCountdown": "Cancel (${seconds}s)",
+    "lanPopupLaterHint": "You can still trust this device anytime in LAN Devices."
   }
 }

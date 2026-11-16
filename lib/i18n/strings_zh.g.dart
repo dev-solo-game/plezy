@@ -2763,6 +2763,23 @@ class Translations$sync$zh extends Translations$sync$en {
 	@override String get lanPeerOnline => '在线';
 	@override String get switchSyncMode => '切换同步模式';
 	@override String get userMenuTooltip => '同步与设备菜单';
+	@override String get progressLan => '局域网同步';
+	@override String progressLanWithPeer({required Object peer}) => '局域网同步 (${peer})';
+	@override String get progressCloud => '云端同步';
+	@override String get phaseFetching => '正在接收数据…';
+	@override String get phaseApplying => '正在更新媒体库…';
+	@override String phaseApplyingProgress({required Object done, required Object total}) => '正在更新 ${done}/${total}';
+	@override String phaseApplyingCount({required Object count}) => '已更新 ${count} 项';
+	@override String get phasePushing => '正在上传变更…';
+	@override String phasePushingProgress({required Object done, required Object total}) => '正在上传 ${done}/${total}';
+	@override String get phaseProbingMounts => '正在校验存储源…';
+	@override String get lanPopupDiscoverTitle => '发现附近局域网设备';
+	@override String lanPopupDiscoverBody({required Object device, required Object platform}) => '是否信任「${device}」(${platform})，在同一 Wi-Fi 下自动同步媒体库与观看进度？';
+	@override String get lanPopupRequestTitle => '收到设备信任请求';
+	@override String lanPopupRequestBody({required Object device, required Object platform}) => '「${device}」(${platform}) 请求与本机建立信任并同步数据。';
+	@override String lanPopupWaitingBody({required Object device}) => '已发送请求，正在等待「${device}」确认…';
+	@override String lanPopupCancelCountdown({required Object seconds}) => '取消 (${seconds}s)';
+	@override String get lanPopupLaterHint => '关闭后仍可随时在「局域网设备」列表中手动信任。';
 }
 
 // Path: appIcon.names
@@ -6333,6 +6350,23 @@ extension on TranslationsZh {
 			'sync.lanPeerOnline' => '在线',
 			'sync.switchSyncMode' => '切换同步模式',
 			'sync.userMenuTooltip' => '同步与设备菜单',
+			'sync.progressLan' => '局域网同步',
+			'sync.progressLanWithPeer' => ({required Object peer}) => '局域网同步 (${peer})',
+			'sync.progressCloud' => '云端同步',
+			'sync.phaseFetching' => '正在接收数据…',
+			'sync.phaseApplying' => '正在更新媒体库…',
+			'sync.phaseApplyingProgress' => ({required Object done, required Object total}) => '正在更新 ${done}/${total}',
+			'sync.phaseApplyingCount' => ({required Object count}) => '已更新 ${count} 项',
+			'sync.phasePushing' => '正在上传变更…',
+			'sync.phasePushingProgress' => ({required Object done, required Object total}) => '正在上传 ${done}/${total}',
+			'sync.phaseProbingMounts' => '正在校验存储源…',
+			'sync.lanPopupDiscoverTitle' => '发现附近局域网设备',
+			'sync.lanPopupDiscoverBody' => ({required Object device, required Object platform}) => '是否信任「${device}」(${platform})，在同一 Wi-Fi 下自动同步媒体库与观看进度？',
+			'sync.lanPopupRequestTitle' => '收到设备信任请求',
+			'sync.lanPopupRequestBody' => ({required Object device, required Object platform}) => '「${device}」(${platform}) 请求与本机建立信任并同步数据。',
+			'sync.lanPopupWaitingBody' => ({required Object device}) => '已发送请求，正在等待「${device}」确认…',
+			'sync.lanPopupCancelCountdown' => ({required Object seconds}) => '取消 (${seconds}s)',
+			'sync.lanPopupLaterHint' => '关闭后仍可随时在「局域网设备」列表中手动信任。',
 			_ => null,
 		};
 	}

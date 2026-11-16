@@ -47,7 +47,7 @@ import '../mixins/refreshable.dart';
 import '../mixins/tab_visibility_aware.dart';
 import '../i18n/strings.g.dart';
 import '../library/library_scan_service.dart';
-import '../library/library_scrape_runner.dart';
+import '../widgets/library_status_indicator.dart';
 import '../utils/app_logger.dart';
 import '../utils/dialogs.dart';
 import '../utils/formatters.dart';
@@ -74,66 +74,6 @@ class DiscoverScreen extends StatefulWidget {
 
   @override
   State<DiscoverScreen> createState() => _DiscoverScreenState();
-}
-
-class _LibraryUpdateIndicator extends StatelessWidget {
-  const _LibraryUpdateIndicator();
-
-  @override
-  Widget build(BuildContext context) {
-    return Selector<LibraryScanService?, ({String label, String detail, bool failed})?>(
-      selector: (_, scans) {
-        final job = scans?.update;
-        final files = job?.filesSeen ?? scans?.standaloneScanFiles;
-        final error = scans?.updateError;
-        if (job == null && files == null && error == null) return null;
-        final mode = job?.mode ?? error?.mode ?? LibraryUpdateMode.full;
-        final label = mode == LibraryUpdateMode.incremental ? t.storage.incrementalUpdate : t.storage.fullUpdate;
-        if (job == null && files == null && error != null) {
-          final detail = error.message == LibraryScrapeRunner.noTmdbKey ? t.storage.scrapeNoKey : error.message;
-          return (label: label, detail: detail, failed: true);
-        }
-        final progress = switch (job) {
-          LibraryUpdate(cancel: final cancel) when cancel.isCancelled => t.storage.cancellingUpdate,
-          LibraryUpdate(scraping: true, :final scraped, :final scrapeTotal) =>
-            scrapeTotal == 0 ? t.storage.scraping : t.storage.scrapingProgress(done: scraped, total: scrapeTotal),
-          _ when files != null => t.storage.scanning(files: files),
-          _ => t.storage.waitingToUpdate(mode: label),
-        };
-        return (label: label, detail: progress, failed: false);
-      },
-      builder: (context, status, _) {
-        if (status == null) return const SizedBox.shrink();
-        final theme = Theme.of(context);
-        final color = status.failed ? theme.colorScheme.error : theme.colorScheme.onSurface;
-        final text = status.failed ? '${status.label} · ${t.common.error}' : '${status.label} · ${status.detail}';
-        return Tooltip(
-          message: '${status.label}\n${status.detail}',
-          child: Padding(
-            padding: const EdgeInsetsDirectional.only(end: 8),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (status.failed)
-                  AppIcon(Symbols.error_outline_rounded, color: color, size: 14)
-                else
-                  const SizedBox.square(dimension: 12, child: CircularProgressIndicator(strokeWidth: 2)),
-                const SizedBox(width: 6),
-                Flexible(
-                  child: Text(
-                    text,
-                    style: theme.textTheme.labelMedium?.copyWith(color: color),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
 }
 
 class _DiscoverScreenState extends State<DiscoverScreen>
@@ -868,9 +808,24 @@ class _DiscoverScreenState extends State<DiscoverScreen>
                   ],
                 );
 
+          final Widget menuBadge = (sync?.isSyncing ?? false)
+              ? Stack(
+                  alignment: Alignment.center,
+                  clipBehavior: Clip.none,
+                  children: [
+                    iconWidget,
+                    Positioned.fill(
+                      child: IgnorePointer(
+                        child: CircularProgressIndicator(strokeWidth: 2, color: colorScheme.primary),
+                      ),
+                    ),
+                  ],
+                )
+              : iconWidget;
+
           return AppMenuButton<String>(
             key: _userMenuKey,
-            icon: iconWidget,
+            icon: menuBadge,
             tooltip: t.sync.userMenuTooltip,
             adaptiveSheet: true,
             anchorAlignment: AppMenuAnchorAlignment.end,
@@ -889,6 +844,7 @@ class _DiscoverScreenState extends State<DiscoverScreen>
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
     final session = sync?.session;
+    final progressDetail = sync != null && sync.progress.isActive ? formatSyncProgressDetail(t, sync.progress) : null;
 
     if (session != null) {
       final pending = sync?.pendingOutboxCount ?? 0;
@@ -903,7 +859,7 @@ class _DiscoverScreenState extends State<DiscoverScreen>
           value: 'sync_settings',
           icon: Symbols.cloud_sync_rounded,
           label: t.sync.title,
-          subtitle: pending > 0 ? t.sync.pendingChanges(count: pending) : null,
+          subtitle: progressDetail ?? (pending > 0 ? t.sync.pendingChanges(count: pending) : null),
         ),
         AppMenuItem<String>(value: 'settings', icon: Symbols.settings_rounded, label: t.common.settings),
         AppMenuItem<String>(value: 'logout', icon: Symbols.logout_rounded, label: t.common.logout),
@@ -925,7 +881,7 @@ class _DiscoverScreenState extends State<DiscoverScreen>
         value: 'lan_devices',
         icon: Symbols.devices_rounded,
         label: t.sync.lanDevicesTitle,
-        subtitle: requestCount > 0 ? t.sync.lanPairRequestBadge(count: requestCount) : null,
+        subtitle: progressDetail ?? (requestCount > 0 ? t.sync.lanPairRequestBadge(count: requestCount) : null),
         trailing: Container(
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
           decoration: BoxDecoration(
@@ -983,7 +939,7 @@ class _DiscoverScreenState extends State<DiscoverScreen>
                   ),
                   const SizedBox(width: 12),
                 ],
-                const Flexible(child: _LibraryUpdateIndicator()),
+                const Flexible(child: LibraryStatusIndicator()),
               ],
             ),
           ),

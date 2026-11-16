@@ -6951,6 +6951,57 @@ class Translations$sync$en {
 
 	/// en: 'Sync & Devices'
 	String get userMenuTooltip => 'Sync & Devices';
+
+	/// en: 'LAN Sync'
+	String get progressLan => 'LAN Sync';
+
+	/// en: 'LAN Sync (${peer})'
+	String progressLanWithPeer({required Object peer}) => 'LAN Sync (${peer})';
+
+	/// en: 'Cloud Sync'
+	String get progressCloud => 'Cloud Sync';
+
+	/// en: 'Fetching updates…'
+	String get phaseFetching => 'Fetching updates…';
+
+	/// en: 'Updating library…'
+	String get phaseApplying => 'Updating library…';
+
+	/// en: 'Updating ${done}/${total}'
+	String phaseApplyingProgress({required Object done, required Object total}) => 'Updating ${done}/${total}';
+
+	/// en: 'Updated ${count} items'
+	String phaseApplyingCount({required Object count}) => 'Updated ${count} items';
+
+	/// en: 'Uploading changes…'
+	String get phasePushing => 'Uploading changes…';
+
+	/// en: 'Uploading ${done}/${total}'
+	String phasePushingProgress({required Object done, required Object total}) => 'Uploading ${done}/${total}';
+
+	/// en: 'Checking sources…'
+	String get phaseProbingMounts => 'Checking sources…';
+
+	/// en: 'Nearby Plezy Device Found'
+	String get lanPopupDiscoverTitle => 'Nearby Plezy Device Found';
+
+	/// en: 'Trust "${device}" (${platform}) to sync your media library and watch progress automatically over Wi-Fi?'
+	String lanPopupDiscoverBody({required Object device, required Object platform}) => 'Trust "${device}" (${platform}) to sync your media library and watch progress automatically over Wi-Fi?';
+
+	/// en: 'Device Trust Request'
+	String get lanPopupRequestTitle => 'Device Trust Request';
+
+	/// en: '"${device}" (${platform}) wants to trust and sync with this device.'
+	String lanPopupRequestBody({required Object device, required Object platform}) => '"${device}" (${platform}) wants to trust and sync with this device.';
+
+	/// en: 'Waiting for "${device}" to confirm trust…'
+	String lanPopupWaitingBody({required Object device}) => 'Waiting for "${device}" to confirm trust…';
+
+	/// en: 'Cancel (${seconds}s)'
+	String lanPopupCancelCountdown({required Object seconds}) => 'Cancel (${seconds}s)';
+
+	/// en: 'You can still trust this device anytime in LAN Devices.'
+	String get lanPopupLaterHint => 'You can still trust this device anytime in LAN Devices.';
 }
 
 // Path: appIcon.names
@@ -11566,6 +11617,23 @@ extension on Translations {
 			'sync.lanPeerOnline' => 'Online',
 			'sync.switchSyncMode' => 'Switch Sync Mode',
 			'sync.userMenuTooltip' => 'Sync & Devices',
+			'sync.progressLan' => 'LAN Sync',
+			'sync.progressLanWithPeer' => ({required Object peer}) => 'LAN Sync (${peer})',
+			'sync.progressCloud' => 'Cloud Sync',
+			'sync.phaseFetching' => 'Fetching updates…',
+			'sync.phaseApplying' => 'Updating library…',
+			'sync.phaseApplyingProgress' => ({required Object done, required Object total}) => 'Updating ${done}/${total}',
+			'sync.phaseApplyingCount' => ({required Object count}) => 'Updated ${count} items',
+			'sync.phasePushing' => 'Uploading changes…',
+			'sync.phasePushingProgress' => ({required Object done, required Object total}) => 'Uploading ${done}/${total}',
+			'sync.phaseProbingMounts' => 'Checking sources…',
+			'sync.lanPopupDiscoverTitle' => 'Nearby Plezy Device Found',
+			'sync.lanPopupDiscoverBody' => ({required Object device, required Object platform}) => 'Trust "${device}" (${platform}) to sync your media library and watch progress automatically over Wi-Fi?',
+			'sync.lanPopupRequestTitle' => 'Device Trust Request',
+			'sync.lanPopupRequestBody' => ({required Object device, required Object platform}) => '"${device}" (${platform}) wants to trust and sync with this device.',
+			'sync.lanPopupWaitingBody' => ({required Object device}) => 'Waiting for "${device}" to confirm trust…',
+			'sync.lanPopupCancelCountdown' => ({required Object seconds}) => 'Cancel (${seconds}s)',
+			'sync.lanPopupLaterHint' => 'You can still trust this device anytime in LAN Devices.',
 			_ => null,
 		};
 	}

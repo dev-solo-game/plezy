@@ -11,6 +11,7 @@ import 'package:plezy/library/library_repository.dart';
 import 'package:plezy/library/sync/lan_peer_sync_service.dart';
 import 'package:plezy/library/sync/sync_coordinator.dart';
 import 'package:plezy/library/sync/sync_crypto.dart';
+import 'package:plezy/library/sync/sync_models.dart';
 import 'package:plezy/media/ids.dart';
 import 'package:plezy/media/media_backend.dart';
 import 'package:plezy/media/media_hub.dart';
@@ -217,6 +218,72 @@ void main() {
     expect(find.text('1 条配对请求'), findsOneWidget);
     expect(find.text('切换同步模式'), findsOneWidget);
     expect(find.text('退出登录'), findsNothing);
+  });
+
+  testWidgets('DiscoverScreen top bar and user menu display active LAN and Cloud sync progress', (tester) async {
+    final harness = await _pumpDiscoverWithSync(tester);
+    addTearDown(() => harness.dispose(tester));
+
+    harness.sync.lanService.debugSeedStateForTesting(
+      deviceName: 'Phone-A',
+      progress: const SyncProgress(
+        phase: SyncPhase.applying,
+        processed: 42,
+        total: 120,
+        peerName: 'LivingRoom-TV',
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('LAN Sync (LivingRoom-TV) · Updating 42/120'), findsOneWidget);
+
+    await tester.tap(find.byTooltip(t.sync.userMenuTooltip));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(find.text('Updating 42/120'), findsOneWidget);
+
+    // Dismiss menu before switching locale and verifying Chinese copy.
+    await tester.tapAt(const Offset(10, 10));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+
+    await tester.runAsync(() => LocaleSettings.setLocale(AppLocale.zh));
+    addTearDown(() => LocaleSettings.setLocaleSync(AppLocale.en));
+    harness.sync.lanService.debugSeedStateForTesting(
+      progress: const SyncProgress(
+        phase: SyncPhase.applying,
+        processed: 42,
+        total: 120,
+        peerName: '客厅电视',
+      ),
+    );
+    await tester.pump();
+    expect(find.text('局域网同步 (客厅电视) · 正在更新 42/120'), findsOneWidget);
+
+    await tester.runAsync(() => LocaleSettings.setLocale(AppLocale.en));
+    harness.sync.lanService.debugSeedStateForTesting(progress: SyncProgress.idle);
+    harness.sync.debugSetSessionForTesting(
+      SyncSessionCredentials(
+        serverUrl: 'https://sync.example.com',
+        userId: 'u-1',
+        username: 'alice',
+        accessToken: 'tok-1',
+        masterKey: Uint8List.fromList(List<int>.filled(32, 7)),
+      ),
+      pendingOutboxCount: 20,
+      progress: const SyncProgress(phase: SyncPhase.pushing, processed: 8, total: 20),
+    );
+    await tester.pump();
+
+    expect(find.text('Cloud Sync · Uploading 8/20'), findsOneWidget);
+
+    await tester.tap(find.byTooltip(t.sync.userMenuTooltip));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(find.text('Uploading 8/20'), findsOneWidget);
+
+    harness.sync.debugSetSessionForTesting(null, progress: SyncProgress.idle);
+    await tester.pump();
   });
 }
 

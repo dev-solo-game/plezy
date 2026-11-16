@@ -9,6 +9,7 @@ import '../../library/sync/lan_peer_sync_service.dart';
 import '../../library/sync/sync_coordinator.dart';
 import '../../library/sync/sync_local_store.dart';
 import '../../widgets/app_icon.dart';
+import '../../widgets/library_status_indicator.dart';
 import 'mounts_screen.dart';
 
 /// Clean standalone list view of LAN P2P discovery status, pairing requests,
@@ -102,7 +103,7 @@ class _LanDevicesPanelState extends State<LanDevicesPanel> {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          ..._buildBanners(theme),
+          ..._buildBanners(theme, serviceError: lan.lastError),
           _buildStatusCard(lan, theme),
           if (requests.isNotEmpty) ...[
             const SizedBox(height: 12),
@@ -145,7 +146,7 @@ class _LanDevicesPanelState extends State<LanDevicesPanel> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        ..._buildBanners(theme),
+        ..._buildBanners(theme, serviceError: lan.lastError),
         Card(
           child: Padding(
             padding: const EdgeInsets.all(16),
@@ -167,6 +168,7 @@ class _LanDevicesPanelState extends State<LanDevicesPanel> {
                 ),
                 const SizedBox(height: 6),
                 Text(t.sync.modeLanDesc, style: theme.textTheme.bodySmall),
+                _buildProgressSection(lan, theme),
                 if (requests.isNotEmpty) ...[
                   const SizedBox(height: 16),
                   ..._buildRequestsSection(lan, requests, theme),
@@ -185,30 +187,60 @@ class _LanDevicesPanelState extends State<LanDevicesPanel> {
     );
   }
 
-  List<Widget> _buildBanners(ThemeData theme) => [
-    if (_error != null) ...[
-      Material(
-        color: theme.colorScheme.errorContainer,
-        borderRadius: const BorderRadius.all(Radius.circular(12)),
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Text(_error!, style: TextStyle(color: theme.colorScheme.onErrorContainer)),
+  List<Widget> _buildBanners(ThemeData theme, {String? serviceError}) {
+    final effectiveError = _error ?? serviceError;
+    return [
+      if (effectiveError != null && effectiveError.isNotEmpty) ...[
+        Material(
+          color: theme.colorScheme.errorContainer,
+          borderRadius: const BorderRadius.all(Radius.circular(12)),
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Text(effectiveError, style: TextStyle(color: theme.colorScheme.onErrorContainer)),
+          ),
         ),
-      ),
-      const SizedBox(height: 12),
-    ],
-    if (_statusMessage != null) ...[
-      Material(
-        color: theme.colorScheme.secondaryContainer,
-        borderRadius: const BorderRadius.all(Radius.circular(12)),
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Text(_statusMessage!, style: TextStyle(color: theme.colorScheme.onSecondaryContainer)),
+        const SizedBox(height: 12),
+      ],
+      if (_statusMessage != null) ...[
+        Material(
+          color: theme.colorScheme.secondaryContainer,
+          borderRadius: const BorderRadius.all(Radius.circular(12)),
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Text(_statusMessage!, style: TextStyle(color: theme.colorScheme.onSecondaryContainer)),
+          ),
         ),
+        const SizedBox(height: 12),
+      ],
+    ];
+  }
+
+  Widget _buildProgressSection(LanPeerSyncService lan, ThemeData theme) {
+    final prog = lan.progress;
+    if (!prog.isActive) return const SizedBox.shrink();
+    final peerName = prog.peerName;
+    final label = (peerName != null && peerName.isNotEmpty)
+        ? t.sync.progressLanWithPeer(peer: peerName)
+        : t.sync.progressLan;
+    final detail = formatSyncProgressDetail(t, prog);
+    return Padding(
+      padding: const EdgeInsets.only(top: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Expanded(child: Text(label, style: theme.textTheme.labelMedium)),
+              if (detail != null)
+                Text(detail, style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+            ],
+          ),
+          const SizedBox(height: 6),
+          LinearProgressIndicator(value: prog.fraction),
+        ],
       ),
-      const SizedBox(height: 12),
-    ],
-  ];
+    );
+  }
 
   Widget _buildStatusCard(LanPeerSyncService lan, ThemeData theme) {
     final running = lan.isRunning;
@@ -238,6 +270,7 @@ class _LanDevicesPanelState extends State<LanDevicesPanel> {
                   ),
                   const SizedBox(height: 4),
                   Text(t.sync.modeLanDesc, style: theme.textTheme.bodySmall),
+                  _buildProgressSection(lan, theme),
                 ],
               ),
             ),

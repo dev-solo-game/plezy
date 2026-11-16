@@ -11,6 +11,7 @@ import '../../i18n/strings.g.dart';
 import '../../library/sync/sync_coordinator.dart';
 import '../../library/sync/sync_crypto.dart';
 import '../../widgets/app_icon.dart';
+import '../../widgets/library_status_indicator.dart';
 import 'lan_devices_screen.dart';
 import 'mounts_screen.dart';
 
@@ -318,6 +319,14 @@ class _SyncSettingsScreenState extends State<SyncSettingsScreen> {
               if (sync.lastError != null) ...[
                 const SizedBox(height: 6),
                 Text(sync.lastError!, style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.error)),
+              ],
+              if (sync.progress.isActive) ...[
+                const SizedBox(height: 12),
+                if (formatSyncProgressDetail(t, sync.progress) case final detail?) ...[
+                  Text(detail, style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.primary)),
+                  const SizedBox(height: 6),
+                ],
+                LinearProgressIndicator(value: sync.progress.fraction),
               ],
               const SizedBox(height: 16),
               Row(

@@ -42,6 +42,7 @@ import '../watch_together/providers/watch_together_provider.dart';
 import '../watch_together/watch_together.dart' show WatchNoticeListener;
 import '../widgets/music/mini_player.dart';
 import '../widgets/agent_control_scope.dart';
+import '../widgets/lan_pair_prompt_host.dart';
 import 'profile_navigation_scope.dart';
 import 'settings_shortcut.dart';
 
@@ -237,8 +238,13 @@ class _ProfileSessionScreenState extends State<ProfileSessionScreen> {
                   try {
                     final local = context.read<LocalLibraryClient>();
                     context.read<LibraryScanService>().onLibraryChanged = () {
-                      unawaited(local.refreshMounts());
-                      if (!libraries.isDisposed) unawaited(libraries.refresh());
+                      unawaited(() async {
+                        await local.refreshMounts();
+                        if (!libraries.isDisposed) {
+                          libraries.markServerLibrariesStale(LocalLibraryClient.localServerId);
+                          await libraries.refresh();
+                        }
+                      }());
                     };
                   } on ProviderNotFoundException {
                     // Hosted without the local library (tests): nothing to hook.
@@ -267,9 +273,23 @@ class _ProfileSessionScreenState extends State<ProfileSessionScreen> {
                   // (recently added) as well.
                   try {
                     final scans = context.read<LibraryScanService>();
+                    LocalLibraryClient? local;
+                    try {
+                      local = context.read<LocalLibraryClient>();
+                    } on ProviderNotFoundException {
+                      local = null;
+                    }
                     void reload() {
                       if (discover.isDisposed) {
                         scans.removeLibraryListener(reload);
+                      } else if (local != null) {
+                        unawaited(
+                          local.refreshMounts().then((_) {
+                            if (!discover.isDisposed) {
+                              unawaited(discover.refreshAfterLibraryUpdate());
+                            }
+                          }),
+                        );
                       } else {
                         unawaited(discover.refreshAfterLibraryUpdate());
                       }
@@ -418,23 +438,25 @@ class _ProfileSessionNavigatorState extends State<_ProfileSessionNavigator> {
             // across content routes (but inside the profile provider scope so
             // it dies with the session). SettingsShortcut wraps both so the
             // desktop open-settings chord also works with mini-player focus.
-            child: SettingsShortcut(
-              navigatorKey: _navigatorKey,
-              settingsRoutes: _settingsRouteTracker,
-              child: Stack(
-                children: [
-                  Navigator(
-                    key: _navigatorKey,
-                    observers: [
-                      _routeObserver,
-                      _musicRouteObserver,
-                      _settingsRouteTracker,
-                      BackKeySuppressorObserver(),
-                    ],
-                    onGenerateRoute: _onGenerateRoute,
-                  ),
-                  const Positioned.fill(child: MusicMiniPlayerOverlay()),
-                ],
+            child: LanPairPromptHost(
+              child: SettingsShortcut(
+                navigatorKey: _navigatorKey,
+                settingsRoutes: _settingsRouteTracker,
+                child: Stack(
+                  children: [
+                    Navigator(
+                      key: _navigatorKey,
+                      observers: [
+                        _routeObserver,
+                        _musicRouteObserver,
+                        _settingsRouteTracker,
+                        BackKeySuppressorObserver(),
+                      ],
+                      onGenerateRoute: _onGenerateRoute,
+                    ),
+                    const Positioned.fill(child: MusicMiniPlayerOverlay()),
+                  ],
+                ),
               ),
             ),
           ),

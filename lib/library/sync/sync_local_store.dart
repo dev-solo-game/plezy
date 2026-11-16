@@ -99,6 +99,7 @@ class SyncLocalStore {
   static const String _kLanPrivKey = 'sync_lan_priv_key';
   static const String _kLanPubKey = 'sync_lan_pub_key';
   static const String _kLanTrustedPeers = 'sync_lan_trusted_peers';
+  static const String _kLanPromptedPeers = 'sync_lan_prompted_peers';
   static const String _kLanRevision = 'sync_lan_revision';
 
   static const String typeSource = 'source';
@@ -468,5 +469,28 @@ class SyncLocalStore {
     final raw = jsonEncode([for (final p in peers) p.toJson()]);
     final protectedJson = await CredentialVault.protect(raw);
     await _putMeta(_kLanTrustedPeers, protectedJson);
+  }
+
+  Future<Set<String>> loadPromptedLanPeerIds() async {
+    final rawJson = await _getMeta(_kLanPromptedPeers);
+    if (rawJson == null || rawJson.isEmpty) return <String>{};
+    try {
+      final decoded = jsonDecode(rawJson);
+      if (decoded is! List) return <String>{};
+      return {
+        for (final entry in decoded)
+          if (entry is String && entry.isNotEmpty) entry,
+      };
+    } on FormatException {
+      return <String>{};
+    }
+  }
+
+  Future<void> savePromptedLanPeerIds(Iterable<String> peerIds) async {
+    final sorted = [
+      for (final id in {...peerIds})
+        if (id.isNotEmpty) id,
+    ]..sort();
+    await _putMeta(_kLanPromptedPeers, jsonEncode(sorted));
   }
 }

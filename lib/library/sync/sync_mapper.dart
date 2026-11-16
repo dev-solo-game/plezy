@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
 
@@ -38,6 +39,11 @@ class SyncMapper {
   final SyncLocalStore syncStore;
   final MountManager mountManager;
   final Future<void> Function(String mountId)? onPreemptMountScan;
+
+  static const int workChunkSize = 25;
+  static const int fileChunkSize = 80;
+  static const int stateChunkSize = 120;
+  static const int _outboxBatchSize = 250;
 
   static int _nowMs() => clock.now().millisecondsSinceEpoch;
 
@@ -419,45 +425,55 @@ class SyncMapper {
       mountIds: mountIds,
       includeAllWorkStates: includeAllWorkStates,
     );
-    for (final src in bundle.sources) {
-      await syncStore.enqueue(
-        entityType: SyncLocalStore.typeSource,
-        entityKey: src['source_id'] as String,
-        updatedAt: bundle.ts,
-        payload: src,
-      );
-    }
-    for (final w in bundle.works) {
-      await syncStore.enqueue(
-        entityType: SyncLocalStore.typeWork,
-        entityKey: w['work_key'] as String,
-        updatedAt: (w['client_updated_at'] as num?)?.toInt() ?? bundle.ts,
-        payload: w,
-      );
-    }
-    for (final f in bundle.files) {
-      await syncStore.enqueue(
-        entityType: SyncLocalStore.typeFile,
-        entityKey: f['file_id'] as String,
-        updatedAt: (f['client_updated_at'] as num?)?.toInt() ?? bundle.ts,
-        payload: f,
-      );
-    }
-    for (final p in bundle.workPrefs) {
-      await syncStore.enqueue(
-        entityType: SyncLocalStore.typeWorkPref,
-        entityKey: p['work_key'] as String,
-        updatedAt: (p['client_updated_at'] as num?)?.toInt() ?? bundle.ts,
-        payload: p,
-      );
-    }
-    for (final g in bundle.watchProgress) {
-      await syncStore.enqueue(
-        entityType: SyncLocalStore.typeWatchProgress,
-        entityKey: g['progress_key'] as String,
-        updatedAt: (g['client_updated_at'] as num?)?.toInt() ?? bundle.ts,
-        payload: g,
-      );
+    final entries = <({String entityType, String entityKey, int updatedAt, Map<String, Object?> payload})>[
+      for (final src in bundle.sources)
+        (
+          entityType: SyncLocalStore.typeSource,
+          entityKey: src['source_id'] as String,
+          updatedAt: bundle.ts,
+          payload: src,
+        ),
+      for (final w in bundle.works)
+        (
+          entityType: SyncLocalStore.typeWork,
+          entityKey: w['work_key'] as String,
+          updatedAt: (w['client_updated_at'] as num?)?.toInt() ?? bundle.ts,
+          payload: w,
+        ),
+      for (final f in bundle.files)
+        (
+          entityType: SyncLocalStore.typeFile,
+          entityKey: f['file_id'] as String,
+          updatedAt: (f['client_updated_at'] as num?)?.toInt() ?? bundle.ts,
+          payload: f,
+        ),
+      for (final p in bundle.workPrefs)
+        (
+          entityType: SyncLocalStore.typeWorkPref,
+          entityKey: p['work_key'] as String,
+          updatedAt: (p['client_updated_at'] as num?)?.toInt() ?? bundle.ts,
+          payload: p,
+        ),
+      for (final g in bundle.watchProgress)
+        (
+          entityType: SyncLocalStore.typeWatchProgress,
+          entityKey: g['progress_key'] as String,
+          updatedAt: (g['client_updated_at'] as num?)?.toInt() ?? bundle.ts,
+          payload: g,
+        ),
+    ];
+    for (var i = 0; i < entries.length; i += _outboxBatchSize) {
+      final slice = entries.sublist(i, math.min(i + _outboxBatchSize, entries.length));
+      await db.transaction(() async {
+        for (final entry in slice) {
+          await syncStore.enqueue(
+            entityType: entry.entityType,
+            entityKey: entry.entityKey,
+            updatedAt: entry.updatedAt,
+            payload: entry.payload,
+          );
+        }
+      });
     }
   }
 
@@ -518,7 +534,139 @@ class SyncMapper {
     );
   }
 
-  /// Applies one paginated pull batch atomically into the local Drift database.
+  Future<void> _restoreTouchedRootItems(Set<int> touchedItemIds) async {
+    if (touchedItemIds.isEmpty) return;
+    final rows = await (db.select(db.libraryItems)..where((t) => t.id.isIn(touchedItemIds))).get();
+    final rootIds = <int>{};
+    for (final item in rows) {
+      if (item.kind == LibraryKinds.episode || item.kind == LibraryKinds.season) {
+        rootIds.add(item.showId ?? item.parentId ?? item.id);
+      } else {
+        rootIds.add(item.id);
+      }
+    }
+    final watchStates = LibraryWatchStateStore(db);
+    for (final rootId in rootIds) {
+      await watchStates.restoreItemAndChildren(rootId);
+    }
+  }
+
+  static List<({List<Map<String, dynamic>> works, List<Map<String, dynamic>> files})> _buildStage3Chunks(
+    List<Map<String, dynamic>> works,
+    List<Map<String, dynamic>> effectiveFiles,
+  ) {
+    final workKeysInBatch = <String>{
+      for (final w in works)
+        if (w['work_key'] is String && (w['work_key'] as String).isNotEmpty) w['work_key'] as String,
+    };
+
+    final videos = <Map<String, dynamic>>[];
+    final subtitlesByOwner = <String, List<Map<String, dynamic>>>{};
+    final unownedSubtitles = <Map<String, dynamic>>[];
+    for (final f in effectiveFiles) {
+      if (f['role'] == LibraryFileRoles.subtitle) {
+        final owner = f['owner_file_id'] as String?;
+        if (owner != null && owner.isNotEmpty) {
+          subtitlesByOwner.putIfAbsent(owner, () => []).add(f);
+        } else {
+          unownedSubtitles.add(f);
+        }
+      } else {
+        videos.add(f);
+      }
+    }
+
+    final videosByWorkKey = <String, List<Map<String, dynamic>>>{};
+    final remainingVideos = <Map<String, dynamic>>[];
+    for (final v in videos) {
+      final wk = v['work_key'] as String?;
+      if (wk != null && workKeysInBatch.contains(wk)) {
+        videosByWorkKey.putIfAbsent(wk, () => []).add(v);
+      } else {
+        remainingVideos.add(v);
+      }
+    }
+
+    void appendOwnedSubtitles(List<Map<String, dynamic>> targetFiles, List<Map<String, dynamic>> addedVideos) {
+      for (final v in addedVideos) {
+        final fileId = v['file_id'] as String?;
+        if (fileId == null || fileId.isEmpty) continue;
+        final owned = subtitlesByOwner.remove(fileId);
+        if (owned != null && owned.isNotEmpty) {
+          targetFiles.addAll(owned);
+        }
+      }
+    }
+
+    final chunks = <({List<Map<String, dynamic>> works, List<Map<String, dynamic>> files})>[];
+    var curWorks = <Map<String, dynamic>>[];
+    var curFiles = <Map<String, dynamic>>[];
+
+    void flushCurrentChunk() {
+      if (curWorks.isEmpty && curFiles.isEmpty) return;
+      chunks.add((works: curWorks, files: curFiles));
+      curWorks = <Map<String, dynamic>>[];
+      curFiles = <Map<String, dynamic>>[];
+    }
+
+    for (final w in works) {
+      final wk = w['work_key'] as String?;
+      final wVideos =
+          wk != null ? (videosByWorkKey.remove(wk) ?? const <Map<String, dynamic>>[]) : const <Map<String, dynamic>>[];
+
+      if (curWorks.isNotEmpty &&
+          (curWorks.length >= workChunkSize ||
+              curFiles.length + math.min(wVideos.length, fileChunkSize) > fileChunkSize)) {
+        flushCurrentChunk();
+      }
+
+      curWorks.add(w);
+      if (wVideos.length <= fileChunkSize) {
+        curFiles.addAll(wVideos);
+        appendOwnedSubtitles(curFiles, wVideos);
+      } else {
+        final firstBatch = wVideos.sublist(0, fileChunkSize);
+        curFiles.addAll(firstBatch);
+        appendOwnedSubtitles(curFiles, firstBatch);
+        flushCurrentChunk();
+        for (var i = fileChunkSize; i < wVideos.length; i += fileChunkSize) {
+          final batch = wVideos.sublist(i, math.min(i + fileChunkSize, wVideos.length));
+          curFiles.addAll(batch);
+          appendOwnedSubtitles(curFiles, batch);
+          flushCurrentChunk();
+        }
+      }
+
+      if (curWorks.length >= workChunkSize || curFiles.length >= fileChunkSize) {
+        flushCurrentChunk();
+      }
+    }
+    flushCurrentChunk();
+
+    for (final leftover in videosByWorkKey.values) {
+      remainingVideos.addAll(leftover);
+    }
+    for (var i = 0; i < remainingVideos.length; i += fileChunkSize) {
+      final batch = remainingVideos.sublist(i, math.min(i + fileChunkSize, remainingVideos.length));
+      final chunkFiles = <Map<String, dynamic>>[...batch];
+      appendOwnedSubtitles(chunkFiles, batch);
+      chunks.add((works: const [], files: chunkFiles));
+    }
+
+    final trailingSubs = <Map<String, dynamic>>[
+      for (final list in subtitlesByOwner.values) ...list,
+      ...unownedSubtitles,
+    ];
+    for (var i = 0; i < trailingSubs.length; i += fileChunkSize) {
+      final batch = trailingSubs.sublist(i, math.min(i + fileChunkSize, trailingSubs.length));
+      chunks.add((works: const [], files: batch));
+    }
+
+    return chunks;
+  }
+
+  /// Applies one pull batch progressively across bounded micro-transactions so
+  /// synced titles and progress render incrementally without blocking the UI.
   /// Returns the count of touched entities.
   Future<int> applyPullBatch({
     required Uint8List masterKey,
@@ -532,8 +680,15 @@ class SyncMapper {
     bool isFinalPage = true,
     bool updateCloudCursor = true,
     bool deterministicP2pSourceTieBreak = false,
+    void Function(int processed, int total)? onProgress,
+    FutureOr<void> Function()? onChunkApplied,
   }) async {
     var changes = 0;
+    final totalEntities = sources.length + works.length + files.length + workPrefs.length + watchProgress.length;
+    var processedEntities = 0;
+    if (totalEntities > 0) {
+      onProgress?.call(0, totalEntities);
+    }
 
     final imageBase = userSettings['tmdb_image_base_url'];
     if (imageBase is String && imageBase.trim().isNotEmpty) {
@@ -557,57 +712,133 @@ class SyncMapper {
       await _preemptConflictingScans(sources, deterministicP2pSourceTieBreak: deterministicP2pSourceTieBreak);
     }
 
-    final rehomedMounts = <(String, String)>[];
-    final deletedMountIds = <String>[];
-    final touchedItemIds = <int>{};
     final localWinnerRemaps = <String, String>{};
+    final workItemByKey = <String, int>{};
+    final rowIdBySyncFileId = <String, int>{};
 
-    await db.transaction(() async {
-      // 1. Merge shared mounts & canonical source deduplication.
-      changes += await _applyIncomingSources(
-        sources,
-        masterKey: masterKey,
-        rehomedMounts: rehomedMounts,
-        deletedMountIds: deletedMountIds,
-        deterministicP2pSourceTieBreak: deterministicP2pSourceTieBreak,
-        localWinnerRemaps: localWinnerRemaps,
-      );
-
-      // 2. Merge works & files under 4-tier monotonic weights.
-      final workItemByKey = <String, int>{};
-      final effectiveFiles = localWinnerRemaps.isEmpty ? files : _remapIncomingFiles(files, localWinnerRemaps);
-      changes += await _applyIncomingWorks(works, workItemByKey: workItemByKey, touchedItemIds: touchedItemIds);
-      changes += await _applyIncomingFiles(effectiveFiles, workItemByKey: workItemByKey, touchedItemIds: touchedItemIds);
-
-      if (isFinalPage && changes > 0) {
-        await repo.pruneEmptyTitles();
+    // Stage 1: Merge shared mounts & canonical source deduplication first.
+    if (sources.isNotEmpty) {
+      final rehomedMounts = <(String, String)>[];
+      final deletedMountIds = <String>[];
+      var sourceChanges = 0;
+      await db.transaction(() async {
+        sourceChanges = await _applyIncomingSources(
+          sources,
+          masterKey: masterKey,
+          rehomedMounts: rehomedMounts,
+          deletedMountIds: deletedMountIds,
+          deterministicP2pSourceTieBreak: deterministicP2pSourceTieBreak,
+          localWinnerRemaps: localWinnerRemaps,
+        );
+      });
+      changes += sourceChanges;
+      for (final (oldId, newId) in rehomedMounts) {
+        await mountManager.dropCachedDriver(oldId);
+        await syncStore.rekeyOutboxForRemappedSource(oldId, newId);
       }
-
-      // 3. Merge work preferences (intro/credits skip + favorites) & calibrated LWW watch progress.
-      changes += await _applyIncomingWorkPrefs(workPrefs, touchedItemIds: touchedItemIds);
-      changes += await _applyIncomingWatchProgress(watchProgress, touchedItemIds: touchedItemIds);
-
-      // Project updated WorkWatchStates onto local LibraryUserStates for all touched titles.
-      final watchStates = LibraryWatchStateStore(db);
-      for (final itemId in touchedItemIds) {
-        await watchStates.restoreItemAndChildren(itemId);
+      for (final deletedId in deletedMountIds) {
+        await mountManager.dropCachedDriver(deletedId);
       }
-      if (workPrefs.isNotEmpty || watchProgress.isNotEmpty || works.isNotEmpty || effectiveFiles.isNotEmpty) {
-        await watchStates.restoreAll();
+      processedEntities += sources.length;
+      onProgress?.call(processedEntities, totalEntities);
+      if (sourceChanges > 0) {
+        await onChunkApplied?.call();
       }
-
-      // Advance cloud cursor ONLY during cloud pulls and after transactional persistence succeeds.
-      if (updateCloudCursor) {
-        await syncStore.saveLastPullSeq(nextSeq);
-      }
-    });
-
-    for (final (oldId, newId) in rehomedMounts) {
-      await mountManager.dropCachedDriver(oldId);
-      await syncStore.rekeyOutboxForRemappedSource(oldId, newId);
     }
-    for (final deletedId in deletedMountIds) {
-      await mountManager.dropCachedDriver(deletedId);
+
+    final effectiveFiles = localWinnerRemaps.isEmpty ? files : _remapIncomingFiles(files, localWinnerRemaps);
+    final stage3Chunks = _buildStage3Chunks(works, effectiveFiles);
+
+    if (sources.isNotEmpty && (workPrefs.isNotEmpty || watchProgress.isNotEmpty || stage3Chunks.isNotEmpty)) {
+      await Future<void>.delayed(Duration.zero);
+    }
+
+    // Stage 2: Write work preferences & watch progress in chunks BEFORE works/files so
+    // existing works update immediately and new works/episodes inherit states as they land.
+    for (var i = 0; i < workPrefs.length; i += stateChunkSize) {
+      final slice = workPrefs.sublist(i, math.min(i + stateChunkSize, workPrefs.length));
+      final chunkTouchedIds = <int>{};
+      var chunkChanges = 0;
+      await db.transaction(() async {
+        chunkChanges = await _applyIncomingWorkPrefs(slice, touchedItemIds: chunkTouchedIds);
+        await _restoreTouchedRootItems(chunkTouchedIds);
+      });
+      changes += chunkChanges;
+      processedEntities += slice.length;
+      onProgress?.call(processedEntities, totalEntities);
+      if (chunkTouchedIds.isNotEmpty) {
+        await onChunkApplied?.call();
+      }
+      final hasMore = i + stateChunkSize < workPrefs.length || watchProgress.isNotEmpty || stage3Chunks.isNotEmpty;
+      if (hasMore) {
+        await Future<void>.delayed(Duration.zero);
+      }
+    }
+
+    for (var i = 0; i < watchProgress.length; i += stateChunkSize) {
+      final slice = watchProgress.sublist(i, math.min(i + stateChunkSize, watchProgress.length));
+      final chunkTouchedIds = <int>{};
+      var chunkChanges = 0;
+      await db.transaction(() async {
+        chunkChanges = await _applyIncomingWatchProgress(slice, touchedItemIds: chunkTouchedIds);
+        await _restoreTouchedRootItems(chunkTouchedIds);
+      });
+      changes += chunkChanges;
+      processedEntities += slice.length;
+      onProgress?.call(processedEntities, totalEntities);
+      if (chunkTouchedIds.isNotEmpty) {
+        await onChunkApplied?.call();
+      }
+      final hasMore = i + stateChunkSize < watchProgress.length || stage3Chunks.isNotEmpty;
+      if (hasMore) {
+        await Future<void>.delayed(Duration.zero);
+      }
+    }
+
+    // Stage 3: Merge works & co-located video/subtitle files in bounded micro-transactions.
+    for (var i = 0; i < stage3Chunks.length; i++) {
+      final chunk = stage3Chunks[i];
+      final chunkTouchedIds = <int>{};
+      var chunkChanges = 0;
+      await db.transaction(() async {
+        if (chunk.works.isNotEmpty) {
+          chunkChanges += await _applyIncomingWorks(
+            chunk.works,
+            workItemByKey: workItemByKey,
+            touchedItemIds: chunkTouchedIds,
+          );
+        }
+        if (chunk.files.isNotEmpty) {
+          chunkChanges += await _applyIncomingFiles(
+            chunk.files,
+            workItemByKey: workItemByKey,
+            touchedItemIds: chunkTouchedIds,
+            rowIdBySyncFileId: rowIdBySyncFileId,
+          );
+        }
+        await _restoreTouchedRootItems(chunkTouchedIds);
+      });
+      changes += chunkChanges;
+      processedEntities += chunk.works.length + chunk.files.length;
+      onProgress?.call(processedEntities, totalEntities);
+      if (chunkChanges > 0) {
+        await onChunkApplied?.call();
+      }
+      if (i + 1 < stage3Chunks.length) {
+        await Future<void>.delayed(Duration.zero);
+      }
+    }
+
+    // Finalization: prune orphans on the final page and advance cloud cursor after all chunks commit.
+    if ((isFinalPage && changes > 0) || updateCloudCursor) {
+      await db.transaction(() async {
+        if (isFinalPage && changes > 0) {
+          await repo.pruneEmptyTitles();
+        }
+        if (updateCloudCursor) {
+          await syncStore.saveLastPullSeq(nextSeq);
+        }
+      });
     }
 
     return changes;
@@ -1233,9 +1464,10 @@ class SyncMapper {
     List<Map<String, dynamic>> rawFiles, {
     required Map<String, int> workItemByKey,
     required Set<int> touchedItemIds,
+    Map<String, int>? rowIdBySyncFileId,
   }) async {
     var count = 0;
-    final rowIdBySyncFileId = <String, int>{};
+    final fileRowIds = rowIdBySyncFileId ?? <String, int>{};
     final runningScanIdByMount = <String, int>{};
 
     Future<int> activeScanIdFor(String mountId) async {
@@ -1267,7 +1499,7 @@ class SyncMapper {
       );
       final fileId = f['file_id'] as String?;
       if (rowId != null && fileId != null) {
-        rowIdBySyncFileId[fileId] = rowId;
+        fileRowIds[fileId] = rowId;
       }
     }
 
@@ -1275,7 +1507,7 @@ class SyncMapper {
       count++;
       final mountId = f['source_id'] as String?;
       final ownerSyncId = f['owner_file_id'] as String?;
-      int? ownerRowId = ownerSyncId == null ? null : rowIdBySyncFileId[ownerSyncId];
+      int? ownerRowId = ownerSyncId == null ? null : fileRowIds[ownerSyncId];
       if (ownerRowId == null && ownerSyncId != null) {
         if (mountId != null) {
           final candidates = await (db.select(

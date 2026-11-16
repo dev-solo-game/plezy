@@ -608,7 +608,11 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
     // visuals need.
     setStateIfMounted(() {});
 
-    if (event.changeType == WatchStateChangeType.progressUpdate && event.isNowWatched != true) return;
+    if (event.changeType == WatchStateChangeType.progressUpdate &&
+        event.isNowWatched != true &&
+        (!_metadata.isShow || event.itemId == _onDeckEpisode?.id)) {
+      return;
+    }
 
     if (widget.isOffline) {
       if (_metadata.isShow) {
@@ -3008,7 +3012,10 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
               context,
               metadata: episode,
               isOffline: widget.isOffline,
-              onRefresh: () => unawaited(_refreshItemInPlace(episode)),
+              onRefresh: () {
+                unawaited(_refreshItemInPlace(episode));
+                if (_metadata.isShow) unawaited(_refreshWatchState());
+              },
               isLaunchCurrent: () => _canUseDetail,
             );
           },
@@ -3351,7 +3358,18 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
     // now, and _freshAll reads providers through State.context.
     if (!_canUseDetail) return;
     if (_onDeckEpisode != null) return;
-    final next = firstUnwatchedEpisode(_freshAll(_episodes));
+    final freshEpisodes = _freshAll(_episodes);
+    MediaItem? next;
+    final targetId = widget.initialEpisodeId;
+    if (targetId != null) {
+      for (final episode in freshEpisodes) {
+        if (episode.id == targetId && episode.isUnwatchedOrInProgress) {
+          next = episode;
+          break;
+        }
+      }
+    }
+    next ??= firstUnwatchedEpisode(freshEpisodes);
     if (next == null) return;
     setStateIfMounted(() {
       _onDeckEpisode = next;
@@ -4543,7 +4561,10 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
         context,
         metadata: item,
         isOffline: widget.isOffline,
-        onRefresh: () => unawaited(_refreshItemInPlace(item)),
+        onRefresh: () {
+          unawaited(_refreshItemInPlace(item));
+          if (_metadata.isShow) unawaited(_refreshWatchState());
+        },
         isLaunchCurrent: () => _canUseDetail,
       );
       return true;

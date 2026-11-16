@@ -81,3 +81,39 @@ String? mergeQuarkCheckpoint(String? local, String? remote) {
 
   return '$localRoot:${math.max(localWatermark, remoteWatermark)}';
 }
+
+/// Active synchronization phase reported by [LanPeerSyncService] and [SyncAndScanCoordinator].
+enum SyncPhase { idle, connecting, pulling, applying, pushing, probingMounts }
+
+/// Immutable progress snapshot for synchronization across LAN P2P and Cloud Sync.
+class SyncProgress {
+  const SyncProgress({
+    this.phase = SyncPhase.idle,
+    this.processed = 0,
+    this.total = 0,
+    this.peerName,
+  });
+
+  static const SyncProgress idle = SyncProgress();
+
+  final SyncPhase phase;
+  final int processed;
+  final int total;
+  final String? peerName;
+
+  bool get isActive => phase != SyncPhase.idle;
+
+  double? get fraction => (total > 0 && processed >= 0) ? (processed / total).clamp(0.0, 1.0) : null;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is SyncProgress &&
+          other.phase == phase &&
+          other.processed == processed &&
+          other.total == total &&
+          other.peerName == peerName;
+
+  @override
+  int get hashCode => Object.hash(phase, processed, total, peerName);
+}

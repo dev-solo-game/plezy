@@ -11,6 +11,7 @@ import '../../utils/udp_broadcast_sockets.dart';
 import 'sync_crypto.dart';
 import 'sync_local_store.dart';
 import 'sync_mapper.dart';
+import 'sync_models.dart';
 
 class LanDiscoveredPeer {
   const LanDiscoveredPeer({
@@ -73,6 +74,7 @@ class LanPeerSyncService extends ChangeNotifier {
   static const Duration _broadcastInterval = Duration(seconds: 3);
   static const Duration _peerStaleTimeout = Duration(seconds: 15);
   static const Duration _hmacWindow = Duration(minutes: 5);
+  static const Duration liveRefreshInterval = Duration(milliseconds: 1200);
 
   final SyncLocalStore syncStore;
   final SyncMapper mapper;
@@ -97,19 +99,29 @@ class LanPeerSyncService extends ChangeNotifier {
   final Map<String, LanPairRequest> _incomingRequests = {};
   final Map<String, LanDiscoveredPeer> _outgoingPairTargets = {};
   final Map<String, Future<void>> _activePeerSyncs = {};
+  final Map<String, DateTime> _dismissedIncomingRequestAt = {};
+  Set<String> _promptedPeerIds = {};
   List<LanTrustedPeer> _trustedPeers = [];
 
   bool _running = false;
   bool _disposed = false;
   bool _syncing = false;
+  SyncProgress _progress = SyncProgress.idle;
   String? _lastError;
 
   bool get isRunning => _running;
-  bool get isSyncing => _syncing;
+  bool get isSyncing => _syncing || _activePeerSyncs.isNotEmpty || _progress.isActive;
+  SyncProgress get progress => _progress;
   int? get listeningPort => _httpServer?.port;
   String? get publicKeyBase64 => _pubKeyB64;
   String? get deviceId => _deviceId;
   String? get lastError => _lastError;
+
+  void _setProgress(SyncProgress next) {
+    if (_disposed || _progress == next) return;
+    _progress = next;
+    notifyListeners();
+  }
 
   String get deviceName {
     final saved = _deviceName?.trim();
@@ -124,6 +136,55 @@ class LanPeerSyncService extends ChangeNotifier {
   List<LanDiscoveredPeer> get discoveredPeers => List.unmodifiable(_discovered.values);
   List<LanPairRequest> get incomingPairRequests => List.unmodifiable(_incomingRequests.values);
   List<LanTrustedPeer> get trustedPeers => List.unmodifiable(_trustedPeers);
+  Set<String> get promptedPeerIds => Set.unmodifiable(_promptedPeerIds);
+
+  bool isPeerTrusted(String deviceId) => _trustedPeers.any((t) => t.deviceId == deviceId);
+
+  bool shouldAutoPromptPeer(String deviceId) {
+    return _running &&
+        !_disposed &&
+        deviceId.isNotEmpty &&
+        deviceId != _deviceId &&
+        !isPeerTrusted(deviceId) &&
+        !_promptedPeerIds.contains(deviceId) &&
+        !_outgoingPairTargets.containsKey(deviceId);
+  }
+
+  List<LanDiscoveredPeer> get unpromptedDiscoveredPeers => [
+    for (final peer in _discovered.values)
+      if (shouldAutoPromptPeer(peer.deviceId)) peer,
+  ];
+
+  List<LanPairRequest> get unpromptedIncomingRequests => [
+    for (final req in _incomingRequests.values)
+      if (!isPeerTrusted(req.deviceId) &&
+          (_dismissedIncomingRequestAt[req.deviceId] == null ||
+              req.requestedAt.isAfter(_dismissedIncomingRequestAt[req.deviceId]!)))
+        req,
+  ];
+
+  Future<void> _recordPromptedPeer(String deviceId) async {
+    if (deviceId.isEmpty) return;
+    if (_promptedPeerIds.add(deviceId)) {
+      await syncStore.savePromptedLanPeerIds(_promptedPeerIds);
+    }
+  }
+
+  /// Persists that the one-time discovery popup has already been presented for [deviceId].
+  Future<void> markPeerAutoPrompted(String deviceId) async {
+    if (deviceId.isEmpty) return;
+    if (_promptedPeerIds.add(deviceId)) {
+      await syncStore.savePromptedLanPeerIds(_promptedPeerIds);
+      if (!_disposed) notifyListeners();
+    }
+  }
+
+  /// Suppresses re-popping the global modal for [req] while leaving [req] in
+  /// [incomingPairRequests] so the user can still accept/reject it in LAN Devices.
+  void dismissIncomingRequestPrompt(LanPairRequest req) {
+    _dismissedIncomingRequestAt[req.deviceId] = req.requestedAt;
+    if (!_disposed) notifyListeners();
+  }
 
   Future<void> start({int bindHttpPort = 0}) async {
     if (_running || _disposed) return;
@@ -134,6 +195,16 @@ class LanPeerSyncService extends ChangeNotifier {
     _privKeyB64 = keyPair.privateKeyBase64;
     _pubKeyB64 = keyPair.publicKeyBase64;
     _trustedPeers = List<LanTrustedPeer>.from(await syncStore.loadTrustedLanPeers());
+    _promptedPeerIds = Set<String>.from(await syncStore.loadPromptedLanPeerIds());
+    var promptedDirty = false;
+    for (final peer in _trustedPeers) {
+      if (_promptedPeerIds.add(peer.deviceId)) {
+        promptedDirty = true;
+      }
+    }
+    if (promptedDirty) {
+      await syncStore.savePromptedLanPeerIds(_promptedPeerIds);
+    }
 
     _httpClient = http.Client();
     _httpServer = await HttpServer.bind(InternetAddress.anyIPv4, bindHttpPort);
@@ -168,6 +239,7 @@ class LanPeerSyncService extends ChangeNotifier {
     _discovered.clear();
     _incomingRequests.clear();
     _outgoingPairTargets.clear();
+    _dismissedIncomingRequestAt.clear();
     if (!_disposed) notifyListeners();
   }
 
@@ -262,7 +334,9 @@ class LanPeerSyncService extends ChangeNotifier {
         unawaited(syncStore.saveTrustedLanPeers(_trustedPeers));
       }
       if (peer.revision > trusted.lastSyncedRevision) {
-        unawaited(syncWithPeer(_trustedPeers[idx], hostOverride: peer.host, portOverride: peer.httpPort));
+        unawaited(
+          syncWithPeer(_trustedPeers[idx], hostOverride: peer.host, portOverride: peer.httpPort).catchError((Object _) {}),
+        );
       }
     }
     notifyListeners();
@@ -270,6 +344,12 @@ class LanPeerSyncService extends ChangeNotifier {
 
   Future<void> requestPairWithPeer(LanDiscoveredPeer peer) async {
     if (!_running || _httpServer == null) throw StateError('LAN P2P service is not running');
+    await _recordPromptedPeer(peer.deviceId);
+    final existingIncoming = _incomingRequests[peer.deviceId];
+    if (existingIncoming != null && existingIncoming.pubKeyBase64 == peer.pubKeyBase64) {
+      await acceptPairRequest(existingIncoming);
+      return;
+    }
     _outgoingPairTargets[peer.deviceId] = peer;
     final uri = Uri.parse('http://${peer.host}:${peer.httpPort}/lan/v1/pair/request');
     final resp = await _httpClient!
@@ -314,7 +394,10 @@ class LanPeerSyncService extends ChangeNotifier {
     _trustedPeers.removeWhere((p) => p.deviceId == trusted.deviceId);
     _trustedPeers.add(trusted);
     _incomingRequests.remove(req.deviceId);
+    _outgoingPairTargets.remove(req.deviceId);
+    _dismissedIncomingRequestAt.remove(req.deviceId);
     await syncStore.saveTrustedLanPeers(_trustedPeers);
+    await _recordPromptedPeer(req.deviceId);
 
     final ts = clock.now().millisecondsSinceEpoch;
     final mac = SyncCrypto.hmacSha256Base64(key: sharedKey, message: 'PAIR:${req.deviceId}:$_deviceId:$ts');
@@ -342,6 +425,7 @@ class LanPeerSyncService extends ChangeNotifier {
   }
 
   void rejectPairRequest(String deviceId) {
+    _dismissedIncomingRequestAt.remove(deviceId);
     if (_incomingRequests.remove(deviceId) != null && !_disposed) {
       notifyListeners();
     }
@@ -403,6 +487,9 @@ class LanPeerSyncService extends ChangeNotifier {
       _lastError = '$e';
     } finally {
       _syncing = false;
+      if (_activePeerSyncs.isEmpty) {
+        _progress = SyncProgress.idle;
+      }
       if (!_disposed) notifyListeners();
     }
   }
@@ -417,63 +504,89 @@ class LanPeerSyncService extends ChangeNotifier {
     final active = _activePeerSyncs[peer.deviceId];
     if (active != null) return active;
 
+    final host = hostOverride ?? _discovered[peer.deviceId]?.host ?? peer.lastHost;
+    final port = portOverride ?? _discovered[peer.deviceId]?.httpPort ?? peer.lastPort;
+    if (host == null || port == null || port <= 0) return;
+
     final run = () async {
-      final host = hostOverride ?? _discovered[peer.deviceId]?.host ?? peer.lastHost;
-      final port = portOverride ?? _discovered[peer.deviceId]?.httpPort ?? peer.lastPort;
-      if (host == null || port == null || port <= 0) return;
-
-      final ts = clock.now().millisecondsSinceEpoch;
-      final path = '/lan/v1/sync/snapshot';
-      final sig = SyncCrypto.hmacSha256Base64(key: peer.sharedKey, message: 'GET:$path:$ts');
-      final resp = await _httpClient!
-          .get(
-            Uri.parse('http://$host:$port$path'),
-            headers: {
-              'Accept-Encoding': 'gzip',
-              'X-Plezy-Device': _deviceId!,
-              'X-Plezy-Timestamp': '$ts',
-              'X-Plezy-Signature': sig,
-            },
-          )
-          .timeout(const Duration(seconds: 10));
-      if (resp.statusCode != HttpStatus.ok) {
-        throw HttpException('LAN snapshot failed (${resp.statusCode})');
-      }
-
-      final payload = jsonDecode(utf8.decode(resp.bodyBytes)) as Map<String, dynamic>;
-      final peerRev = (payload['revision'] as num?)?.toInt() ?? 0;
-      final bundle = payload['bundle'] as Map<String, dynamic>? ?? const {};
-
-      final touched = await mapper.applyPullBatch(
-        masterKey: peer.sharedKey,
-        sources: _listOfMaps(bundle['sources']),
-        works: _listOfMaps(bundle['works']),
-        files: _listOfMaps(bundle['files']),
-        workPrefs: _listOfMaps(bundle['work_prefs']),
-        watchProgress: _listOfMaps(bundle['watch_progress']),
-        userSettings: _mapOf(bundle['user_settings']),
-        nextSeq: 0,
-        isFinalPage: true,
-        updateCloudCursor: false,
-        deterministicP2pSourceTieBreak: true,
-      );
-
-      final idx = _trustedPeers.indexWhere((p) => p.deviceId == peer.deviceId);
-      if (idx >= 0 && peerRev > _trustedPeers[idx].lastSyncedRevision) {
-        _trustedPeers[idx] = _trustedPeers[idx].copyWith(lastSyncedRevision: peerRev, lastHost: host, lastPort: port);
-        await syncStore.saveTrustedLanPeers(_trustedPeers);
-      }
-
-      if (touched > 0) {
-        onLibraryChanged?.call();
-      }
-      if (notifyBack) {
-        final myRev = await syncStore.getLocalLanRevision();
-        if (myRev > 0) {
-          await _postNotify(peer, host: host, port: port, revision: myRev);
+      _lastError = null;
+      _setProgress(SyncProgress(phase: SyncPhase.pulling, peerName: peer.deviceName));
+      try {
+        final ts = clock.now().millisecondsSinceEpoch;
+        final path = '/lan/v1/sync/snapshot';
+        final sig = SyncCrypto.hmacSha256Base64(key: peer.sharedKey, message: 'GET:$path:$ts');
+        final resp = await _httpClient!
+            .get(
+              Uri.parse('http://$host:$port$path'),
+              headers: {
+                'Accept-Encoding': 'gzip',
+                'X-Plezy-Device': _deviceId!,
+                'X-Plezy-Timestamp': '$ts',
+                'X-Plezy-Signature': sig,
+              },
+            )
+            .timeout(const Duration(seconds: 10));
+        if (resp.statusCode != HttpStatus.ok) {
+          throw HttpException('LAN snapshot failed (${resp.statusCode})');
         }
+
+        final payload = jsonDecode(utf8.decode(resp.bodyBytes)) as Map<String, dynamic>;
+        final peerRev = (payload['revision'] as num?)?.toInt() ?? 0;
+        final bundle = payload['bundle'] as Map<String, dynamic>? ?? const {};
+
+        DateTime? lastLiveNotify;
+        void maybeNotifyLive({bool force = false}) {
+          final cb = onLibraryChanged;
+          if (cb == null || _disposed) return;
+          final now = clock.now();
+          if (force || lastLiveNotify == null || now.difference(lastLiveNotify!) >= liveRefreshInterval) {
+            lastLiveNotify = now;
+            cb();
+          }
+        }
+
+        final touched = await mapper.applyPullBatch(
+          masterKey: peer.sharedKey,
+          sources: _listOfMaps(bundle['sources']),
+          works: _listOfMaps(bundle['works']),
+          files: _listOfMaps(bundle['files']),
+          workPrefs: _listOfMaps(bundle['work_prefs']),
+          watchProgress: _listOfMaps(bundle['watch_progress']),
+          userSettings: _mapOf(bundle['user_settings']),
+          nextSeq: 0,
+          isFinalPage: true,
+          updateCloudCursor: false,
+          deterministicP2pSourceTieBreak: true,
+          onProgress: (done, total) => _setProgress(
+            SyncProgress(
+              phase: SyncPhase.applying,
+              processed: done,
+              total: total,
+              peerName: peer.deviceName,
+            ),
+          ),
+          onChunkApplied: () => maybeNotifyLive(),
+        );
+
+        final idx = _trustedPeers.indexWhere((p) => p.deviceId == peer.deviceId);
+        if (idx >= 0 && peerRev > _trustedPeers[idx].lastSyncedRevision) {
+          _trustedPeers[idx] = _trustedPeers[idx].copyWith(lastSyncedRevision: peerRev, lastHost: host, lastPort: port);
+          await syncStore.saveTrustedLanPeers(_trustedPeers);
+        }
+
+        if (touched > 0) {
+          maybeNotifyLive(force: true);
+        }
+        if (notifyBack) {
+          final myRev = await syncStore.getLocalLanRevision();
+          if (myRev > 0) {
+            await _postNotify(peer, host: host, port: port, revision: myRev);
+          }
+        }
+      } catch (e) {
+        _lastError = '$e';
+        rethrow;
       }
-      if (!_disposed) notifyListeners();
     }();
 
     _activePeerSyncs[peer.deviceId] = run;
@@ -481,6 +594,10 @@ class LanPeerSyncService extends ChangeNotifier {
       await run;
     } finally {
       unawaited(_activePeerSyncs.remove(peer.deviceId));
+      if (_activePeerSyncs.isEmpty) {
+        _progress = SyncProgress.idle;
+      }
+      if (!_disposed) notifyListeners();
     }
   }
 
@@ -532,7 +649,14 @@ class LanPeerSyncService extends ChangeNotifier {
         final remoteHost = req.connectionInfo?.remoteAddress.address ?? verifiedPeer.lastHost;
         final remotePort = (body['http_port'] as num?)?.toInt() ?? verifiedPeer.lastPort;
         await _writeJson(req.response, HttpStatus.ok, {'ok': true});
-        unawaited(syncWithPeer(verifiedPeer, hostOverride: remoteHost, portOverride: remotePort, notifyBack: false));
+        unawaited(
+          syncWithPeer(
+            verifiedPeer,
+            hostOverride: remoteHost,
+            portOverride: remotePort,
+            notifyBack: false,
+          ).catchError((Object _) {}),
+        );
         return;
       }
 
@@ -566,8 +690,10 @@ class LanPeerSyncService extends ChangeNotifier {
       return;
     }
 
-    // Auto-confirm only if already trusted with the exact same X25519 public key.
+    // Auto-confirm if already trusted or mutually initiating pairing with the exact same X25519 public key.
     final already = _trustedPeers.where((p) => p.deviceId == peerId && p.pubKeyBase64 == peerPub).firstOrNull;
+    final mutualTarget = _outgoingPairTargets[peerId];
+    final isMutual = mutualTarget != null && mutualTarget.pubKeyBase64 == peerPub;
     final code = SyncCrypto.computePairingCode(_pubKeyB64!, peerPub);
     final pairReq = LanPairRequest(
       deviceId: peerId,
@@ -580,9 +706,9 @@ class LanPeerSyncService extends ChangeNotifier {
       requestedAt: clock.now(),
     );
 
-    if (already != null) {
+    if (already != null || isMutual) {
       await _writeJson(req.response, HttpStatus.ok, {'status': 'pending', 'pairing_code': code});
-      unawaited(acceptPairRequest(pairReq));
+      unawaited(acceptPairRequest(pairReq).catchError((Object _) {}));
       return;
     }
 
@@ -602,10 +728,13 @@ class LanPeerSyncService extends ChangeNotifier {
     final host = req.connectionInfo?.remoteAddress.address;
 
     final pending = peerId == null ? null : _outgoingPairTargets[peerId];
-    if (pending == null ||
+    final existingTrusted = (peerId == null || peerPub == null)
+        ? null
+        : _trustedPeers.where((p) => p.deviceId == peerId && p.pubKeyBase64 == peerPub).firstOrNull;
+    if ((pending == null && existingTrusted == null) ||
         peerId == null ||
         peerPub == null ||
-        peerPub != pending.pubKeyBase64 ||
+        (pending != null && peerPub != pending.pubKeyBase64) ||
         _privKeyB64 == null ||
         _pubKeyB64 == null ||
         (clock.now().millisecondsSinceEpoch - ts).abs() > _hmacWindow.inMilliseconds) {
@@ -624,6 +753,11 @@ class LanPeerSyncService extends ChangeNotifier {
       return;
     }
 
+    if (pending == null && existingTrusted != null) {
+      await _writeJson(req.response, HttpStatus.ok, {'status': 'paired'});
+      return;
+    }
+
     final trusted = LanTrustedPeer(
       deviceId: peerId,
       deviceName: peerName,
@@ -631,17 +765,20 @@ class LanPeerSyncService extends ChangeNotifier {
       sharedKeyBase64: base64Encode(sharedKey),
       lastSyncedRevision: 0,
       pairedAtMs: clock.now().millisecondsSinceEpoch,
-      lastHost: host ?? pending.host,
-      lastPort: httpPort ?? pending.httpPort,
+      lastHost: host ?? pending!.host,
+      lastPort: httpPort ?? pending!.httpPort,
     );
     _outgoingPairTargets.remove(peerId);
+    _incomingRequests.remove(peerId);
+    _dismissedIncomingRequestAt.remove(peerId);
     _trustedPeers.removeWhere((p) => p.deviceId == peerId);
     _trustedPeers.add(trusted);
     await syncStore.saveTrustedLanPeers(_trustedPeers);
+    await _recordPromptedPeer(peerId);
 
     await _writeJson(req.response, HttpStatus.ok, {'status': 'paired'});
     if (!_disposed) notifyListeners();
-    unawaited(syncWithPeer(trusted, notifyBack: false));
+    unawaited(syncWithPeer(trusted, notifyBack: false).catchError((Object _) {}));
   }
 
   LanTrustedPeer? _authenticateRequest(HttpRequest req) {
@@ -696,16 +833,28 @@ class LanPeerSyncService extends ChangeNotifier {
     List<LanDiscoveredPeer> discovered = const [],
     List<LanPairRequest> incomingRequests = const [],
     List<LanTrustedPeer> trusted = const [],
+    Set<String>? promptedPeerIds,
+    SyncProgress? progress,
+    String? lastError,
+    bool clearError = false,
   }) {
     _running = running;
     if (deviceName != null) _deviceName = deviceName;
     if (publicKeyBase64 != null) _pubKeyB64 = publicKeyBase64;
+    if (promptedPeerIds != null) _promptedPeerIds = Set<String>.from(promptedPeerIds);
+    if (progress != null) _progress = progress;
+    if (clearError) {
+      _lastError = null;
+    } else if (lastError != null) {
+      _lastError = lastError;
+    }
     _discovered
       ..clear()
       ..addEntries(discovered.map((p) => MapEntry(p.deviceId, p)));
     _incomingRequests
       ..clear()
       ..addEntries(incomingRequests.map((r) => MapEntry(r.deviceId, r)));
+    _dismissedIncomingRequestAt.removeWhere((id, _) => !_incomingRequests.containsKey(id));
     _trustedPeers = List<LanTrustedPeer>.from(trusted);
     if (!_disposed) notifyListeners();
   }

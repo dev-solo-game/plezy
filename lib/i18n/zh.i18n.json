@@ -2828,6 +2828,23 @@
     "lanDiscoveryStopped": "局域网广播未开启",
     "lanPeerOnline": "在线",
     "switchSyncMode": "切换同步模式",
-    "userMenuTooltip": "同步与设备菜单"
+    "userMenuTooltip": "同步与设备菜单",
+    "progressLan": "局域网同步",
+    "progressLanWithPeer": "局域网同步 (${peer})",
+    "progressCloud": "云端同步",
+    "phaseFetching": "正在接收数据…",
+    "phaseApplying": "正在更新媒体库…",
+    "phaseApplyingProgress": "正在更新 ${done}/${total}",
+    "phaseApplyingCount": "已更新 ${count} 项",
+    "phasePushing": "正在上传变更…",
+    "phasePushingProgress": "正在上传 ${done}/${total}",
+    "phaseProbingMounts": "正在校验存储源…",
+    "lanPopupDiscoverTitle": "发现附近局域网设备",
+    "lanPopupDiscoverBody": "是否信任「${device}」(${platform})，在同一 Wi-Fi 下自动同步媒体库与观看进度？",
+    "lanPopupRequestTitle": "收到设备信任请求",
+    "lanPopupRequestBody": "「${device}」(${platform}) 请求与本机建立信任并同步数据。",
+    "lanPopupWaitingBody": "已发送请求，正在等待「${device}」确认…",
+    "lanPopupCancelCountdown": "取消 (${seconds}s)",
+    "lanPopupLaterHint": "关闭后仍可随时在「局域网设备」列表中手动信任。"
   }
 }

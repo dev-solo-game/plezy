@@ -437,12 +437,58 @@ class LibraryRepository {
     return rows.map(_toView).toList();
   }
 
-  /// The episode to play next for a show: the first one not yet watched.
+  /// The episode to play next for a show:
+  /// 1. The most recently played in-progress episode (`positionMs > 0 && !isWatched`).
+  /// 2. The first unwatched episode after the most recently watched/played episode.
+  /// 3. The first unwatched episode from the beginning of the show.
   Future<LibraryItemView?> nextUnwatchedEpisode(int showId) async {
-    for (final episode in await episodesOfShow(showId)) {
+    final episodes = await episodesOfShow(showId);
+    if (episodes.isEmpty) return null;
+
+    // 1. Prefer an in-progress episode (most recently played wins).
+    LibraryItemView? latestInProgress;
+    for (final episode in episodes) {
+      if (!episode.isWatched && (episode.state?.positionMs ?? 0) > 0) {
+        if (latestInProgress == null || _isMoreRecentState(episode.state!, latestInProgress.state!)) {
+          latestInProgress = episode;
+        }
+      }
+    }
+    if (latestInProgress != null) return latestInProgress;
+
+    // 2. If any episode has been watched/played, anchor on the most recently
+    // played watched episode (breaking ties by later position in watch order)
+    // and return the first unwatched episode after it.
+    int? anchorIndex;
+    LibraryUserStateRow? anchorState;
+    for (var i = 0; i < episodes.length; i++) {
+      final ep = episodes[i];
+      final st = ep.state;
+      if (ep.isWatched || (st?.playCount ?? 0) > 0 || (st?.lastPlayedAt ?? 0) > 0) {
+        if (anchorIndex == null || (st != null && (anchorState == null || _isMoreRecentState(st, anchorState)))) {
+          anchorIndex = i;
+          anchorState = st;
+        }
+      }
+    }
+    if (anchorIndex != null) {
+      for (var i = anchorIndex + 1; i < episodes.length; i++) {
+        if (!episodes[i].isWatched) return episodes[i];
+      }
+    }
+
+    // 3. Fallback: first unwatched episode from the start, or null if all watched.
+    for (final episode in episodes) {
       if (!episode.isWatched) return episode;
     }
     return null;
+  }
+
+  static bool _isMoreRecentState(LibraryUserStateRow candidate, LibraryUserStateRow current) {
+    final candPlayed = candidate.lastPlayedAt ?? 0;
+    final currPlayed = current.lastPlayedAt ?? 0;
+    if (candPlayed != currPlayed) return candPlayed > currPlayed;
+    return candidate.updatedAt >= current.updatedAt;
   }
 
   /// Titles still waiting for the scraper to place them are on no shelf.

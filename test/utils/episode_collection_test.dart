@@ -34,6 +34,7 @@ MediaItem _episode(
   int? viewCount,
   int? viewOffsetMs,
   int? durationMs,
+  int? lastViewedAt,
   String? originallyAvailableAt,
 }) => testMediaItem(
   id: id,
@@ -48,6 +49,7 @@ MediaItem _episode(
   viewCount: viewCount,
   viewOffsetMs: viewOffsetMs,
   durationMs: durationMs,
+  lastViewedAt: lastViewedAt,
   originallyAvailableAt: originallyAvailableAt,
 );
 
@@ -166,6 +168,14 @@ void main() {
     expect(firstUnwatchedSeasonIndex([special, season1, season2, season3]), 2);
   });
 
+  test('firstUnwatchedSeasonIndex prefers a partially-watched later season over an untouched earlier season', () {
+    final season1 = _season('season-1', index: 1, leafCount: 5, viewedLeafCount: 0); // untouched
+    final season2 = _season('season-2', index: 2, leafCount: 5, viewedLeafCount: 2); // partially watched
+    final season3 = _season('season-3', index: 3, leafCount: 5, viewedLeafCount: 0);
+
+    expect(firstUnwatchedSeasonIndex([season1, season2, season3]), 1);
+  });
+
   test('firstUnwatchedSeasonIndex uses direct episode count when the leaf total is missing', () {
     final season = _season('season-1', childCount: 5, viewedLeafCount: 2);
 
@@ -225,6 +235,23 @@ void main() {
       firstUnwatchedEpisode([_episode('e1', index: 1, viewCount: 1), _episode('e2', index: 2, viewCount: 2)]),
       isNull,
     );
+  });
+
+  test('firstUnwatchedEpisode handles skipped episodes (in-progress and watched)', () {
+    final e1 = _episode('e1', index: 1);
+    final e2InProgress = _episode('e2', index: 2, viewOffsetMs: 500, durationMs: 1000, lastViewedAt: 100);
+    final e3Unwatched = _episode('e3', index: 3);
+
+    // Skipped e1, watching e2 -> returns e2.
+    expect(firstUnwatchedEpisode([e1, e2InProgress, e3Unwatched]), same(e2InProgress));
+
+    // Multiple in-progress -> returns the most recently viewed.
+    final e3InProgressNewer = _episode('e3', index: 3, viewOffsetMs: 200, durationMs: 1000, lastViewedAt: 200);
+    expect(firstUnwatchedEpisode([e1, e2InProgress, e3InProgressNewer]), same(e3InProgressNewer));
+
+    // Skipped e1, finished e2 -> returns e3.
+    final e2Watched = _episode('e2', index: 2, viewCount: 1, lastViewedAt: 150);
+    expect(firstUnwatchedEpisode([e1, e2Watched, e3Unwatched]), same(e3Unwatched));
   });
 
   test('sortEpisodesByWatchOrder interleaves Specials into aired order by air date', () {

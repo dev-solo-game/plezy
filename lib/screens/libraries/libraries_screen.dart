@@ -28,6 +28,7 @@ import '../../widgets/app_menu.dart';
 import '../../widgets/desktop_app_bar.dart';
 import '../../widgets/focusable_tab_chip.dart';
 import '../../widgets/library_management_sheet.dart';
+import '../../widgets/library_status_indicator.dart';
 import '../../services/media_list_playback_launcher.dart';
 import '../../services/storage_service.dart';
 import '../../mixins/refreshable.dart';
@@ -892,6 +893,12 @@ class _LibrariesScreenState extends State<LibrariesScreen>
       shadowColor: Colors.transparent,
       scrolledUnderElevation: 0,
       actions: [
+        Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 260),
+            child: const LibraryStatusIndicator(),
+          ),
+        ),
         FocusableActionBar(
           key: _actionBarKey,
           onNavigateLeft: () => getTabChipFocusNode(_visibleTabs.length - 1).requestFocus(),
@@ -923,6 +930,12 @@ class _LibrariesScreenState extends State<LibrariesScreen>
           scrolledUnderElevation: 0,
           title: _buildAppBarTitle(visibleLibraries, selectedLibrary, groupByServer: groupByServerSetting),
           actions: [
+            Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 260),
+                child: const LibraryStatusIndicator(),
+              ),
+            ),
             FocusableActionBar(
               key: _actionBarKey,
               onNavigateLeft: () => getTabChipFocusNode(_visibleTabs.length - 1).requestFocus(),

@@ -242,6 +242,44 @@ void main() {
       expect((await repo.getItem(show.show))!.watchedEpisodeCount, 0);
     });
 
+    test('nextUnwatchedEpisode prioritizes most recently played in-progress episode', () async {
+      final show = await addShow();
+      final e12 = show.episodes[1];
+      final e21 = show.episodes[2];
+
+      // Skip S1E1 and watch S1E2 halfway -> returns S1E2.
+      await timed(() => repo.setProgress(e12, positionMs: 60000, durationMs: 600000));
+      expect((await repo.nextUnwatchedEpisode(show.show))!.item.title, 'S1E2');
+
+      // Multiple in-progress episodes -> returns the most recently played one.
+      await timed(() => repo.setProgress(e21, positionMs: 30000, durationMs: 600000));
+      expect((await repo.nextUnwatchedEpisode(show.show))!.item.title, 'S2E1');
+
+      // Resuming S1E2 later makes it the most recently played in-progress episode.
+      await timed(() => repo.setProgress(e12, positionMs: 90000, durationMs: 600000));
+      expect((await repo.nextUnwatchedEpisode(show.show))!.item.title, 'S1E2');
+    });
+
+    test('nextUnwatchedEpisode follows the most recently watched episode when skipping earlier episodes', () async {
+      final show = await addShow();
+      final e12 = show.episodes[1];
+      final e21 = show.episodes[2];
+      final e22 = show.episodes[3];
+
+      // Skip S1E1 and finish S1E2 -> returns S2E1.
+      await timed(() => repo.setProgress(e12, positionMs: 590000, durationMs: 600000));
+      expect((await repo.nextUnwatchedEpisode(show.show))!.item.title, 'S2E1');
+
+      // Mark S2E1 watched too -> advances to S2E2.
+      await timed(() => repo.markWatched(e21, watched: true));
+      expect((await repo.nextUnwatchedEpisode(show.show))!.item.title, 'S2E2');
+
+      // Mark S0E1 and S2E2 watched while S1E1 is still unwatched -> falls back to S1E1.
+      await timed(() => repo.markWatched(show.special, watched: true));
+      await timed(() => repo.markWatched(e22, watched: true));
+      expect((await repo.nextUnwatchedEpisode(show.show))!.item.title, 'S1E1');
+    });
+
     test('deleting a show removes its seasons, episodes and their state', () async {
       final show = await addShow();
       await repo.setProgress(show.episodes.first, positionMs: 5, durationMs: 100);

@@ -97,6 +97,17 @@ class LibrariesProvider extends ChangeNotifier with DisposableChangeNotifierMixi
   /// push event first marks it.
   int libraryContentEpoch(String globalKey) => _contentEpochByGlobalKey[globalKey] ?? 0;
 
+  /// Marks every loaded library belonging to [serverId] stale so inactive
+  /// library tabs reload when next shown after a local scan or sync update.
+  void markServerLibrariesStale(String serverId) {
+    if (isDisposed) return;
+    for (final library in _libraries) {
+      if (library.serverId == serverId) {
+        _contentEpochByGlobalKey[library.globalKey] = (_contentEpochByGlobalKey[library.globalKey] ?? 0) + 1;
+      }
+    }
+  }
+
   void _onLibraryContentChanged(LibraryChangeEvent event) {
     if (isDisposed || !event.hasChanges) return;
     // Resolved once per event, not per library: the loop below is the only

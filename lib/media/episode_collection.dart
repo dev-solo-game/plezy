@@ -112,26 +112,85 @@ MediaItem? defaultPlaybackSeason(List<MediaItem> seasons) {
 }
 
 /// Index of the first season that still has unwatched episodes, preferring
-/// regular seasons over specials (mirrors [defaultPlaybackSeasonIndex]).
+/// partially-watched regular seasons or regular seasons following the most
+/// recently touched regular season before falling back to earlier regular
+/// seasons and finally Specials (mirrors [defaultPlaybackSeasonIndex]).
 /// Uses normalized aggregate state, so no episodes need to be fetched.
 /// Returns null when every season is fully watched or counts are unavailable.
 int? firstUnwatchedSeasonIndex(List<MediaItem> seasons) {
   int? firstSpecial;
+  int? firstUnwatchedRegular;
+  int? firstPartialRegular;
+  int? lastTouchedRegular;
+
   for (var i = 0; i < seasons.length; i++) {
     final season = seasons[i];
     if (season.kind != MediaKind.season) continue;
     if (season.leafWatchTotal == null) continue;
-    if (season.isWatched) continue;
-    if (!isSpecialSeasonNumber(season.index)) return i; // first regular season with unwatched
-    firstSpecial ??= i; // specials only count as a last resort
+    if (isSpecialSeasonNumber(season.index)) {
+      if (!season.isWatched) firstSpecial ??= i; // specials only count as a last resort
+      continue;
+    }
+    final hasWatchedAny = (season.viewedLeafCount ?? 0) > 0;
+    if (season.isWatched || hasWatchedAny) {
+      lastTouchedRegular = i;
+    }
+    if (!season.isWatched) {
+      firstUnwatchedRegular ??= i;
+      if (hasWatchedAny) firstPartialRegular ??= i;
+    }
   }
-  return firstSpecial;
+
+  if (firstPartialRegular != null) return firstPartialRegular;
+  if (lastTouchedRegular != null) {
+    for (var i = lastTouchedRegular + 1; i < seasons.length; i++) {
+      final season = seasons[i];
+      if (season.kind != MediaKind.season) continue;
+      if (season.leafWatchTotal == null) continue;
+      if (isSpecialSeasonNumber(season.index)) continue;
+      if (!season.isWatched) return i;
+    }
+  }
+  return firstUnwatchedRegular ?? firstSpecial;
 }
 
-/// First episode that is unwatched or still in progress, in list order.
-/// Same predicate as [_collectPlayable]'s `unwatchedOnly` filter, returned in
-/// the order the episodes are displayed so the highlight matches the list.
+/// Episode to play/resume next from [episodes] in display order:
+/// 1. The most recently viewed in-progress episode (`viewOffsetMs > 0`).
+/// 2. The first unwatched/in-progress episode after the most recently viewed
+///    watched episode.
+/// 3. The first unwatched/in-progress episode from the beginning of [episodes].
 MediaItem? firstUnwatchedEpisode(List<MediaItem> episodes) {
+  MediaItem? latestInProgress;
+  for (final episode in episodes) {
+    if (episode.kind != MediaKind.episode) continue;
+    if ((episode.viewOffsetMs ?? 0) <= 0) continue;
+    if (latestInProgress == null || (episode.lastViewedAt ?? 0) > (latestInProgress.lastViewedAt ?? 0)) {
+      latestInProgress = episode;
+    }
+  }
+  if (latestInProgress != null) return latestInProgress;
+
+  int? anchorIndex;
+  int anchorViewedAt = -1;
+  for (var i = 0; i < episodes.length; i++) {
+    final episode = episodes[i];
+    if (episode.kind != MediaKind.episode) continue;
+    if (episode.isWatched && (episode.viewOffsetMs ?? 0) == 0) {
+      final viewedAt = episode.lastViewedAt ?? 0;
+      if (anchorIndex == null || viewedAt >= anchorViewedAt) {
+        anchorIndex = i;
+        anchorViewedAt = viewedAt;
+      }
+    }
+  }
+  if (anchorIndex != null) {
+    for (var i = anchorIndex + 1; i < episodes.length; i++) {
+      final episode = episodes[i];
+      if (episode.kind != MediaKind.episode) continue;
+      if (episode.isUnwatchedOrInProgress) return episode;
+    }
+  }
+
   for (final episode in episodes) {
     if (episode.kind != MediaKind.episode) continue;
     if (!episode.isUnwatchedOrInProgress) continue;
