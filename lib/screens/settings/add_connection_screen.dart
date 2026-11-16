@@ -12,7 +12,6 @@ import '../../widgets/backend_badge.dart';
 import '../../widgets/focused_scroll_scaffold.dart';
 import '../profile/borrow_connection_screen.dart';
 import 'add_jellyfin_screen.dart';
-import 'add_plex_account_screen.dart';
 
 /// Picker shown when the user taps "Add connection".
 ///
@@ -36,13 +35,6 @@ class AddConnectionScreen extends StatelessWidget {
     const jellyfinDialect = MediaBrowserDialect.jellyfin;
     const embyDialect = MediaBrowserDialect.emby;
     final options = <_BackendOption>[
-      if (plexSupportEnabled && !mediaBrowserOnly)
-        _BackendOption(
-          backend: MediaBackend.plex,
-          title: t.addServer.signInWithPlexCard,
-          subtitle: scoped ? t.addServer.signInWithPlexCardSubtitleScoped : t.addServer.signInWithPlexCardSubtitle,
-          builder: (_) => AddPlexAccountScreen(targetProfile: targetProfile),
-        ),
       _BackendOption(
         backend: MediaBackend.jellyfin,
         title: t.addServer.connectToMediaBrowserCard(product: jellyfinDialect.productName),

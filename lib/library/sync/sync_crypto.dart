@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:math';
 import 'dart:typed_data';
 
+import 'package:crypto/crypto.dart' as crypto;
 import 'package:cryptography/cryptography.dart';
 
 class SyncKdfParams {
@@ -103,6 +104,56 @@ abstract final class SyncCrypto {
     final kp = await _x25519.newKeyPair();
     final pub = await kp.extractPublicKey();
     return SyncQrKeyPair(keyPair: kp, publicKeyBase64: base64Encode(pub.bytes));
+  }
+
+  static Future<({String privateKeyBase64, String publicKeyBase64})> generateLanIdentityKeyPair() async {
+    final kp = await _x25519.newKeyPair();
+    final priv = await kp.extractPrivateKeyBytes();
+    final pub = await kp.extractPublicKey();
+    return (privateKeyBase64: base64Encode(priv), publicKeyBase64: base64Encode(pub.bytes));
+  }
+
+  static Future<Uint8List> deriveLanSharedKey({
+    required String myPrivateKeyBase64,
+    required String myPublicKeyBase64,
+    required String peerPublicKeyBase64,
+  }) async {
+    final myPriv = SimpleKeyPairData(
+      base64Decode(myPrivateKeyBase64),
+      publicKey: SimplePublicKey(base64Decode(myPublicKeyBase64), type: KeyPairType.x25519),
+      type: KeyPairType.x25519,
+    );
+    final peerPub = SimplePublicKey(base64Decode(peerPublicKeyBase64), type: KeyPairType.x25519);
+    final shared = await _x25519.sharedSecretKey(keyPair: myPriv, remotePublicKey: peerPub);
+    final derived = await _hkdf.deriveKey(
+      secretKey: shared,
+      nonce: const [],
+      info: utf8.encode('plezy-lan-p2p-v1'),
+    );
+    return Uint8List.fromList(await derived.extractBytes());
+  }
+
+  static String computePairingCode(String pubKeyA, String pubKeyB) {
+    final ordered = [pubKeyA, pubKeyB]..sort();
+    final digest = crypto.sha256.convert(utf8.encode('${ordered.first}|${ordered.last}')).bytes;
+    final numeric = ((digest[0] << 8) | digest[1]) % 10000;
+    return numeric.toString().padLeft(4, '0');
+  }
+
+  static String hmacSha256Base64({required Uint8List key, required String message}) {
+    final digest = crypto.Hmac(crypto.sha256, key).convert(utf8.encode(message));
+    return base64Encode(digest.bytes);
+  }
+
+  static bool constantTimeEquals(String a, String b) {
+    final ba = utf8.encode(a);
+    final bb = utf8.encode(b);
+    if (ba.length != bb.length) return false;
+    var diff = 0;
+    for (var i = 0; i < ba.length; i++) {
+      diff |= ba[i] ^ bb[i];
+    }
+    return diff == 0;
   }
 
   static Future<String> sealMasterKeyForTv({

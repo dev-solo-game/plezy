@@ -48,18 +48,17 @@ class SyncMapper {
     StorageKind.local => mount.configString(MountKeys.rootPath) ?? '/',
   };
 
-  /// Enqueues [mount] (excluding [StorageKind.local]) into `SyncOutbox`.
-  Future<void> enqueueMount(
+  Future<Map<String, Object?>> _buildSourcePayload(
     StorageMount mount, {
-    required Uint8List masterKey,
+    required Uint8List encryptionKey,
+    required int ts,
     bool forceAuthOverride = false,
-    int? updatedAt,
   }) async {
-    if (mount.kind == StorageKind.local) return;
-    final ts = updatedAt ?? await syncStore.calibratedNowMs();
     final canonicalKey = DeterministicKeys.canonicalSourceKey(mount);
     final scanRow = await (db.select(db.libraryScanStates)..where((t) => t.mountId.equals(mount.id))).getSingleOrNull();
-    final encryptedAuth = mount.secrets.isEmpty ? '' : await SyncCrypto.encryptPayload(jsonEncode(mount.secrets), masterKey);
+    final encryptedAuth = mount.secrets.isEmpty
+        ? ''
+        : await SyncCrypto.encryptPayload(jsonEncode(mount.secrets), encryptionKey);
 
     var authUpdatedAt = await syncStore.getAuthUpdatedAt(mount.id);
     if (authUpdatedAt == 0 && mount.secrets.isNotEmpty) {
@@ -76,28 +75,47 @@ class SyncMapper {
           entry.key: entry.value,
     };
 
+    return {
+      'source_id': mount.id,
+      'canonical_key': canonicalKey,
+      'name': mount.displayName,
+      'protocol': mount.kind.id,
+      'is_lan_only': mount.configBool(MountKeys.isLanOnly),
+      'primary_url': _primaryUrlOf(mount),
+      'fallback_url': mount.configString(MountKeys.fallbackUrl),
+      'config_json': extraConfig,
+      'include_paths': mount.configStringList(MountKeys.includePaths),
+      'exclude_paths': mount.configStringList(MountKeys.excludePaths),
+      'encrypted_auth': encryptedAuth,
+      'auth_updated_at': authUpdatedAt,
+      if (forceAuthOverride) 'force_auth_override': true,
+      'quark_checkpoint': scanRow?.quarkCheckpoint,
+      'created_at': mount.createdAt?.millisecondsSinceEpoch ?? ts,
+      'client_updated_at': ts,
+      'is_deleted': false,
+    };
+  }
+
+  /// Enqueues [mount] (excluding [StorageKind.local]) into `SyncOutbox`.
+  Future<void> enqueueMount(
+    StorageMount mount, {
+    required Uint8List masterKey,
+    bool forceAuthOverride = false,
+    int? updatedAt,
+  }) async {
+    if (mount.kind == StorageKind.local) return;
+    final ts = updatedAt ?? await syncStore.calibratedNowMs();
+    final payload = await _buildSourcePayload(
+      mount,
+      encryptionKey: masterKey,
+      ts: ts,
+      forceAuthOverride: forceAuthOverride,
+    );
     await syncStore.enqueue(
       entityType: SyncLocalStore.typeSource,
       entityKey: mount.id,
       updatedAt: ts,
-      payload: {
-        'source_id': mount.id,
-        'canonical_key': canonicalKey,
-        'name': mount.displayName,
-        'protocol': mount.kind.id,
-        'is_lan_only': mount.configBool(MountKeys.isLanOnly),
-        'primary_url': _primaryUrlOf(mount),
-        'fallback_url': mount.configString(MountKeys.fallbackUrl),
-        'config_json': extraConfig,
-        'include_paths': mount.configStringList(MountKeys.includePaths),
-        'exclude_paths': mount.configStringList(MountKeys.excludePaths),
-        'encrypted_auth': encryptedAuth,
-        'auth_updated_at': authUpdatedAt,
-        if (forceAuthOverride) 'force_auth_override': true,
-        'quark_checkpoint': scanRow?.quarkCheckpoint,
-        'client_updated_at': ts,
-        'is_deleted': false,
-      },
+      payload: payload,
     );
   }
 
@@ -115,10 +133,16 @@ class SyncMapper {
     );
   }
 
-  /// Exports shared mounts, works, files, skip preferences, and watch progress
-  /// to `SyncOutbox` so a newly joined device receives a full zero-scan index.
-  Future<void> enqueueSharedCatalog({
-    required Uint8List masterKey,
+  Future<({
+    int ts,
+    List<Map<String, Object?>> sources,
+    List<Map<String, Object?>> works,
+    List<Map<String, Object?>> files,
+    List<Map<String, Object?>> workPrefs,
+    List<Map<String, Object?>> watchProgress,
+    Map<String, Object?> userSettings,
+  })> _collectCatalogBundle({
+    required Uint8List encryptionKey,
     Set<String>? mountIds,
     bool includeAllWorkStates = true,
   }) async {
@@ -128,17 +152,24 @@ class SyncMapper {
       for (final m in mounts)
         if (m.kind != StorageKind.local && (mountIds == null || mountIds.contains(m.id))) m,
     ];
+
+    final sources = <Map<String, Object?>>[];
     for (final mount in sharedMounts) {
-      await enqueueMount(mount, masterKey: masterKey, updatedAt: ts);
+      sources.add(await _buildSourcePayload(mount, encryptionKey: encryptionKey, ts: ts));
     }
+
+    final works = <Map<String, Object?>>[];
+    final outFiles = <Map<String, Object?>>[];
+    final workPrefs = <Map<String, Object?>>[];
+    final watchProgress = <Map<String, Object?>>[];
 
     final sharedIds = sharedMounts.map((m) => m.id).toSet();
     if (sharedIds.isNotEmpty) {
-      final files = await (db.select(
+      final dbFiles = await (db.select(
         db.libraryFiles,
       )..where((t) => t.mountId.isIn(sharedIds) & t.matchState.isNotValue(LibraryMatchStates.ignored))).get();
 
-      final filesById = <int, LibraryFileRow>{for (final f in files) f.id: f};
+      final filesById = <int, LibraryFileRow>{for (final f in dbFiles) f.id: f};
       final itemsCache = <int, LibraryItemRow>{};
       Future<LibraryItemRow?> tryLoadItem(int? id) async {
         if (id == null) return null;
@@ -149,29 +180,24 @@ class SyncMapper {
       }
 
       final exportedWorks = <String>{};
-      final fileKeyByRowId = <int, String>{};
-      for (final f in files) {
-        fileKeyByRowId[f.id] = DeterministicKeys.generateFileId(sourceId: f.mountId, mountRelativePath: f.path);
-      }
+      final fileKeyByRowId = <int, String>{
+        for (final f in dbFiles) f.id: DeterministicKeys.generateFileId(sourceId: f.mountId, mountRelativePath: f.path),
+      };
 
-      for (final file in files) {
+      for (final file in dbFiles) {
         if (file.role != LibraryFileRoles.video) continue;
         final item = await tryLoadItem(file.itemId);
         LibraryItemRow? workItem;
         if (item != null) {
           if (item.kind == LibraryKinds.movie) {
             workItem = item;
-          } else if (item.kind == LibraryKinds.episode) {
-            workItem = await tryLoadItem(item.showId ?? item.parentId);
-          } else if (item.kind == LibraryKinds.season) {
+          } else if (item.kind == LibraryKinds.episode || item.kind == LibraryKinds.season) {
             workItem = await tryLoadItem(item.showId ?? item.parentId);
           }
         }
 
         final String? workKey = await _resolveSyncWorkKey(workItem: workItem, repFile: file);
-        final workRank = workItem != null
-            ? MatchStatusRank.fromItem(workItem)
-            : MatchStatusRank.fromFile(file);
+        final workRank = workItem != null ? MatchStatusRank.fromItem(workItem) : MatchStatusRank.fromFile(file);
 
         if (workItem != null && workKey != null && exportedWorks.add(workKey)) {
           final genres = [for (final g in await repo.genresOf(workItem.id)) g.name];
@@ -186,133 +212,139 @@ class SyncMapper {
               },
           ];
           final (provider, extId) = _primaryProviderAndId(workItem);
-          await syncStore.enqueue(
-            entityType: SyncLocalStore.typeWork,
-            entityKey: workKey,
-            updatedAt: workItem.updatedAt > 0 ? workItem.updatedAt : ts,
-            payload: {
-              'work_key': workKey,
-              'kind': workItem.kind,
-              'library_type': workItem.libraryType,
-              'provider': provider ?? workItem.metadataSource,
-              'external_id': extId,
-              'match_status': workRank,
-              'metadata_json': {
-                'title': workItem.title,
-                'sort_title': workItem.sortTitle,
-                'original_title': workItem.originalTitle,
-                'aliases': workItem.aliases,
-                'year': workItem.year,
-                'release_date': workItem.releaseDate,
-                'summary': workItem.summary,
-                'tagline': workItem.tagline,
-                'content_rating': workItem.contentRating,
-                'studio': workItem.studio,
-                'rating': workItem.rating,
-                'runtime_ms': workItem.runtimeMs,
-                'tmdb_id': workItem.tmdbId,
-                'imdb_id': workItem.imdbId,
-                'tvdb_id': workItem.tvdbId,
-                'bangumi_id': workItem.bangumiId,
-                'douban_id': workItem.doubanId,
-                'poster_path': workItem.posterSource,
-                'backdrop_path': workItem.backdropSource,
-                'logo_path': workItem.logoSource,
-                'metadata_source': workItem.metadataSource,
-                'locked': workItem.locked,
-                'source_added_at': workItem.sourceAddedAt,
-                'genres': genres,
-                'credits': credits,
-              },
-              'client_updated_at': workItem.updatedAt > 0 ? workItem.updatedAt : ts,
-              'is_deleted': false,
+          final updatedAt = workItem.updatedAt > 0 ? workItem.updatedAt : ts;
+          works.add({
+            'work_key': workKey,
+            'kind': workItem.kind,
+            'library_type': workItem.libraryType,
+            'provider': provider ?? workItem.metadataSource,
+            'external_id': extId,
+            'match_status': workRank,
+            'metadata_json': {
+              'title': workItem.title,
+              'sort_title': workItem.sortTitle,
+              'original_title': workItem.originalTitle,
+              'aliases': workItem.aliases,
+              'year': workItem.year,
+              'release_date': workItem.releaseDate,
+              'summary': workItem.summary,
+              'tagline': workItem.tagline,
+              'content_rating': workItem.contentRating,
+              'studio': workItem.studio,
+              'rating': workItem.rating,
+              'runtime_ms': workItem.runtimeMs,
+              'tmdb_id': workItem.tmdbId,
+              'imdb_id': workItem.imdbId,
+              'tvdb_id': workItem.tvdbId,
+              'bangumi_id': workItem.bangumiId,
+              'douban_id': workItem.doubanId,
+              'poster_path': workItem.posterSource,
+              'backdrop_path': workItem.backdropSource,
+              'logo_path': workItem.logoSource,
+              'metadata_source': workItem.metadataSource,
+              'locked': workItem.locked,
+              'source_added_at': workItem.sourceAddedAt,
+              'genres': genres,
+              'credits': credits,
             },
-          );
+            'client_updated_at': updatedAt,
+            'is_deleted': false,
+          });
         }
 
         final fileId = fileKeyByRowId[file.id]!;
         final ep = item != null && item.kind == LibraryKinds.episode ? item : null;
-        await syncStore.enqueue(
-          entityType: SyncLocalStore.typeFile,
-          entityKey: fileId,
-          updatedAt: ts,
-          payload: {
-            'file_id': fileId,
-            'source_id': file.mountId,
-            'relative_path': DeterministicKeys.normalizeMountPath(file.path),
-            'remote_id': file.remoteId,
-            'role': file.role,
-            'owner_file_id': null,
-            'language': file.language,
-            'file_name': StoragePath.name(file.path),
-            'file_size': file.size ?? 0,
-            'file_mtime': file.modifiedAt ?? 0,
-            'file_created_at': file.sourceCreatedAt ?? 0,
-            'work_key': workKey,
-            'season_num': ep?.seasonNumber ?? -1,
-            'episode_num': ep?.episodeNumber ?? -1,
-            'match_status': MatchStatusRank.fromFile(file, item: workItem),
-            'version_label': file.versionLabel,
-            'parsed_json': file.parsed,
-            'media_spec_json': {
-              if (file.durationMs != null) 'duration_ms': file.durationMs,
-              if (file.container != null) 'container': file.container,
-              if (file.videoCodec != null) 'video_codec': file.videoCodec,
-              if (file.width != null) 'width': file.width,
-              if (file.height != null) 'height': file.height,
-              if (file.hdrFormat != null) 'hdr_format': file.hdrFormat,
-              if (ep != null) 'ep_title': ep.title,
-              if (ep?.summary != null) 'ep_overview': ep!.summary,
-              if (ep?.posterSource != null) 'ep_still_path': ep!.posterSource,
-              if (ep?.runtimeMs != null) 'ep_runtime_ms': ep!.runtimeMs,
-              if (ep?.metadataSource != null) 'ep_metadata_source': ep!.metadataSource,
-              if (ep?.scrapedAt != null) 'ep_scraped_at': ep!.scrapedAt,
-              if (ep?.releaseDate != null) 'ep_release_date': ep!.releaseDate,
-            },
-            'client_updated_at': ts,
-            'is_deleted': false,
+        outFiles.add({
+          'file_id': fileId,
+          'source_id': file.mountId,
+          'relative_path': DeterministicKeys.normalizeMountPath(file.path),
+          'remote_id': file.remoteId,
+          'role': file.role,
+          'owner_file_id': null,
+          'language': file.language,
+          'file_name': StoragePath.name(file.path),
+          'file_size': file.size ?? 0,
+          'file_mtime': file.modifiedAt ?? 0,
+          'file_created_at': file.sourceCreatedAt ?? 0,
+          'work_key': workKey,
+          'season_num': ep?.seasonNumber ?? -1,
+          'episode_num': ep?.episodeNumber ?? -1,
+          'match_status': MatchStatusRank.fromFile(file, item: workItem),
+          'version_label': file.versionLabel,
+          'parsed_json': file.parsed,
+          'media_spec_json': {
+            if (file.durationMs != null) 'duration_ms': file.durationMs,
+            if (file.container != null) 'container': file.container,
+            if (file.videoCodec != null) 'video_codec': file.videoCodec,
+            if (file.width != null) 'width': file.width,
+            if (file.height != null) 'height': file.height,
+            if (file.hdrFormat != null) 'hdr_format': file.hdrFormat,
+            if (ep != null) 'ep_title': ep.title,
+            if (ep?.summary != null) 'ep_overview': ep!.summary,
+            if (ep?.posterSource != null) 'ep_still_path': ep!.posterSource,
+            if (ep?.runtimeMs != null) 'ep_runtime_ms': ep!.runtimeMs,
+            if (ep?.metadataSource != null) 'ep_metadata_source': ep!.metadataSource,
+            if (ep?.scrapedAt != null) 'ep_scraped_at': ep!.scrapedAt,
+            if (ep?.releaseDate != null) 'ep_release_date': ep!.releaseDate,
           },
-        );
+          'client_updated_at': ts,
+          'is_deleted': false,
+        });
       }
 
-      // Export companion subtitles after videos so owner_file_id is deterministic.
-      for (final file in files) {
+      for (final file in dbFiles) {
         if (file.role != LibraryFileRoles.subtitle) continue;
         final owner = file.ownerFileId == null ? null : filesById[file.ownerFileId];
         final ownerFileId = owner == null ? null : fileKeyByRowId[owner.id];
         final fileId = fileKeyByRowId[file.id]!;
-        await syncStore.enqueue(
-          entityType: SyncLocalStore.typeFile,
-          entityKey: fileId,
-          updatedAt: ts,
-          payload: {
-            'file_id': fileId,
-            'source_id': file.mountId,
-            'relative_path': DeterministicKeys.normalizeMountPath(file.path),
-            'remote_id': file.remoteId,
-            'role': LibraryFileRoles.subtitle,
-            'owner_file_id': ownerFileId,
-            'language': file.language,
-            'file_name': StoragePath.name(file.path),
-            'file_size': file.size ?? 0,
-            'file_mtime': file.modifiedAt ?? 0,
-            'season_num': -1,
-            'episode_num': -1,
-            'match_status': MatchStatusRank.matched,
-            'media_spec_json': const <String, Object?>{},
-            'client_updated_at': ts,
-            'is_deleted': false,
-          },
-        );
+        outFiles.add({
+          'file_id': fileId,
+          'source_id': file.mountId,
+          'relative_path': DeterministicKeys.normalizeMountPath(file.path),
+          'remote_id': file.remoteId,
+          'role': LibraryFileRoles.subtitle,
+          'owner_file_id': ownerFileId,
+          'language': file.language,
+          'file_name': StoragePath.name(file.path),
+          'file_size': file.size ?? 0,
+          'file_mtime': file.modifiedAt ?? 0,
+          'season_num': -1,
+          'episode_num': -1,
+          'match_status': MatchStatusRank.matched,
+          'media_spec_json': const <String, Object?>{},
+          'client_updated_at': ts,
+          'is_deleted': false,
+        });
       }
     }
 
     if (includeAllWorkStates) {
-      // Also export local scraped works' skip prefs & watch progress (including StorageKind.local works).
+      final skipStore = WorkSkipSettingsStore(db);
+      final stateStore = LibraryWatchStateStore(db);
       final allStates = await (db.select(
         db.workWatchStates,
       )..where((t) => t.source.equals(WorkIdentity.localSource))).get();
       final seenWorkPrefs = <String>{};
+
+      Future<void> addPref(WorkIdentity identity, int updatedAt) async {
+        final workKey = '${identity.provider}:${identity.kind}:${identity.externalId}';
+        if (!seenWorkPrefs.add(workKey)) return;
+        final skip = await skipStore.read(identity);
+        final wholeState = await stateStore.read(identity.stateKey());
+        workPrefs.add({
+          'work_key': workKey,
+          'intro_enabled': skip.introEnabled,
+          'intro_start_ms': skip.introStartMs,
+          'intro_end_ms': skip.introEndMs,
+          'credits_enabled': skip.creditsEnabled,
+          'credits_from_end_ms': skip.creditsDurationMs,
+          'keep_easter_egg_ms': skip.creditsResumeBeforeEndMs,
+          'is_favorite': wholeState?.favorite ?? false,
+          'hidden_from_continue': wholeState?.hiddenFromContinue ?? false,
+          'client_updated_at': updatedAt,
+        });
+      }
+
       for (final st in allStates) {
         final identity = WorkIdentity(
           source: st.source,
@@ -320,50 +352,124 @@ class SyncMapper {
           provider: st.provider,
           externalId: st.externalId,
         );
+        await addPref(identity, st.updatedAt);
         final workKey = '${st.provider}:${st.kind}:${st.externalId}';
-        if (seenWorkPrefs.add(workKey)) {
-          await syncStore.enqueueWorkPrefsForIdentity(identity, updatedAt: st.updatedAt);
-        }
         final progressKey = DeterministicKeys.generateProgressKey(
           workKey: workKey,
           kind: st.kind,
           seasonNum: st.seasonNumber,
           episodeNum: st.episodeNumber,
         );
-        await syncStore.enqueue(
-          entityType: SyncLocalStore.typeWatchProgress,
-          entityKey: progressKey,
-          updatedAt: st.updatedAt,
-          payload: {
-            'progress_key': progressKey,
-            'work_key': workKey,
-            'season_num': st.seasonNumber,
-            'episode_num': st.episodeNumber,
-            'position_ms': st.positionMs,
-            'duration_ms': st.durationMs ?? 0,
-            'watched': st.watched,
-            'play_count': st.playCount,
-            'last_played_at': st.lastPlayedAt,
-            'client_updated_at': st.updatedAt,
-          },
-        );
+        watchProgress.add({
+          'progress_key': progressKey,
+          'work_key': workKey,
+          'season_num': st.seasonNumber,
+          'episode_num': st.episodeNumber,
+          'position_ms': st.positionMs,
+          'duration_ms': st.durationMs ?? 0,
+          'watched': st.watched,
+          'play_count': st.playCount,
+          'last_played_at': st.lastPlayedAt,
+          'client_updated_at': st.updatedAt,
+        });
       }
 
-      // Also export any WorkSkipSettings saved for works without watch states yet.
       final skipSettings = await (db.select(
         db.librarySettings,
       )..where((t) => t.key.like('work-skip:${WorkIdentity.localSource}:%'))).get();
       for (final row in skipSettings) {
         final parts = row.key.substring('work-skip:'.length).split(':');
         if (parts.length < 4) continue;
-        final workKey = '${parts[2]}:${parts[1]}:${parts[3]}';
-        if (!seenWorkPrefs.add(workKey)) continue;
-        await syncStore.enqueueWorkPrefsForIdentity(
+        await addPref(
           WorkIdentity(source: parts[0], kind: parts[1], provider: parts[2], externalId: parts[3]),
-          updatedAt: ts,
+          ts,
         );
       }
     }
+
+    final scraperSettings = await LibrarySettingsStore(db).loadScraper();
+    final userSettings = <String, Object?>{
+      if (scraperSettings.tmdbImageBase.isNotEmpty) 'tmdb_image_base_url': scraperSettings.tmdbImageBase,
+    };
+
+    return (
+      ts: ts,
+      sources: sources,
+      works: works,
+      files: outFiles,
+      workPrefs: workPrefs,
+      watchProgress: watchProgress,
+      userSettings: userSettings,
+    );
+  }
+
+  /// Exports shared mounts, works, files, skip preferences, and watch progress
+  /// to `SyncOutbox` so a newly joined device receives a full zero-scan index.
+  Future<void> enqueueSharedCatalog({
+    required Uint8List masterKey,
+    Set<String>? mountIds,
+    bool includeAllWorkStates = true,
+  }) async {
+    final bundle = await _collectCatalogBundle(
+      encryptionKey: masterKey,
+      mountIds: mountIds,
+      includeAllWorkStates: includeAllWorkStates,
+    );
+    for (final src in bundle.sources) {
+      await syncStore.enqueue(
+        entityType: SyncLocalStore.typeSource,
+        entityKey: src['source_id'] as String,
+        updatedAt: bundle.ts,
+        payload: src,
+      );
+    }
+    for (final w in bundle.works) {
+      await syncStore.enqueue(
+        entityType: SyncLocalStore.typeWork,
+        entityKey: w['work_key'] as String,
+        updatedAt: (w['client_updated_at'] as num?)?.toInt() ?? bundle.ts,
+        payload: w,
+      );
+    }
+    for (final f in bundle.files) {
+      await syncStore.enqueue(
+        entityType: SyncLocalStore.typeFile,
+        entityKey: f['file_id'] as String,
+        updatedAt: (f['client_updated_at'] as num?)?.toInt() ?? bundle.ts,
+        payload: f,
+      );
+    }
+    for (final p in bundle.workPrefs) {
+      await syncStore.enqueue(
+        entityType: SyncLocalStore.typeWorkPref,
+        entityKey: p['work_key'] as String,
+        updatedAt: (p['client_updated_at'] as num?)?.toInt() ?? bundle.ts,
+        payload: p,
+      );
+    }
+    for (final g in bundle.watchProgress) {
+      await syncStore.enqueue(
+        entityType: SyncLocalStore.typeWatchProgress,
+        entityKey: g['progress_key'] as String,
+        updatedAt: (g['client_updated_at'] as num?)?.toInt() ?? bundle.ts,
+        payload: g,
+      );
+    }
+  }
+
+  /// Builds an E2EE snapshot bundle for direct serverless LAN P2P transfer
+  /// without mutating `SyncOutbox`.
+  Future<Map<String, Object?>> buildSnapshotBundle({required Uint8List encryptionKey}) async {
+    final bundle = await _collectCatalogBundle(encryptionKey: encryptionKey, includeAllWorkStates: true);
+    return {
+      'server_time_ms': _nowMs(),
+      'user_settings': bundle.userSettings,
+      'sources': bundle.sources,
+      'works': bundle.works,
+      'files': bundle.files,
+      'work_prefs': bundle.workPrefs,
+      'watch_progress': bundle.watchProgress,
+    };
   }
 
   static (String?, String?) _primaryProviderAndId(LibraryItemRow item) {
@@ -420,6 +526,8 @@ class SyncMapper {
     required Map<String, Object?> userSettings,
     required int nextSeq,
     bool isFinalPage = true,
+    bool updateCloudCursor = true,
+    bool deterministicP2pSourceTieBreak = false,
   }) async {
     var changes = 0;
 
@@ -444,6 +552,7 @@ class SyncMapper {
     final rehomedMounts = <(String, String)>[];
     final deletedMountIds = <String>[];
     final touchedItemIds = <int>{};
+    final localWinnerRemaps = <String, String>{};
 
     await db.transaction(() async {
       // 1. Merge shared mounts & canonical source deduplication.
@@ -452,12 +561,15 @@ class SyncMapper {
         masterKey: masterKey,
         rehomedMounts: rehomedMounts,
         deletedMountIds: deletedMountIds,
+        deterministicP2pSourceTieBreak: deterministicP2pSourceTieBreak,
+        localWinnerRemaps: localWinnerRemaps,
       );
 
       // 2. Merge works & files under 4-tier monotonic weights.
       final workItemByKey = <String, int>{};
+      final effectiveFiles = localWinnerRemaps.isEmpty ? files : _remapIncomingFiles(files, localWinnerRemaps);
       changes += await _applyIncomingWorks(works, workItemByKey: workItemByKey, touchedItemIds: touchedItemIds);
-      changes += await _applyIncomingFiles(files, workItemByKey: workItemByKey, touchedItemIds: touchedItemIds);
+      changes += await _applyIncomingFiles(effectiveFiles, workItemByKey: workItemByKey, touchedItemIds: touchedItemIds);
 
       if (isFinalPage && changes > 0) {
         await repo.pruneEmptyTitles();
@@ -472,12 +584,14 @@ class SyncMapper {
       for (final itemId in touchedItemIds) {
         await watchStates.restoreItemAndChildren(itemId);
       }
-      if (workPrefs.isNotEmpty || watchProgress.isNotEmpty || works.isNotEmpty || files.isNotEmpty) {
+      if (workPrefs.isNotEmpty || watchProgress.isNotEmpty || works.isNotEmpty || effectiveFiles.isNotEmpty) {
         await watchStates.restoreAll();
       }
 
-      // Advance cursor ONLY after transactional persistence succeeds.
-      await syncStore.saveLastPullSeq(nextSeq);
+      // Advance cloud cursor ONLY during cloud pulls and after transactional persistence succeeds.
+      if (updateCloudCursor) {
+        await syncStore.saveLastPullSeq(nextSeq);
+      }
     });
 
     for (final (oldId, newId) in rehomedMounts) {
@@ -630,6 +744,8 @@ class SyncMapper {
     required Uint8List masterKey,
     required List<(String, String)> rehomedMounts,
     required List<String> deletedMountIds,
+    required bool deterministicP2pSourceTieBreak,
+    required Map<String, String> localWinnerRemaps,
   }) async {
     var count = 0;
     final currentMounts = await mountManager.registry.list();
@@ -686,27 +802,69 @@ class SyncMapper {
         }
       }
 
+      final remoteCreatedAt = (src['created_at'] as num?)?.toInt();
+      final incomingCreatedAt = existingByCanonical?.createdAt ??
+          (remoteCreatedAt != null && remoteCreatedAt > 0
+              ? DateTime.fromMillisecondsSinceEpoch(remoteCreatedAt)
+              : DateTime.fromMillisecondsSinceEpoch(_nowMs()));
+
       final incomingMount = StorageMount(
         id: sourceId,
         kind: kind,
         displayName: (src['name'] as String?)?.trim().isNotEmpty == true ? src['name'] as String : kind.id,
         config: config,
         secrets: secrets,
-        createdAt: existingByCanonical?.createdAt ?? DateTime.fromMillisecondsSinceEpoch(_nowMs()),
+        createdAt: incomingCreatedAt,
       );
 
       final remoteCp = src['quark_checkpoint'] as String?;
+      var resolvedMountId = sourceId;
       if (existingByCanonical != null && existingByCanonical.id != sourceId) {
-        rehomedMounts.add((existingByCanonical.id, sourceId));
-        await _rehomeMountTx(
-          oldMountId: existingByCanonical.id,
-          newMountId: sourceId,
-          targetMount: incomingMount,
-          remoteCheckpoint: remoteCp,
-        );
-        byId.remove(existingByCanonical.id);
-        byId[sourceId] = incomingMount;
-        if (canonicalKey.isNotEmpty) byCanonical[canonicalKey] = incomingMount;
+        final remoteWins = !deterministicP2pSourceTieBreak ||
+            _remoteSourceWinsTieBreak(
+              remoteId: sourceId,
+              remoteCreatedAt: remoteCreatedAt,
+              local: existingByCanonical,
+            );
+        if (remoteWins) {
+          rehomedMounts.add((existingByCanonical.id, sourceId));
+          await _rehomeMountTx(
+            oldMountId: existingByCanonical.id,
+            newMountId: sourceId,
+            targetMount: incomingMount,
+            remoteCheckpoint: remoteCp,
+          );
+          byId.remove(existingByCanonical.id);
+          byId[sourceId] = incomingMount;
+          if (canonicalKey.isNotEmpty) byCanonical[canonicalKey] = incomingMount;
+        } else {
+          resolvedMountId = existingByCanonical.id;
+          localWinnerRemaps[sourceId] = resolvedMountId;
+          final mergedLocal = StorageMount(
+            id: resolvedMountId,
+            kind: existingByCanonical.kind,
+            displayName: existingByCanonical.displayName,
+            config: existingByCanonical.config,
+            secrets: existingByCanonical.secrets.isNotEmpty ? existingByCanonical.secrets : secrets,
+            createdAt: existingByCanonical.createdAt,
+          );
+          await mountManager.registry.upsert(mergedLocal);
+          if (remoteCp != null && remoteCp.isNotEmpty) {
+            final curScan = await (db.select(
+              db.libraryScanStates,
+            )..where((t) => t.mountId.equals(resolvedMountId))).getSingleOrNull();
+            final mergedCp = mergeQuarkCheckpoint(curScan?.quarkCheckpoint, remoteCp);
+            if (mergedCp != null) {
+              await db
+                  .into(db.libraryScanStates)
+                  .insertOnConflictUpdate(
+                    LibraryScanStatesCompanion.insert(mountId: resolvedMountId, quarkCheckpoint: Value(mergedCp)),
+                  );
+            }
+          }
+          byId[resolvedMountId] = mergedLocal;
+          if (canonicalKey.isNotEmpty) byCanonical[canonicalKey] = mergedLocal;
+        }
       } else {
         await mountManager.registry.upsert(incomingMount);
         if (remoteCp != null && remoteCp.isNotEmpty) {
@@ -726,17 +884,64 @@ class SyncMapper {
         if (canonicalKey.isNotEmpty) byCanonical[canonicalKey] = incomingMount;
       }
 
+      final activeMount = byId[resolvedMountId];
       // Prune existing local files matching newly excluded directories.
-      if (incomingMount.configStringList(MountKeys.excludePaths).isNotEmpty) {
-        final localFiles = await (db.select(db.libraryFiles)..where((t) => t.mountId.equals(sourceId))).get();
+      if (activeMount != null && activeMount.configStringList(MountKeys.excludePaths).isNotEmpty) {
+        final localFiles = await (db.select(db.libraryFiles)..where((t) => t.mountId.equals(resolvedMountId))).get();
         for (final f in localFiles) {
-          if (!incomingMount.isFileAllowed(f.path)) {
+          if (!activeMount.isFileAllowed(f.path)) {
             await (db.delete(db.libraryFiles)..where((t) => t.id.equals(f.id))).go();
           }
         }
       }
     }
     return count;
+  }
+
+  static bool _remoteSourceWinsTieBreak({
+    required String remoteId,
+    int? remoteCreatedAt,
+    required StorageMount local,
+  }) {
+    final rCreated = (remoteCreatedAt != null && remoteCreatedAt > 0) ? remoteCreatedAt : (1 << 62);
+    final lCreated = (local.createdAt != null && local.createdAt!.millisecondsSinceEpoch > 0)
+        ? local.createdAt!.millisecondsSinceEpoch
+        : (1 << 62);
+    if (rCreated != lCreated) return rCreated < lCreated;
+    return remoteId.compareTo(local.id) < 0;
+  }
+
+  static List<Map<String, dynamic>> _remapIncomingFiles(
+    List<Map<String, dynamic>> files,
+    Map<String, String> sourceRemaps,
+  ) {
+    final fileIdMap = <String, String>{};
+    final out = <Map<String, dynamic>>[];
+    for (final raw in files) {
+      final copy = Map<String, dynamic>.from(raw);
+      final srcId = copy['source_id'] as String?;
+      if (srcId != null && sourceRemaps.containsKey(srcId)) {
+        final newSrc = sourceRemaps[srcId]!;
+        final relPath = copy['relative_path'] as String? ?? '';
+        final oldFileId = copy['file_id'] as String?;
+        final newFileId = DeterministicKeys.generateFileId(sourceId: newSrc, mountRelativePath: relPath);
+        copy['source_id'] = newSrc;
+        copy['file_id'] = newFileId;
+        if (oldFileId != null && oldFileId.isNotEmpty) {
+          fileIdMap[oldFileId] = newFileId;
+        }
+      }
+      out.add(copy);
+    }
+    if (fileIdMap.isNotEmpty) {
+      for (final copy in out) {
+        final owner = copy['owner_file_id'] as String?;
+        if (owner != null && fileIdMap.containsKey(owner)) {
+          copy['owner_file_id'] = fileIdMap[owner];
+        }
+      }
+    }
+    return out;
   }
 
   Future<int> _applyIncomingWorks(

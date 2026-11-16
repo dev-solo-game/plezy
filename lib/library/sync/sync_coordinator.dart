@@ -12,13 +12,15 @@ import '../../utils/app_logger.dart';
 import '../library_repository.dart';
 import '../library_scan_service.dart';
 import '../library_settings.dart';
+import 'lan_peer_sync_service.dart';
 import 'sync_api_client.dart';
 import 'sync_crypto.dart';
 import 'sync_local_store.dart';
 import 'sync_mapper.dart';
 
-/// Coordinates end-to-end encrypted multi-device synchronization (Pull -> Merge
-/// -> Push -> Probe -> Optional Scan) on top of the local Drift database.
+/// Coordinates end-to-end encrypted multi-device synchronization in mutually
+/// exclusive modes: either serverless LAN P2P sync ([SyncMode.lanP2p]) or the
+/// remote Go sync server ([SyncMode.cloudServer]).
 class SyncAndScanCoordinator extends ChangeNotifier {
   SyncAndScanCoordinator({
     required this.db,
@@ -27,10 +29,18 @@ class SyncAndScanCoordinator extends ChangeNotifier {
     this.scanService,
     SyncApiClient? apiClient,
     this.isTvDevice = false,
+    this.enableLanUdp = true,
+    this.autoStartLanService = true,
   }) : syncStore = SyncLocalStore(db),
        apiClient = apiClient ?? SyncApiClient(),
        _ownsApiClient = apiClient == null {
     mapper = SyncMapper(db: db, repo: repo, syncStore: syncStore, mountManager: mountManager);
+    lanService = LanPeerSyncService(
+      syncStore: syncStore,
+      mapper: mapper,
+      onLibraryChanged: () => scanService?.notifyLibraryChanged(),
+      enableUdpBroadcast: enableLanUdp,
+    )..addListener(_onLanServiceChanged);
   }
 
   final AppDatabase db;
@@ -41,10 +51,14 @@ class SyncAndScanCoordinator extends ChangeNotifier {
   final SyncApiClient apiClient;
   final bool _ownsApiClient;
   final bool isTvDevice;
+  final bool enableLanUdp;
+  final bool autoStartLanService;
   late final SyncMapper mapper;
+  late final LanPeerSyncService lanService;
 
   SyncSessionCredentials? _session;
   String? _deviceId;
+  bool _onboardingCompleted = false;
   bool _initialized = false;
   bool _isSyncing = false;
   bool _disposed = false;
@@ -55,19 +69,46 @@ class SyncAndScanCoordinator extends ChangeNotifier {
   static const String _kExportedUserKey = 'exported_baseline_user_id';
 
   bool get isSignedIn => _session != null;
+  SyncMode get syncMode => _session != null ? SyncMode.cloudServer : SyncMode.lanP2p;
+  bool get onboardingCompleted => _onboardingCompleted;
   SyncSessionCredentials? get session => _session;
-  bool get isSyncing => _isSyncing;
+  bool get isSyncing => _isSyncing || lanService.isSyncing;
   int get pendingOutboxCount => _pendingOutboxCount;
   DateTime? get lastSyncedAt => _lastSyncedAt;
-  String? get lastError => _lastError;
+  String? get lastError => _lastError ?? lanService.lastError;
   String get deviceId => _deviceId ?? '';
+
+  void _onLanServiceChanged() {
+    if (!_disposed) notifyListeners();
+  }
 
   Future<void> initialize() async {
     if (_initialized || _disposed) return;
     _deviceId = await syncStore.getOrCreateDeviceId();
     _session = await syncStore.loadSession();
+    _onboardingCompleted = await syncStore.isOnboardingCompleted();
     _pendingOutboxCount = (await syncStore.readPendingOutbox(limit: 1000)).length;
     _initialized = true;
+
+    if (_session != null) {
+      await syncStore.setSyncMode(SyncMode.cloudServer);
+      await lanService.stop();
+    } else if (_onboardingCompleted && autoStartLanService) {
+      await syncStore.setSyncMode(SyncMode.lanP2p);
+      await lanService.start();
+    }
+
+    if (!_disposed) notifyListeners();
+  }
+
+  Future<void> selectLanMode({bool startService = true}) async {
+    await initialize();
+    await syncStore.setOnboardingCompleted(true);
+    await syncStore.setSyncMode(SyncMode.lanP2p);
+    _onboardingCompleted = true;
+    if (_session == null && startService && autoStartLanService) {
+      await lanService.start();
+    }
     if (!_disposed) notifyListeners();
   }
 
@@ -235,6 +276,12 @@ class SyncAndScanCoordinator extends ChangeNotifier {
     _lastSyncedAt = null;
     await syncStore.clearSession();
     await (db.delete(db.syncMetadata)..where((t) => t.key.equals(_kExportedUserKey))).go();
+    await syncStore.setSyncMode(SyncMode.lanP2p);
+    await syncStore.setOnboardingCompleted(true);
+    _onboardingCompleted = true;
+    if (autoStartLanService) {
+      await lanService.start();
+    }
     if (!_disposed) notifyListeners();
   }
 
@@ -243,7 +290,11 @@ class SyncAndScanCoordinator extends ChangeNotifier {
     required int serverTimeMs,
     required bool hadLocalContentBeforeSignIn,
   }) async {
+    await lanService.stop();
     await syncStore.saveSession(creds);
+    await syncStore.setSyncMode(SyncMode.cloudServer);
+    await syncStore.setOnboardingCompleted(true);
+    _onboardingCompleted = true;
     if (serverTimeMs > 0) {
       final offset = serverTimeMs - clock.now().millisecondsSinceEpoch;
       await syncStore.saveServerTimeOffsetMs(offset);
@@ -271,7 +322,16 @@ class SyncAndScanCoordinator extends ChangeNotifier {
   Future<void> onMountSaved(StorageMount mount) async {
     await initialize();
     final sess = _session;
-    if (sess == null || mount.kind == StorageKind.local) return;
+    if (mount.kind != StorageKind.local) {
+      await syncStore.bumpLocalLanRevision();
+    }
+    if (sess == null) {
+      if (mount.kind != StorageKind.local) {
+        unawaited(lanService.notifyTrustedPeersOfLocalChange());
+      }
+      return;
+    }
+    if (mount.kind == StorageKind.local) return;
     await syncStore.setAuthUpdatedAt(mount.id, await syncStore.calibratedNowMs());
     await mapper.enqueueMount(mount, masterKey: sess.masterKey, forceAuthOverride: true);
     await refreshOutboxCount();
@@ -280,7 +340,11 @@ class SyncAndScanCoordinator extends ChangeNotifier {
 
   Future<void> onMountRemoved(String mountId) async {
     await initialize();
-    if (_session == null) return;
+    await syncStore.bumpLocalLanRevision();
+    if (_session == null) {
+      unawaited(lanService.notifyTrustedPeersOfLocalChange());
+      return;
+    }
     await mapper.enqueueMountDeletion(mountId);
     await refreshOutboxCount();
     unawaited(pushOutboxOnly());
@@ -288,10 +352,24 @@ class SyncAndScanCoordinator extends ChangeNotifier {
 
   Future<void> onCatalogChanged({Set<String>? mountIds}) async {
     await initialize();
+    await syncStore.bumpLocalLanRevision();
     final sess = _session;
-    if (sess == null) return;
+    if (sess == null) {
+      unawaited(lanService.notifyTrustedPeersOfLocalChange());
+      return;
+    }
     await mapper.enqueueSharedCatalog(masterKey: sess.masterKey, mountIds: mountIds, includeAllWorkStates: true);
     await refreshOutboxCount();
+    unawaited(pushOutboxOnly());
+  }
+
+  Future<void> onPlaybackOutboxQueued() async {
+    await initialize();
+    await refreshOutboxCount();
+    if (_session == null) {
+      unawaited(lanService.notifyTrustedPeersOfLocalChange());
+      return;
+    }
     unawaited(pushOutboxOnly());
   }
 
@@ -463,6 +541,8 @@ class SyncAndScanCoordinator extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    lanService.removeListener(_onLanServiceChanged);
+    lanService.dispose();
     if (_ownsApiClient) apiClient.close();
     super.dispose();
   }

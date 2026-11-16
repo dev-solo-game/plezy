@@ -15,7 +15,6 @@ import 'package:provider/provider.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:sentry_flutter/sentry_flutter.dart';
 import 'connection/connection.dart';
-import 'connection/connection_bootstrap.dart';
 import 'connection/connection_registry.dart';
 import 'media/media_backend.dart';
 import 'navigation/profile_navigation_scope.dart';
@@ -74,7 +73,6 @@ import 'services/library_events/library_event_service.dart';
 import 'services/offline_watch_sync_service.dart';
 import 'services/data_aggregation_service.dart';
 import 'services/credential_vault.dart';
-import 'services/server_registry.dart';
 import 'services/download_manager_service.dart';
 import 'services/pip_service.dart';
 import 'services/download_storage_service.dart';
@@ -1819,7 +1817,7 @@ class _MainAppState extends State<MainApp> with WidgetsBindingObserver {
               isTvDevice: TvDetectionService.isTVSync(),
             );
             scanService.onCatalogChanged = (mountIds) => unawaited(coordinator.onCatalogChanged(mountIds: mountIds));
-            localClient.onSyncOutboxEnqueued = () => unawaited(coordinator.pushOutboxOnly());
+            localClient.onSyncOutboxEnqueued = () => unawaited(coordinator.onPlaybackOutboxQueued());
             unawaited(
               coordinator.initialize().then((_) {
                 if (coordinator.isSignedIn) {
@@ -2344,27 +2342,13 @@ class _SetupScreenState extends State<SetupScreen> with MountedSetStateMixin {
     _setStatus(t.common.checkingNetwork);
 
     final storage = await StorageService.getInstance();
-    final registry = ServerRegistry(storage);
 
-    // Idempotent: brings legacy SharedPreferences state (plexToken,
-    // currentUserUUID, homeUsersCache) into the new ConnectionRegistry +
-    // ProfileRegistry tables. No-op on subsequent launches.
     if (mounted) {
       try {
         final connRegistry = context.read<ConnectionRegistry>();
         final profileConnections = context.read<ProfileConnectionRegistry>();
-        final profileRegistry = context.read<ProfileRegistry>();
         final activeProfiles = context.read<ActiveProfileProvider>();
         final serverManager = context.read<MultiServerProvider>().serverManager;
-        if (plexSupportEnabled) {
-          await ConnectionBootstrap(
-            storage: storage,
-            connectionRegistry: connRegistry,
-            serverRegistry: registry,
-            profileRegistry: profileRegistry,
-            plexHome: context.read<PlexHomeService>(),
-          ).run();
-        }
         final pruned = await ProfileConnectionCleanup(
           profileConnections: profileConnections,
           connections: connRegistry,
@@ -2428,6 +2412,28 @@ class _SetupScreenState extends State<SetupScreen> with MountedSetStateMixin {
       appLogger.e('Setup: failed to prepare the local library', error: e, stackTrace: st);
     }
 
+    if (!mounted) return;
+
+    final syncCoordinator = context.read<SyncAndScanCoordinator>();
+    final mountRegistry = context.read<MountManager>().registry;
+    await syncCoordinator.initialize();
+    if (!mounted) return;
+
+    final hasInitialMounts = (await mountRegistry.list()).isNotEmpty;
+    if (!mounted) return;
+    final onboardingDone = await syncCoordinator.syncStore.isOnboardingCompleted();
+    if (!mounted) return;
+    if (!onboardingDone) {
+      if (hasInitialMounts || allConnections.isNotEmpty || syncCoordinator.isSignedIn) {
+        await syncCoordinator.syncStore.setOnboardingCompleted(true);
+        if (!syncCoordinator.isSignedIn) {
+          await syncCoordinator.selectLanMode();
+        }
+      } else {
+        unawaited(Navigator.pushReplacement(context, fadeRoute(const AuthScreen())));
+        return;
+      }
+    }
     if (!mounted) return;
 
     if (mounted) {

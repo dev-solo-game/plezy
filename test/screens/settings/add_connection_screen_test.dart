@@ -9,7 +9,6 @@ import 'package:plezy/media/media_browser_dialect.dart';
 import 'package:plezy/profiles/profile.dart';
 import 'package:plezy/screens/settings/add_connection_screen.dart';
 import 'package:plezy/screens/settings/add_jellyfin_screen.dart';
-import 'package:plezy/screens/settings/add_plex_account_screen.dart';
 import 'package:plezy/theme/mono_theme.dart';
 import 'package:plezy/widgets/backend_badge.dart';
 
@@ -83,18 +82,6 @@ void main() {
     final screen = await tapCard(tester, 'Connect to Jellyfin');
     expect(screen.dialect, MediaBrowserDialect.jellyfin);
     expect(find.text('Add Jellyfin server'), findsOneWidget);
-  });
-
-  testWidgets('the Plex card opens Plex sign-in in an enabled build', skip: !plexSupportEnabled, (tester) async {
-    await tester.pumpWidget(app(const AddConnectionScreen()));
-    await tester.pumpAndSettle();
-
-    await tester.tap(find.text('Sign in with Plex'));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 400));
-
-    expect(find.byType(AddPlexAccountScreen), findsOneWidget);
-    expect(find.byType(AddJellyfinScreen), findsNothing);
   });
 
   testWidgets('a scoped Emby card names the profile it will bind to', (tester) async {

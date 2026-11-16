@@ -1,8 +1,8 @@
 import '../utils/app_logger.dart';
 import 'media_browser_dialect.dart';
 
-/// Product gate for Plex sign-in and activation of stored Plex connections.
-const plexSupportEnabled = bool.fromEnvironment('PLEZY_ENABLE_PLEX');
+/// Plex sign-in has been removed in favor of local/LAN and self-hosted sync.
+const bool plexSupportEnabled = false;
 
 /// Backend identifier for a media item, library, or server.
 ///

@@ -1,0 +1,687 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:clock/clock.dart';
+import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
+
+import '../../utils/app_logger.dart';
+import '../../utils/udp_broadcast_sockets.dart';
+import 'sync_crypto.dart';
+import 'sync_local_store.dart';
+import 'sync_mapper.dart';
+
+class LanDiscoveredPeer {
+  const LanDiscoveredPeer({
+    required this.deviceId,
+    required this.deviceName,
+    required this.platform,
+    required this.host,
+    required this.httpPort,
+    required this.pubKeyBase64,
+    required this.revision,
+    required this.lastSeen,
+  });
+
+  final String deviceId;
+  final String deviceName;
+  final String platform;
+  final String host;
+  final int httpPort;
+  final String pubKeyBase64;
+  final int revision;
+  final DateTime lastSeen;
+
+  String pairingCodeFor(String myPubKeyBase64) => SyncCrypto.computePairingCode(myPubKeyBase64, pubKeyBase64);
+}
+
+class LanPairRequest {
+  const LanPairRequest({
+    required this.deviceId,
+    required this.deviceName,
+    required this.platform,
+    required this.host,
+    required this.httpPort,
+    required this.pubKeyBase64,
+    required this.pairingCode,
+    required this.requestedAt,
+  });
+
+  final String deviceId;
+  final String deviceName;
+  final String platform;
+  final String host;
+  final int httpPort;
+  final String pubKeyBase64;
+  final String pairingCode;
+  final DateTime requestedAt;
+}
+
+/// Zero-server LAN P2P discovery, Trust-On-First-Use (TOFU) 4-digit pairing,
+/// and E2EE catalog/progress synchronization over direct local HTTP.
+class LanPeerSyncService extends ChangeNotifier {
+  LanPeerSyncService({
+    required this.syncStore,
+    required this.mapper,
+    this.onLibraryChanged,
+    this.discoveryPort = defaultDiscoveryPort,
+    this.enableUdpBroadcast = true,
+  });
+
+  static const int defaultDiscoveryPort = 48635;
+  static const Duration _broadcastInterval = Duration(seconds: 3);
+  static const Duration _peerStaleTimeout = Duration(seconds: 15);
+  static const Duration _hmacWindow = Duration(minutes: 5);
+
+  final SyncLocalStore syncStore;
+  final SyncMapper mapper;
+  final VoidCallback? onLibraryChanged;
+  final int discoveryPort;
+  final bool enableUdpBroadcast;
+
+  HttpServer? _httpServer;
+  http.Client? _httpClient;
+  RawDatagramSocket? _udpListener;
+  UdpBroadcastSocketSet? _udpBroadcaster;
+  StreamSubscription<RawSocketEvent>? _udpSub;
+  Timer? _broadcastTimer;
+  Timer? _pruneTimer;
+
+  String? _deviceId;
+  String? _deviceName;
+  String? _privKeyB64;
+  String? _pubKeyB64;
+
+  final Map<String, LanDiscoveredPeer> _discovered = {};
+  final Map<String, LanPairRequest> _incomingRequests = {};
+  final Map<String, LanDiscoveredPeer> _outgoingPairTargets = {};
+  final Map<String, Future<void>> _activePeerSyncs = {};
+  List<LanTrustedPeer> _trustedPeers = [];
+
+  bool _running = false;
+  bool _disposed = false;
+  bool _syncing = false;
+  String? _lastError;
+
+  bool get isRunning => _running;
+  bool get isSyncing => _syncing;
+  int? get listeningPort => _httpServer?.port;
+  String? get publicKeyBase64 => _pubKeyB64;
+  String? get deviceId => _deviceId;
+  String? get lastError => _lastError;
+
+  List<LanDiscoveredPeer> get discoveredPeers => List.unmodifiable(_discovered.values);
+  List<LanPairRequest> get incomingPairRequests => List.unmodifiable(_incomingRequests.values);
+  List<LanTrustedPeer> get trustedPeers => List.unmodifiable(_trustedPeers);
+
+  Future<void> start({int bindHttpPort = 0}) async {
+    if (_running || _disposed) return;
+
+    _deviceId = await syncStore.getOrCreateDeviceId();
+    _deviceName = await syncStore.getDeviceName();
+    final keyPair = await syncStore.getOrCreateLanKeyPair();
+    _privKeyB64 = keyPair.privateKeyBase64;
+    _pubKeyB64 = keyPair.publicKeyBase64;
+    _trustedPeers = List<LanTrustedPeer>.from(await syncStore.loadTrustedLanPeers());
+
+    _httpClient = http.Client();
+    _httpServer = await HttpServer.bind(InternetAddress.anyIPv4, bindHttpPort);
+    _httpServer!.listen((req) => unawaited(_handleHttp(req)), onError: (Object e) {
+      appLogger.w('[LanP2P] HTTP listener error', error: e);
+    });
+
+    if (enableUdpBroadcast) {
+      await _startUdpDiscovery();
+    }
+
+    _running = true;
+    if (!_disposed) notifyListeners();
+  }
+
+  Future<void> stop() async {
+    _running = false;
+    _broadcastTimer?.cancel();
+    _broadcastTimer = null;
+    _pruneTimer?.cancel();
+    _pruneTimer = null;
+    await _udpSub?.cancel();
+    _udpSub = null;
+    _udpListener?.close();
+    _udpListener = null;
+    await _udpBroadcaster?.close();
+    _udpBroadcaster = null;
+    await _httpServer?.close(force: true);
+    _httpServer = null;
+    _httpClient?.close();
+    _httpClient = null;
+    _discovered.clear();
+    _incomingRequests.clear();
+    _outgoingPairTargets.clear();
+    if (!_disposed) notifyListeners();
+  }
+
+  Future<void> _startUdpDiscovery() async {
+    try {
+      _udpBroadcaster = await UdpBroadcastSockets.bind();
+      _udpListener = await RawDatagramSocket.bind(InternetAddress.anyIPv4, discoveryPort, reuseAddress: true);
+      _udpListener!.broadcastEnabled = true;
+      _udpSub = _udpListener!.listenDatagrams(_onUdpDatagram, debugLabel: 'LanP2P');
+
+      unawaited(_sendBeacon());
+      _broadcastTimer = Timer.periodic(_broadcastInterval, (_) => unawaited(_sendBeacon()));
+      _pruneTimer = Timer.periodic(const Duration(seconds: 5), (_) => _pruneStalePeers());
+    } catch (e) {
+      appLogger.d('[LanP2P] UDP discovery unavailable (port $discoveryPort)', error: e);
+    }
+  }
+
+  Future<void> _sendBeacon() async {
+    final sockSet = _udpBroadcaster;
+    final port = _httpServer?.port;
+    final devId = _deviceId;
+    final pubKey = _pubKeyB64;
+    if (!_running || sockSet == null || port == null || devId == null || pubKey == null) return;
+
+    final rev = await syncStore.getLocalLanRevision();
+    final payload = utf8.encode(
+      jsonEncode({
+        'type': 'plezy_lan_sync_v1',
+        'device_id': devId,
+        'device_name': _deviceName ?? 'Plezy',
+        'platform': Platform.operatingSystem,
+        'http_port': port,
+        'pub_key': pubKey,
+        'revision': rev,
+      }),
+    );
+    sockSet.send(payload, UdpBroadcastSockets.limitedBroadcastAddress, discoveryPort);
+  }
+
+  void _onUdpDatagram(Datagram dg) {
+    if (!_running || _disposed) return;
+    try {
+      final decoded = jsonDecode(utf8.decode(dg.data));
+      if (decoded is! Map<String, dynamic> || decoded['type'] != 'plezy_lan_sync_v1') return;
+      final peerId = decoded['device_id'] as String?;
+      final peerPub = decoded['pub_key'] as String?;
+      final port = (decoded['http_port'] as num?)?.toInt();
+      if (peerId == null || peerId.isEmpty || peerId == _deviceId || peerPub == null || port == null || port <= 0) {
+        return;
+      }
+      registerDiscoveredPeer(
+        LanDiscoveredPeer(
+          deviceId: peerId,
+          deviceName: decoded['device_name'] as String? ?? 'Device',
+          platform: decoded['platform'] as String? ?? 'unknown',
+          host: dg.address.address,
+          httpPort: port,
+          pubKeyBase64: peerPub,
+          revision: (decoded['revision'] as num?)?.toInt() ?? 0,
+          lastSeen: clock.now(),
+        ),
+      );
+    } catch (_) {
+      // Ignore malformed LAN datagrams from unrelated apps.
+    }
+  }
+
+  void _pruneStalePeers() {
+    if (!_running || _disposed) return;
+    final now = clock.now();
+    final before = _discovered.length;
+    _discovered.removeWhere((_, p) => now.difference(p.lastSeen) > _peerStaleTimeout);
+    if (_discovered.length != before) notifyListeners();
+  }
+
+  /// Registers or updates a nearby LAN peer (used by UDP discovery and tests).
+  void registerDiscoveredPeer(LanDiscoveredPeer peer) {
+    if (!_running || _disposed || peer.deviceId == _deviceId) return;
+    _discovered[peer.deviceId] = peer;
+
+    final idx = _trustedPeers.indexWhere((t) => t.deviceId == peer.deviceId && t.pubKeyBase64 == peer.pubKeyBase64);
+    if (idx >= 0) {
+      final trusted = _trustedPeers[idx];
+      final endpointChanged = trusted.lastHost != peer.host || trusted.lastPort != peer.httpPort;
+      if (endpointChanged || trusted.deviceName != peer.deviceName) {
+        _trustedPeers[idx] = trusted.copyWith(
+          deviceName: peer.deviceName,
+          lastHost: peer.host,
+          lastPort: peer.httpPort,
+        );
+        unawaited(syncStore.saveTrustedLanPeers(_trustedPeers));
+      }
+      if (peer.revision > trusted.lastSyncedRevision) {
+        unawaited(syncWithPeer(_trustedPeers[idx], hostOverride: peer.host, portOverride: peer.httpPort));
+      }
+    }
+    notifyListeners();
+  }
+
+  Future<void> requestPairWithPeer(LanDiscoveredPeer peer) async {
+    if (!_running || _httpServer == null) throw StateError('LAN P2P service is not running');
+    _outgoingPairTargets[peer.deviceId] = peer;
+    final uri = Uri.parse('http://${peer.host}:${peer.httpPort}/lan/v1/pair/request');
+    final resp = await _httpClient!
+        .post(
+          uri,
+          headers: {'Content-Type': 'application/json; charset=utf-8'},
+          body: jsonEncode({
+            'device_id': _deviceId,
+            'device_name': _deviceName ?? 'Plezy',
+            'platform': Platform.operatingSystem,
+            'http_port': _httpServer!.port,
+            'pub_key': _pubKeyB64,
+            'host': '127.0.0.1',
+          }),
+        )
+        .timeout(const Duration(seconds: 5));
+    if (resp.statusCode < 200 || resp.statusCode >= 300) {
+      throw HttpException('Pair request rejected (${resp.statusCode}): ${resp.body}');
+    }
+  }
+
+  Future<void> acceptPairRequest(LanPairRequest req) async {
+    if (!_running || _privKeyB64 == null || _pubKeyB64 == null || _httpServer == null) {
+      throw StateError('LAN P2P service is not running');
+    }
+    final sharedKey = await SyncCrypto.deriveLanSharedKey(
+      myPrivateKeyBase64: _privKeyB64!,
+      myPublicKeyBase64: _pubKeyB64!,
+      peerPublicKeyBase64: req.pubKeyBase64,
+    );
+    final trusted = LanTrustedPeer(
+      deviceId: req.deviceId,
+      deviceName: req.deviceName,
+      pubKeyBase64: req.pubKeyBase64,
+      sharedKeyBase64: base64Encode(sharedKey),
+      lastSyncedRevision: 0,
+      pairedAtMs: clock.now().millisecondsSinceEpoch,
+      lastHost: req.host,
+      lastPort: req.httpPort,
+    );
+
+    _trustedPeers.removeWhere((p) => p.deviceId == trusted.deviceId);
+    _trustedPeers.add(trusted);
+    _incomingRequests.remove(req.deviceId);
+    await syncStore.saveTrustedLanPeers(_trustedPeers);
+
+    final ts = clock.now().millisecondsSinceEpoch;
+    final mac = SyncCrypto.hmacSha256Base64(key: sharedKey, message: 'PAIR:${req.deviceId}:$_deviceId:$ts');
+    final uri = Uri.parse('http://${req.host}:${req.httpPort}/lan/v1/pair/confirm');
+    final resp = await _httpClient!
+        .post(
+          uri,
+          headers: {'Content-Type': 'application/json; charset=utf-8'},
+          body: jsonEncode({
+            'device_id': _deviceId,
+            'device_name': _deviceName ?? 'Plezy',
+            'pub_key': _pubKeyB64,
+            'http_port': _httpServer!.port,
+            'timestamp': ts,
+            'hmac': mac,
+          }),
+        )
+        .timeout(const Duration(seconds: 5));
+    if (resp.statusCode < 200 || resp.statusCode >= 300) {
+      throw HttpException('Pair confirm failed (${resp.statusCode}): ${resp.body}');
+    }
+
+    if (!_disposed) notifyListeners();
+    await syncWithPeer(trusted, notifyBack: true);
+  }
+
+  void rejectPairRequest(String deviceId) {
+    if (_incomingRequests.remove(deviceId) != null && !_disposed) {
+      notifyListeners();
+    }
+  }
+
+  Future<void> removeTrustedPeer(String deviceId) async {
+    _trustedPeers.removeWhere((p) => p.deviceId == deviceId);
+    await syncStore.saveTrustedLanPeers(_trustedPeers);
+    if (!_disposed) notifyListeners();
+  }
+
+  Future<void> notifyTrustedPeersOfLocalChange() async {
+    if (!_running || _disposed || _httpServer == null) return;
+    final rev = await syncStore.bumpLocalLanRevision();
+    unawaited(_sendBeacon());
+    final snapshot = List<LanTrustedPeer>.from(_trustedPeers);
+    for (final peer in snapshot) {
+      final host = _discovered[peer.deviceId]?.host ?? peer.lastHost;
+      final port = _discovered[peer.deviceId]?.httpPort ?? peer.lastPort;
+      if (host == null || port == null || port <= 0) continue;
+      unawaited(_postNotify(peer, host: host, port: port, revision: rev));
+    }
+  }
+
+  Future<void> _postNotify(LanTrustedPeer peer, {required String host, required int port, required int revision}) async {
+    if (!_running || _httpClient == null || _httpServer == null) return;
+    try {
+      final ts = clock.now().millisecondsSinceEpoch;
+      final path = '/lan/v1/sync/notify';
+      final sig = SyncCrypto.hmacSha256Base64(key: peer.sharedKey, message: 'POST:$path:$ts');
+      await _httpClient!
+          .post(
+            Uri.parse('http://$host:$port$path'),
+            headers: {
+              'Content-Type': 'application/json; charset=utf-8',
+              'X-Plezy-Device': _deviceId!,
+              'X-Plezy-Timestamp': '$ts',
+              'X-Plezy-Signature': sig,
+            },
+            body: jsonEncode({'revision': revision, 'http_port': _httpServer!.port}),
+          )
+          .timeout(const Duration(seconds: 3));
+    } catch (_) {
+      // Peer might currently be offline; UDP discovery or manual sync catches up later.
+    }
+  }
+
+  Future<void> syncWithAllTrustedPeers() async {
+    if (!_running || _disposed) return;
+    _syncing = true;
+    _lastError = null;
+    if (!_disposed) notifyListeners();
+    try {
+      final peers = List<LanTrustedPeer>.from(_trustedPeers);
+      for (final peer in peers) {
+        await syncWithPeer(peer, notifyBack: false);
+      }
+    } catch (e) {
+      _lastError = '$e';
+    } finally {
+      _syncing = false;
+      if (!_disposed) notifyListeners();
+    }
+  }
+
+  Future<void> syncWithPeer(
+    LanTrustedPeer peer, {
+    String? hostOverride,
+    int? portOverride,
+    bool notifyBack = false,
+  }) async {
+    if (!_running || _disposed || _httpClient == null) return;
+    final active = _activePeerSyncs[peer.deviceId];
+    if (active != null) return active;
+
+    final run = () async {
+      final host = hostOverride ?? _discovered[peer.deviceId]?.host ?? peer.lastHost;
+      final port = portOverride ?? _discovered[peer.deviceId]?.httpPort ?? peer.lastPort;
+      if (host == null || port == null || port <= 0) return;
+
+      final ts = clock.now().millisecondsSinceEpoch;
+      final path = '/lan/v1/sync/snapshot';
+      final sig = SyncCrypto.hmacSha256Base64(key: peer.sharedKey, message: 'GET:$path:$ts');
+      final resp = await _httpClient!
+          .get(
+            Uri.parse('http://$host:$port$path'),
+            headers: {
+              'Accept-Encoding': 'gzip',
+              'X-Plezy-Device': _deviceId!,
+              'X-Plezy-Timestamp': '$ts',
+              'X-Plezy-Signature': sig,
+            },
+          )
+          .timeout(const Duration(seconds: 10));
+      if (resp.statusCode != HttpStatus.ok) {
+        throw HttpException('LAN snapshot failed (${resp.statusCode})');
+      }
+
+      final payload = jsonDecode(utf8.decode(resp.bodyBytes)) as Map<String, dynamic>;
+      final peerRev = (payload['revision'] as num?)?.toInt() ?? 0;
+      final bundle = payload['bundle'] as Map<String, dynamic>? ?? const {};
+
+      final touched = await mapper.applyPullBatch(
+        masterKey: peer.sharedKey,
+        sources: _listOfMaps(bundle['sources']),
+        works: _listOfMaps(bundle['works']),
+        files: _listOfMaps(bundle['files']),
+        workPrefs: _listOfMaps(bundle['work_prefs']),
+        watchProgress: _listOfMaps(bundle['watch_progress']),
+        userSettings: _mapOf(bundle['user_settings']),
+        nextSeq: 0,
+        isFinalPage: true,
+        updateCloudCursor: false,
+        deterministicP2pSourceTieBreak: true,
+      );
+
+      final idx = _trustedPeers.indexWhere((p) => p.deviceId == peer.deviceId);
+      if (idx >= 0 && peerRev > _trustedPeers[idx].lastSyncedRevision) {
+        _trustedPeers[idx] = _trustedPeers[idx].copyWith(lastSyncedRevision: peerRev, lastHost: host, lastPort: port);
+        await syncStore.saveTrustedLanPeers(_trustedPeers);
+      }
+
+      if (touched > 0) {
+        onLibraryChanged?.call();
+      }
+      if (notifyBack) {
+        final myRev = await syncStore.getLocalLanRevision();
+        if (myRev > 0) {
+          await _postNotify(peer, host: host, port: port, revision: myRev);
+        }
+      }
+      if (!_disposed) notifyListeners();
+    }();
+
+    _activePeerSyncs[peer.deviceId] = run;
+    try {
+      await run;
+    } finally {
+      unawaited(_activePeerSyncs.remove(peer.deviceId));
+    }
+  }
+
+  Future<void> _handleHttp(HttpRequest req) async {
+    try {
+      final path = req.uri.path;
+      if (req.method == 'GET' && path == '/lan/v1/hello') {
+        final rev = await syncStore.getLocalLanRevision();
+        await _writeJson(req.response, HttpStatus.ok, {
+          'device_id': _deviceId,
+          'device_name': _deviceName ?? 'Plezy',
+          'platform': Platform.operatingSystem,
+          'pub_key': _pubKeyB64,
+          'revision': rev,
+        });
+        return;
+      }
+
+      if (req.method == 'POST' && path == '/lan/v1/pair/request') {
+        await _handlePairRequest(req);
+        return;
+      }
+
+      if (req.method == 'POST' && path == '/lan/v1/pair/confirm') {
+        await _handlePairConfirm(req);
+        return;
+      }
+
+      final verifiedPeer = _authenticateRequest(req);
+      if (verifiedPeer == null) {
+        await _writeJson(req.response, HttpStatus.forbidden, {'error': 'untrusted_peer'});
+        return;
+      }
+
+      if (req.method == 'GET' && path == '/lan/v1/sync/snapshot') {
+        final rev = await syncStore.getLocalLanRevision();
+        final bundle = await mapper.buildSnapshotBundle(encryptionKey: verifiedPeer.sharedKey);
+        await _writeJson(
+          req.response,
+          HttpStatus.ok,
+          {'revision': rev, 'bundle': bundle},
+          compress: req.headers.value('Accept-Encoding')?.contains('gzip') == true,
+        );
+        return;
+      }
+
+      if (req.method == 'POST' && path == '/lan/v1/sync/notify') {
+        final body = await _readJsonBody(req);
+        final remoteHost = req.connectionInfo?.remoteAddress.address ?? verifiedPeer.lastHost;
+        final remotePort = (body['http_port'] as num?)?.toInt() ?? verifiedPeer.lastPort;
+        await _writeJson(req.response, HttpStatus.ok, {'ok': true});
+        unawaited(syncWithPeer(verifiedPeer, hostOverride: remoteHost, portOverride: remotePort, notifyBack: false));
+        return;
+      }
+
+      await _writeJson(req.response, HttpStatus.notFound, {'error': 'not_found'});
+    } catch (e) {
+      appLogger.d('[LanP2P] Request handler error', error: e);
+      try {
+        await _writeJson(req.response, HttpStatus.badRequest, {'error': '$e'});
+      } catch (_) {}
+    }
+  }
+
+  Future<void> _handlePairRequest(HttpRequest req) async {
+    final body = await _readJsonBody(req);
+    final peerId = body['device_id'] as String?;
+    final peerName = body['device_name'] as String? ?? 'Device';
+    final platform = body['platform'] as String? ?? 'unknown';
+    final peerPub = body['pub_key'] as String?;
+    final httpPort = (body['http_port'] as num?)?.toInt();
+    final host = req.connectionInfo?.remoteAddress.address ?? body['host'] as String?;
+
+    if (peerId == null ||
+        peerId.isEmpty ||
+        peerPub == null ||
+        peerPub.isEmpty ||
+        httpPort == null ||
+        httpPort <= 0 ||
+        host == null ||
+        _pubKeyB64 == null) {
+      await _writeJson(req.response, HttpStatus.badRequest, {'error': 'invalid_pair_request'});
+      return;
+    }
+
+    // Auto-confirm only if already trusted with the exact same X25519 public key.
+    final already = _trustedPeers.where((p) => p.deviceId == peerId && p.pubKeyBase64 == peerPub).firstOrNull;
+    final code = SyncCrypto.computePairingCode(_pubKeyB64!, peerPub);
+    final pairReq = LanPairRequest(
+      deviceId: peerId,
+      deviceName: peerName,
+      platform: platform,
+      host: host,
+      httpPort: httpPort,
+      pubKeyBase64: peerPub,
+      pairingCode: code,
+      requestedAt: clock.now(),
+    );
+
+    if (already != null) {
+      await _writeJson(req.response, HttpStatus.ok, {'status': 'pending', 'pairing_code': code});
+      unawaited(acceptPairRequest(pairReq));
+      return;
+    }
+
+    _incomingRequests[peerId] = pairReq;
+    if (!_disposed) notifyListeners();
+    await _writeJson(req.response, HttpStatus.ok, {'status': 'pending', 'pairing_code': code});
+  }
+
+  Future<void> _handlePairConfirm(HttpRequest req) async {
+    final body = await _readJsonBody(req);
+    final peerId = body['device_id'] as String?;
+    final peerName = body['device_name'] as String? ?? 'Device';
+    final peerPub = body['pub_key'] as String?;
+    final httpPort = (body['http_port'] as num?)?.toInt();
+    final ts = (body['timestamp'] as num?)?.toInt() ?? 0;
+    final mac = body['hmac'] as String? ?? '';
+    final host = req.connectionInfo?.remoteAddress.address;
+
+    final pending = peerId == null ? null : _outgoingPairTargets[peerId];
+    if (pending == null ||
+        peerId == null ||
+        peerPub == null ||
+        peerPub != pending.pubKeyBase64 ||
+        _privKeyB64 == null ||
+        _pubKeyB64 == null ||
+        (clock.now().millisecondsSinceEpoch - ts).abs() > _hmacWindow.inMilliseconds) {
+      await _writeJson(req.response, HttpStatus.forbidden, {'error': 'unexpected_pair_confirm'});
+      return;
+    }
+
+    final sharedKey = await SyncCrypto.deriveLanSharedKey(
+      myPrivateKeyBase64: _privKeyB64!,
+      myPublicKeyBase64: _pubKeyB64!,
+      peerPublicKeyBase64: peerPub,
+    );
+    final expectedMac = SyncCrypto.hmacSha256Base64(key: sharedKey, message: 'PAIR:$_deviceId:$peerId:$ts');
+    if (!SyncCrypto.constantTimeEquals(mac, expectedMac)) {
+      await _writeJson(req.response, HttpStatus.forbidden, {'error': 'invalid_pair_hmac'});
+      return;
+    }
+
+    final trusted = LanTrustedPeer(
+      deviceId: peerId,
+      deviceName: peerName,
+      pubKeyBase64: peerPub,
+      sharedKeyBase64: base64Encode(sharedKey),
+      lastSyncedRevision: 0,
+      pairedAtMs: clock.now().millisecondsSinceEpoch,
+      lastHost: host ?? pending.host,
+      lastPort: httpPort ?? pending.httpPort,
+    );
+    _outgoingPairTargets.remove(peerId);
+    _trustedPeers.removeWhere((p) => p.deviceId == peerId);
+    _trustedPeers.add(trusted);
+    await syncStore.saveTrustedLanPeers(_trustedPeers);
+
+    await _writeJson(req.response, HttpStatus.ok, {'status': 'paired'});
+    if (!_disposed) notifyListeners();
+    unawaited(syncWithPeer(trusted, notifyBack: false));
+  }
+
+  LanTrustedPeer? _authenticateRequest(HttpRequest req) {
+    final peerId = req.headers.value('X-Plezy-Device');
+    final tsRaw = req.headers.value('X-Plezy-Timestamp');
+    final sig = req.headers.value('X-Plezy-Signature');
+    if (peerId == null || tsRaw == null || sig == null) return null;
+
+    final ts = int.tryParse(tsRaw);
+    if (ts == null || (clock.now().millisecondsSinceEpoch - ts).abs() > _hmacWindow.inMilliseconds) {
+      return null;
+    }
+
+    final peer = _trustedPeers.where((p) => p.deviceId == peerId).firstOrNull;
+    if (peer == null) return null;
+
+    final expected = SyncCrypto.hmacSha256Base64(key: peer.sharedKey, message: '${req.method}:${req.uri.path}:$ts');
+    return SyncCrypto.constantTimeEquals(sig, expected) ? peer : null;
+  }
+
+  static Future<Map<String, dynamic>> _readJsonBody(HttpRequest req) async {
+    final raw = await utf8.decodeStream(req);
+    if (raw.trim().isEmpty) return const {};
+    final decoded = jsonDecode(raw);
+    return decoded is Map<String, dynamic> ? decoded : const {};
+  }
+
+  static Future<void> _writeJson(HttpResponse resp, int status, Object body, {bool compress = false}) async {
+    final raw = utf8.encode(jsonEncode(body));
+    resp.statusCode = status;
+    resp.headers.contentType = ContentType.json;
+    if (compress && raw.length > 512) {
+      resp.headers.set(HttpHeaders.contentEncodingHeader, 'gzip');
+      resp.add(gzip.encode(raw));
+    } else {
+      resp.add(raw);
+    }
+    await resp.close();
+  }
+
+  static Map<String, Object?> _mapOf(Object? raw) =>
+      raw is Map ? {for (final entry in raw.entries) '${entry.key}': entry.value} : const {};
+
+  static List<Map<String, dynamic>> _listOfMaps(Object? raw) =>
+      raw is List ? [for (final entry in raw) if (entry is Map<String, dynamic>) entry] : const [];
+
+  @override
+  void dispose() {
+    _disposed = true;
+    unawaited(stop());
+    super.dispose();
+  }
+}

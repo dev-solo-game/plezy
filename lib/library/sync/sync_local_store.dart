@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:clock/clock.dart';
 import 'package:drift/drift.dart';
@@ -11,6 +12,70 @@ import '../../services/work_skip_settings_store.dart';
 import '../library_watch_state_store.dart';
 import 'deterministic_keys.dart';
 import 'sync_crypto.dart';
+
+enum SyncMode { lanP2p, cloudServer }
+
+class LanTrustedPeer {
+  const LanTrustedPeer({
+    required this.deviceId,
+    required this.deviceName,
+    required this.pubKeyBase64,
+    required this.sharedKeyBase64,
+    required this.lastSyncedRevision,
+    required this.pairedAtMs,
+    this.lastHost,
+    this.lastPort,
+  });
+
+  final String deviceId;
+  final String deviceName;
+  final String pubKeyBase64;
+  final String sharedKeyBase64;
+  final int lastSyncedRevision;
+  final int pairedAtMs;
+  final String? lastHost;
+  final int? lastPort;
+
+  Uint8List get sharedKey => Uint8List.fromList(base64Decode(sharedKeyBase64));
+
+  LanTrustedPeer copyWith({
+    String? deviceName,
+    int? lastSyncedRevision,
+    String? lastHost,
+    int? lastPort,
+  }) => LanTrustedPeer(
+    deviceId: deviceId,
+    deviceName: deviceName ?? this.deviceName,
+    pubKeyBase64: pubKeyBase64,
+    sharedKeyBase64: sharedKeyBase64,
+    lastSyncedRevision: lastSyncedRevision ?? this.lastSyncedRevision,
+    pairedAtMs: pairedAtMs,
+    lastHost: lastHost ?? this.lastHost,
+    lastPort: lastPort ?? this.lastPort,
+  );
+
+  Map<String, Object?> toJson() => {
+    'device_id': deviceId,
+    'device_name': deviceName,
+    'pub_key': pubKeyBase64,
+    'shared_key': sharedKeyBase64,
+    'last_synced_revision': lastSyncedRevision,
+    'paired_at_ms': pairedAtMs,
+    if (lastHost != null) 'last_host': lastHost,
+    if (lastPort != null) 'last_port': lastPort,
+  };
+
+  factory LanTrustedPeer.fromJson(Map<String, dynamic> json) => LanTrustedPeer(
+    deviceId: json['device_id'] as String,
+    deviceName: json['device_name'] as String? ?? 'Device',
+    pubKeyBase64: json['pub_key'] as String,
+    sharedKeyBase64: json['shared_key'] as String,
+    lastSyncedRevision: (json['last_synced_revision'] as num?)?.toInt() ?? 0,
+    pairedAtMs: (json['paired_at_ms'] as num?)?.toInt() ?? 0,
+    lastHost: json['last_host'] as String?,
+    lastPort: (json['last_port'] as num?)?.toInt(),
+  );
+}
 
 /// Persists local sync metadata, calibrated timestamps, and the pending
 /// [SyncOutbox] queue used by incremental synchronization.
@@ -28,6 +93,13 @@ class SyncLocalStore {
   static const String _kAccessToken = 'sync_access_token';
   static const String _kMasterKey = 'sync_master_key';
   static const String _kAuthUpdatedPrefix = 'source_auth_updated_at:';
+  static const String _kSyncMode = 'sync_mode';
+  static const String _kOnboardingDone = 'sync_onboarding_done';
+  static const String _kDeviceName = 'sync_device_name';
+  static const String _kLanPrivKey = 'sync_lan_priv_key';
+  static const String _kLanPubKey = 'sync_lan_pub_key';
+  static const String _kLanTrustedPeers = 'sync_lan_trusted_peers';
+  static const String _kLanRevision = 'sync_lan_revision';
 
   static const String typeSource = 'source';
   static const String typeWork = 'work';
@@ -319,5 +391,80 @@ class SyncLocalStore {
         );
       }
     });
+  }
+
+  Future<SyncMode> getSyncMode() async {
+    final raw = await _getMeta(_kSyncMode);
+    if (raw == SyncMode.cloudServer.name) return SyncMode.cloudServer;
+    if (raw == SyncMode.lanP2p.name) return SyncMode.lanP2p;
+    final hasSession = (await _getMeta(_kAccessToken))?.isNotEmpty == true;
+    return hasSession ? SyncMode.cloudServer : SyncMode.lanP2p;
+  }
+
+  Future<void> setSyncMode(SyncMode mode) => _putMeta(_kSyncMode, mode.name);
+
+  Future<bool> isOnboardingCompleted() async => await _getMeta(_kOnboardingDone) == 'true';
+
+  Future<void> setOnboardingCompleted(bool completed) => _putMeta(_kOnboardingDone, '$completed');
+
+  Future<String> getDeviceName() async {
+    final saved = await _getMeta(_kDeviceName);
+    if (saved != null && saved.trim().isNotEmpty) return saved.trim();
+    try {
+      final host = Platform.localHostname.trim();
+      if (host.isNotEmpty) return host;
+    } catch (_) {}
+    return 'Plezy Device';
+  }
+
+  Future<void> setDeviceName(String name) => _putMeta(_kDeviceName, name.trim());
+
+  Future<int> getLocalLanRevision() async => int.tryParse(await _getMeta(_kLanRevision) ?? '') ?? 0;
+
+  Future<int> bumpLocalLanRevision() async {
+    final next = (await getLocalLanRevision()) + 1;
+    await _putMeta(_kLanRevision, '$next');
+    return next;
+  }
+
+  Future<({String privateKeyBase64, String publicKeyBase64})> getOrCreateLanKeyPair() async {
+    final encPriv = await _getMeta(_kLanPrivKey);
+    final pub = await _getMeta(_kLanPubKey);
+    if (encPriv != null && encPriv.isNotEmpty && pub != null && pub.isNotEmpty) {
+      final clearPriv = await CredentialVault.reveal(encPriv);
+      if (clearPriv != null && clearPriv.isNotEmpty) {
+        return (privateKeyBase64: clearPriv, publicKeyBase64: pub);
+      }
+    }
+    final generated = await SyncCrypto.generateLanIdentityKeyPair();
+    final protectedPriv = await CredentialVault.protect(generated.privateKeyBase64);
+    await db.transaction(() async {
+      await _putMeta(_kLanPrivKey, protectedPriv);
+      await _putMeta(_kLanPubKey, generated.publicKeyBase64);
+    });
+    return generated;
+  }
+
+  Future<List<LanTrustedPeer>> loadTrustedLanPeers() async {
+    final protectedJson = await _getMeta(_kLanTrustedPeers);
+    if (protectedJson == null || protectedJson.isEmpty) return const [];
+    final rawJson = await CredentialVault.reveal(protectedJson);
+    if (rawJson == null || rawJson.isEmpty) return const [];
+    try {
+      final decoded = jsonDecode(rawJson);
+      if (decoded is! List) return const [];
+      return [
+        for (final entry in decoded)
+          if (entry is Map<String, dynamic>) LanTrustedPeer.fromJson(entry),
+      ];
+    } on FormatException {
+      return const [];
+    }
+  }
+
+  Future<void> saveTrustedLanPeers(List<LanTrustedPeer> peers) async {
+    final raw = jsonEncode([for (final p in peers) p.toJson()]);
+    final protectedJson = await CredentialVault.protect(raw);
+    await _putMeta(_kLanTrustedPeers, protectedJson);
   }
 }

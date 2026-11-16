@@ -6790,11 +6790,74 @@ class Translations$sync$en {
 
 	// Translations
 
-	/// en: 'Cloud Sync'
-	String get title => 'Cloud Sync';
+	/// en: 'Sync & Connection'
+	String get title => 'Sync & Connection';
 
 	/// en: 'E2EE multi-device library & progress sync'
 	String get subtitle => 'E2EE multi-device library & progress sync';
+
+	/// en: 'Local & LAN P2P Mode'
+	String get modeLanTitle => 'Local & LAN P2P Mode';
+
+	/// en: 'Offline-ready without a server; auto-discovers trusted devices on the same Wi-Fi.'
+	String get modeLanDesc => 'Offline-ready without a server; auto-discovers trusted devices on the same Wi-Fi.';
+
+	/// en: 'Sign In to Sync Server'
+	String get modeCloudTitle => 'Sign In to Sync Server';
+
+	/// en: 'Connect to your Go Sync Server for remote 5G sync & TV QR login (disables LAN discovery).'
+	String get modeCloudDesc => 'Connect to your Go Sync Server for remote 5G sync & TV QR login (disables LAN discovery).';
+
+	/// en: 'Current mode: Local & LAN P2P Sync'
+	String get activeModeLan => 'Current mode: Local & LAN P2P Sync';
+
+	/// en: 'Current mode: Sync Server (LAN P2P disabled)'
+	String get activeModeCloud => 'Current mode: Sync Server (LAN P2P disabled)';
+
+	/// en: 'Switch to Sync Server (Go Server)'
+	String get switchToCloudTitle => 'Switch to Sync Server (Go Server)';
+
+	/// en: 'Sign Out & Switch to Local/LAN'
+	String get switchToLan => 'Sign Out & Switch to Local/LAN';
+
+	/// en: 'Searching for devices on the same Wi-Fi…'
+	String get lanDiscoveryEmpty => 'Searching for devices on the same Wi-Fi…';
+
+	/// en: 'Nearby LAN Devices'
+	String get lanNearbyTitle => 'Nearby LAN Devices';
+
+	/// en: 'Trusted LAN Devices'
+	String get lanTrustedTitle => 'Trusted LAN Devices';
+
+	/// en: 'Pairing Requests'
+	String get lanRequestsTitle => 'Pairing Requests';
+
+	/// en: 'Trust & Sync'
+	String get lanPairButton => 'Trust & Sync';
+
+	/// en: 'Pairing request sent. Confirm on the other device.'
+	String get lanPairRequested => 'Pairing request sent. Confirm on the other device.';
+
+	/// en: 'Allow Trust'
+	String get lanAcceptButton => 'Allow Trust';
+
+	/// en: 'Reject'
+	String get lanRejectButton => 'Reject';
+
+	/// en: 'Remove'
+	String get lanRemoveTrust => 'Remove';
+
+	/// en: 'Sync LAN Now'
+	String get lanSyncNow => 'Sync LAN Now';
+
+	/// en: 'Pairing code: ${code}'
+	String lanPairingCode({required Object code}) => 'Pairing code: ${code}';
+
+	/// en: 'LAN P2P (${count} trusted device(s))'
+	String lanSettingsSubtitle({required Object count}) => 'LAN P2P (${count} trusted device(s))';
+
+	/// en: 'Sync Server: ${name}'
+	String cloudSettingsSubtitle({required Object name}) => 'Sync Server: ${name}';
 
 	/// en: 'Sync Server URL'
 	String get serverUrl => 'Sync Server URL';
@@ -11411,11 +11474,34 @@ extension on Translations {
 			'workSkip.delayDescription' => ({required Object seconds}) => 'Wait ${seconds} seconds before skipping credits. Intro skips immediately.',
 			'workSkip.cancelVisit' => 'Cancel this skip',
 			'workSkip.legend' => 'Blue: intro · Amber: credits',
-			'sync.title' => 'Cloud Sync',
+			'sync.title' => 'Sync & Connection',
 			'sync.subtitle' => 'E2EE multi-device library & progress sync',
+			'sync.modeLanTitle' => 'Local & LAN P2P Mode',
+			'sync.modeLanDesc' => 'Offline-ready without a server; auto-discovers trusted devices on the same Wi-Fi.',
+			'sync.modeCloudTitle' => 'Sign In to Sync Server',
+			'sync.modeCloudDesc' => 'Connect to your Go Sync Server for remote 5G sync & TV QR login (disables LAN discovery).',
+			'sync.activeModeLan' => 'Current mode: Local & LAN P2P Sync',
+			'sync.activeModeCloud' => 'Current mode: Sync Server (LAN P2P disabled)',
+			'sync.switchToCloudTitle' => 'Switch to Sync Server (Go Server)',
+			'sync.switchToLan' => 'Sign Out & Switch to Local/LAN',
+			'sync.lanDiscoveryEmpty' => 'Searching for devices on the same Wi-Fi…',
+			'sync.lanNearbyTitle' => 'Nearby LAN Devices',
+			'sync.lanTrustedTitle' => 'Trusted LAN Devices',
+			'sync.lanRequestsTitle' => 'Pairing Requests',
+			'sync.lanPairButton' => 'Trust & Sync',
+			'sync.lanPairRequested' => 'Pairing request sent. Confirm on the other device.',
+			'sync.lanAcceptButton' => 'Allow Trust',
+			'sync.lanRejectButton' => 'Reject',
+			'sync.lanRemoveTrust' => 'Remove',
+			'sync.lanSyncNow' => 'Sync LAN Now',
+			'sync.lanPairingCode' => ({required Object code}) => 'Pairing code: ${code}',
+			'sync.lanSettingsSubtitle' => ({required Object count}) => 'LAN P2P (${count} trusted device(s))',
+			'sync.cloudSettingsSubtitle' => ({required Object name}) => 'Sync Server: ${name}',
 			'sync.serverUrl' => 'Sync Server URL',
 			'sync.username' => 'Username',
 			'sync.password' => 'Password',
+			_ => null,
+		} ?? switch (path) {
 			'sync.register' => 'Create Account',
 			'sync.login' => 'Sign In',
 			'sync.qrLoginTitle' => 'TV / Big-Screen Quick Login',

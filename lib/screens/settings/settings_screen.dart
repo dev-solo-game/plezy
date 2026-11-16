@@ -49,7 +49,6 @@ import '../../widgets/settings_builder.dart';
 import '../../widgets/settings_section.dart';
 import '../../widgets/system_bottom_inset.dart';
 import '../../profiles/active_profile_provider.dart';
-import '../../profiles/profile.dart';
 import '../../watch_together/services/watch_party_relays.dart';
 import 'about_screen.dart';
 import 'add_connection_screen.dart';
@@ -60,9 +59,10 @@ import 'general_settings_screen.dart';
 import 'keyboard_shortcuts_screen.dart';
 import '../../connection/connection_registry.dart';
 import '../../connection/connection.dart';
-import '../../media/media_backend.dart';
+import '../../library/sync/sync_coordinator.dart';
 import '../storage/mounts_screen.dart';
 import '../storage/scraper_settings_screen.dart';
+import '../storage/sync_settings_screen.dart';
 import 'logs_screen.dart';
 import 'playback_settings_screen.dart';
 import '../profile/profile_switch_screen.dart';
@@ -387,6 +387,16 @@ class _SettingsScreenState extends State<SettingsScreen> with FocusableTab, Moun
 
   Widget _buildMediaSourcesSection() {
     final active = context.watch<ActiveProfileProvider?>()?.active;
+    SyncAndScanCoordinator? sync;
+    try {
+      sync = context.watch<SyncAndScanCoordinator>();
+    } on ProviderNotFoundException catch (_) {}
+    final syncSubtitle = sync == null
+        ? t.sync.subtitle
+        : sync.isSignedIn
+        ? t.sync.cloudSettingsSubtitle(name: sync.session!.username)
+        : t.sync.lanSettingsSubtitle(count: sync.lanService.trustedPeers.length);
+
     return SettingsGroup(
       title: t.storage.mediaSources,
       children: [
@@ -396,6 +406,12 @@ class _SettingsScreenState extends State<SettingsScreen> with FocusableTab, Moun
           title: t.storage.title,
           subtitle: t.storage.description,
           destinationBuilder: (context) => const MountsScreen(),
+        ),
+        SettingNavigationTile(
+          icon: Symbols.cloud_sync_rounded,
+          title: t.sync.title,
+          subtitle: syncSubtitle,
+          destinationBuilder: (_) => const SyncSettingsScreen(),
         ),
         SettingNavigationTile(
           icon: Symbols.dns_rounded,
@@ -415,19 +431,9 @@ class _SettingsScreenState extends State<SettingsScreen> with FocusableTab, Moun
   }
 
   Widget _buildConnectionsSection(BuildContext context) {
-    final active = context.select<ActiveProfileProvider, Profile?>((p) => p.active);
     return SettingsGroup(
       title: t.connections.sectionTitle,
       children: [
-        if (plexSupportEnabled)
-          SettingNavigationTile(
-            icon: Symbols.add_link_rounded,
-            title: t.connections.addConnection,
-            subtitle: active == null
-                ? t.connections.addConnectionSubtitleNoProfile
-                : t.connections.addConnectionSubtitleScoped(displayName: active.displayName),
-            destinationBuilder: (_) => AddConnectionScreen(targetProfile: active),
-          ),
         _buildProfilesTile(context),
         if (context.select<AccountPreferencesController, bool>((c) => c.accounts.isNotEmpty))
           _buildAccountPreferencesTile(context),

@@ -1,167 +1,95 @@
 import 'package:drift/native.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:plezy/connection/connection.dart';
-import 'package:plezy/connection/connection_registry.dart';
 import 'package:plezy/database/app_database.dart';
-import 'package:plezy/models/plex/plex_home_user.dart';
-import 'package:plezy/profiles/plex_home_service.dart';
-import 'package:plezy/profiles/profile.dart';
-import 'package:plezy/profiles/profile_connection_registry.dart';
+import 'package:plezy/i18n/strings.g.dart';
+import 'package:plezy/library/library_repository.dart';
+import 'package:plezy/library/sync/sync_coordinator.dart';
+import 'package:plezy/library/sync/sync_local_store.dart';
 import 'package:plezy/screens/auth_screen.dart';
-import 'package:plezy/services/storage_service.dart';
+import 'package:plezy/screens/storage/sync_settings_screen.dart';
+import 'package:plezy/services/credential_vault.dart';
+import 'package:plezy/storage/mount_manager.dart';
+import 'package:plezy/storage/mount_registry.dart';
+import 'package:provider/provider.dart';
 
 import '../test_helpers/prefs.dart';
 
 void main() {
-  setUp(resetSharedPreferencesForTest);
+  TestWidgetsFlutterBinding.ensureInitialized();
 
-  test('initial profile is built from the refreshed Plex Home cache', () async {
+  setUp(() {
+    resetSharedPreferencesForTest();
+    CredentialVault.resetKeyForTesting();
+  });
+
+  testWidgets('AuthScreen offers Local/LAN and Cloud Sync modes without Plex', (tester) async {
+    await tester.pumpWidget(
+      TranslationProvider(child: const MaterialApp(home: AuthScreen(initializeServices: false))),
+    );
+    await tester.pump();
+
+    expect(find.text(t.sync.modeLanTitle), findsOneWidget);
+    expect(find.text(t.sync.modeCloudTitle), findsOneWidget);
+    expect(find.text(t.auth.connectToMediaBrowser(product: 'Jellyfin')), findsOneWidget);
+    expect(find.text(t.auth.connectToMediaBrowser(product: 'Emby')), findsOneWidget);
+    expect(find.text(t.auth.signInWithPlex), findsNothing);
+  });
+
+  testWidgets('tapping Cloud Sync mode opens SyncSettingsScreen in onboarding mode', (tester) async {
     final db = AppDatabase.forTesting(NativeDatabase.memory());
-    final connections = ConnectionRegistry(db);
-    final profileConnections = ProfileConnectionRegistry(db);
-    final storage = await StorageService.getInstance();
-    final plexHome = PlexHomeService(
-      connections: connections,
-      profileConnections: profileConnections,
-      storage: storage,
-      plexHomeUserFetcher: (_) async => [
-        PlexHomeUser(
-          id: 1,
-          uuid: 'home-user-a',
-          title: 'Home User',
-          thumb: '',
-          hasPassword: false,
-          restricted: false,
-          updatedAt: null,
-          admin: true,
-          guest: false,
-          protected: false,
-        ),
-      ],
+    final repo = LibraryRepository(db);
+    final manager = MountManager(MountRegistry(db));
+    final sync = SyncAndScanCoordinator(
+      db: db,
+      repo: repo,
+      mountManager: manager,
+      enableLanUdp: false,
+      autoStartLanService: false,
     );
     addTearDown(() async {
-      await plexHome.dispose();
+      sync.dispose();
+      await manager.dispose();
       await db.close();
     });
 
-    final account = PlexAccountConnection(
-      id: 'plex-account-a',
-      accountToken: 'account-token',
-      clientIdentifier: 'client-a',
-      accountLabel: 'Plex',
-      createdAt: DateTime(2026, 1, 1),
+    await tester.pumpWidget(
+      ChangeNotifierProvider<SyncAndScanCoordinator>.value(
+        value: sync,
+        child: TranslationProvider(child: const MaterialApp(home: AuthScreen(initializeServices: false))),
+      ),
     );
-    await connections.upsert(account);
-    await plexHome.refresh(account);
+    await tester.pump();
 
-    final profile = initialPlexHomeProfileFromCache(plexHome, account);
+    await tester.tap(find.text(t.sync.modeCloudTitle));
+    await tester.pumpAndSettle();
 
-    expect(profile, isNotNull);
-    expect(profile!.id, plexHomeProfileId(accountConnectionId: account.id, homeUserUuid: 'home-user-a'));
-    expect(profile.parentConnectionId, account.id);
-    expect(profile.displayName, 'Home User');
+    expect(find.byType(SyncSettingsScreen), findsOneWidget);
+    expect(find.text(t.sync.register), findsOneWidget);
   });
 
-  test('a PIN-protected single Plex Home user is left for the picker', () async {
+  test('selecting Local/LAN mode completes onboarding without requiring a server', () async {
     final db = AppDatabase.forTesting(NativeDatabase.memory());
-    final connections = ConnectionRegistry(db);
-    final profileConnections = ProfileConnectionRegistry(db);
-    final storage = await StorageService.getInstance();
-    final plexHome = PlexHomeService(
-      connections: connections,
-      profileConnections: profileConnections,
-      storage: storage,
-      plexHomeUserFetcher: (_) async => [
-        PlexHomeUser(
-          id: 1,
-          uuid: 'home-user-a',
-          title: 'Home User',
-          thumb: '',
-          hasPassword: true,
-          restricted: false,
-          updatedAt: null,
-          admin: true,
-          guest: false,
-          protected: true,
-        ),
-      ],
+    final repo = LibraryRepository(db);
+    final manager = MountManager(MountRegistry(db));
+    final sync = SyncAndScanCoordinator(
+      db: db,
+      repo: repo,
+      mountManager: manager,
+      enableLanUdp: false,
+      autoStartLanService: false,
     );
     addTearDown(() async {
-      await plexHome.dispose();
+      sync.dispose();
+      await manager.dispose();
       await db.close();
     });
 
-    final account = PlexAccountConnection(
-      id: 'plex-account-a',
-      accountToken: 'account-token',
-      clientIdentifier: 'client-a',
-      accountLabel: 'Plex',
-      createdAt: DateTime(2026, 1, 1),
-    );
-    await connections.upsert(account);
-    await plexHome.refresh(account);
+    await sync.initialize();
+    expect(await sync.syncStore.isOnboardingCompleted(), isFalse);
 
-    expect(initialPlexHomeProfileFromCache(plexHome, account), isNull);
-    expect(
-      shouldPromptForInitialProfileSelection(
-        activeProfile: null,
-        hasProfiles: false,
-        accountHasHomeUsers: plexHome.current[account.id]?.isNotEmpty == true,
-        requireProfileSelectionOnOpen: false,
-      ),
-      isTrue,
-    );
-  });
-
-  test('initial profile selection is required when home users exist but no profile is active', () {
-    expect(
-      shouldPromptForInitialProfileSelection(
-        activeProfile: null,
-        hasProfiles: false,
-        accountHasHomeUsers: true,
-        requireProfileSelectionOnOpen: false,
-      ),
-      isTrue,
-    );
-  });
-
-  test('initial profile selection is skipped when a profile was auto-selected', () {
-    final profile = Profile.local(id: 'local-owner', displayName: 'Owner', createdAt: DateTime(2026, 1, 1));
-
-    expect(
-      shouldPromptForInitialProfileSelection(
-        activeProfile: profile,
-        hasProfiles: true,
-        accountHasHomeUsers: true,
-        requireProfileSelectionOnOpen: false,
-      ),
-      isFalse,
-    );
-  });
-
-  test('initial profile selection is required when the launch setting is enabled', () {
-    final profile = Profile.local(id: 'local-owner', displayName: 'Owner', createdAt: DateTime(2026, 1, 1));
-
-    expect(
-      shouldPromptForInitialProfileSelection(
-        activeProfile: profile,
-        hasProfiles: true,
-        accountHasHomeUsers: true,
-        requireProfileSelectionOnOpen: true,
-      ),
-      isTrue,
-    );
-  });
-
-  test('initial profile selection is skipped when no profiles are available', () {
-    expect(
-      shouldPromptForInitialProfileSelection(
-        activeProfile: null,
-        hasProfiles: false,
-        accountHasHomeUsers: false,
-        requireProfileSelectionOnOpen: false,
-      ),
-      isFalse,
-    );
+    await sync.selectLanMode(startService: false);
+    expect(sync.syncMode, SyncMode.lanP2p);
+    expect(await sync.syncStore.isOnboardingCompleted(), isTrue);
   });
 }

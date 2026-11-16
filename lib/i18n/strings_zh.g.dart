@@ -2709,8 +2709,29 @@ class Translations$sync$zh extends Translations$sync$en {
 	final TranslationsZh _root; // ignore: unused_field
 
 	// Translations
-	@override String get title => '多端云同步';
+	@override String get title => '多端同步模式';
 	@override String get subtitle => '端到端加密媒体库索引、网盘配置与播放进度同步';
+	@override String get modeLanTitle => '本地与局域网同步（免登录）';
+	@override String get modeLanDesc => '无需部署服务器，离线可用并在同一 Wi-Fi 下自动发现可信设备点对点同步。';
+	@override String get modeCloudTitle => '登录云同步服务器';
+	@override String get modeCloudDesc => '连接自建 Go 同步服务器，支持跨网漫游与电视扫码秒登（同时关闭局域网广播）。';
+	@override String get activeModeLan => '当前模式：本地与局域网 P2P 同步';
+	@override String get activeModeCloud => '当前模式：同步服务器（已关闭局域网 P2P）';
+	@override String get switchToCloudTitle => '随时切换：登录 Go 同步服务器';
+	@override String get switchToLan => '退出并切回本地/局域网模式';
+	@override String get lanDiscoveryEmpty => '正在同一局域网下发现其他 Plezy 设备…';
+	@override String get lanNearbyTitle => '附近局域网设备';
+	@override String get lanTrustedTitle => '已信任的局域网设备';
+	@override String get lanRequestsTitle => '收到配对信任请求';
+	@override String get lanPairButton => '信任并同步';
+	@override String get lanPairRequested => '已发送配对请求，请在另一台设备上确认信任。';
+	@override String get lanAcceptButton => '允许信任';
+	@override String get lanRejectButton => '拒绝';
+	@override String get lanRemoveTrust => '取消信任';
+	@override String get lanSyncNow => '立即局域网同步';
+	@override String lanPairingCode({required Object code}) => '核对配对码：${code}';
+	@override String lanSettingsSubtitle({required Object count}) => '局域网 P2P（已信任 ${count} 台设备）';
+	@override String cloudSettingsSubtitle({required Object name}) => '同步服务器：${name}';
 	@override String get serverUrl => '同步服务器地址';
 	@override String get username => '用户名';
 	@override String get password => '密码';
@@ -6244,8 +6265,29 @@ extension on TranslationsZh {
 			'workSkip.delayDescription' => ({required Object seconds}) => '进入片尾后等待 ${seconds} 秒再跳过；片头直接跳过。',
 			'workSkip.cancelVisit' => '取消本次跳过',
 			'workSkip.legend' => '蓝色：片头 · 金色：片尾',
-			'sync.title' => '多端云同步',
+			'sync.title' => '多端同步模式',
 			'sync.subtitle' => '端到端加密媒体库索引、网盘配置与播放进度同步',
+			'sync.modeLanTitle' => '本地与局域网同步（免登录）',
+			'sync.modeLanDesc' => '无需部署服务器，离线可用并在同一 Wi-Fi 下自动发现可信设备点对点同步。',
+			'sync.modeCloudTitle' => '登录云同步服务器',
+			'sync.modeCloudDesc' => '连接自建 Go 同步服务器，支持跨网漫游与电视扫码秒登（同时关闭局域网广播）。',
+			'sync.activeModeLan' => '当前模式：本地与局域网 P2P 同步',
+			'sync.activeModeCloud' => '当前模式：同步服务器（已关闭局域网 P2P）',
+			'sync.switchToCloudTitle' => '随时切换：登录 Go 同步服务器',
+			'sync.switchToLan' => '退出并切回本地/局域网模式',
+			'sync.lanDiscoveryEmpty' => '正在同一局域网下发现其他 Plezy 设备…',
+			'sync.lanNearbyTitle' => '附近局域网设备',
+			'sync.lanTrustedTitle' => '已信任的局域网设备',
+			'sync.lanRequestsTitle' => '收到配对信任请求',
+			'sync.lanPairButton' => '信任并同步',
+			'sync.lanPairRequested' => '已发送配对请求，请在另一台设备上确认信任。',
+			'sync.lanAcceptButton' => '允许信任',
+			'sync.lanRejectButton' => '拒绝',
+			'sync.lanRemoveTrust' => '取消信任',
+			'sync.lanSyncNow' => '立即局域网同步',
+			'sync.lanPairingCode' => ({required Object code}) => '核对配对码：${code}',
+			'sync.lanSettingsSubtitle' => ({required Object count}) => '局域网 P2P（已信任 ${count} 台设备）',
+			'sync.cloudSettingsSubtitle' => ({required Object name}) => '同步服务器：${name}',
 			'sync.serverUrl' => '同步服务器地址',
 			'sync.username' => '用户名',
 			'sync.password' => '密码',
@@ -6257,6 +6299,8 @@ extension on TranslationsZh {
 			'sync.qrAuthorizeTitle' => '授权电视端登录',
 			'sync.qrAuthorizeHint' => '粘贴电视端展示的配对链接（plezy://qr-auth?...）。',
 			'sync.qrAuthorizeButton' => '确认授权给该设备',
+			_ => null,
+		} ?? switch (path) {
 			'sync.qrAuthorized' => '已发送授权与加密密钥。',
 			'sync.syncNow' => '立即同步',
 			'sync.syncing' => '同步中…',
