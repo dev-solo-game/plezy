@@ -70,6 +70,7 @@ void main() {
   late List<Map<String, Object>> search;
   late List<Map<String, Object>> seasonFiles;
   late List<String> folderReads;
+  late List<String> ancestryReads;
   late List<int> searchPages;
   late List<String?> searchCookies;
   late bool failSecondPage;
@@ -93,6 +94,7 @@ void main() {
     search = [_file('old', 'Old Movie (2022).mkv', baseline)];
     seasonFiles = [...search];
     folderReads = [];
+    ancestryReads = [];
     searchPages = [];
     searchCookies = [];
     failSecondPage = false;
@@ -116,7 +118,9 @@ void main() {
           await response.close();
           return;
         }
-      } else if (!ancestry) {
+      } else if (ancestry) {
+        ancestryReads.add(folder!);
+      } else {
         folderReads.add(folder!);
         if (failFolderReads) {
           response.statusCode = HttpStatus.serviceUnavailable;
@@ -196,7 +200,16 @@ void main() {
     expect(await checkpoint(), 'library:$next');
 
     folderReads.clear();
-    await incremental();
+    ancestryReads.clear();
+    final idleSeen = <int>[];
+    await scanner.scanQuarkIncremental(
+      mount,
+      driver,
+      cancel: ScanCancelToken(),
+      onProgress: (progress) => idleSeen.add(progress.filesSeen),
+    );
+    expect(idleSeen, [0, 0]);
+    expect(ancestryReads, isEmpty);
     expect(folderReads, isEmpty);
     seasonFiles.removeLast();
     await incremental();
@@ -222,6 +235,33 @@ void main() {
     expect(await db.select(db.libraryFiles).get(), hasLength(1));
     await incremental();
     expect(await checkpoint(), 'library:$next');
+  });
+
+  test('detects a new file sharing the baseline timestamp while skipping the already-indexed file', () async {
+    await scanner.scan(mount, driver);
+    expect(await checkpoint(), 'library:$baseline');
+
+    final sameWindow = _file('new-same-ts', 'Same Minute (2022).mkv', baseline);
+    search = [sameWindow, ...search];
+    seasonFiles = [...search];
+    folderReads.clear();
+    ancestryReads.clear();
+
+    final seen = <int>[];
+    final result = await scanner.scanQuarkIncremental(
+      mount,
+      driver,
+      cancel: ScanCancelToken(),
+      onProgress: (progress) => seen.add(progress.filesSeen),
+    );
+    expect(seen, [1, 1]);
+    expect(result.hasChanges, isTrue);
+    expect(ancestryReads, ['season']);
+    expect(folderReads, ['season']);
+    expect(
+      (await db.select(db.libraryFiles).get()).map((row) => row.remoteId),
+      unorderedEquals(['old', 'new-same-ts']),
+    );
   });
 
   test('recently added prefers the Quark creation time on both full and incremental scans', () async {
@@ -320,7 +360,7 @@ void main() {
         onProgress?.call(1, 1);
         scraping.complete();
         await finishScraping.future;
-        return null;
+        return const LibraryScrapeOutcome(hasChanges: true);
       },
     );
     addTearDown(scans.dispose);
@@ -343,11 +383,13 @@ void main() {
       scanner: scanner,
       mounts: _MountManager(MountRegistry(db), driver),
       scrape: ({retryUnmatched = false, mountIds, refreshMatched = false, isCancelled, onProgress}) async {
-        if (mountIds?.contains(mount.id) != true || !refreshMatched) return 'Incorrect scrape scope';
+        if (mountIds?.contains(mount.id) != true || !refreshMatched) {
+          return const LibraryScrapeOutcome(note: 'Incorrect scrape scope');
+        }
         scrapes.complete();
         await finishScraping.future;
         cancelled.complete(isCancelled!());
-        return null;
+        return const LibraryScrapeOutcome();
       },
     );
     addTearDown(scans.dispose);
@@ -381,7 +423,7 @@ void main() {
           await release.future;
           expect(isCancelled!(), isTrue);
         }
-        return null;
+        return const LibraryScrapeOutcome();
       },
     );
     addTearDown(scans.dispose);

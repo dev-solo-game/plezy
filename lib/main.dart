@@ -2261,26 +2261,7 @@ class _SetupScreenState extends State<SetupScreen> with MountedSetStateMixin {
     final activeProfile = context.read<ActiveProfileProvider>();
     final scans = context.read<LibraryScanService>();
 
-    local
-      ..serverName = t.storage.localLibraryName
-      ..shelfTitles = {
-        'movie': t.storage.content.movie,
-        'show': t.storage.content.show,
-        'anime': t.storage.content.anime,
-        'variety': t.storage.content.variety,
-        'documentary': t.storage.content.documentary,
-        'pending': t.storage.unmatchedTitles,
-      }
-      ..sortTitles = {
-        'title': t.storage.sortTitle,
-        'year': t.storage.sortYear,
-        'releaseDate': t.storage.sortReleaseDate,
-        'rating': t.storage.sortRating,
-        'addedAt': t.storage.sortAddedAt,
-        'lastPlayed': t.storage.sortLastPlayed,
-      }
-      ..recentlyAddedTitle = t.storage.recentlyAdded(shelf: '{shelf}')
-      ..continueWatchingTitle = t.storage.continueWatching;
+    configureLocalLibraryClientLabels(local);
     await local.refreshMounts();
     serverManager.registerLocalLibrary(local);
     // Until a session's library list takes over, keep the mounts current.
@@ -2309,7 +2290,10 @@ class _SetupScreenState extends State<SetupScreen> with MountedSetStateMixin {
       await activeProfile.reloadFromStorage();
     }
     if (activeProfile.active == null && activeProfile.profiles.isNotEmpty) {
-      await activeProfile.activate(activeProfile.profiles.first);
+      final candidate = activeProfile.profiles.where((p) => !p.isPinProtected).firstOrNull;
+      if (candidate != null) {
+        await activeProfile.activate(candidate);
+      }
     }
   }
 
@@ -2424,7 +2408,9 @@ class _SetupScreenState extends State<SetupScreen> with MountedSetStateMixin {
     final onboardingDone = await syncCoordinator.syncStore.isOnboardingCompleted();
     if (!mounted) return;
     if (!onboardingDone) {
-      if (hasInitialMounts || allConnections.isNotEmpty || syncCoordinator.isSignedIn) {
+      final hasExplicitOnboarding = await syncCoordinator.syncStore.hasExplicitOnboardingState();
+      if (!mounted) return;
+      if (!hasExplicitOnboarding && (hasInitialMounts || allConnections.isNotEmpty || syncCoordinator.isSignedIn)) {
         await syncCoordinator.syncStore.setOnboardingCompleted(true);
         if (!syncCoordinator.isSignedIn) {
           await syncCoordinator.selectLanMode();

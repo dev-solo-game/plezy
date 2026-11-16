@@ -66,8 +66,9 @@ void main() {
     expect(find.text(t.auth.signInWithPlex), findsNothing);
     expect(find.text(t.sync.modeLanTitle), findsOneWidget);
     expect(find.text(t.sync.modeCloudTitle), findsOneWidget);
-    expect(find.text(t.auth.connectToMediaBrowser(product: 'Jellyfin')), findsOneWidget);
-    expect(find.text(t.auth.connectToMediaBrowser(product: 'Emby')), findsOneWidget);
+    expect(find.text(t.auth.connectToMediaBrowser(product: 'Jellyfin')), findsNothing);
+    expect(find.text(t.auth.connectToMediaBrowser(product: 'Emby')), findsNothing);
+    expect(find.text(t.storage.title), findsNothing);
   });
 
   testWidgets('fresh AuthScreen has normal actions without recovery notice', (tester) async {
@@ -78,7 +79,8 @@ void main() {
     expect(find.text(t.auth.signInWithPlex), findsNothing);
     expect(find.text(t.sync.modeLanTitle), findsOneWidget);
     expect(find.text(t.sync.modeCloudTitle), findsOneWidget);
-    expect(find.text(t.auth.connectToMediaBrowser(product: 'Jellyfin')), findsOneWidget);
-    expect(find.text(t.auth.connectToMediaBrowser(product: 'Emby')), findsOneWidget);
+    expect(find.text(t.auth.connectToMediaBrowser(product: 'Jellyfin')), findsNothing);
+    expect(find.text(t.auth.connectToMediaBrowser(product: 'Emby')), findsNothing);
+    expect(find.text(t.storage.title), findsNothing);
   });
 }

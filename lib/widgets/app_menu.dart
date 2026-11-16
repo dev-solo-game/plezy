@@ -65,9 +65,11 @@ class AppMenuDivider<T> extends AppMenuEntry<T> {
 
 class AppMenuHeader<T> extends AppMenuEntry<T> {
   final String? label;
+  final String? subtitle;
+  final IconData? icon;
   final Widget? child;
 
-  const AppMenuHeader({this.label, this.child})
+  const AppMenuHeader({this.label, this.subtitle, this.icon, this.child})
     : assert(label != null || child != null, 'AppMenuHeader requires either label or child');
 }
 
@@ -671,18 +673,61 @@ class _AppMenuHeaderTile<T> extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final style = Theme.of(context).textTheme.labelSmall?.copyWith(
-      fontWeight: FontWeight.w600,
-      letterSpacing: 0.4,
-      color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.62),
-    );
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final textTheme = theme.textTheme;
+    if (entry.icon == null && entry.subtitle == null) {
+      final style = textTheme.labelSmall?.copyWith(
+        fontWeight: FontWeight.w600,
+        letterSpacing: 0.4,
+        color: colorScheme.onSurface.withValues(alpha: 0.62),
+      );
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+        child: DefaultTextStyle.merge(
+          style: style,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          child: entry.child ?? Text(entry.label!),
+        ),
+      );
+    }
+
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-      child: DefaultTextStyle.merge(
-        style: style,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        child: entry.child ?? Text(entry.label!),
+      padding: const EdgeInsets.fromLTRB(14, 8, 14, 6),
+      child: Row(
+        children: [
+          if (entry.icon != null) ...[
+            SizedBox(
+              width: 24,
+              child: AppIcon(entry.icon!, fill: 1, size: 20, color: colorScheme.primary),
+            ),
+            const SizedBox(width: 12),
+          ],
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                DefaultTextStyle.merge(
+                  style: textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600, color: colorScheme.onSurface),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  child: entry.child ?? Text(entry.label!),
+                ),
+                if (entry.subtitle != null) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    entry.subtitle!,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: textTheme.labelSmall?.copyWith(color: colorScheme.onSurfaceVariant),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -798,9 +843,13 @@ class _AppMenuPopupState<T> extends State<_AppMenuPopup<T>> {
     var longest = 0;
     for (final entry in widget.entries) {
       if (entry is AppMenuItem<T>) {
-        longest = math.max(longest, entry.label?.length ?? 0);
+        final labelLen = entry.label?.length ?? 0;
+        final subtitleLen = entry.subtitle?.length ?? 0;
+        final itemLen = math.max(labelLen + (entry.trailing != null ? 14 : 0), subtitleLen);
+        longest = math.max(longest, itemLen + (entry.icon != null || entry.leading != null ? 4 : 0));
       } else if (entry is AppMenuHeader<T>) {
-        longest = math.max(longest, entry.label?.length ?? 0);
+        final headerLen = math.max(entry.label?.length ?? 0, entry.subtitle?.length ?? 0);
+        longest = math.max(longest, headerLen + (entry.icon != null ? 4 : 0));
       }
     }
     return math.min(360, math.max(_minMenuWidth, 96 + longest * 7.5));
@@ -855,7 +904,7 @@ double _estimateMenuHeight<T>(List<AppMenuEntry<T>> entries) {
       case AppMenuDivider<T>():
         height += 9;
       case AppMenuHeader<T>():
-        height += 32;
+        height += (entry.subtitle != null || entry.icon != null) ? 54 : 32;
       default:
         break;
     }

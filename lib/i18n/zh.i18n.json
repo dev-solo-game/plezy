@@ -2816,6 +2816,18 @@
     "account": "当前账号：${name}",
     "pendingChanges": "待上传离线变更：${count} 条",
     "lastSynced": "上次同步：${time}",
-    "neverSynced": "尚未同步"
+    "neverSynced": "尚未同步",
+    "menuModeLanTitle": "本地与局域网模式",
+    "menuModeLanSubtitle": "本机：${device}",
+    "menuModeCloudTitle": "云端同步模式",
+    "menuModeCloudSubtitle": "账号：${name}",
+    "lanDevicesTitle": "局域网设备",
+    "lanDiscoveredCount": "已发现 ${count} 台",
+    "lanPairRequestBadge": "${count} 条配对请求",
+    "lanDiscoveryRunning": "正在同一局域网广播与发现设备",
+    "lanDiscoveryStopped": "局域网广播未开启",
+    "lanPeerOnline": "在线",
+    "switchSyncMode": "切换同步模式",
+    "userMenuTooltip": "同步与设备菜单"
   }
 }

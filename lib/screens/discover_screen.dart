@@ -33,13 +33,11 @@ import '../widgets/hub_section.dart';
 import '../widgets/app_menu.dart';
 import '../widgets/clickable_cursor.dart';
 import '../widgets/loading_indicator_box.dart';
-import '../widgets/profile_switching_overlay.dart';
-import 'profile/profile_switch_screen.dart';
 import 'profile/profile_teardown.dart';
-import '../profiles/active_profile_provider.dart';
-import '../profiles/profile.dart';
-import '../profiles/profile_activation.dart';
-import '../profiles/profile_avatar.dart';
+import 'storage/lan_devices_screen.dart';
+import 'storage/sync_settings_screen.dart';
+import '../library/sync/sync_coordinator.dart';
+import '../utils/initials_palette.dart';
 import '../services/settings_service.dart';
 import '../widgets/settings_builder.dart';
 import '../widgets/fitting_title_text.dart';
@@ -156,7 +154,6 @@ class _DiscoverScreenState extends State<DiscoverScreen>
   bool get _areHubsLoading => _discover.areHubsLoading;
   String? get _errorMessage => _discover.errorMessage == null ? null : t.errors.unableToLoad(context: t.discover.title);
 
-  bool _switchingProfile = false;
   final PageController _heroController = PageController();
   final ScrollController _scrollController = ScrollController();
   final ValueNotifier<int> _heroIndex = ValueNotifier<int>(0);
@@ -803,13 +800,6 @@ class _DiscoverScreenState extends State<DiscoverScreen>
     }
   }
 
-  void _handleSwitchProfile(BuildContext context) {
-    Navigator.of(
-      context,
-      rootNavigator: true,
-    ).push(MaterialPageRoute(builder: (context) => const ProfileSwitchScreen()));
-  }
-
   void _handleOpenSettings(BuildContext context) {
     final mainScope = MainScreenFocusScope.of(context, listen: false);
     if (mainScope != null) {
@@ -820,91 +810,154 @@ class _DiscoverScreenState extends State<DiscoverScreen>
     Navigator.push(context, buildSettingsRoute());
   }
 
-  /// Build the [FocusableAction] wrapping the user menu.
-  /// Pulls live state from [ActiveProfileProvider]; the menu reuses
-  /// [_userMenuItems] for the menu contents so d-pad and tap paths
-  /// stay in sync.
+  /// Build the [FocusableAction] wrapping the top-right sync/mode & devices menu.
   FocusableAction _buildUserMenuAction(BuildContext context) {
-    final activeProvider = context.watch<ActiveProfileProvider>();
-    final active = activeProvider.active;
-    final profiles = activeProvider.profiles;
-
     return FocusableAction(
-      onPressed: _switchingProfile ? null : () => _userMenuKey.currentState?.showButtonMenu(focusFirstItem: true),
-      child: AppMenuButton<String>(
-        key: _userMenuKey,
-        enabled: !_switchingProfile,
-        icon: active != null
-            ? ProfileAvatar(profile: active, size: 32, avatarUrl: activeProvider.avatarUrlFor(active.id))
-            : const AppIcon(Symbols.account_circle_rounded, fill: 1, size: 32, color: Colors.white),
-        tooltip: t.profiles.sectionTitle,
-        adaptiveSheet: true,
-        anchorAlignment: AppMenuAnchorAlignment.end,
-        onSelected: (value) => unawaited(_handleUserMenuAction(context, value)),
-        entriesBuilder: (context) =>
-            _userMenuItems(context, activeProfile: active, profiles: profiles, activeProvider: activeProvider),
+      onPressed: () => _userMenuKey.currentState?.showButtonMenu(focusFirstItem: true),
+      child: Builder(
+        builder: (menuBtnContext) {
+          final sync = menuBtnContext.watch<SyncAndScanCoordinator?>();
+          final session = sync?.session;
+          final isCloud = session != null;
+          final requestCount = isCloud ? 0 : (sync?.lanService.incomingPairRequests.length ?? 0);
+          final theme = Theme.of(menuBtnContext);
+          final colorScheme = theme.colorScheme;
+
+          final Widget iconWidget = isCloud
+              ? ClipOval(
+                  child: Container(
+                    width: 32,
+                    height: 32,
+                    color: colorForName(session.username, theme),
+                    alignment: Alignment.center,
+                    child: Text(
+                      initialOf(session.username),
+                      style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                )
+              : Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    Container(
+                      width: 32,
+                      height: 32,
+                      decoration: BoxDecoration(
+                        color: colorScheme.onSurface.withValues(alpha: 0.14),
+                        shape: BoxShape.circle,
+                      ),
+                      alignment: Alignment.center,
+                      child: AppIcon(Symbols.devices_rounded, size: 18, color: colorScheme.onSurface),
+                    ),
+                    if (requestCount > 0)
+                      Positioned(
+                        top: 0,
+                        right: 0,
+                        child: IgnorePointer(
+                          child: Container(
+                            width: 9,
+                            height: 9,
+                            decoration: BoxDecoration(
+                              color: colorScheme.primary,
+                              shape: BoxShape.circle,
+                              border: Border.fromBorderSide(BorderSide(color: colorScheme.surface, width: 1.5)),
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                );
+
+          return AppMenuButton<String>(
+            key: _userMenuKey,
+            icon: iconWidget,
+            tooltip: t.sync.userMenuTooltip,
+            adaptiveSheet: true,
+            anchorAlignment: AppMenuAnchorAlignment.end,
+            onSelected: (value) => unawaited(_handleUserMenuAction(menuBtnContext, value)),
+            entriesBuilder: (menuContext) => _userMenuItems(
+              menuContext,
+              sync: Provider.of<SyncAndScanCoordinator?>(menuContext, listen: false) ?? sync,
+            ),
+          );
+        },
       ),
     );
   }
 
-  List<AppMenuEntry<String>> _userMenuItems(
-    BuildContext context, {
-    required Profile? activeProfile,
-    required List<Profile> profiles,
-    required ActiveProfileProvider activeProvider,
-  }) {
+  List<AppMenuEntry<String>> _userMenuItems(BuildContext context, {required SyncAndScanCoordinator? sync}) {
     final theme = Theme.of(context);
-    final switchable = profiles.where((p) => p.id != activeProfile?.id).toList();
+    final colorScheme = theme.colorScheme;
+    final session = sync?.session;
+
+    if (session != null) {
+      final pending = sync?.pendingOutboxCount ?? 0;
+      return [
+        AppMenuHeader<String>(
+          icon: Symbols.cloud_done_rounded,
+          label: t.sync.menuModeCloudTitle,
+          subtitle: t.sync.menuModeCloudSubtitle(name: session.username),
+        ),
+        const AppMenuDivider<String>(),
+        AppMenuItem<String>(
+          value: 'sync_settings',
+          icon: Symbols.cloud_sync_rounded,
+          label: t.sync.title,
+          subtitle: pending > 0 ? t.sync.pendingChanges(count: pending) : null,
+        ),
+        AppMenuItem<String>(value: 'settings', icon: Symbols.settings_rounded, label: t.common.settings),
+        AppMenuItem<String>(value: 'logout', icon: Symbols.logout_rounded, label: t.common.logout),
+      ];
+    }
+
+    final deviceName = sync?.lanService.deviceName ?? 'Plezy';
+    final discoveredCount = sync?.lanService.discoveredPeers.length ?? 0;
+    final requestCount = sync?.lanService.incomingPairRequests.length ?? 0;
 
     return [
-      for (final p in switchable)
-        AppMenuItem<String>(
-          value: 'profile:${p.id}',
-          leading: ProfileAvatar(profile: p, size: 24, avatarUrl: activeProvider.avatarUrlFor(p.id)),
-          label: p.displayName,
-          trailing: p.isPinProtected
-              ? AppIcon(Symbols.lock_rounded, fill: 1, size: 14, color: theme.colorScheme.onSurfaceVariant)
-              : null,
+      AppMenuHeader<String>(
+        icon: Symbols.wifi_tethering_rounded,
+        label: t.sync.menuModeLanTitle,
+        subtitle: t.sync.menuModeLanSubtitle(device: deviceName),
+      ),
+      const AppMenuDivider<String>(),
+      AppMenuItem<String>(
+        value: 'lan_devices',
+        icon: Symbols.devices_rounded,
+        label: t.sync.lanDevicesTitle,
+        subtitle: requestCount > 0 ? t.sync.lanPairRequestBadge(count: requestCount) : null,
+        trailing: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+          decoration: BoxDecoration(
+            color: discoveredCount > 0 ? colorScheme.primaryContainer : colorScheme.surfaceContainerHighest,
+            borderRadius: const BorderRadius.all(Radius.circular(999)),
+          ),
+          child: Text(
+            t.sync.lanDiscoveredCount(count: discoveredCount),
+            style: theme.textTheme.labelSmall?.copyWith(
+              color: discoveredCount > 0 ? colorScheme.onPrimaryContainer : colorScheme.onSurfaceVariant,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
         ),
-      if (switchable.isNotEmpty) const AppMenuDivider(),
-      AppMenuItem<String>(value: 'manage_profiles', icon: Symbols.group_rounded, label: t.profiles.sectionTitle),
+      ),
       AppMenuItem<String>(value: 'settings', icon: Symbols.settings_rounded, label: t.common.settings),
-      AppMenuItem<String>(value: 'logout', icon: Symbols.logout_rounded, label: t.common.logout),
+      AppMenuItem<String>(value: 'switch_mode', icon: Symbols.swap_horiz_rounded, label: t.sync.switchSyncMode),
     ];
   }
 
   Future<void> _handleUserMenuAction(BuildContext context, String value) async {
-    if (_switchingProfile) return;
-    if (value == 'logout') {
-      unawaited(_handleLogout());
-      return;
-    }
-    if (value == 'manage_profiles') {
-      _handleSwitchProfile(context);
-      return;
-    }
-    if (value == 'settings') {
-      _handleOpenSettings(context);
-      return;
-    }
-    if (value.startsWith('profile:')) {
-      final id = value.substring('profile:'.length);
-      final active = context.read<ActiveProfileProvider>();
-      final target = active.profiles.where((p) => p.id == id).firstOrNull;
-      if (target == null) return;
-      await _switchProfileFromMenu(target);
-    }
-  }
-
-  Future<void> _switchProfileFromMenu(Profile profile) async {
-    if (_switchingProfile) return;
-    setState(() => _switchingProfile = true);
-    try {
-      await switchProfileFromUi(context, profile);
-    } finally {
-      if (mounted) {
-        setState(() => _switchingProfile = false);
-      }
+    switch (value) {
+      case 'lan_devices':
+        unawaited(Navigator.push(context, MaterialPageRoute(builder: (_) => const LanDevicesScreen())));
+      case 'sync_settings':
+        unawaited(Navigator.push(context, MaterialPageRoute(builder: (_) => const SyncSettingsScreen())));
+      case 'settings':
+        _handleOpenSettings(context);
+      case 'switch_mode':
+        await logoutAllProfiles(context);
+      case 'logout':
+        unawaited(_handleLogout());
     }
   }
 
@@ -1038,7 +1091,7 @@ class _DiscoverScreenState extends State<DiscoverScreen>
                       onPressed: () => _serverActivitiesButtonKey.currentState?.togglePanel(),
                       child: ServerActivitiesButton(key: _serverActivitiesButtonKey),
                     ),
-                  // User menu — profiles + sign out
+                  // Sync mode & devices menu
                   _buildUserMenuAction(context),
                 ],
               );
@@ -1188,7 +1241,6 @@ class _DiscoverScreenState extends State<DiscoverScreen>
           // initial/tab-switch focus lands on content (hero/hubs), not the toolbar.
           // Toolbar buttons are still reachable via explicit UP from hero section.
           Positioned(top: 0, left: 0, right: 0, child: ExcludeFocusTraversal(child: _buildOverlaidAppBar())),
-          if (_switchingProfile) const ProfileSwitchingOverlay(),
         ],
       ),
     );
@@ -1234,13 +1286,13 @@ class _DiscoverScreenState extends State<DiscoverScreen>
   // Cached for the same reason: every provider notification (Continue
   // Watching refreshes on return from Detail or the player) rebuilds this
   // screen, and the toolbar was most of that rebuild. Its own content reads
-  // only the theme, translations and _switchingProfile; the providers and
-  // clock inside it rebuild themselves.
+  // only the theme and translations; the providers and clock inside it
+  // rebuild themselves.
   Widget? _tvToolbarOverlayWidget;
-  (ThemeData, Translations, bool)? _tvToolbarOverlayWidgetKey;
+  (ThemeData, Translations)? _tvToolbarOverlayWidgetKey;
 
   Widget _cachedTvToolbarOverlay() {
-    final key = (Theme.of(context), t, _switchingProfile);
+    final key = (Theme.of(context), t);
     if (_tvToolbarOverlayWidget != null && key == _tvToolbarOverlayWidgetKey) return _tvToolbarOverlayWidget!;
     _tvToolbarOverlayWidgetKey = key;
     return _tvToolbarOverlayWidget = TvToolbarOverlay(child: _buildOverlaidAppBar());
@@ -1286,7 +1338,6 @@ class _DiscoverScreenState extends State<DiscoverScreen>
               child: _cachedTvBrowseRail(browseHubs, showServerName: showServerNameOnHubs || hubsSpanMultipleServers),
             ),
           _cachedTvToolbarOverlay(),
-          if (_switchingProfile) const ProfileSwitchingOverlay(),
         ],
       ),
     );

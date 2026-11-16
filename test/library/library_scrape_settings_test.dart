@@ -202,6 +202,32 @@ void main() {
     expect(images('image.tmdb.org'), 'https://image.tmdb.org/t/p');
     expect(images('https://image.tmdb.org/t/p'), 'https://image.tmdb.org/t/p');
   });
+
+  test('scrapeLibrary notifies catalog/library listeners only when items change state', () async {
+    var libraryChanges = 0;
+    var catalogChanges = 0;
+    service.onLibraryChanged = () => libraryChanges++;
+    service.onCatalogChanged = (_) => catalogChanges++;
+
+    // Without a TMDB key the queued movie is skipped without state changes.
+    await store.saveScraper(const ScraperSettings(tmdbApiKey: '', bangumiEnabled: false));
+    await service.scrapeLibrary();
+    expect(libraryChanges, 0);
+    expect(catalogChanges, 0);
+
+    // With a working TMDB endpoint the movie matches, firing both once.
+    await store.saveScraper(
+      ScraperSettings(tmdbApiKey: 'key', tmdbApiBase: 'http://127.0.0.1:${tmdb.port}', bangumiEnabled: false),
+    );
+    await service.scrapeLibrary();
+    expect(libraryChanges, 1);
+    expect(catalogChanges, 1);
+
+    // Running again with nothing left in the queue must not trigger sync.
+    await service.scrapeLibrary();
+    expect(libraryChanges, 1);
+    expect(catalogChanges, 1);
+  });
 }
 
 void unawaitedScrape(Future<void> future) {}

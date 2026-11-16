@@ -688,6 +688,28 @@ class LanPeerSyncService extends ChangeNotifier {
   static List<Map<String, dynamic>> _listOfMaps(Object? raw) =>
       raw is List ? [for (final entry in raw) if (entry is Map<String, dynamic>) entry] : const [];
 
+  @visibleForTesting
+  void debugSeedStateForTesting({
+    bool running = true,
+    String? deviceName,
+    String? publicKeyBase64,
+    List<LanDiscoveredPeer> discovered = const [],
+    List<LanPairRequest> incomingRequests = const [],
+    List<LanTrustedPeer> trusted = const [],
+  }) {
+    _running = running;
+    if (deviceName != null) _deviceName = deviceName;
+    if (publicKeyBase64 != null) _pubKeyB64 = publicKeyBase64;
+    _discovered
+      ..clear()
+      ..addEntries(discovered.map((p) => MapEntry(p.deviceId, p)));
+    _incomingRequests
+      ..clear()
+      ..addEntries(incomingRequests.map((r) => MapEntry(r.deviceId, r)));
+    _trustedPeers = List<LanTrustedPeer>.from(trusted);
+    if (!_disposed) notifyListeners();
+  }
+
   @override
   void dispose() {
     _disposed = true;

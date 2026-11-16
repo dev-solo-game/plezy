@@ -7,6 +7,7 @@ import '../storage/mount_manager.dart';
 import '../storage/storage_driver.dart';
 import '../storage/storage_path.dart';
 import 'library_repository.dart';
+import 'library_scan_service.dart';
 import 'library_scraper.dart';
 import 'library_settings.dart';
 import 'scrapers/bangumi_provider.dart';
@@ -102,12 +103,12 @@ class LibraryScrapeRunner {
     }
   }
 
-  /// Scrapes everything queued. Returns null when the run completed, a
-  /// message when it stopped early, or [noTmdbKey].
+  /// Scrapes everything queued. Returns the outcome including any early-stop
+  /// note (or [noTmdbKey]) and whether any titles changed match state.
   ///
-  /// [retryUnmatched] first puts titles an earlier run could not match back
-  /// in the queue.
-  Future<String?> scrapePending({
+  /// [retryUnmatched] first puts titles and episode files an earlier run
+  /// could not match back in the queue.
+  Future<LibraryScrapeOutcome> scrapePending({
     bool retryUnmatched = false,
     Set<String>? mountIds,
     bool refreshMatched = false,
@@ -122,8 +123,8 @@ class LibraryScrapeRunner {
         isCancelled: isCancelled,
         onProgress: onProgress,
       );
-      if (summary.stoppedBy != null) return summary.stoppedBy;
-      return summary.skipped > 0 && !current.hasTmdb ? noTmdbKey : null;
+      final note = summary.stoppedBy ?? (summary.skipped > 0 && !current.hasTmdb ? noTmdbKey : null);
+      return LibraryScrapeOutcome(note: note, hasChanges: summary.hasChanges);
     }, isCancelled: isCancelled);
   }
 }

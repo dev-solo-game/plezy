@@ -14,6 +14,8 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:plezy/connection/connection.dart';
 import 'package:plezy/connection/connection_registry.dart';
 import 'package:plezy/database/app_database.dart';
+import 'package:plezy/library/library_repository.dart';
+import 'package:plezy/library/local_library_client.dart';
 import 'package:plezy/models/plex/plex_config.dart';
 import 'package:plezy/services/plex_api_cache.dart';
 import 'package:plezy/services/plex_auth_service.dart';
@@ -21,6 +23,8 @@ import 'package:plezy/services/plex_client.dart';
 import 'package:plezy/services/jellyfin_client.dart';
 import 'package:plezy/services/multi_server_manager.dart';
 import 'package:plezy/services/storage_service.dart';
+import 'package:plezy/storage/mount_manager.dart';
+import 'package:plezy/storage/mount_registry.dart';
 import 'package:plezy/utils/active_client_scope.dart';
 import 'package:plezy/utils/device_identity.dart';
 
@@ -2107,6 +2111,37 @@ void main() {
       expect(m.getClient(ServerId('jf-machine')), isNull);
       expect(m.getJellyfinClientByCompoundId('jf-machine/user-a'), isNull);
       expect(m.getJellyfinClientByCompoundId('jf-machine/user-b'), isNull);
+    });
+
+    test('preserves registered local library client as online while clearing remote servers', () async {
+      final db = AppDatabase.forTesting(NativeDatabase.memory());
+      final mounts = MountManager(MountRegistry(db));
+      final localClient = LocalLibraryClient(repository: LibraryRepository(db), mounts: mounts);
+      final m = MultiServerManager();
+      addTearDown(() async {
+        m.dispose();
+        await mounts.dispose();
+        await db.close();
+      });
+
+      m.registerLocalLibrary(localClient);
+      m.debugRegisterJellyfinClientForTesting(_jellyfinClient('user-a'));
+
+      final emitted = <Map<String, bool>>[];
+      final sub = m.statusStream.listen(emitted.add);
+      addTearDown(sub.cancel);
+
+      m.disconnectAll();
+      await Future<void>.delayed(Duration.zero);
+
+      expect(m.getClient(ServerId('jf-machine')), isNull);
+      expect(m.getClient(ServerId(LocalLibraryClient.localServerId)), same(localClient));
+      expect(m.onlineServerIds, [LocalLibraryClient.localServerId]);
+      expect(emitted.last, {LocalLibraryClient.localServerId: true});
+
+      await m.shutdown();
+      expect(m.getClient(ServerId(LocalLibraryClient.localServerId)), isNull);
+      expect(m.onlineServerIds, isEmpty);
     });
   });
 

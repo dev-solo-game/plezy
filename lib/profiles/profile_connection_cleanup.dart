@@ -140,7 +140,6 @@ class ProfileConnectionCleanup {
   }) async {
     await pruneUnreferencedJellyfinConnections();
     final conns = await connections.list();
-    if (conns.isEmpty) return (route: PostRemovalRoute.signedOut, profiles: const <Profile>[]);
 
     final merged = mergeLocalWithPlexHome(
       locals: await profileRegistry.list(),

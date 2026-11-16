@@ -65,7 +65,6 @@ import '../storage/scraper_settings_screen.dart';
 import '../storage/sync_settings_screen.dart';
 import 'logs_screen.dart';
 import 'playback_settings_screen.dart';
-import '../profile/profile_switch_screen.dart';
 import 'services_settings_screen.dart';
 import 'settings_utils.dart';
 import 'supporter_settings_tile.dart';
@@ -416,12 +415,7 @@ class _SettingsScreenState extends State<SettingsScreen> with FocusableTab, Moun
         SettingNavigationTile(
           icon: Symbols.dns_rounded,
           title: 'Emby / Jellyfin',
-          subtitle: active == null
-              ? t.addServer.connectToMediaBrowserCardSubtitle
-              : t.addServer.connectToMediaBrowserCardSubtitleScoped(
-                  product: 'Emby / Jellyfin',
-                  name: active.displayName,
-                ),
+          subtitle: t.addServer.connectToMediaBrowserCardSubtitle,
           destinationBuilder: (_) => active == null
               ? const AddConnectionScreen(mediaBrowserOnly: true)
               : ProfileDetailScreen(profile: active, mediaSourcesOnly: true),
@@ -431,13 +425,11 @@ class _SettingsScreenState extends State<SettingsScreen> with FocusableTab, Moun
   }
 
   Widget _buildConnectionsSection(BuildContext context) {
+    final hasAccounts = context.select<AccountPreferencesController, bool>((c) => c.accounts.isNotEmpty);
+    if (!hasAccounts) return const SizedBox.shrink();
     return SettingsGroup(
       title: t.connections.sectionTitle,
-      children: [
-        _buildProfilesTile(context),
-        if (context.select<AccountPreferencesController, bool>((c) => c.accounts.isNotEmpty))
-          _buildAccountPreferencesTile(context),
-      ],
+      children: [_buildAccountPreferencesTile(context)],
     );
   }
 
@@ -455,30 +447,6 @@ class _SettingsScreenState extends State<SettingsScreen> with FocusableTab, Moun
       subtitle: subtitle,
       destinationBuilder: (context) =>
           AccountPreferencesScreen(targets: [for (final account in accounts) account.target]),
-    );
-  }
-
-  Widget _buildProfilesTile(BuildContext context) {
-    // ActiveProfileProvider already merges local rows with virtual Plex
-    // Home profiles — counting only the local DB rows made every Plex Home
-    // household read as a single profile here. `context.select` keeps
-    // rebuilds scoped to actual count/name changes (a StreamBuilder here
-    // was also re-created on every settings rebuild).
-    final count = context.select<ActiveProfileProvider, int>((p) => p.profiles.length);
-    final activeName = context.select<ActiveProfileProvider, String?>((p) => p.active?.displayName);
-    final subtitle = count <= 1
-        ? t.profiles.summarySingle
-        : (activeName != null
-              ? t.profiles.summaryMultipleWithActive(count: count, activeName: activeName)
-              : t.profiles.summaryMultiple(count: count));
-    return SettingNavigationTile(
-      icon: Symbols.group_rounded,
-      title: t.profiles.sectionTitle,
-      subtitle: subtitle,
-      onTap: () => Navigator.of(
-        context,
-        rootNavigator: true,
-      ).push(MaterialPageRoute(builder: (_) => const ProfileSwitchScreen())),
     );
   }
 

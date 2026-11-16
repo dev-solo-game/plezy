@@ -6915,6 +6915,42 @@ class Translations$sync$en {
 
 	/// en: 'Not synced yet'
 	String get neverSynced => 'Not synced yet';
+
+	/// en: 'Local & LAN Mode'
+	String get menuModeLanTitle => 'Local & LAN Mode';
+
+	/// en: 'This device: ${device}'
+	String menuModeLanSubtitle({required Object device}) => 'This device: ${device}';
+
+	/// en: 'Cloud Sync Mode'
+	String get menuModeCloudTitle => 'Cloud Sync Mode';
+
+	/// en: 'Account: ${name}'
+	String menuModeCloudSubtitle({required Object name}) => 'Account: ${name}';
+
+	/// en: 'LAN Devices'
+	String get lanDevicesTitle => 'LAN Devices';
+
+	/// en: '${count} found'
+	String lanDiscoveredCount({required Object count}) => '${count} found';
+
+	/// en: '${count} pairing request(s)'
+	String lanPairRequestBadge({required Object count}) => '${count} pairing request(s)';
+
+	/// en: 'Broadcasting and discovering devices on LAN'
+	String get lanDiscoveryRunning => 'Broadcasting and discovering devices on LAN';
+
+	/// en: 'LAN discovery stopped'
+	String get lanDiscoveryStopped => 'LAN discovery stopped';
+
+	/// en: 'Online'
+	String get lanPeerOnline => 'Online';
+
+	/// en: 'Switch Sync Mode'
+	String get switchSyncMode => 'Switch Sync Mode';
+
+	/// en: 'Sync & Devices'
+	String get userMenuTooltip => 'Sync & Devices';
 }
 
 // Path: appIcon.names
@@ -11518,6 +11554,18 @@ extension on Translations {
 			'sync.pendingChanges' => ({required Object count}) => '${count} pending offline change(s)',
 			'sync.lastSynced' => ({required Object time}) => 'Last synced: ${time}',
 			'sync.neverSynced' => 'Not synced yet',
+			'sync.menuModeLanTitle' => 'Local & LAN Mode',
+			'sync.menuModeLanSubtitle' => ({required Object device}) => 'This device: ${device}',
+			'sync.menuModeCloudTitle' => 'Cloud Sync Mode',
+			'sync.menuModeCloudSubtitle' => ({required Object name}) => 'Account: ${name}',
+			'sync.lanDevicesTitle' => 'LAN Devices',
+			'sync.lanDiscoveredCount' => ({required Object count}) => '${count} found',
+			'sync.lanPairRequestBadge' => ({required Object count}) => '${count} pairing request(s)',
+			'sync.lanDiscoveryRunning' => 'Broadcasting and discovering devices on LAN',
+			'sync.lanDiscoveryStopped' => 'LAN discovery stopped',
+			'sync.lanPeerOnline' => 'Online',
+			'sync.switchSyncMode' => 'Switch Sync Mode',
+			'sync.userMenuTooltip' => 'Sync & Devices',
 			_ => null,
 		};
 	}

@@ -275,19 +275,33 @@ class SyncAndScanCoordinator extends ChangeNotifier {
     );
   }
 
-  Future<void> signOut() async {
+  Future<void> _clearCloudSessionState() async {
     await initialize();
     _session = null;
     _lastError = null;
     _lastSyncedAt = null;
     await syncStore.clearSession();
     await (db.delete(db.syncMetadata)..where((t) => t.key.equals(_kExportedUserKey))).go();
+  }
+
+  Future<void> signOut() async {
+    await _clearCloudSessionState();
     await syncStore.setSyncMode(SyncMode.lanP2p);
     await syncStore.setOnboardingCompleted(true);
     _onboardingCompleted = true;
     if (autoStartLanService) {
       await lanService.start();
     }
+    if (!_disposed) notifyListeners();
+  }
+
+  /// Clears any active cloud session and stops LAN sync so the user returns to
+  /// login/mode selection without discarding local library data or media sources.
+  Future<void> logoutToModeSelection() async {
+    await _clearCloudSessionState();
+    await lanService.stop();
+    await syncStore.setOnboardingCompleted(false);
+    _onboardingCompleted = false;
     if (!_disposed) notifyListeners();
   }
 
@@ -542,6 +556,13 @@ class SyncAndScanCoordinator extends ChangeNotifier {
       }
     }
     return remappedAny;
+  }
+
+  @visibleForTesting
+  void debugSetSessionForTesting(SyncSessionCredentials? session, {int pendingOutboxCount = 0}) {
+    _session = session;
+    _pendingOutboxCount = pendingOutboxCount;
+    if (!_disposed) notifyListeners();
   }
 
   @override

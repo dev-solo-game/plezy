@@ -3,39 +3,67 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:material_symbols_icons/symbols.dart';
 import 'package:provider/provider.dart';
+import 'package:uuid/uuid.dart';
 
 import '../database/app_database.dart';
 import '../focus/focusable_button.dart';
 import '../focus/key_event_utils.dart';
 import '../i18n/strings.g.dart';
+import '../library/local_library_client.dart';
 import '../library/sync/sync_coordinator.dart';
-import '../media/media_backend.dart';
-import '../media/media_browser_dialect.dart';
 import '../navigation/profile_session_screen.dart';
+import '../profiles/active_profile_binder.dart';
+import '../profiles/active_profile_provider.dart';
+import '../profiles/profile.dart';
+import '../profiles/profile_registry.dart';
+import '../providers/multi_server_provider.dart';
 import '../utils/navigation_transitions.dart';
 import '../widgets/app_icon.dart';
-import '../widgets/backend_badge.dart';
-import 'settings/add_jellyfin_screen.dart';
-import 'storage/mounts_screen.dart';
 import 'storage/sync_settings_screen.dart';
 
-/// Initial mode selection & media-source onboarding screen.
+/// Populates localized shelf and sort titles on [local] from `t.storage`.
+void configureLocalLibraryClientLabels(LocalLibraryClient local) {
+  local
+    ..serverName = t.storage.localLibraryName
+    ..shelfTitles = {
+      'movie': t.storage.content.movie,
+      'show': t.storage.content.show,
+      'anime': t.storage.content.anime,
+      'variety': t.storage.content.variety,
+      'documentary': t.storage.content.documentary,
+      'pending': t.storage.unmatchedTitles,
+    }
+    ..sortTitles = {
+      'title': t.storage.sortTitle,
+      'year': t.storage.sortYear,
+      'releaseDate': t.storage.sortReleaseDate,
+      'rating': t.storage.sortRating,
+      'addedAt': t.storage.sortAddedAt,
+      'lastPlayed': t.storage.sortLastPlayed,
+    }
+    ..recentlyAddedTitle = t.storage.recentlyAdded(shelf: '{shelf}')
+    ..continueWatchingTitle = t.storage.continueWatching;
+}
+
+/// Initial mode selection & sync onboarding screen.
 ///
 /// Offers mutually exclusive synchronization modes:
 /// 1) Local & Serverless LAN P2P Mode (no login required), or
-/// 2) Sync Server (Go Server) for cross-network sync & 1-second TV QR login,
-/// alongside secondary Emby / Jellyfin connection options.
+/// 2) Sync Server (Go Server) for cross-network sync & 1-second TV QR login.
 class AuthScreen extends StatefulWidget {
   const AuthScreen({
     super.key,
     this.initialErrorMessage,
     this.initializeServices = true,
     this.databaseRecoveryRequired = false,
+    @visibleForTesting this.sessionBuilder,
   });
 
   final String? initialErrorMessage;
   final bool initializeServices;
   final bool databaseRecoveryRequired;
+  @visibleForTesting
+  final WidgetBuilder? sessionBuilder;
 
   @override
   State<AuthScreen> createState() => _AuthScreenState();
@@ -78,13 +106,59 @@ class _AuthScreenState extends State<AuthScreen> {
     }
   }
 
+  Future<void> _ensureLocalSessionReady() async {
+    final local = context.read<LocalLibraryClient?>();
+    final multiServer = context.read<MultiServerProvider?>();
+    if (local != null && multiServer != null) {
+      configureLocalLibraryClientLabels(local);
+      await local.refreshMounts();
+      if (!mounted) return;
+      multiServer.serverManager.registerLocalLibrary(local);
+    }
+
+    final activeProfile = context.read<ActiveProfileProvider?>();
+    final profiles = context.read<ProfileRegistry?>();
+    if (activeProfile != null && profiles != null) {
+      await activeProfile.reloadFromStorage();
+      if (!mounted) return;
+      if (activeProfile.profiles.isEmpty) {
+        await profiles.upsert(
+          Profile.local(id: const Uuid().v4(), displayName: t.storage.defaultProfileName, createdAt: DateTime.now()),
+        );
+        await activeProfile.reloadFromStorage();
+        if (!mounted) return;
+      }
+      if (activeProfile.active == null && activeProfile.profiles.isNotEmpty) {
+        final candidate = activeProfile.profiles.where((p) => !p.isPinProtected).firstOrNull;
+        if (candidate != null) {
+          await activeProfile.activate(candidate);
+          if (!mounted) return;
+        }
+      }
+    }
+
+    final binder = context.read<ActiveProfileBinder?>();
+    if (binder != null) {
+      binder.start();
+      await binder.rebindActive();
+    }
+  }
+
+  Future<void> _enterProfileSession() async {
+    await _ensureLocalSessionReady();
+    if (!mounted) return;
+    unawaited(
+      Navigator.pushReplacement(context, fadeRoute(widget.sessionBuilder?.call(context) ?? const ProfileSessionScreen())),
+    );
+  }
+
   Future<void> _selectLocalLanMode() async {
     if (_busy || !await _prepareDatabaseRecoveryForSignIn() || !mounted) return;
     setState(() => _busy = true);
     try {
       await _maybeCoordinator()?.selectLanMode();
       if (!mounted) return;
-      unawaited(Navigator.pushReplacement(context, fadeRoute(const ProfileSessionScreen())));
+      await _enterProfileSession();
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -97,24 +171,13 @@ class _AuthScreenState extends State<AuthScreen> {
     ).push<bool>(MaterialPageRoute<bool>(builder: (_) => const SyncSettingsScreen(onboardingMode: true)));
     if (!mounted) return;
     if (signedIn == true || _maybeCoordinator()?.isSignedIn == true) {
-      unawaited(Navigator.pushReplacement(context, fadeRoute(const ProfileSessionScreen())));
+      setState(() => _busy = true);
+      try {
+        await _enterProfileSession();
+      } finally {
+        if (mounted) setState(() => _busy = false);
+      }
     }
-  }
-
-  Future<void> _connectToMediaBrowser(MediaBrowserDialect dialect) async {
-    if (!await _prepareDatabaseRecoveryForSignIn() || !mounted) return;
-    final added = await Navigator.push<bool>(
-      context,
-      MaterialPageRoute(builder: (_) => AddJellyfinScreen(dialect: dialect)),
-    );
-    if (!mounted || added != true) return;
-    await _maybeCoordinator()?.selectLanMode();
-    if (!mounted) return;
-    unawaited(Navigator.pushReplacement(context, fadeRoute(const ProfileSessionScreen())));
-  }
-
-  void _openStorageMounts() {
-    unawaited(Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const MountsScreen())));
   }
 
   @override
@@ -175,8 +238,6 @@ class _AuthScreenState extends State<AuthScreen> {
 
   Widget _buildModeChoices(BuildContext context) {
     final theme = Theme.of(context);
-    const jellyfinDialect = MediaBrowserDialect.jellyfin;
-    const embyDialect = MediaBrowserDialect.emby;
 
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -214,50 +275,6 @@ class _AuthScreenState extends State<AuthScreen> {
           t.sync.modeCloudDesc,
           style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
           textAlign: TextAlign.center,
-        ),
-        const SizedBox(height: 20),
-        Row(
-          children: [
-            Expanded(child: Divider(color: theme.colorScheme.outlineVariant)),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              child: Text(
-                t.auth.or,
-                style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurface.withValues(alpha: 0.6)),
-              ),
-            ),
-            Expanded(child: Divider(color: theme.colorScheme.outlineVariant)),
-          ],
-        ),
-        const SizedBox(height: 12),
-        FocusableButton(
-          onPressed: () => unawaited(_connectToMediaBrowser(jellyfinDialect)),
-          child: OutlinedButton.icon(
-            onPressed: () => unawaited(_connectToMediaBrowser(jellyfinDialect)),
-            style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 14)),
-            icon: const BackendBadge(backend: MediaBackend.jellyfin, size: 18),
-            label: Text(t.auth.connectToMediaBrowser(product: jellyfinDialect.productName)),
-          ),
-        ),
-        const SizedBox(height: 10),
-        FocusableButton(
-          onPressed: () => unawaited(_connectToMediaBrowser(embyDialect)),
-          child: OutlinedButton.icon(
-            onPressed: () => unawaited(_connectToMediaBrowser(embyDialect)),
-            style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 14)),
-            icon: const BackendBadge(backend: MediaBackend.emby, size: 18),
-            label: Text(t.auth.connectToMediaBrowser(product: embyDialect.productName)),
-          ),
-        ),
-        const SizedBox(height: 10),
-        FocusableButton(
-          onPressed: _openStorageMounts,
-          child: OutlinedButton.icon(
-            onPressed: _openStorageMounts,
-            style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 14)),
-            icon: const AppIcon(Symbols.hard_drive_rounded, size: 18),
-            label: Text(t.storage.title),
-          ),
         ),
         if (_errorMessage != null) ...[
           const SizedBox(height: 16),

@@ -27,6 +27,8 @@ class ScrapeSummary {
   /// Set when scraping stopped early: a missing or rejected API key, or the
   /// network being down. The titles not reached stay queued.
   final String? stoppedBy;
+
+  bool get hasChanges => matched > 0 || unmatched > 0 || merged > 0;
 }
 
 /// Identifies the library's provisional titles and puts them on a shelf.
@@ -226,10 +228,15 @@ class LibraryScraper {
       await _apply(item, details, folder: await _folderOf(item));
       title = details.title;
     }
+    var filledEpisodes = 0;
     if (isShow) {
-      await _fillSeasons(item, provider, id, title, pendingOnly: !refreshMatched);
+      filledEpisodes = await _fillSeasons(item, provider, id, title, pendingOnly: !refreshMatched);
     }
-    await _setFilesState(item, LibraryMatchStates.matched);
+    final newlyMatchedFiles = await _setFilesState(item, LibraryMatchStates.matched);
+    final markedUnmatched = isShow ? await _markRemainingPendingFilesUnmatched(item) : 0;
+    if (!refreshMatched && filledEpisodes == 0 && newlyMatchedFiles == 0) {
+      return markedUnmatched > 0 ? ScrapeOutcome.unmatched : ScrapeOutcome.skipped;
+    }
     return ScrapeOutcome.matched;
   }
 
@@ -238,6 +245,13 @@ class LibraryScraper {
     await (_db.update(_db.libraryItems)..where((t) => t.metadataSource.isNull() & t.locked.equals(false))).write(
       const LibraryItemsCompanion(scrapedAt: Value(null)),
     );
+    await (_db.update(_db.libraryFiles)..where(
+          (t) =>
+              t.role.equals(LibraryFileRoles.video) &
+              t.matchState.equals(LibraryMatchStates.unmatched) &
+              t.matchLocked.equals(false),
+        ))
+        .write(const LibraryFilesCompanion(matchState: Value(LibraryMatchStates.pending)));
   }
 
   // ─── One title ─────────────────────────────────────────────────────────
@@ -284,6 +298,7 @@ class LibraryScraper {
     await _apply(item, details, folder: await _folderOf(item));
     if (isShow) await _fillSeasons(item, provider, candidate.id, details.title);
     await _setFilesState(item, LibraryMatchStates.matched);
+    if (isShow) await _markRemainingPendingFilesUnmatched(item);
     return ScrapeOutcome.matched;
   }
 
@@ -635,13 +650,14 @@ class LibraryScraper {
   }
 
   /// Season and episode details for every season the library has files for.
-  Future<void> _fillSeasons(
+  Future<int> _fillSeasons(
     LibraryItemRow show,
     MetadataProvider provider,
     String showId,
     String showTitle, {
     bool pendingOnly = false,
   }) async {
+    var applied = 0;
     for (final seasonView in await _repo.children(show.id)) {
       final seasonRow = seasonView.item;
       final number = seasonRow.seasonNumber;
@@ -671,9 +687,13 @@ class LibraryScraper {
       for (final episodeView in episodes) {
         if (pendingOnly && episodeView.item.scrapedAt != null) continue;
         final scraped = byNumber[episodeView.item.episodeNumber];
-        if (scraped != null) await _applyEpisode(episodeView.item, scraped, provider.source);
+        if (scraped != null) {
+          await _applyEpisode(episodeView.item, scraped, provider.source);
+          applied++;
+        }
       }
     }
+    return applied;
   }
 
   Future<void> _applyEpisode(LibraryItemRow episode, ScrapedEpisode scraped, String source) async {
@@ -793,15 +813,15 @@ class LibraryScraper {
     ];
   }
 
-  Future<void> _setFilesState(LibraryItemRow item, String state, {bool locked = false}) async {
+  Future<int> _setFilesState(LibraryItemRow item, String state, {bool locked = false}) async {
     final leaves = await _leafIds(item, withMetadataOnly: !locked && state == LibraryMatchStates.matched);
-    if (leaves.isEmpty) return;
-    await (_db.update(_db.libraryFiles)..where(
+    if (leaves.isEmpty) return 0;
+    return (_db.update(_db.libraryFiles)..where(
           (t) =>
               t.itemId.isIn(leaves) &
               t.role.equals(LibraryFileRoles.video) &
               // A lookup that found nothing must not undo a manual match.
-              (locked ? const Constant(true) : t.matchLocked.equals(false)),
+              (locked ? const Constant(true) : t.matchLocked.equals(false) & t.matchState.isNotValue(state)),
         ))
         .write(
           LibraryFilesCompanion(
@@ -809,6 +829,19 @@ class LibraryScraper {
             matchLocked: locked ? const Value(true) : const Value.absent(),
           ),
         );
+  }
+
+  Future<int> _markRemainingPendingFilesUnmatched(LibraryItemRow item) async {
+    final leaves = await _leafIds(item);
+    if (leaves.isEmpty) return 0;
+    return (_db.update(_db.libraryFiles)..where(
+          (t) =>
+              t.itemId.isIn(leaves) &
+              t.role.equals(LibraryFileRoles.video) &
+              t.matchLocked.equals(false) &
+              t.matchState.equals(LibraryMatchStates.pending),
+        ))
+        .write(const LibraryFilesCompanion(matchState: Value(LibraryMatchStates.unmatched)));
   }
 
   /// Folds [duplicate] into [target]: two file names that turned out to be
@@ -865,7 +898,17 @@ class LibraryScraper {
     // What moved over was still unplaced; it belongs where the target is.
     await _repo.setLibraryType(target.id, target.libraryType);
     final merged = await (_db.select(_db.libraryItems)..where((t) => t.id.equals(target.id))).getSingle();
+    var checkedShowSeasons = false;
+    if (merged.kind == LibraryKinds.show) {
+      final provider = _metadataProviders.where((p) => p.source == merged.metadataSource).firstOrNull;
+      final id = provider?.source == 'tmdb' ? merged.tmdbId : merged.bangumiId;
+      if (provider != null && id != null) {
+        await _fillSeasons(merged, provider, id, merged.title, pendingOnly: true);
+        checkedShowSeasons = true;
+      }
+    }
     await _setFilesState(merged, LibraryMatchStates.matched);
+    if (checkedShowSeasons) await _markRemainingPendingFilesUnmatched(merged);
     return ScrapeOutcome.merged;
   }
 

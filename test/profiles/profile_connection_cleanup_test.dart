@@ -368,6 +368,15 @@ void main() {
       expect(result.profiles, isEmpty);
     });
 
+    test('local profile with zero connections stays signed in', () async {
+      await profileRegistry.upsert(local('local-1'));
+
+      final result = await resolve();
+
+      expect(result.route, PostRemovalRoute.staySignedIn);
+      expect(result.profiles.map((p) => p.id), ['local-1']);
+    });
+
     test('only an orphaned Jellyfin connection → pruned, signed out (the #1423 wedge)', () async {
       final jf = _jellyfin();
       await connections.upsert(jf);

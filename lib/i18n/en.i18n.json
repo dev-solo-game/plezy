@@ -2828,6 +2828,18 @@
     "account": "Account: ${name}",
     "pendingChanges": "${count} pending offline change(s)",
     "lastSynced": "Last synced: ${time}",
-    "neverSynced": "Not synced yet"
+    "neverSynced": "Not synced yet",
+    "menuModeLanTitle": "Local & LAN Mode",
+    "menuModeLanSubtitle": "This device: ${device}",
+    "menuModeCloudTitle": "Cloud Sync Mode",
+    "menuModeCloudSubtitle": "Account: ${name}",
+    "lanDevicesTitle": "LAN Devices",
+    "lanDiscoveredCount": "${count} found",
+    "lanPairRequestBadge": "${count} pairing request(s)",
+    "lanDiscoveryRunning": "Broadcasting and discovering devices on LAN",
+    "lanDiscoveryStopped": "LAN discovery stopped",
+    "lanPeerOnline": "Online",
+    "switchSyncMode": "Switch Sync Mode",
+    "userMenuTooltip": "Sync & Devices"
   }
 }

@@ -2,12 +2,14 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:uuid/uuid.dart';
 
 import '../../connection/connection_registry.dart';
 import '../../database/app_database.dart';
 import '../../database/download_collection_operations.dart';
 import '../../database/download_operations.dart';
 import '../../i18n/strings.g.dart';
+import '../../library/sync/sync_coordinator.dart';
 import '../../profiles/active_profile_binder.dart';
 import '../../profiles/active_profile_provider.dart';
 import '../../profiles/plex_home_service.dart';
@@ -15,7 +17,6 @@ import '../../profiles/profile.dart';
 import '../../profiles/profile_connection_cleanup.dart';
 import '../../profiles/profile_connection_registry.dart';
 import '../../profiles/profile_registry.dart';
-import '../../providers/account_preferences_controller.dart';
 import '../../providers/companion_remote_provider.dart';
 import '../../providers/download_provider.dart';
 import '../../providers/discover_provider.dart';
@@ -96,14 +97,17 @@ Future<bool> settleSessionAfterRemoval(
   );
 
   if (result.route == PostRemovalRoute.signedOut) {
-    await scope.active.clearActiveProfile();
-    await scope.binder.rebindActive();
-    if (scope.navigator.mounted) {
-      unawaited(
-        scope.navigator.pushAndRemoveUntil(MaterialPageRoute(builder: (_) => const AuthScreen()), (_) => false),
-      );
-    }
-    return true;
+    final fallback = Profile.local(
+      id: const Uuid().v4(),
+      displayName: t.storage.defaultProfileName,
+      createdAt: DateTime.now(),
+    );
+    await scope.profileRegistry.upsert(fallback);
+    await scope.active.reloadFromStorage();
+    scope.binder.markUserInitiatedActivation(fallback.id);
+    await scope.active.activate(fallback);
+    await scope.hiddenLibraries?.refresh();
+    return false;
   }
 
   final activeId = scope.storage.getActiveProfileId();
@@ -351,14 +355,14 @@ Future<bool> _plexAccountRemovalOwnsDownloads(
   return false;
 }
 
-/// Full logout: clear every profile, connection, credential, cached API
-/// row, and user-scoped pref, then reset to [AuthScreen]. The caller
-/// confirms first.
+/// Full logout: reset the sync/login session and return to [AuthScreen]
+/// while preserving local profiles, local library data, mounts, and
+/// configured Jellyfin/Emby media sources. The caller confirms first.
 Future<void> logoutAllProfiles(BuildContext context) async {
   final scope = SessionTeardownScope.of(context);
-  final accountPreferences = context.read<AccountPreferencesController>();
   final companionRemote = context.read<CompanionRemoteProvider>();
   final playbackState = context.read<PlaybackStateProvider>();
+  final syncCoordinator = context.read<SyncAndScanCoordinator?>();
 
   final activeOwner = scope.active.activeId;
   if (activeOwner != null) {
@@ -366,34 +370,13 @@ Future<void> logoutAllProfiles(BuildContext context) async {
   }
 
   await companionRemote.resetForLogout();
-  // Credentials and the signed-out users' server-side preferences go first so
-  // nothing below can read them back as the next sign-in's defaults.
-  await scope.storage.clearUserData();
-  accountPreferences.repository.clear();
-  // Downloads are device-local data, not credentials. Keep their physical
-  // files and pinned metadata, but detach profile ownership before deleting
-  // the profiles so the next selected profile can adopt them.
-  await scope.downloads.detachDownloadsForLogout();
+  await syncCoordinator?.logoutToModeSelection();
+
+  // Disconnect live remote media-server sockets while preserving the
+  // always-on LocalLibraryClient, local profiles, mounts, and configured
+  // Jellyfin/Emby media sources for the next login mode selection.
   scope.multiServer.clearAllConnections();
-  // Drop the profile/connection rows so the next sign-in starts clean and
-  // doesn't bind to stale tokens or orphaned profile rows.
-  await scope.profileConnections.clear();
-  await scope.profileRegistry.clear();
-  await scope.connections.clear();
-  await scope.plexHome.clearAll();
-  await scope.storage.clearActiveProfileId();
-  await scope.storage.clearAllProfileLastUsed();
-  await scope.storage.clearAllUserScopedPreferences();
-  // Queued watch actions, sync rules and downloads' collection membership are
-  // keyed by the profiles that just ceased to exist; left behind they'd
-  // strand forever (or worse, replay through the next sign-in's clients).
-  await scope.database.clearAllWatchActions();
-  await scope.database.clearAllSyncRules();
-  await scope.database.clearAllDownloadCollections();
-  // Preserve pinned rows backing offline downloads; all session/API data is
-  // volatile and must not cross into the next sign-in.
   await ApiCache.clearRegisteredVolatile();
-  await scope.hiddenLibraries?.refresh();
   playbackState.clearShuffle();
 
   if (scope.navigator.mounted) {

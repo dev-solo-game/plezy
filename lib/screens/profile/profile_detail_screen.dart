@@ -269,7 +269,7 @@ class _ProfileDetailScreenState extends State<ProfileDetailScreen> with Controll
     final avatarUrl = context.watch<ActiveProfileProvider>().avatarUrlFor(_profile.id);
 
     return FocusedScrollScaffold(
-      title: Text(widget.mediaSourcesOnly ? 'Emby / Jellyfin · ${_profile.displayName}' : _profile.displayName),
+      title: Text(widget.mediaSourcesOnly ? 'Emby / Jellyfin' : _profile.displayName),
       slivers: [
         SliverPadding(
           padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),

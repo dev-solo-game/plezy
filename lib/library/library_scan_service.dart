@@ -12,10 +12,17 @@ import '../utils/app_logger.dart';
 import 'library_repository.dart';
 import 'library_scanner.dart';
 
-/// Looks up metadata for every title waiting for it. Returns a message when
-/// it had to stop early (no API key, network down), or null.
+class LibraryScrapeOutcome {
+  const LibraryScrapeOutcome({this.note, this.hasChanges = false});
+
+  final String? note;
+  final bool hasChanges;
+}
+
+/// Looks up metadata for every title waiting for it. Returns the outcome with
+/// an optional early-stop message and whether any items changed state.
 typedef LibraryScrapeFunction =
-    Future<String?> Function({
+    Future<LibraryScrapeOutcome> Function({
       bool retryUnmatched,
       Set<String>? mountIds,
       bool refreshMatched,
@@ -537,15 +544,14 @@ class LibraryScanService extends ChangeNotifier {
     bool isCancelled() => _disposed || _scrapeCancelled || cancel?.isCancelled == true;
     if (!silent) _publishScrape(LibraryScrapeStatus(running: true, runs: _scrapeStatus.runs));
     String? note;
-    var hadWork = false;
+    var hasChanges = false;
     try {
-      note = await scrape!(
+      final outcome = await scrape!(
         retryUnmatched: retryUnmatched,
         mountIds: mountIds,
         refreshMatched: refreshMatched,
         isCancelled: isCancelled,
         onProgress: (done, total) {
-          hadWork |= done > 0;
           final progressChanged = job != null && (job.scraped != done || job.scrapeTotal != total);
           if (progressChanged) {
             job.scraped = done;
@@ -558,11 +564,13 @@ class LibraryScanService extends ChangeNotifier {
           _publishScrape(LibraryScrapeStatus(running: true, done: done, total: total, runs: _scrapeStatus.runs));
           if (job?._refreshWhenFinished == true) return;
           final last = _lastLiveRefresh;
-          if (done > 0 && (last == null || DateTime.now().difference(last) >= _liveRefreshInterval)) {
+          if (done > 0 && done < total && (last == null || DateTime.now().difference(last) >= _liveRefreshInterval)) {
             _libraryChanged();
           }
         },
       );
+      note = outcome.note;
+      hasChanges = outcome.hasChanges;
     } catch (e) {
       note = '$e';
     }
@@ -570,8 +578,8 @@ class LibraryScanService extends ChangeNotifier {
     if (!silent) {
       _publishScrape(LibraryScrapeStatus(note: isCancelled() ? null : note, runs: _scrapeStatus.runs + 1));
     }
-    if (job?._refreshWhenFinished != true && (mountIds == null || hadWork)) _libraryChanged();
-    if (hadWork) onCatalogChanged?.call(mountIds);
+    if (job?._refreshWhenFinished != true && hasChanges) _libraryChanged();
+    if (hasChanges) onCatalogChanged?.call(mountIds);
   }
 
   /// Stops a running lookup after the title it is on.

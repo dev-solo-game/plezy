@@ -285,7 +285,12 @@ void main() {
     await scraper.scrapePending(mountIds: {mount.id});
     final episode = (await repo.episodesOfShow(show.id)).last.item;
     expect(episode.scrapedAt, isNull);
-    expect((await repo.versionsOf(episode.id)).single.matchState, LibraryMatchStates.pending);
+    expect((await repo.versionsOf(episode.id)).single.matchState, LibraryMatchStates.unmatched);
+
+    // Subsequent automatic runs do not keep re-querying the missing episode.
+    var totalSeen = -1;
+    await scraper.scrapePending(onProgress: (_, total) => totalSeen = total);
+    expect(totalSeen, 0);
 
     tmdb.details['95396'] = const ScrapedTitle(source: 'tmdb', tmdbId: '95396', title: 'Severance Updated');
     tmdb.seasons['95396/1'] = const ScrapedSeason(
@@ -295,6 +300,7 @@ void main() {
         ScrapedEpisode(number: 2, title: 'Second'),
       ],
     );
+    await scraper.requeueUnmatched();
     await scraper.scrapePending(mountIds: {mount.id});
     expect((await repo.episodesOfShow(show.id)).map((e) => e.item.title), ['First', 'Second']);
     expect((await repo.versionsOf(episode.id)).single.matchState, LibraryMatchStates.matched);
@@ -625,6 +631,31 @@ void main() {
     final show = (await items(LibraryKinds.show)).single;
     expect((show.id, show.title, show.libraryType, show.locked), (movie.id, '某演唱会', LibraryTypes.variety, true));
     expect((await repo.episodesOfShow(show.id)).single.item.libraryType, LibraryTypes.variety);
+  });
+
+  test('matched show marks missing-episode files unmatched so startup scrape does not repeat them', () async {
+    driver.files
+      ..add('/TV/Show/Season 1/Show.S01E01.mkv')
+      ..add('/TV/Show/Season 1/Show.S01E99.mkv');
+    await scan();
+    tmdb.results['show'] = [tmdb.hit('100', 'Show')];
+    tmdb.details['100'] = const ScrapedTitle(source: 'tmdb', tmdbId: '100', title: 'Show');
+    tmdb.seasons['100/1'] = const ScrapedSeason(number: 1, episodes: [ScrapedEpisode(number: 1, title: 'Pilot')]);
+
+    final first = await scraper.scrapePending();
+    expect(first.matched, 1);
+    final show = (await items(LibraryKinds.show)).single;
+    final episodes = await repo.episodesOfShow(show.id);
+    expect((await repo.versionsOf(episodes[0].item.id)).single.matchState, LibraryMatchStates.matched);
+    expect((await repo.versionsOf(episodes[1].item.id)).single.matchState, LibraryMatchStates.unmatched);
+    expect((await repo.videosInState(LibraryMatchStates.unmatched)).single.path, '/TV/Show/Season 1/Show.S01E99.mkv');
+
+    tmdb.calls.clear();
+    var queued = -1;
+    final second = await scraper.scrapePending(onProgress: (_, total) => queued = total);
+    expect(queued, 0);
+    expect(second.hasChanges, isFalse);
+    expect(tmdb.calls, isEmpty);
   });
 }
 

@@ -8,10 +8,10 @@ import 'package:qr_flutter/qr_flutter.dart';
 
 import '../../focus/focusable_text_field.dart';
 import '../../i18n/strings.g.dart';
-import '../../library/sync/lan_peer_sync_service.dart';
 import '../../library/sync/sync_coordinator.dart';
 import '../../library/sync/sync_crypto.dart';
 import '../../widgets/app_icon.dart';
+import 'lan_devices_screen.dart';
 import 'mounts_screen.dart';
 
 class SyncSettingsScreen extends StatefulWidget {
@@ -154,33 +154,6 @@ class _SyncSettingsScreenState extends State<SyncSettingsScreen> {
     }
   }
 
-  Future<void> _requestLanPair(LanDiscoveredPeer peer) async {
-    final lan = context.read<SyncAndScanCoordinator>().lanService;
-    setState(() {
-      _error = null;
-      _statusMessage = null;
-    });
-    try {
-      await lan.requestPairWithPeer(peer);
-      if (mounted) setState(() => _statusMessage = t.sync.lanPairRequested);
-    } catch (e) {
-      if (mounted) setState(() => _error = '$e');
-    }
-  }
-
-  Future<void> _acceptLanPair(LanPairRequest req) async {
-    final lan = context.read<SyncAndScanCoordinator>().lanService;
-    setState(() {
-      _error = null;
-      _statusMessage = null;
-    });
-    try {
-      await lan.acceptPairRequest(req);
-    } catch (e) {
-      if (mounted) setState(() => _error = '$e');
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final sync = context.watch<SyncAndScanCoordinator>();
@@ -230,96 +203,9 @@ class _SyncSettingsScreenState extends State<SyncSettingsScreen> {
   }
 
   List<Widget> _buildLanAndCloudSwitchCards(SyncAndScanCoordinator sync, ThemeData theme) {
-    final lan = sync.lanService;
-    final trusted = lan.trustedPeers;
-    final trustedIds = {for (final p in trusted) p.deviceId};
-    final nearby = [
-      for (final p in lan.discoveredPeers)
-        if (!trustedIds.contains(p.deviceId)) p,
-    ];
-    final requests = lan.incomingPairRequests;
-    final myPub = lan.publicKeyBase64 ?? '';
-
     return [
       if (!widget.onboardingMode) ...[
-        Card(
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Text('${t.sync.activeModeLan} (${lan.deviceName})', style: theme.textTheme.titleMedium),
-                const SizedBox(height: 6),
-                Text(t.sync.modeLanDesc, style: theme.textTheme.bodySmall),
-                if (requests.isNotEmpty) ...[
-                  const SizedBox(height: 16),
-                  Text(t.sync.lanRequestsTitle, style: theme.textTheme.titleSmall),
-                  for (final req in requests)
-                    ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      title: Text(req.deviceName),
-                      subtitle: Text(t.sync.lanPairingCode(code: req.pairingCode)),
-                      trailing: Wrap(
-                        spacing: 8,
-                        children: [
-                          TextButton(
-                            onPressed: () => lan.rejectPairRequest(req.deviceId),
-                            child: Text(t.sync.lanRejectButton),
-                          ),
-                          FilledButton(
-                            onPressed: () => unawaited(_acceptLanPair(req)),
-                            child: Text(t.sync.lanAcceptButton),
-                          ),
-                        ],
-                      ),
-                    ),
-                ],
-                if (trusted.isNotEmpty) ...[
-                  const SizedBox(height: 16),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(t.sync.lanTrustedTitle, style: theme.textTheme.titleSmall),
-                      TextButton.icon(
-                        onPressed: lan.isSyncing ? null : () => unawaited(lan.syncWithAllTrustedPeers()),
-                        icon: const AppIcon(Symbols.sync_rounded, size: 18),
-                        label: Text(t.sync.lanSyncNow),
-                      ),
-                    ],
-                  ),
-                  for (final peer in trusted)
-                    ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      leading: const AppIcon(Symbols.devices_rounded),
-                      title: Text(peer.deviceName),
-                      subtitle: Text(peer.lastHost ?? ''),
-                      trailing: TextButton(
-                        onPressed: () => unawaited(lan.removeTrustedPeer(peer.deviceId)),
-                        child: Text(t.sync.lanRemoveTrust),
-                      ),
-                    ),
-                ],
-                const SizedBox(height: 16),
-                Text(t.sync.lanNearbyTitle, style: theme.textTheme.titleSmall),
-                const SizedBox(height: 4),
-                if (nearby.isEmpty)
-                  Text(t.sync.lanDiscoveryEmpty, style: theme.textTheme.bodySmall)
-                else
-                  for (final peer in nearby)
-                    ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      leading: const AppIcon(Symbols.radar_rounded),
-                      title: Text('${peer.deviceName} (${peer.platform})'),
-                      subtitle: Text(t.sync.lanPairingCode(code: peer.pairingCodeFor(myPub))),
-                      trailing: OutlinedButton(
-                        onPressed: () => unawaited(_requestLanPair(peer)),
-                        child: Text(t.sync.lanPairButton),
-                      ),
-                    ),
-              ],
-            ),
-          ),
-        ),
+        const LanDevicesPanel(),
         const SizedBox(height: 12),
       ],
       Card(

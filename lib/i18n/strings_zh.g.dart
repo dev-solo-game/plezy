@@ -2751,6 +2751,18 @@ class Translations$sync$zh extends Translations$sync$en {
 	@override String pendingChanges({required Object count}) => '待上传离线变更：${count} 条';
 	@override String lastSynced({required Object time}) => '上次同步：${time}';
 	@override String get neverSynced => '尚未同步';
+	@override String get menuModeLanTitle => '本地与局域网模式';
+	@override String menuModeLanSubtitle({required Object device}) => '本机：${device}';
+	@override String get menuModeCloudTitle => '云端同步模式';
+	@override String menuModeCloudSubtitle({required Object name}) => '账号：${name}';
+	@override String get lanDevicesTitle => '局域网设备';
+	@override String lanDiscoveredCount({required Object count}) => '已发现 ${count} 台';
+	@override String lanPairRequestBadge({required Object count}) => '${count} 条配对请求';
+	@override String get lanDiscoveryRunning => '正在同一局域网广播与发现设备';
+	@override String get lanDiscoveryStopped => '局域网广播未开启';
+	@override String get lanPeerOnline => '在线';
+	@override String get switchSyncMode => '切换同步模式';
+	@override String get userMenuTooltip => '同步与设备菜单';
 }
 
 // Path: appIcon.names
@@ -6309,6 +6321,18 @@ extension on TranslationsZh {
 			'sync.pendingChanges' => ({required Object count}) => '待上传离线变更：${count} 条',
 			'sync.lastSynced' => ({required Object time}) => '上次同步：${time}',
 			'sync.neverSynced' => '尚未同步',
+			'sync.menuModeLanTitle' => '本地与局域网模式',
+			'sync.menuModeLanSubtitle' => ({required Object device}) => '本机：${device}',
+			'sync.menuModeCloudTitle' => '云端同步模式',
+			'sync.menuModeCloudSubtitle' => ({required Object name}) => '账号：${name}',
+			'sync.lanDevicesTitle' => '局域网设备',
+			'sync.lanDiscoveredCount' => ({required Object count}) => '已发现 ${count} 台',
+			'sync.lanPairRequestBadge' => ({required Object count}) => '${count} 条配对请求',
+			'sync.lanDiscoveryRunning' => '正在同一局域网广播与发现设备',
+			'sync.lanDiscoveryStopped' => '局域网广播未开启',
+			'sync.lanPeerOnline' => '在线',
+			'sync.switchSyncMode' => '切换同步模式',
+			'sync.userMenuTooltip' => '同步与设备菜单',
 			_ => null,
 		};
 	}

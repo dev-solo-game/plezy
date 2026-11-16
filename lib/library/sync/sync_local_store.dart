@@ -405,6 +405,8 @@ class SyncLocalStore {
 
   Future<bool> isOnboardingCompleted() async => await _getMeta(_kOnboardingDone) == 'true';
 
+  Future<bool> hasExplicitOnboardingState() async => await _getMeta(_kOnboardingDone) != null;
+
   Future<void> setOnboardingCompleted(bool completed) => _putMeta(_kOnboardingDone, '$completed');
 
   Future<String> getDeviceName() async {

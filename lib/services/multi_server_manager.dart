@@ -73,6 +73,7 @@ class MultiServerManager {
   FutureOr<void> Function(JellyfinConnection connection)? onJellyfinConnectionUpdated;
 
   final Map<String, MediaServerClient> _clients = {};
+  MediaServerClient? _localLibraryClient;
 
   final Map<String, PlexServer> _plexServers = {};
 
@@ -352,6 +353,7 @@ class MultiServerManager {
   /// Registers the local media library. It is not a network server: it has
   /// no endpoints to probe or tokens to refresh, and is always online.
   void registerLocalLibrary(MediaServerClient client) {
+    _localLibraryClient = client;
     _clients[client.serverId] = client;
     _serverStatus[client.serverId] = true;
     _emitStatus();
@@ -1663,20 +1665,25 @@ class MultiServerManager {
   ///
   /// Registrations are dropped synchronously ([_detachAllClients] runs before
   /// the first await); only the socket drain is left running in the background.
-  void disconnectAll() {
-    unawaited(disconnectAllGracefully(drainTimeout: const Duration(seconds: 2)));
+  void disconnectAll({bool preserveLocalLibrary = true}) {
+    unawaited(
+      disconnectAllGracefully(drainTimeout: const Duration(seconds: 2), preserveLocalLibrary: preserveLocalLibrary),
+    );
   }
 
-  Future<void> disconnectAllGracefully({Duration drainTimeout = const Duration(seconds: 5)}) async {
+  Future<void> disconnectAllGracefully({
+    Duration drainTimeout = const Duration(seconds: 5),
+    bool preserveLocalLibrary = true,
+  }) async {
     appLogger.i('Gracefully disconnecting all servers');
-    final clients = _detachAllClients();
+    final clients = _detachAllClients(preserveLocalLibrary: preserveLocalLibrary);
     await Future.wait(
       clients.map((client) => _closeClientGracefully(client, drainTimeout: drainTimeout)),
       eagerError: false,
     );
   }
 
-  Set<MediaServerClient> _detachAllClients() {
+  Set<MediaServerClient> _detachAllClients({bool preserveLocalLibrary = true}) {
     ++_profileRefreshEpoch;
     _profileRefreshGenerations.clear();
     _stopNetworkMonitoring();
@@ -1691,7 +1698,13 @@ class MultiServerManager {
     _relayEscapeAttempts.clear();
     _activeHealthCheck = null;
     _activeReconnect = null;
-    final clients = <MediaServerClient>{..._clients.values, ..._jellyfinByCompoundId.values};
+    final retainedLocal = preserveLocalLibrary ? _localLibraryClient : null;
+    if (!preserveLocalLibrary) _localLibraryClient = null;
+    final clients = <MediaServerClient>{
+      for (final client in _clients.values)
+        if (!identical(client, retainedLocal)) client,
+      ..._jellyfinByCompoundId.values,
+    };
     _clients.clear();
     _jellyfinByCompoundId.clear();
     _activeJellyfinMachine.clear();
@@ -1704,8 +1717,12 @@ class MultiServerManager {
     _plexScopeByServer.clear();
     _plexServerListRefreshStartedAt.clear();
     _activeOptimizations.clear();
+    if (retainedLocal != null) {
+      _clients[retainedLocal.serverId] = retainedLocal;
+      _serverStatus[retainedLocal.serverId] = true;
+    }
     if (!_statusController.isClosed) {
-      _statusController.add({});
+      _statusController.add(Map<String, bool>.unmodifiable(_serverStatus));
     }
     return clients;
   }
@@ -1722,11 +1739,11 @@ class MultiServerManager {
     if (!_statusController.isClosed) unawaited(_statusController.close());
     if (!_connectProgressController.isClosed) unawaited(_connectProgressController.close());
     if (!_visibilityController.isClosed) unawaited(_visibilityController.close());
-    await disconnectAllGracefully(drainTimeout: drainTimeout);
+    await disconnectAllGracefully(drainTimeout: drainTimeout, preserveLocalLibrary: false);
   }
 
   void dispose() {
-    disconnectAll();
+    disconnectAll(preserveLocalLibrary: false);
     if (!_statusController.isClosed) {
       _statusController.close();
     }

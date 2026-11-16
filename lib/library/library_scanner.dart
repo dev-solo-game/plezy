@@ -212,6 +212,17 @@ class LibraryScanner {
     final watermark = _watermark(state, driver.rootFolderId);
     if (watermark == null) throw const StorageException(StorageErrorKind.other, 'Quark: full scan required');
     final threshold = watermark - const Duration(minutes: 1).inMilliseconds;
+    final knownByRemoteId = {
+      for (final file
+          in await (_db.select(_db.libraryFiles)..where(
+                (t) =>
+                    t.mountId.equals(mount.id) &
+                    t.remoteId.isNotNull() &
+                    t.modifiedAt.isBiggerOrEqualValue(threshold),
+              ))
+              .get())
+        file.remoteId!: file,
+    };
     final changed = <String, ({StorageEntry entry, String parentId, int updatedAt})>{};
     var latest = watermark;
     int? previousTimestamp;
@@ -230,6 +241,14 @@ class LibraryScanner {
         if (row.updatedAt < threshold || !_isVideo(row.entry.name)) continue;
         if (row.parentId.isEmpty) {
           throw const StorageException(StorageErrorKind.other, 'Quark: missing parent folder ID');
+        }
+        final known = knownByRemoteId[row.entry.id];
+        if (known != null &&
+            known.modifiedAt == row.updatedAt &&
+            StoragePath.name(known.path) == row.entry.name &&
+            (row.entry.size == null || known.size == row.entry.size) &&
+            mount.isFileAllowed(known.path)) {
+          continue;
         }
         changed.putIfAbsent(row.entry.id!, () => row);
       }
