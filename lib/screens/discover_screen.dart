@@ -1008,14 +1008,16 @@ class _DiscoverScreenState extends State<DiscoverScreen>
                         children: [
                           IconButton(
                             icon: AppIcon(
-                              companionRemote.isConnected ? Symbols.cast_connected_rounded : Symbols.devices_rounded,
-                              fill: companionRemote.isConnected ? 1 : 0,
-                              color: companionRemote.isConnected ? colorScheme.primary : foregroundColor,
+                              companionRemote.hasActiveControlLink
+                                  ? Symbols.cast_connected_rounded
+                                  : Symbols.devices_rounded,
+                              fill: companionRemote.hasActiveControlLink ? 1 : 0,
+                              color: companionRemote.hasActiveControlLink ? colorScheme.primary : foregroundColor,
                             ),
                             onPressed: () => unawaited(showRemoteDevicesStatusMenu(remoteBtnContext)),
                             tooltip: t.companionRemote.remoteDevices,
                           ),
-                          if (companionRemote.isConnected)
+                          if (companionRemote.hasActiveControlLink)
                             Positioned(
                               top: 6,
                               right: 6,

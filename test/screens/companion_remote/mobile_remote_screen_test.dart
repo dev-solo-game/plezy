@@ -167,4 +167,36 @@ void main() {
     expect(provider.sent.last.type, RemoteCommandType.setSyncOffset);
     expect(provider.sent.last.data, {'subtitleMs': 200});
   });
+
+  testWidgets('disables progress slider at zero instead of clamping positive position to full when duration is 0', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(800, 1400);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    final provider = _SessionStatusProvider()
+      ..snapshot = const RemotePlayerSnapshot(
+        active: true,
+        stage: 'playing',
+        title: 'Episode 16',
+        playing: true,
+        positionMs: 5000,
+        durationMs: 0,
+      );
+    addTearDown(provider.dispose);
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<CompanionRemoteProvider>.value(
+        value: provider,
+        child: MaterialApp(theme: monoTheme(MonoPalette.dark), home: const RemoteControlScreen()),
+      ),
+    );
+
+    final progressSlider = tester.widgetList<Slider>(find.byType(Slider)).first;
+    expect(progressSlider.value, 0.0);
+    expect(progressSlider.onChanged, isNull);
+    expect(find.text('0:05'), findsOneWidget);
+    expect(find.text('0:00'), findsOneWidget);
+  });
 }

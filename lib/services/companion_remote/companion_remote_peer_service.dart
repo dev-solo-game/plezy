@@ -913,173 +913,181 @@ class CompanionRemotePeerService with KeepaliveMixin {
       String? receivedHostClientId;
 
       _channelSubscription = channel.stream.listen(
-        (data) async {
-          if (!_ownsRemoteChannel(channel, connectionGeneration)) return;
-          try {
-            if (_isAuthenticated) {
-              await _handleEncryptedCommand(data);
-            } else if (_sessionEncKey != null) {
-              // Keys derived, waiting for encrypted authSuccess
-              final decrypted = await _decryptIncoming(data);
-              if (decrypted == null || !_ownsRemoteChannel(channel, connectionGeneration)) return;
+        (data) {
+          unawaited(
+            _incomingQueue.run(() async {
+              if (!_ownsRemoteChannel(channel, connectionGeneration)) return;
+              try {
+                if (_isAuthenticated) {
+                  await _handleEncryptedCommand(data);
+                } else if (_sessionEncKey != null) {
+                  // Keys derived, waiting for encrypted authSuccess
+                  final decrypted = await _decryptIncoming(data);
+                  if (decrypted == null || !_ownsRemoteChannel(channel, connectionGeneration)) return;
 
-              final json = jsonDecode(decrypted) as Map<String, dynamic>;
-              if (json['type'] == 'authSuccess') {
-                _isAuthenticated = true;
-                appLogger.d('CompanionRemote: Authentication successful');
+                  final json = jsonDecode(decrypted) as Map<String, dynamic>;
+                  if (json['type'] == 'authSuccess') {
+                    _isAuthenticated = true;
+                    appLogger.d('CompanionRemote: Authentication successful');
 
-                if (!completer.isCompleted) {
-                  completer.complete();
-                }
-
-                final device = RemoteDevice(
-                  id: 'host',
-                  name: 'Desktop',
-                  platform: 'desktop',
-                  connectedAt: DateTime.now(),
-                );
-                _deviceConnectedController.add(device);
-                _connectionStateController.add(RemoteSessionStatus.connected);
-
-                sendDeviceInfo(deviceName, platform);
-                startKeepalive();
-              } else if (json['type'] == 'authFailed') {
-                if (!completer.isCompleted) {
-                  completer.completeError(
-                    RemotePeerError(
-                      type: RemotePeerErrorType.authFailed,
-                      message: t.companionRemote.errors.authenticationFailed,
-                    ),
-                  );
-                }
-              }
-            } else {
-              // Pre-auth: plaintext handshake
-              final json = jsonDecode(data as String) as Map<String, dynamic>;
-              final messageType = json['type'] as String?;
-
-              if (messageType == 'challenge') {
-                hostNonce = base64Decode(json['nonce'] as String);
-                final legacyHostClientId = json['hostClientId'] as String? ?? '';
-                final challengeContextHostIds = <String, String>{};
-                final challengeContexts = json['authContexts'] as List<dynamic>? ?? const [];
-                for (final item in challengeContexts) {
-                  if (item is! Map) continue;
-                  final id = item['id'] as String?;
-                  final hostClientId = item['hostClientId'] as String?;
-                  if (id != null && id.isNotEmpty && hostClientId != null && hostClientId.isNotEmpty) {
-                    challengeContextHostIds[id] = hostClientId;
-                  }
-                }
-
-                RemoteAuthContext? selectedContext;
-                if (authContextId != null && authContextId.isNotEmpty) {
-                  for (final context in authContexts) {
-                    if (context.id == authContextId) {
-                      selectedContext = context;
-                      break;
+                    if (!completer.isCompleted) {
+                      completer.complete();
                     }
-                  }
-                } else if (challengeContextHostIds.isNotEmpty) {
-                  for (final context in authContexts) {
-                    if (challengeContextHostIds.containsKey(context.id)) {
-                      selectedContext = context;
-                      break;
+
+                    final device = RemoteDevice(
+                      id: 'host',
+                      name: 'Desktop',
+                      platform: 'desktop',
+                      connectedAt: DateTime.now(),
+                    );
+                    _deviceConnectedController.add(device);
+                    _connectionStateController.add(RemoteSessionStatus.connected);
+
+                    sendDeviceInfo(deviceName, platform);
+                    startKeepalive();
+                  } else if (json['type'] == 'authFailed') {
+                    if (!completer.isCompleted) {
+                      completer.completeError(
+                        RemotePeerError(
+                          type: RemotePeerErrorType.authFailed,
+                          message: t.companionRemote.errors.authenticationFailed,
+                        ),
+                      );
                     }
                   }
                 } else {
-                  selectedContext = authContexts.first;
-                }
+                  // Pre-auth: plaintext handshake
+                  final json = jsonDecode(data as String) as Map<String, dynamic>;
+                  final messageType = json['type'] as String?;
 
-                if (selectedContext == null ||
-                    (challengeContextHostIds.isNotEmpty && !challengeContextHostIds.containsKey(selectedContext.id))) {
-                  appLogger.w('CompanionRemote: No shared auth context with host');
-                  if (!completer.isCompleted) {
-                    completer.completeError(
+                  if (messageType == 'challenge') {
+                    hostNonce = base64Decode(json['nonce'] as String);
+                    final legacyHostClientId = json['hostClientId'] as String? ?? '';
+                    final challengeContextHostIds = <String, String>{};
+                    final challengeContexts = json['authContexts'] as List<dynamic>? ?? const [];
+                    for (final item in challengeContexts) {
+                      if (item is! Map) continue;
+                      final id = item['id'] as String?;
+                      final hostClientId = item['hostClientId'] as String?;
+                      if (id != null && id.isNotEmpty && hostClientId != null && hostClientId.isNotEmpty) {
+                        challengeContextHostIds[id] = hostClientId;
+                      }
+                    }
+
+                    RemoteAuthContext? selectedContext;
+                    if (authContextId != null && authContextId.isNotEmpty) {
+                      for (final context in authContexts) {
+                        if (context.id == authContextId) {
+                          selectedContext = context;
+                          break;
+                        }
+                      }
+                    } else if (challengeContextHostIds.isNotEmpty) {
+                      for (final context in authContexts) {
+                        if (challengeContextHostIds.containsKey(context.id)) {
+                          selectedContext = context;
+                          break;
+                        }
+                      }
+                    } else {
+                      selectedContext = authContexts.first;
+                    }
+
+                    if (selectedContext == null ||
+                        (challengeContextHostIds.isNotEmpty &&
+                            !challengeContextHostIds.containsKey(selectedContext.id))) {
+                      appLogger.w('CompanionRemote: No shared auth context with host');
+                      if (!completer.isCompleted) {
+                        completer.completeError(
+                          RemotePeerError(
+                            type: RemotePeerErrorType.authFailed,
+                            message: t.companionRemote.errors.authenticationFailed,
+                          ),
+                        );
+                      }
+                      unawaited(channel.sink.close(4003, 'Authentication failed'));
+                      return;
+                    }
+
+                    receivedHostClientId = challengeContextHostIds[selectedContext.id] ?? legacyHostClientId;
+                    clientNonce = auth.generateNonce();
+
+                    if (expectedHostClientId.isNotEmpty && receivedHostClientId != expectedHostClientId) {
+                      appLogger.w('CompanionRemote: Host client ID mismatch');
+                      if (!completer.isCompleted) {
+                        completer.completeError(
+                          RemotePeerError(
+                            type: RemotePeerErrorType.authFailed,
+                            message: t.companionRemote.errors.authenticationFailed,
+                          ),
+                        );
+                      }
+                      unawaited(channel.sink.close(4003, 'Authentication failed'));
+                      return;
+                    }
+
+                    final authTag = auth.computeAuthTag(
+                      homeSecret: selectedContext.homeSecret,
+                      hostNonce: hostNonce!,
+                      clientNonce: clientNonce!,
+                      hostClientId: receivedHostClientId!,
+                      userUUID: selectedContext.userUuid,
+                      clientIdentifier: selectedContext.clientIdentifier,
+                      deviceName: deviceName,
+                      platform: platform,
+                    );
+
+                    // Derive and install session keys before sending `auth` so an
+                    // immediate encrypted reply on localhost/LAN never races a
+                    // null `_sessionEncKey`.
+                    final sessionEncKey = await auth.deriveSessionEncKey(
+                      selectedContext.homeSecret,
+                      hostNonce!,
+                      clientNonce!,
+                    );
+                    if (!_ownsRemoteChannel(channel, connectionGeneration)) return;
+                    _sessionEncKey = sessionEncKey;
+                    _sendCounter = 0;
+                    _recvCounter = 0;
+                    _selectedAuthContextId = selectedContext.id;
+                    _selectedHostClientId = receivedHostClientId;
+
+                    channel.sink.add(
+                      jsonEncode({
+                        'type': 'auth',
+                        'authContextId': selectedContext.id,
+                        'clientNonce': base64Encode(clientNonce!),
+                        'userUUID': selectedContext.userUuid,
+                        'clientIdentifier': selectedContext.clientIdentifier,
+                        'deviceName': deviceName,
+                        'platform': platform,
+                        'authTag': authTag,
+                      }),
+                    );
+                  } else if (messageType == 'authFailed') {
+                    appLogger.w('CompanionRemote: Authentication failed');
+                    if (!completer.isCompleted) {
+                      completer.completeError(
+                        RemotePeerError(
+                          type: RemotePeerErrorType.authFailed,
+                          message: t.companionRemote.errors.authenticationFailed,
+                        ),
+                      );
+                    }
+                    _errorController.add(
                       RemotePeerError(
                         type: RemotePeerErrorType.authFailed,
                         message: t.companionRemote.errors.authenticationFailed,
                       ),
                     );
+                    _connectionStateController.add(RemoteSessionStatus.error);
                   }
-                  unawaited(channel.sink.close(4003, 'Authentication failed'));
-                  return;
                 }
-
-                receivedHostClientId = challengeContextHostIds[selectedContext.id] ?? legacyHostClientId;
-                clientNonce = auth.generateNonce();
-
-                if (expectedHostClientId.isNotEmpty && receivedHostClientId != expectedHostClientId) {
-                  appLogger.w('CompanionRemote: Host client ID mismatch');
-                  if (!completer.isCompleted) {
-                    completer.completeError(
-                      RemotePeerError(
-                        type: RemotePeerErrorType.authFailed,
-                        message: t.companionRemote.errors.authenticationFailed,
-                      ),
-                    );
-                  }
-                  unawaited(channel.sink.close(4003, 'Authentication failed'));
-                  return;
-                }
-
-                final authTag = auth.computeAuthTag(
-                  homeSecret: selectedContext.homeSecret,
-                  hostNonce: hostNonce!,
-                  clientNonce: clientNonce!,
-                  hostClientId: receivedHostClientId!,
-                  userUUID: selectedContext.userUuid,
-                  clientIdentifier: selectedContext.clientIdentifier,
-                  deviceName: deviceName,
-                  platform: platform,
-                );
-
-                channel.sink.add(
-                  jsonEncode({
-                    'type': 'auth',
-                    'authContextId': selectedContext.id,
-                    'clientNonce': base64Encode(clientNonce!),
-                    'userUUID': selectedContext.userUuid,
-                    'clientIdentifier': selectedContext.clientIdentifier,
-                    'deviceName': deviceName,
-                    'platform': platform,
-                    'authTag': authTag,
-                  }),
-                );
-
-                final sessionEncKey = await auth.deriveSessionEncKey(
-                  selectedContext.homeSecret,
-                  hostNonce!,
-                  clientNonce!,
-                );
-                if (!_ownsRemoteChannel(channel, connectionGeneration)) return;
-                _sessionEncKey = sessionEncKey;
-                _sendCounter = 0;
-                _recvCounter = 0;
-                _selectedAuthContextId = selectedContext.id;
-                _selectedHostClientId = receivedHostClientId;
-              } else if (messageType == 'authFailed') {
-                appLogger.w('CompanionRemote: Authentication failed');
-                if (!completer.isCompleted) {
-                  completer.completeError(
-                    RemotePeerError(
-                      type: RemotePeerErrorType.authFailed,
-                      message: t.companionRemote.errors.authenticationFailed,
-                    ),
-                  );
-                }
-                _errorController.add(
-                  RemotePeerError(
-                    type: RemotePeerErrorType.authFailed,
-                    message: t.companionRemote.errors.authenticationFailed,
-                  ),
-                );
-                _connectionStateController.add(RemoteSessionStatus.error);
+              } catch (e) {
+                appLogger.e('CompanionRemote: Failed to parse message', error: e);
               }
-            }
-          } catch (e) {
-            appLogger.e('CompanionRemote: Failed to parse message', error: e);
-          }
+            }),
+          );
         },
         onDone: () {
           if (!_ownsRemoteChannel(channel, connectionGeneration)) return;
@@ -1315,8 +1323,10 @@ class CompanionRemotePeerService with KeepaliveMixin {
 
   // ── Encrypted send/receive ──
 
-  // Serialize cryptographic operations so implicit nonce counters cannot
-  // interleave when stream callbacks overlap.
+  // Serialize cryptographic operations and inbound remote frames so implicit
+  // nonce counters and handshake transitions cannot interleave when stream
+  // callbacks overlap.
+  final SerialFutureQueue _incomingQueue = SerialFutureQueue();
   final SerialFutureQueue _encryptQueue = SerialFutureQueue();
   final SerialFutureQueue _decryptQueue = SerialFutureQueue();
   final SerialFutureQueue _sendQueue = SerialFutureQueue();
@@ -1635,6 +1645,7 @@ class CompanionRemotePeerService with KeepaliveMixin {
 
       // Decrypted commands may enqueue acknowledgements, and sends enqueue
       // encryption, so drain in dependency order.
+      await _incomingQueue.settled;
       await _decryptQueue.settled;
       await _sendQueue.settled;
       await _encryptQueue.settled;
@@ -1662,6 +1673,7 @@ class CompanionRemotePeerService with KeepaliveMixin {
       _sessionEncKey = null;
       _sendCounter = 0;
       _recvCounter = 0;
+      _incomingQueue.reset();
       _sendQueue.reset();
       _encryptQueue.reset();
       _decryptQueue.reset();

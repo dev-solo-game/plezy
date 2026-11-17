@@ -383,8 +383,10 @@ class _RemoteControlScreenState extends State<RemoteControlScreen> {
     CompanionRemoteProvider provider,
     RemotePlayerSnapshot snapshot,
   ) {
-    final maxMs = math.max(snapshot.durationMs, 1).toDouble();
-    final displayMs = (_dragPositionMs ?? snapshot.positionMs.toDouble()).clamp(0.0, maxMs);
+    final hasDuration = snapshot.durationMs > 0;
+    final maxMs = hasDuration ? snapshot.durationMs.toDouble() : 1.0;
+    final displayMs = hasDuration ? (_dragPositionMs ?? snapshot.positionMs.toDouble()).clamp(0.0, maxMs) : 0.0;
+    final shownPositionMs = hasDuration ? displayMs.round() : math.max(0, snapshot.positionMs);
 
     return Card(
       child: Padding(
@@ -395,18 +397,20 @@ class _RemoteControlScreenState extends State<RemoteControlScreen> {
               value: displayMs,
               min: 0,
               max: maxMs,
-              onChanged: (v) => setState(() => _dragPositionMs = v),
-              onChangeEnd: (v) {
-                setState(() => _dragPositionMs = null);
-                provider.sendCommand(RemoteCommandType.seekTo, data: {'positionMs': v.round()});
-              },
+              onChanged: hasDuration ? (v) => setState(() => _dragPositionMs = v) : null,
+              onChangeEnd: hasDuration
+                  ? (v) {
+                      setState(() => _dragPositionMs = null);
+                      provider.sendCommand(RemoteCommandType.seekTo, data: {'positionMs': v.round()});
+                    }
+                  : null,
             ),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 8),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Text(formatDurationTimestamp(Duration(milliseconds: displayMs.round()))),
+                  Text(formatDurationTimestamp(Duration(milliseconds: shownPositionMs))),
                   Text(formatDurationTimestamp(Duration(milliseconds: snapshot.durationMs))),
                 ],
               ),

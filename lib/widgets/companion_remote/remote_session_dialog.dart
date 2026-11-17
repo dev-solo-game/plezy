@@ -63,7 +63,9 @@ class _RemoteSessionDialogState extends State<RemoteSessionDialog> with MountedS
       final provider = context.read<CompanionRemoteProvider>();
       setState(() {
         _isStarting = false;
-        _errorMessage = started ? null : provider.session?.errorMessage ?? t.companionRemote.pairing.cryptoInitFailed;
+        _errorMessage = started
+            ? null
+            : (provider.hostErrorMessage ?? provider.session?.errorMessage ?? t.companionRemote.pairing.cryptoInitFailed);
       });
     } catch (e) {
       setStateIfMounted(() {
@@ -177,7 +179,7 @@ class _RemoteSessionDialogState extends State<RemoteSessionDialog> with MountedS
 
                     _buildServerStatus(context, provider),
 
-                    if (provider.connectedDevice != null) ...[
+                    if (provider.hostConnectedDevice != null) ...[
                       const SizedBox(height: 16),
                       _buildConnectedDevice(context, provider),
                     ],
@@ -229,9 +231,9 @@ class _RemoteSessionDialogState extends State<RemoteSessionDialog> with MountedS
   }
 
   Widget _buildStatusLine(BuildContext context, CompanionRemoteProvider provider) {
-    if (provider.connectedDevice != null) {
+    if (provider.hostConnectedDevice != null) {
       return Text(
-        t.companionRemote.connectedTo(name: provider.connectedDevice!.name),
+        t.companionRemote.connectedTo(name: provider.hostConnectedDevice!.name),
         style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Colors.green),
       );
     }
@@ -298,7 +300,7 @@ class _RemoteSessionDialogState extends State<RemoteSessionDialog> with MountedS
   }
 
   Widget _buildConnectedDevice(BuildContext context, CompanionRemoteProvider provider) {
-    final device = provider.connectedDevice!;
+    final device = provider.hostConnectedDevice!;
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16.0),

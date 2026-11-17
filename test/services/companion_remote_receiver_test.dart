@@ -3,6 +3,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:plezy/focus/input_mode_tracker.dart';
 import 'package:plezy/models/companion_remote/remote_command.dart';
 import 'package:plezy/services/companion_remote/companion_remote_receiver.dart';
 import 'package:plezy/widgets/video_controls/player_chrome_controller.dart';
@@ -114,5 +115,50 @@ void main() {
       expect(routed, isEmpty);
       expect(seeks, 1);
     });
+  });
+
+  testWidgets('ignores player transport and fullscreen commands when no player is active', (tester) async {
+    final receiver = CompanionRemoteReceiver.instance;
+    receiver.playerOwner = null;
+    receiver.musicTransport = null;
+    receiver.onPlay = null;
+    receiver.onPause = null;
+    receiver.onPlayPause = null;
+    receiver.onFullscreen = null;
+
+    final focusNode = FocusNode();
+    addTearDown(focusNode.dispose);
+    final events = <KeyEvent>[];
+
+    await tester.pumpWidget(
+      InputModeTracker(
+        child: MaterialApp(
+          home: Focus(
+            focusNode: focusNode,
+            onKeyEvent: (_, event) {
+              events.add(event);
+              return KeyEventResult.handled;
+            },
+            child: const SizedBox.expand(),
+          ),
+        ),
+      ),
+    );
+    focusNode.requestFocus();
+    await tester.pump();
+    expect(InputModeTracker.currentMode, InputMode.pointer);
+
+    for (final type in const [
+      RemoteCommandType.play,
+      RemoteCommandType.pause,
+      RemoteCommandType.playPause,
+      RemoteCommandType.fullscreen,
+    ]) {
+      receiver.handleCommand(RemoteCommand(type: type), null);
+    }
+    await tester.pump();
+
+    expect(events, isEmpty);
+    expect(InputModeTracker.currentMode, InputMode.pointer);
   });
 }

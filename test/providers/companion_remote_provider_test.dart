@@ -277,7 +277,7 @@ void main() {
       await harness.provider.cancelReconnect();
     });
 
-    test('cancelReconnect fully tears down a running host and discovery', () async {
+    test('stopHostServer tears down a running host and its broadcasting', () async {
       final hostDisposalGate = Completer<void>();
       final host = _FakeCompanionRemotePeerService(disconnectGate: hostDisposalGate);
       final discovery = _FakeLanDiscoveryService();
@@ -290,22 +290,91 @@ void main() {
       expect(harness.provider.debugIsDiscoveryBroadcasting, isTrue);
       expect(host.hasListeners, isTrue);
 
-      final cancellation = harness.provider.cancelReconnect();
+      final stopFuture = harness.provider.stopHostServer();
       await host.disconnectStarted.future;
       expect(harness.provider.debugIsDiscoveryBroadcasting, isFalse);
       expect(host.hasListeners, isFalse);
       hostDisposalGate.complete();
-      await cancellation;
+      await stopFuture;
 
-      expect(harness.provider.session, isNull);
+      expect(harness.provider.hostSession, isNull);
       expect(harness.provider.isHostServerRunning, isFalse);
       expect(harness.provider.debugIsDiscoveryBroadcasting, isFalse);
-      expect(harness.provider.debugIsDiscoveryListening, isFalse);
       expect(discovery.stopBroadcastingCalls, 1);
-      expect(discovery.stopListeningCalls, 1);
       expect(host.disposeCalls, 1);
       expect(host.disconnectCalls, 1);
       expect(host.hasListeners, isFalse);
+    });
+
+    test('cancelReconnect and leaveSession tear down outbound remote without stopping running host server', () async {
+      final host = _FakeCompanionRemotePeerService();
+      final remote = _FakeCompanionRemotePeerService();
+      final discovery = _FakeLanDiscoveryService();
+      final factory = _FakePeerFactory([host, remote]);
+      final harness = await _RemoteHarness.create(factory.call, discoveryServiceFactory: () => discovery);
+      addTearDown(harness.close);
+
+      await harness.provider.startHostServer();
+      await harness.provider.connectToManualHost('192.0.2.10:48634');
+      expect(harness.provider.isHostServerRunning, isTrue);
+      expect(harness.provider.isConnected, isTrue);
+
+      remote.emitDeviceDisconnected();
+      expect(harness.provider.status, RemoteSessionStatus.reconnecting);
+
+      await harness.provider.cancelReconnect();
+      expect(harness.provider.session, isNull);
+      expect(harness.provider.status, RemoteSessionStatus.disconnected);
+      expect(harness.provider.isHostServerRunning, isTrue);
+      expect(harness.provider.debugIsDiscoveryBroadcasting, isTrue);
+      expect(host.disposeCalls, 0);
+      expect(remote.disposeCalls, 1);
+    });
+
+    test('startHostServer and auth refresh while outbound remote is connected do not disturb remote session', () async {
+      final remote = _FakeCompanionRemotePeerService();
+      final host = _FakeCompanionRemotePeerService();
+      final factory = _FakePeerFactory([remote, host]);
+      final harness = await _RemoteHarness.create(
+        factory.call,
+        discoveryServiceFactory: _FakeLanDiscoveryService.new,
+      );
+      addTearDown(harness.close);
+
+      await harness.provider.connectToManualHost('192.0.2.11:48634');
+      remote.emitDeviceConnected(
+        RemoteDevice(id: 'tv', name: 'Living Room TV', platform: 'android', connectedAt: DateTime(2026)),
+      );
+      remote.sentCommands.clear();
+      expect(harness.provider.status, RemoteSessionStatus.connected);
+
+      await harness.provider.startHostServer();
+      expect(harness.provider.isHostServerRunning, isTrue);
+      expect(harness.provider.status, RemoteSessionStatus.connected);
+      expect(harness.provider.isConnected, isTrue);
+
+      harness.provider.sendCommand(RemoteCommandType.playPause);
+      expect(remote.sentCommands.map((c) => c.type), [RemoteCommandType.playPause]);
+      expect(host.sentCommands, isEmpty);
+
+      host.emitDeviceConnected(
+        RemoteDevice(id: 'tablet', name: 'Tablet', platform: 'ios', connectedAt: DateTime(2026)),
+      );
+      host.sentCommands.clear();
+      harness.provider.setHostPlayerActive(true);
+      expect(host.sentCommands.single.type, RemoteCommandType.syncState);
+      expect(remote.sentCommands.map((c) => c.type), [RemoteCommandType.playPause]);
+
+      // An unchanged crypto refresh keeps both host and outbound remote sessions alive.
+      await harness.provider.ensureCryptoReady(
+        _home('remote-admin'),
+        connections: harness.stack.connections,
+        activeProfile: harness.stack.active,
+        profileConnections: harness.stack.profileConnections,
+      );
+      expect(harness.provider.status, RemoteSessionStatus.connected);
+      harness.provider.sendCommand(RemoteCommandType.seekForward);
+      expect(remote.sentCommands.map((c) => c.type), [RemoteCommandType.playPause, RemoteCommandType.seekForward]);
     });
 
     test('cancel during join keeps disconnected state and disposes the candidate once', () async {

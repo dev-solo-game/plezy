@@ -73,10 +73,13 @@ class CompanionRemoteReceiver {
     appLogger.d('CompanionRemoteReceiver: Handling command: ${command.type}');
 
     // A paired phone cannot point, so any viewer command is evidence of a
-    // pointerless device. Protocol frames and playback-parameter updates are not
-    // viewer input: promoting on periodic heartbeats or phone sliders would flip
-    // an idle desktop host into keyboard mode and hide its cursor.
-    if (_isViewerInput(command.type)) {
+    // pointerless device. Protocol frames, playback-parameter updates, and
+    // player-only commands received while nothing is playing locally are not
+    // viewer input: promoting on periodic heartbeats, phone sliders, or ignored
+    // player controls would flip an idle desktop host into keyboard mode and
+    // hide its cursor.
+    if (_isViewerInput(command.type) &&
+        !(_isPlayerCommand(command.type) && playerOwner == null && musicTransport == null)) {
       InputModeTracker.reportNonPointerInput();
       scheduleFrameIfIdle();
     }
@@ -100,23 +103,11 @@ class CompanionRemoteReceiver {
         simulateKeyPress(LogicalKeyboardKey.contextMenu);
 
       case RemoteCommandType.play:
-        if (onPlay != null) {
-          onPlay!.call();
-        } else {
-          simulateKeyPress(LogicalKeyboardKey.space);
-        }
+        onPlay?.call();
       case RemoteCommandType.pause:
-        if (onPause != null) {
-          onPause!.call();
-        } else {
-          simulateKeyPress(LogicalKeyboardKey.space);
-        }
+        onPause?.call();
       case RemoteCommandType.playPause:
-        if (onPlayPause != null) {
-          onPlayPause!.call();
-        } else {
-          simulateKeyPress(LogicalKeyboardKey.space);
-        }
+        onPlayPause?.call();
       case RemoteCommandType.seekForward:
         onSeekForward?.call();
       case RemoteCommandType.seekBackward:
@@ -170,11 +161,7 @@ class CompanionRemoteReceiver {
         onAudioTracks?.call();
 
       case RemoteCommandType.fullscreen:
-        if (onFullscreen != null) {
-          onFullscreen!.call();
-        } else {
-          simulateKeyPress(LogicalKeyboardKey.keyF);
-        }
+        onFullscreen?.call();
 
       case RemoteCommandType.playMedia:
         final data = command.data;
@@ -240,6 +227,60 @@ bool _isTransport(RemoteCommandType type) => switch (type) {
   RemoteCommandType.nextTrack ||
   RemoteCommandType.previousTrack => true,
   _ => false,
+};
+
+bool _isPlayerCommand(RemoteCommandType type) => switch (type) {
+  RemoteCommandType.play ||
+  RemoteCommandType.pause ||
+  RemoteCommandType.playPause ||
+  RemoteCommandType.stop ||
+  RemoteCommandType.seekForward ||
+  RemoteCommandType.seekBackward ||
+  RemoteCommandType.skipIntro ||
+  RemoteCommandType.skipCredits ||
+  RemoteCommandType.volumeUp ||
+  RemoteCommandType.volumeDown ||
+  RemoteCommandType.volumeMute ||
+  RemoteCommandType.volumeSet ||
+  RemoteCommandType.nextTrack ||
+  RemoteCommandType.previousTrack ||
+  RemoteCommandType.subtitles ||
+  RemoteCommandType.audioTracks ||
+  RemoteCommandType.qualitySettings ||
+  RemoteCommandType.fullscreen => true,
+  RemoteCommandType.ping ||
+  RemoteCommandType.pong ||
+  RemoteCommandType.ack ||
+  RemoteCommandType.deviceInfo ||
+  RemoteCommandType.disconnect ||
+  RemoteCommandType.syncState ||
+  RemoteCommandType.requestState ||
+  RemoteCommandType.playMedia ||
+  RemoteCommandType.seekTo ||
+  RemoteCommandType.setRate ||
+  RemoteCommandType.selectAudioTrack ||
+  RemoteCommandType.selectSubtitleTrack ||
+  RemoteCommandType.selectQuality ||
+  RemoteCommandType.setSyncOffset ||
+  RemoteCommandType.setBoxFitMode ||
+  RemoteCommandType.browseSeason ||
+  RemoteCommandType.playEpisodeItem ||
+  RemoteCommandType.dpadUp ||
+  RemoteCommandType.dpadDown ||
+  RemoteCommandType.dpadLeft ||
+  RemoteCommandType.dpadRight ||
+  RemoteCommandType.select ||
+  RemoteCommandType.back ||
+  RemoteCommandType.contextMenu ||
+  RemoteCommandType.tabNext ||
+  RemoteCommandType.tabPrevious ||
+  RemoteCommandType.tabDiscover ||
+  RemoteCommandType.tabLibraries ||
+  RemoteCommandType.tabSearch ||
+  RemoteCommandType.tabDownloads ||
+  RemoteCommandType.tabSettings ||
+  RemoteCommandType.home ||
+  RemoteCommandType.search => false,
 };
 
 /// Exhaustive by design: no default clause, so adding a [RemoteCommandType]

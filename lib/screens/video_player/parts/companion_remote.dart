@@ -392,7 +392,8 @@ extension _VideoPlayerCompanionRemoteMethods on VideoPlayerScreenState {
     final buffering = state?.buffering ?? false;
     final positionMs = (currentPlayer?.currentPosition.inMilliseconds ?? state?.position.inMilliseconds ?? 0)
         .clamp(0, 1 << 30);
-    final durationMs = (state?.duration.inMilliseconds ?? _currentMetadata.durationMs ?? 0).clamp(0, 1 << 30);
+    final stateDurationMs = state?.duration.inMilliseconds ?? 0;
+    final durationMs = (stateDurationMs > 0 ? stateDurationMs : (_currentMetadata.durationMs ?? 0)).clamp(0, 1 << 30);
     final volume = (_volumeController?.value ?? state?.volume ?? 100.0).clamp(0.0, 100.0).toDouble();
     final offsets = currentPlayer != null ? PlayerSyncOffsets.of(currentPlayer) : null;
 

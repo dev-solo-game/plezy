@@ -759,7 +759,7 @@ void main() {
     expect(receivedTargets.single.title, 'Spirited Away');
   });
 
-  test('bidirectional handoff restores suspended host server on leaveSession and probes updated remotePort', () async {
+  test('bidirectional handoff keeps host server running, streams progress/commands, and hands back', () async {
     final deviceA = await _DeviceHarness.create(customDeviceName: 'Emulator A', selectLanMode: true);
     final deviceB = await _DeviceHarness.create(customDeviceName: 'Desktop B', selectLanMode: true);
     addTearDown(() async {
@@ -773,10 +773,12 @@ void main() {
 
     final targetsA = <RemoteMediaTarget>[];
     final targetsB = <RemoteMediaTarget>[];
+    final commandsOnA = <RemoteCommand>[];
     deviceA.remote.onPlayMediaRequested = (target) async {
       targetsA.add(target);
       return true;
     };
+    deviceA.remote.onCommandReceived = commandsOnA.add;
     deviceB.remote.onPlayMediaRequested = (target) async {
       targetsB.add(target);
       return true;
@@ -786,8 +788,9 @@ void main() {
     await deviceB.remote.startHostServer();
     expect(deviceA.remote.isHostServerRunning, isTrue);
     expect(deviceB.remote.isHostServerRunning, isTrue);
+    final initialPortB = deviceB.sync.lanService.advertisedRemotePort;
 
-    // Step 1: B pushes playback to A, suspending B's own host server.
+    // Step 1: B pushes playback to A without stopping B's own host server.
     await deviceB.remote.refreshOnlineDeviceStatuses();
     final hostA = deviceB.remote.onlineTrustedHosts.single;
     await deviceB.remote.connectAndPlayMedia(
@@ -800,20 +803,74 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 20));
     }
     expect(targetsA.map((t) => t.title), ['Movie One']);
-    expect(deviceB.remote.isHostServerRunning, isFalse);
+    expect(deviceB.remote.isHostServerRunning, isTrue);
+    expect(deviceB.remote.isConnected, isTrue);
 
-    // Step 2: B leaves RemoteControlScreen / session -> B's host server automatically restarts.
+    // Simulating a mid-session sync/host auto-start call on B must not corrupt B's remote link.
+    await deviceB.remote.ensureSyncCryptoReady(deviceB.sync);
+    await deviceB.remote.startHostServer();
+    expect(deviceB.remote.isConnected, isTrue);
+
+    // Step 2: A pushes live progress snapshots to B and receives transport commands from B.
+    deviceA.remote.updateHostPlayerSnapshot(
+      const RemotePlayerSnapshot(
+        active: true,
+        stage: 'playing',
+        title: 'Movie One',
+        playing: true,
+        positionMs: 5000,
+        durationMs: 1200000,
+      ),
+    );
+    final progressDeadline = DateTime.now().add(const Duration(seconds: 5));
+    while (deviceB.remote.remotePlayerSnapshot.durationMs != 1200000 && DateTime.now().isBefore(progressDeadline)) {
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+    }
+    expect(deviceB.remote.remotePlayerSnapshot.playing, isTrue);
+    expect(deviceB.remote.remotePlayerSnapshot.positionMs, 5000);
+    expect(deviceB.remote.remotePlayerSnapshot.durationMs, 1200000);
+
+    deviceB.remote.sendCommand(RemoteCommandType.playPause);
+    deviceB.remote.sendCommand(RemoteCommandType.seekTo, data: {'positionMs': 45000});
+    deviceB.remote.sendCommand(RemoteCommandType.stop);
+    final cmdDeadline = DateTime.now().add(const Duration(seconds: 5));
+    while (commandsOnA.length < 3 && DateTime.now().isBefore(cmdDeadline)) {
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+    }
+    expect(commandsOnA.map((c) => c.type), [
+      RemoteCommandType.playPause,
+      RemoteCommandType.seekTo,
+      RemoteCommandType.stop,
+    ]);
+
+    deviceA.remote.updateHostPlayerSnapshot(
+      const RemotePlayerSnapshot(
+        active: true,
+        stage: 'paused',
+        title: 'Movie One',
+        playing: false,
+        positionMs: 45000,
+        durationMs: 1200000,
+      ),
+    );
+    final updateDeadline = DateTime.now().add(const Duration(seconds: 5));
+    while ((deviceB.remote.remotePlayerSnapshot.playing || deviceB.remote.remotePlayerSnapshot.positionMs != 45000) &&
+        DateTime.now().isBefore(updateDeadline)) {
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+    }
+    expect(deviceB.remote.remotePlayerSnapshot.playing, isFalse);
+    expect(deviceB.remote.remotePlayerSnapshot.positionMs, 45000);
+
+    // Step 3: B leaves the control session -> B's host server remained running on the same port.
     await deviceB.remote.leaveSession();
     expect(deviceB.remote.isHostServerRunning, isTrue);
-    final restartedPortB = deviceB.sync.lanService.advertisedRemotePort;
-    expect(restartedPortB, isNotNull);
-    expect(restartedPortB, greaterThan(0));
+    expect(deviceB.sync.lanService.advertisedRemotePort, initialPortB);
 
-    // Step 3: A refreshes status (unicast probe discovers B's new port) and pushes back to B.
+    // Step 4: A refreshes status and pushes playback back to B.
     await deviceA.remote.refreshOnlineDeviceStatuses();
     final discoveredOnA = deviceA.remote.onlineTrustedHosts;
     expect(discoveredOnA, hasLength(1));
-    expect(discoveredOnA.single.port, restartedPortB);
+    expect(discoveredOnA.single.port, initialPortB);
 
     await deviceA.remote.connectAndPlayMedia(
       discoveredOnA.single,

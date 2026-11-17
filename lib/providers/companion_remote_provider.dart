@@ -59,9 +59,17 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
 
   final CompanionRemotePeerServiceFactory _peerServiceFactory;
   final LanDiscoveryServiceFactory _discoveryServiceFactory;
-  RemoteSession? _session;
-  CompanionRemotePeerService? _peerService;
+
+  // Outbound remote control session state (this device controlling another host).
+  RemoteSession? _remoteSession;
+  CompanionRemotePeerService? _remotePeerService;
   CompanionRemotePeerService? _pendingRemotePeer;
+
+  // Inbound host server state (other devices connecting to control this device).
+  RemoteSession? _hostSession;
+  CompanionRemotePeerService? _hostPeerService;
+  RemoteDevice? _hostConnectedDevice;
+
   LanDiscoveryService? _discoveryService;
   String _deviceName = t.companionRemote.unknownDevice;
   String _platform = 'unknown';
@@ -95,6 +103,7 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
   bool _resumeReconnectPending = false;
   int _resumeReconnectGeneration = 0;
   int _remoteGeneration = 0;
+  int _hostGeneration = 0;
   final Expando<int> _intentionalDisconnectGeneration = Expando<int>(
     'companion remote intentional disconnect generation',
   );
@@ -102,7 +111,6 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
   int? _inFlightHostGeneration;
   String? _inFlightHostClientId;
   String? _inFlightAuthContextId;
-  bool _suspendedHostForRemote = false;
   bool _passiveDiscoveryRequested = false;
 
   // Reconnection context (only hostAddresses and hostClientId are connection-specific)
@@ -134,26 +142,36 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
 
   int get reconnectAttempts => _reconnectAttempts;
 
-  StreamSubscription<RemoteCommand>? _commandSubscription;
-  StreamSubscription<RemoteDevice>? _deviceConnectedSubscription;
-  StreamSubscription<void>? _deviceDisconnectedSubscription;
-  StreamSubscription<RemotePeerError>? _errorSubscription;
-  StreamSubscription<RemoteSessionStatus>? _statusSubscription;
+  StreamSubscription<RemoteCommand>? _remoteCommandSubscription;
+  StreamSubscription<RemoteDevice>? _remoteDeviceConnectedSubscription;
+  StreamSubscription<void>? _remoteDeviceDisconnectedSubscription;
+  StreamSubscription<RemotePeerError>? _remoteErrorSubscription;
+  StreamSubscription<RemoteSessionStatus>? _remoteStatusSubscription;
+
+  StreamSubscription<RemoteCommand>? _hostCommandSubscription;
+  StreamSubscription<RemoteDevice>? _hostDeviceConnectedSubscription;
+  StreamSubscription<void>? _hostDeviceDisconnectedSubscription;
+  StreamSubscription<RemotePeerError>? _hostErrorSubscription;
+  StreamSubscription<RemoteSessionStatus>? _hostStatusSubscription;
 
   CommandReceivedCallback? onCommandReceived;
   Future<bool> Function(RemoteMediaTarget target)? onPlayMediaRequested;
 
-  bool get isInSession => _session != null && _session!.status != RemoteSessionStatus.disconnected;
-  bool get isHost => _session?.isHost ?? false;
-  bool get isRemote => _session?.isRemote ?? false;
-  bool get isConnected => _session?.isConnected ?? false;
-  RemoteSession? get session => _session;
-  RemoteSessionStatus get status => _session?.status ?? RemoteSessionStatus.disconnected;
-  RemoteDevice? get connectedDevice => _session?.connectedDevice;
+  bool get isInSession => isRemote || _hostConnectedDevice != null;
+  bool get isHost => isHostServerRunning;
+  bool get isRemote => _remoteSession != null && _remoteSession!.status != RemoteSessionStatus.disconnected;
+  bool get isConnected => _remoteSession?.isConnected ?? false;
+  bool get hasActiveControlLink => isConnected || _hostConnectedDevice != null;
+  RemoteSession? get session => _remoteSession;
+  RemoteSession? get hostSession => _hostSession;
+  RemoteSessionStatus get status => _remoteSession?.status ?? RemoteSessionStatus.disconnected;
+  RemoteDevice? get connectedDevice => _remoteSession?.connectedDevice ?? _hostConnectedDevice;
+  RemoteDevice? get hostConnectedDevice => _hostConnectedDevice;
+  String? get hostErrorMessage => _hostSession?.errorMessage;
   bool get isPlayerActive => _isPlayerActive;
   RemotePlayerSnapshot get hostPlayerSnapshot => _hostPlayerSnapshot;
   RemotePlayerSnapshot get remotePlayerSnapshot => _remotePlayerSnapshot;
-  bool get isHostServerRunning => _peerService?.isServerRunning ?? false;
+  bool get isHostServerRunning => _hostPeerService?.isServerRunning ?? false;
   List<String> get hostServerAddresses => _hostServerAddresses;
 
   Future<void> _initializeDeviceInfo() async {
@@ -437,30 +455,49 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
     }
 
     // When only the auth context set (e.g., LAN peer trusted/revoked or sync mode switch)
-    // changed within the same profile scope while hosting, hot-update the running server
-    // in place instead of closing its listening port.
-    if (isHostServerRunning && _cryptoProfileId == nextProfileKey && _peerService != null) {
+    // changed within the same profile scope, hot-update in place instead of closing
+    // the host listening port or disturbing unaffected outbound sessions.
+    if (_cryptoProfileId == nextProfileKey && _cryptoProfileId != null) {
       _authContexts = nextContexts;
       _lanStandbyReady = nextLanStandby;
-      await _peerService!.updateHostAuthContexts(nextContexts);
-      checkCurrent?.call();
-      final port = _hostServerPort;
-      effectiveSync?.lanService.setAdvertisedRemotePort(nextLanStandby ? port : null);
-      if (nextContexts.isEmpty) {
-        await _discoveryService?.stopBroadcasting();
-      } else if (port != null && _hostServerAddresses.isNotEmpty) {
-        _discoveryService ??= _discoveryServiceFactory();
-        final localIps = _hostServerAddresses.map((a) => a.split(':').first).toList();
-        await _discoveryService!.startBroadcastingForContexts(
-          contexts: nextContexts,
-          deviceName: _deviceName,
-          platform: _platform,
-          wsPort: port,
-          ips: localIps,
-        );
+      if (isHostServerRunning && _hostPeerService != null) {
+        await _hostPeerService!.updateHostAuthContexts(nextContexts);
+        checkCurrent?.call();
+        final port = _hostServerPort;
+        effectiveSync?.lanService.setAdvertisedRemotePort(nextLanStandby ? port : null);
+        if (nextContexts.isEmpty) {
+          await _discoveryService?.stopBroadcasting();
+        } else if (port != null && _hostServerAddresses.isNotEmpty) {
+          _discoveryService ??= _discoveryServiceFactory();
+          final localIps = _hostServerAddresses.map((a) => a.split(':').first).toList();
+          await _discoveryService!.startBroadcastingForContexts(
+            contexts: nextContexts,
+            deviceName: _deviceName,
+            platform: _platform,
+            wsPort: port,
+            ips: localIps,
+          );
+        }
+      }
+      if (_passiveDiscoverySub != null) {
+        await _passiveDiscoverySub!.cancel();
+        _passiveDiscoverySub = null;
+        if (_authContexts.isEmpty) {
+          _beaconHosts = const [];
+          _discoveryService?.stopListening();
+        } else {
+          startPassiveDiscovery();
+        }
+      } else if (_passiveDiscoveryRequested && _authContexts.isNotEmpty) {
+        startPassiveDiscovery();
+      }
+      if (_remoteSession != null &&
+          _lastAuthContextId != null &&
+          !nextContexts.any((c) => c.id == _lastAuthContextId)) {
+        await leaveSession();
       }
       safeNotifyListeners();
-      appLogger.d('CompanionRemote: Hot-updated host crypto contexts (${nextContexts.length})');
+      appLogger.d('CompanionRemote: Hot-updated crypto contexts (${nextContexts.length})');
       return true;
     }
 
@@ -632,12 +669,19 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
   Future<void> _prepareForCryptoRebuild() async {
     // Always invoked from inside the lifecycle lock — use the unlocked stop so
     // we don't deadlock on our own chain.
-    if (isInSession || isHostServerRunning) {
+    final leavingGeneration = _remoteGeneration;
+    _markIntentionalDisconnect(_remotePeerService, leavingGeneration);
+    _markIntentionalDisconnect(_pendingRemotePeer, leavingGeneration);
+    final detachedPeers = _invalidateRemoteLifecycle();
+    _reconnectAttempts = 0;
+    _remoteSession = null;
+    _isPlayerActive = false;
+    _remotePlayerSnapshot = RemotePlayerSnapshot.idle;
+    await _disposeDetachedPeers(detachedPeers);
+    if (isHostServerRunning || _hostPeerService != null || _hostSession != null) {
       await _stopHostServerLocked();
-    } else {
-      stopDiscovery();
-      _cleanupSubscriptions();
     }
+    stopDiscovery();
     _clearCryptoContext();
   }
 
@@ -654,20 +698,18 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
     }
   }
 
-  void _clearIntentionalDisconnect(CompanionRemotePeerService? peer, int generation) {
-    if (peer != null && _intentionalDisconnectGeneration[peer] == generation) {
-      _intentionalDisconnectGeneration[peer] = null;
-    }
-  }
-
   bool _isIntentionalDisconnect(CompanionRemotePeerService peer, int generation) {
     return _intentionalDisconnectGeneration[peer] == generation;
   }
 
-  bool _ownsPeer(CompanionRemotePeerService peer, int generation) {
+  bool _ownsRemotePeer(CompanionRemotePeerService peer, int generation) {
     return !isDisposed &&
         generation == _remoteGeneration &&
-        (identical(_peerService, peer) || identical(_pendingRemotePeer, peer));
+        (identical(_remotePeerService, peer) || identical(_pendingRemotePeer, peer));
+  }
+
+  bool _ownsHostPeer(CompanionRemotePeerService peer, int hostGeneration) {
+    return !isDisposed && hostGeneration == _hostGeneration && identical(_hostPeerService, peer);
   }
 
   ({CompanionRemotePeerService? current, CompanionRemotePeerService? pending}) _invalidateRemoteLifecycle() {
@@ -682,13 +724,11 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
     cancelPendingTrust();
 
     final pending = _pendingRemotePeer;
-    final current = _session?.isRemote == true ? _peerService : null;
+    final current = _remotePeerService;
     _pendingRemotePeer = null;
-    if (identical(_peerService, current)) {
-      _peerService = null;
-    }
+    _remotePeerService = null;
     if (current != null || pending != null) {
-      _cleanupSubscriptions();
+      _cleanupRemoteSubscriptions();
     }
     return (current: current, pending: pending);
   }
@@ -718,18 +758,17 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
   }
 
   _RemoteConnectRequest _beginRemoteConnectRequest() {
-    final wasHost = isHost || isHostServerRunning;
-    if (wasHost) {
-      _suspendedHostForRemote = true;
-    }
+    final leavingGeneration = _remoteGeneration;
+    _markIntentionalDisconnect(_remotePeerService, leavingGeneration);
+    _markIntentionalDisconnect(_pendingRemotePeer, leavingGeneration);
     final peers = _invalidateRemoteLifecycle();
     _reconnectAttempts = 0;
-    _session = null;
+    _remoteSession = null;
     _isPlayerActive = false;
+    _remotePlayerSnapshot = RemotePlayerSnapshot.idle;
     safeNotifyListeners();
     return _RemoteConnectRequest(
       generation: _remoteGeneration,
-      wasHost: wasHost,
       current: peers.current,
       pending: peers.pending,
     );
@@ -737,11 +776,6 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
 
   Future<bool> _prepareRemoteConnect(_RemoteConnectRequest request) async {
     await _disposeDetachedPeers((current: request.current, pending: request.pending));
-    if (request.wasHost) {
-      await _serializeLifecycle(_stopHostServerLocked);
-    } else {
-      stopDiscovery();
-    }
     return !isDisposed && request.generation == _remoteGeneration;
   }
 
@@ -749,10 +783,15 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
   /// Used by logout so an app-level provider surviving route replacement does
   /// not keep broadcasting with the previous Plex Home identity.
   Future<void> resetForLogout() {
-    _suspendedHostForRemote = false;
     _passiveDiscoveryRequested = false;
+    final leavingGeneration = _remoteGeneration;
+    _markIntentionalDisconnect(_remotePeerService, leavingGeneration);
+    _markIntentionalDisconnect(_pendingRemotePeer, leavingGeneration);
     final detachedPeers = _invalidateRemoteLifecycle();
     _reconnectAttempts = 0;
+    _remoteSession = null;
+    _isPlayerActive = false;
+    _remotePlayerSnapshot = RemotePlayerSnapshot.idle;
     _lastHostAddresses = null;
     _lastHostClientId = null;
     _lastAuthContextId = null;
@@ -790,7 +829,7 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
 
   Future<void> _startHostServerLocked({void Function()? checkCurrent}) async {
     checkCurrent?.call();
-    if (isDisposed || _peerService?.isServerRunning == true) return;
+    if (isDisposed || _hostPeerService?.isServerRunning == true) return;
     if (!isCryptoReady) {
       appLogger.w('CompanionRemote: Cannot start host — crypto not initialized');
       return;
@@ -798,7 +837,8 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
 
     appLogger.d('CompanionRemote: Starting host server');
 
-    final peer = _peerService ??= _peerServiceFactory();
+    final peer = _hostPeerService ??= _peerServiceFactory();
+    final hostGeneration = ++_hostGeneration;
     peer.hostStatusSnapshotBuilder = () => _hostPlayerSnapshot;
     peer.onHostQuickAction = (action, _) async {
       if (action == 'playPause') {
@@ -807,28 +847,29 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
       }
       return _hostPlayerSnapshot;
     };
-    _setupPeerServiceListeners(peer, _remoteGeneration);
+    _setupHostPeerServiceListeners(peer, hostGeneration);
 
     try {
       final contexts = List<RemoteAuthContext>.unmodifiable(_authContexts);
       final result = (contexts.isEmpty && _lanStandbyReady)
-          ? await _peerService!.createStandbySession(_deviceName, _platform)
-          : await _peerService!.createSessionForContexts(_deviceName, _platform, contexts);
+          ? await peer.createStandbySession(_deviceName, _platform)
+          : await peer.createSessionForContexts(_deviceName, _platform, contexts);
       try {
         checkCurrent?.call();
       } catch (_) {
         // The serialized start still owns this candidate. Retire it instead
         // of leaving a stale authorized listener running after a profile switch.
-        if (identical(_peerService, peer)) await _stopHostServerLocked();
+        if (identical(_hostPeerService, peer)) await _stopHostServerLocked();
         rethrow;
       }
       _hostServerAddresses = result.addresses;
       _hostServerPort = result.port;
       _boundSync?.lanService.setAdvertisedRemotePort(_lanStandbyReady ? result.port : null);
 
-      _session = RemoteSession(
+      _hostSession = RemoteSession(
         role: RemoteSessionRole.host,
         status: RemoteSessionStatus.connected,
+        connectedDevice: _hostConnectedDevice,
         createdAt: DateTime.now(),
       );
       safeNotifyListeners();
@@ -847,7 +888,7 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
         try {
           checkCurrent?.call();
         } catch (_) {
-          if (identical(_peerService, peer)) await _stopHostServerLocked();
+          if (identical(_hostPeerService, peer)) await _stopHostServerLocked();
           rethrow;
         }
       }
@@ -859,7 +900,7 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
       _hostServerAddresses = const [];
       _hostServerPort = null;
       _boundSync?.lanService.setAdvertisedRemotePort(null);
-      _session = RemoteSession(
+      _hostSession = RemoteSession(
         role: RemoteSessionRole.host,
         status: RemoteSessionStatus.error,
         errorMessage: _localizedRemoteError(e, (details) => t.companionRemote.errors.serverStartFailed(error: details)),
@@ -872,40 +913,52 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
   /// Stop the host server and LAN broadcasting.
   Future<void> stopHostServer({void Function()? checkCurrent}) => _serializeLifecycle(() async {
     checkCurrent?.call();
-    _suspendedHostForRemote = false;
     await _stopHostServerLocked();
   });
 
   Future<void> _stopHostServerLocked() async {
-    final stopGeneration = _remoteGeneration;
-    final peer = _peerService;
-    _markIntentionalDisconnect(peer, stopGeneration);
+    final stopGeneration = ++_hostGeneration;
+    final peer = _hostPeerService;
 
     try {
       await _discoveryService?.stopBroadcasting();
-      stopDiscovery();
       _hostServerAddresses = const [];
       _hostServerPort = null;
       _boundSync?.lanService.setAdvertisedRemotePort(null);
 
-      if (identical(_peerService, peer)) {
-        _peerService = null;
-        _cleanupSubscriptions();
+      if (identical(_hostPeerService, peer)) {
+        _hostPeerService = null;
+        _cleanupHostSubscriptions();
       }
       if (peer != null) {
         await _disposePeer(peer);
       }
 
-      // A newer remote request may start while the stopped peer's asynchronous
-      // disposal is settling. Never let the older stop erase that replacement.
-      if (_remoteGeneration == stopGeneration) {
-        _session = null;
-        _isPlayerActive = false;
+      // A newer host start may arrive while an older peer's disposal settles.
+      if (_hostGeneration == stopGeneration) {
+        _hostSession = null;
+        _hostConnectedDevice = null;
       }
       safeNotifyListeners();
-    } finally {
-      _clearIntentionalDisconnect(peer, stopGeneration);
+    } catch (e, stackTrace) {
+      appLogger.d('CompanionRemote: Host server stop cleanup ignored', error: e, stackTrace: stackTrace);
     }
+  }
+
+  bool _isSelfHost(DiscoveredHost host) {
+    final myDeviceId = _boundSync?.deviceId ?? '';
+    if (myDeviceId.isNotEmpty && host.clientId == myDeviceId) return true;
+    for (final ctx in _authContexts) {
+      if (ctx.id == host.authContextId && ctx.clientIdentifier.isNotEmpty && ctx.clientIdentifier == host.clientId) {
+        return true;
+      }
+    }
+    if (isHostServerRunning && _hostServerAddresses.isNotEmpty) {
+      for (final addr in host.addresses) {
+        if (_hostServerAddresses.contains(addr)) return true;
+      }
+    }
+    return false;
   }
 
   Stream<List<DiscoveredHost>>? discoverHosts() {
@@ -920,8 +973,7 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
 
     _discoveryService ??= _discoveryServiceFactory();
     final raw = _discoveryService!.startListeningForContexts(_authContexts);
-    final myDeviceId = _boundSync?.deviceId ?? '';
-    return myDeviceId.isEmpty ? raw : raw.map((hosts) => hosts.where((h) => h.clientId != myDeviceId).toList());
+    return raw.map((hosts) => hosts.where((h) => !_isSelfHost(h)).toList());
   }
 
   /// Discovered LAN P2P peers that are already trusted and advertising a remote host port.
@@ -970,10 +1022,9 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
 
   /// Combined online trusted LAN peers and same-account Sync hosts.
   List<DiscoveredHost> get onlineTrustedHosts {
-    final myDeviceId = _boundSync?.deviceId ?? '';
     final merged = <String, DiscoveredHost>{};
     for (final host in [...trustedLanRemoteHosts, ..._beaconHosts]) {
-      if (myDeviceId.isNotEmpty && host.clientId == myDeviceId) continue;
+      if (_isSelfHost(host)) continue;
       merged['${host.authContextId}:${host.clientId}'] = host;
     }
     return merged.values.toList(growable: false);
@@ -1307,7 +1358,7 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
           _lastHostAddresses = [winner!];
           _lastAuthContextId = peer.selectedAuthContextId ?? authContext.id;
           _lastHostClientId = peer.selectedHostClientId ?? resolvedHost.clientId;
-          _session = _session?.copyWith(status: RemoteSessionStatus.connected);
+          _remoteSession = _remoteSession?.copyWith(status: RemoteSessionStatus.connected);
         },
         failureLog: 'CompanionRemote: Failed to connect to host',
         onFailure: _failRemoteConnectSession,
@@ -1370,7 +1421,7 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
       onConnected: (peer) {
         _lastAuthContextId = peer.selectedAuthContextId;
         _lastHostClientId = peer.selectedHostClientId ?? '';
-        _session = _session?.copyWith(status: RemoteSessionStatus.connected);
+        _remoteSession = _remoteSession?.copyWith(status: RemoteSessionStatus.connected);
       },
       failureLog: 'CompanionRemote: Failed to connect to manual host',
       onFailure: _failRemoteConnectSession,
@@ -1378,7 +1429,7 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
   }
 
   void _failRemoteConnectSession(Object error) {
-    _session = _session?.copyWith(
+    _remoteSession = _remoteSession?.copyWith(
       status: RemoteSessionStatus.error,
       errorMessage: _localizedRemoteError(
         error,
@@ -1390,15 +1441,15 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
 
   /// Runs the candidate-peer connect lifecycle shared by the discovered/manual
   /// connect paths and by reconnect attempts: create a candidate, wire its
-  /// listeners, then promote it to [_peerService] or dispose it. The generation
-  /// guards live here so a candidate that lost ownership while joining is
-  /// disposed rather than promoted, in exactly one place. Returns true only
-  /// when the candidate was promoted.
+  /// listeners, then promote it to [_remotePeerService] or dispose it. The
+  /// generation guards live here so a candidate that lost ownership while
+  /// joining is disposed rather than promoted, in exactly one place. Returns
+  /// true only when the candidate was promoted.
   ///
   /// [isReconnectAttempt] carries the attempt's own intent: a failed reconnect
   /// reschedules from this captured flag (plus the generation guard) rather
-  /// than from `_session.status`, which the candidate's mirrored status/error
-  /// emissions can overwrite while the join is in flight.
+  /// than from `_remoteSession.status`, which the candidate's mirrored
+  /// status/error emissions can overwrite while the join is in flight.
   Future<bool> _runRemoteConnect({
     required int generation,
     required Future<void> Function(CompanionRemotePeerService peer) join,
@@ -1412,35 +1463,35 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
     final candidate = _peerServiceFactory();
     _pendingRemotePeer = candidate;
     if (seedConnectingSession) {
-      _session = RemoteSession(
+      _remoteSession = RemoteSession(
         role: RemoteSessionRole.remote,
         status: RemoteSessionStatus.connecting,
         createdAt: DateTime.now(),
       );
     }
-    _setupPeerServiceListeners(candidate, generation);
+    _setupRemotePeerServiceListeners(candidate, generation);
     if (seedConnectingSession) safeNotifyListeners();
 
     try {
       await join(candidate);
-      if (!_ownsPeer(candidate, generation)) {
+      if (!_ownsRemotePeer(candidate, generation)) {
         await _disposePeer(candidate);
         return false;
       }
 
       _pendingRemotePeer = null;
-      _peerService = candidate;
+      _remotePeerService = candidate;
       onConnected(candidate);
       safeNotifyListeners();
       return true;
     } catch (error, stackTrace) {
-      if (!_ownsPeer(candidate, generation)) {
+      if (!_ownsRemotePeer(candidate, generation)) {
         await _disposePeer(candidate);
         return false;
       }
 
       _pendingRemotePeer = null;
-      _cleanupSubscriptions();
+      _cleanupRemoteSubscriptions();
       await _disposePeer(candidate);
       appLogger.e(failureLog, error: error, stackTrace: stackTrace);
       onFailure?.call(error);
@@ -1452,136 +1503,187 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
     }
   }
 
-  void _setupPeerServiceListeners(CompanionRemotePeerService peer, int generation) {
-    // Only one peer owns the provider's listener set at a time. The identity
-    // and generation checks also reject events already queued when teardown
-    // synchronously cancels these subscriptions.
-    _cleanupSubscriptions();
-    _commandSubscription = peer.onCommandReceived.listen(
+  void _setupHostPeerServiceListeners(CompanionRemotePeerService peer, int hostGeneration) {
+    _cleanupHostSubscriptions();
+    _hostCommandSubscription = peer.onCommandReceived.listen(
       (command) {
-        if (!_ownsPeer(peer, generation)) return;
-        appLogger.d('CompanionRemote: Command received: ${command.type}');
+        if (!_ownsHostPeer(peer, hostGeneration)) return;
+        appLogger.d('CompanionRemote: Host command received: ${command.type}');
 
         if (command.type == RemoteCommandType.deviceInfo) {
-          _handleDeviceInfo(command);
-        } else if (command.type == RemoteCommandType.syncState) {
-          _handleSyncState(command);
+          _handleHostDeviceInfo(command);
         } else if (command.type == RemoteCommandType.requestState) {
-          if (isHost) {
-            peer.sendCommand(
-              RemoteCommand(
-                type: RemoteCommandType.syncState,
-                data: {
-                  'playerActive': _hostPlayerActive,
-                  if (_hasHostPlayerSnapshot) 'snapshot': _hostPlayerSnapshot.toJson(),
-                },
-              ),
-            );
-          }
+          peer.sendCommand(
+            RemoteCommand(
+              type: RemoteCommandType.syncState,
+              data: {
+                'playerActive': _hostPlayerActive,
+                if (_hasHostPlayerSnapshot) 'snapshot': _hostPlayerSnapshot.toJson(),
+              },
+            ),
+          );
         } else if (command.type == RemoteCommandType.playMedia) {
-          if (isHost && command.data != null) {
+          if (command.data != null) {
             unawaited(_handlePlayMediaRequest(RemoteMediaTarget.fromJson(command.data!)));
           }
         } else if (command.type != RemoteCommandType.ping &&
             command.type != RemoteCommandType.pong &&
-            command.type != RemoteCommandType.ack) {
+            command.type != RemoteCommandType.ack &&
+            command.type != RemoteCommandType.syncState) {
           onCommandReceived?.call(command);
         }
       },
       onError: (Object error) {
-        if (!_ownsPeer(peer, generation)) return;
-        appLogger.e('CompanionRemote: Stream error', error: error);
+        if (!_ownsHostPeer(peer, hostGeneration)) return;
+        appLogger.e('CompanionRemote: Host stream error', error: error);
       },
     );
 
-    _deviceConnectedSubscription = peer.onDeviceConnected.listen((device) {
-      if (!_ownsPeer(peer, generation)) return;
-      appLogger.d('CompanionRemote: Device connected: ${device.name}');
-      _session = _session?.copyWith(status: RemoteSessionStatus.connected, connectedDevice: device);
+    _hostDeviceConnectedSubscription = peer.onDeviceConnected.listen((device) {
+      if (!_ownsHostPeer(peer, hostGeneration)) return;
+      appLogger.d('CompanionRemote: Remote client connected to host: ${device.name}');
+      _hostConnectedDevice = device;
+      _hostSession = _hostSession?.copyWith(status: RemoteSessionStatus.connected, connectedDevice: device);
       safeNotifyListeners();
-      // The player screen advertises its state once, when it opens; a remote
-      // that pairs (or re-pairs) later would otherwise keep showing the
-      // browse controls over a running player, or the player controls after
-      // it closed while the remote was away.
-      if (isHost) {
-        peer.sendCommand(
-          RemoteCommand(
-            type: RemoteCommandType.syncState,
-            data: {
-              'playerActive': _hostPlayerActive,
-              if (_hasHostPlayerSnapshot) 'snapshot': _hostPlayerSnapshot.toJson(),
-            },
-          ),
-        );
-      } else {
-        peer.sendCommand(const RemoteCommand(type: RemoteCommandType.requestState));
+      peer.sendCommand(
+        RemoteCommand(
+          type: RemoteCommandType.syncState,
+          data: {
+            'playerActive': _hostPlayerActive,
+            if (_hasHostPlayerSnapshot) 'snapshot': _hostPlayerSnapshot.toJson(),
+          },
+        ),
+      );
+    });
+
+    _hostDeviceDisconnectedSubscription = peer.onDeviceDisconnected.listen((_) {
+      if (!_ownsHostPeer(peer, hostGeneration)) return;
+      appLogger.d('CompanionRemote: Remote client disconnected from host');
+      _hostConnectedDevice = null;
+      _hostSession = _hostSession?.copyWith(
+        status: RemoteSessionStatus.connected,
+        connectedDevice: null,
+        errorMessage: null,
+      );
+      safeNotifyListeners();
+    });
+
+    _hostErrorSubscription = peer.onError.listen((error) {
+      if (!_ownsHostPeer(peer, hostGeneration)) return;
+      appLogger.e('CompanionRemote: Host error: ${error.message}');
+      if (!peer.isServerRunning) {
+        _hostSession = _hostSession?.copyWith(status: RemoteSessionStatus.error, errorMessage: error.message);
+        safeNotifyListeners();
       }
     });
 
-    _deviceDisconnectedSubscription = peer.onDeviceDisconnected.listen((_) {
-      if (!_ownsPeer(peer, generation)) return;
+    _hostStatusSubscription = peer.onConnectionStateChanged.listen((status) {
+      if (!_ownsHostPeer(peer, hostGeneration)) return;
+      appLogger.d('CompanionRemote: Host status event: $status');
+      if (status == RemoteSessionStatus.error) {
+        _hostSession = _hostSession?.copyWith(status: status);
+        safeNotifyListeners();
+      }
+    });
+  }
+
+  void _setupRemotePeerServiceListeners(CompanionRemotePeerService peer, int generation) {
+    // Only one outbound peer owns the remote listener set at a time. The
+    // identity and generation checks also reject events already queued when
+    // teardown synchronously cancels these subscriptions.
+    _cleanupRemoteSubscriptions();
+    _remoteCommandSubscription = peer.onCommandReceived.listen(
+      (command) {
+        if (!_ownsRemotePeer(peer, generation)) return;
+        appLogger.d('CompanionRemote: Remote command received: ${command.type}');
+
+        if (command.type == RemoteCommandType.deviceInfo) {
+          _handleRemoteDeviceInfo(command);
+        } else if (command.type == RemoteCommandType.syncState) {
+          _handleSyncState(command);
+        }
+      },
+      onError: (Object error) {
+        if (!_ownsRemotePeer(peer, generation)) return;
+        appLogger.e('CompanionRemote: Remote stream error', error: error);
+      },
+    );
+
+    _remoteDeviceConnectedSubscription = peer.onDeviceConnected.listen((device) {
+      if (!_ownsRemotePeer(peer, generation)) return;
+      appLogger.d('CompanionRemote: Connected to host device: ${device.name}');
+      _remoteSession = _remoteSession?.copyWith(status: RemoteSessionStatus.connected, connectedDevice: device);
+      safeNotifyListeners();
+      peer.sendCommand(const RemoteCommand(type: RemoteCommandType.requestState));
+    });
+
+    _remoteDeviceDisconnectedSubscription = peer.onDeviceDisconnected.listen((_) {
+      if (!_ownsRemotePeer(peer, generation)) return;
       final intentional = _isIntentionalDisconnect(peer, generation);
-      appLogger.d('CompanionRemote: Device disconnected (intentional: $intentional)');
+      appLogger.d('CompanionRemote: Remote disconnected (intentional: $intentional)');
       if (intentional) {
-        _session = _session?.copyWith(status: RemoteSessionStatus.disconnected, connectedDevice: null);
+        _remoteSession = _remoteSession?.copyWith(status: RemoteSessionStatus.disconnected, connectedDevice: null);
         safeNotifyListeners();
-      } else if (isHost) {
-        _session = _session?.copyWith(
-          status: RemoteSessionStatus.reconnecting,
-          connectedDevice: null,
-          errorMessage: null,
-        );
-        safeNotifyListeners();
-        appLogger.d('CompanionRemote: Host waiting for client to reconnect');
       } else {
-        _session = _session?.copyWith(status: RemoteSessionStatus.reconnecting);
+        _remoteSession = _remoteSession?.copyWith(status: RemoteSessionStatus.reconnecting);
         safeNotifyListeners();
         _scheduleReconnect(generation);
       }
     });
 
-    _errorSubscription = peer.onError.listen((error) {
-      if (!_ownsPeer(peer, generation)) return;
-      appLogger.e('CompanionRemote: Error: ${error.message}');
-      if (_session?.status == RemoteSessionStatus.reconnecting) {
+    _remoteErrorSubscription = peer.onError.listen((error) {
+      if (!_ownsRemotePeer(peer, generation)) return;
+      appLogger.e('CompanionRemote: Remote error: ${error.message}');
+      if (_remoteSession?.status == RemoteSessionStatus.reconnecting) {
         // An active reconnect cycle owns the session: attempt failures surface
         // through the join future and are rescheduled there. A stale error
         // from the dying socket must not end the cycle.
         return;
       }
-      _session = _session?.copyWith(status: RemoteSessionStatus.error, errorMessage: error.message);
+      _remoteSession = _remoteSession?.copyWith(status: RemoteSessionStatus.error, errorMessage: error.message);
       safeNotifyListeners();
     });
 
-    _statusSubscription = peer.onConnectionStateChanged.listen((status) {
-      if (!_ownsPeer(peer, generation)) return;
-      appLogger.d('CompanionRemote: Status changed: $status');
-      if (_session?.status == RemoteSessionStatus.reconnecting && status != RemoteSessionStatus.connected) {
+    _remoteStatusSubscription = peer.onConnectionStateChanged.listen((status) {
+      if (!_ownsRemotePeer(peer, generation)) return;
+      appLogger.d('CompanionRemote: Remote status changed: $status');
+      if (_remoteSession?.status == RemoteSessionStatus.reconnecting && status != RemoteSessionStatus.connected) {
         // The peer emits a disconnected status right after deviceDisconnected
         // (and candidates emit connecting/error while a retry is joining);
         // none of those may knock the session out of an active reconnect
         // cycle — only a successful connection ends it.
         return;
       }
-      _session = _session?.copyWith(status: status);
+      _remoteSession = _remoteSession?.copyWith(status: status);
       safeNotifyListeners();
     });
   }
 
-  void _handleDeviceInfo(RemoteCommand command) {
-    if (command.data != null) {
-      final id = command.data!['id'] as String? ?? 'unknown';
-      final name = command.data!['name'] as String? ?? t.companionRemote.unknownDevice;
-      final platform = command.data!['platform'] as String? ?? 'unknown';
-      final role = command.data!['role'] as String?;
+  RemoteDevice? _parseDeviceInfo(RemoteCommand command) {
+    final data = command.data;
+    if (data == null) return null;
+    final id = data['id'] as String? ?? 'unknown';
+    final name = data['name'] as String? ?? t.companionRemote.unknownDevice;
+    final platform = data['platform'] as String? ?? 'unknown';
+    final role = data['role'] as String?;
 
-      appLogger.d('CompanionRemote: Device info - name: $name, platform: $platform, role: $role');
+    appLogger.d('CompanionRemote: Device info - name: $name, platform: $platform, role: $role');
+    return RemoteDevice(id: id, name: name, platform: platform, connectedAt: DateTime.now());
+  }
 
-      final device = RemoteDevice(id: id, name: name, platform: platform, connectedAt: DateTime.now());
+  void _handleHostDeviceInfo(RemoteCommand command) {
+    final device = _parseDeviceInfo(command);
+    if (device == null) return;
+    _hostConnectedDevice = device;
+    _hostSession = _hostSession?.copyWith(connectedDevice: device);
+    safeNotifyListeners();
+  }
 
-      _session = _session?.copyWith(connectedDevice: device);
-      safeNotifyListeners();
-    }
+  void _handleRemoteDeviceInfo(RemoteCommand command) {
+    final device = _parseDeviceInfo(command);
+    if (device == null) return;
+    _remoteSession = _remoteSession?.copyWith(connectedDevice: device);
+    safeNotifyListeners();
   }
 
   void _handleSyncState(RemoteCommand command) {
@@ -1600,6 +1702,9 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
   }
 
   Future<void> _handlePlayMediaRequest(RemoteMediaTarget target) async {
+    if (_remoteSession != null) {
+      unawaited(leaveSession());
+    }
     updateHostPlayerSnapshot(
       RemotePlayerSnapshot(
         active: true,
@@ -1633,17 +1738,30 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
     }
   }
 
-  void _cleanupSubscriptions() {
-    _commandSubscription?.cancel();
-    _commandSubscription = null;
-    _deviceConnectedSubscription?.cancel();
-    _deviceConnectedSubscription = null;
-    _deviceDisconnectedSubscription?.cancel();
-    _deviceDisconnectedSubscription = null;
-    _errorSubscription?.cancel();
-    _errorSubscription = null;
-    _statusSubscription?.cancel();
-    _statusSubscription = null;
+  void _cleanupRemoteSubscriptions() {
+    _remoteCommandSubscription?.cancel();
+    _remoteCommandSubscription = null;
+    _remoteDeviceConnectedSubscription?.cancel();
+    _remoteDeviceConnectedSubscription = null;
+    _remoteDeviceDisconnectedSubscription?.cancel();
+    _remoteDeviceDisconnectedSubscription = null;
+    _remoteErrorSubscription?.cancel();
+    _remoteErrorSubscription = null;
+    _remoteStatusSubscription?.cancel();
+    _remoteStatusSubscription = null;
+  }
+
+  void _cleanupHostSubscriptions() {
+    _hostCommandSubscription?.cancel();
+    _hostCommandSubscription = null;
+    _hostDeviceConnectedSubscription?.cancel();
+    _hostDeviceConnectedSubscription = null;
+    _hostDeviceDisconnectedSubscription?.cancel();
+    _hostDeviceDisconnectedSubscription = null;
+    _hostErrorSubscription?.cancel();
+    _hostErrorSubscription = null;
+    _hostStatusSubscription?.cancel();
+    _hostStatusSubscription = null;
   }
 
   /// Updates the rich playback snapshot advertised by this host over both
@@ -1652,10 +1770,13 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
     _hostPlayerSnapshot = snapshot;
     _hasHostPlayerSnapshot = snapshot.active;
     _hostPlayerActive = snapshot.active;
-    if (!isHost || _peerService == null || !isConnected) return;
-    sendCommand(
-      RemoteCommandType.syncState,
-      data: {'playerActive': snapshot.active, 'snapshot': snapshot.toJson()},
+    final hostPeer = _hostPeerService;
+    if (hostPeer == null || (_hostConnectedDevice == null && !hostPeer.isConnected)) return;
+    hostPeer.sendCommand(
+      RemoteCommand(
+        type: RemoteCommandType.syncState,
+        data: {'playerActive': snapshot.active, 'snapshot': snapshot.toJson()},
+      ),
     );
   }
 
@@ -1667,21 +1788,24 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
       _hostPlayerSnapshot = RemotePlayerSnapshot.idle;
       _hasHostPlayerSnapshot = false;
     }
-    if (_peerService == null || !isConnected) return;
-    sendCommand(
-      RemoteCommandType.syncState,
-      data: {'playerActive': active, if (_hasHostPlayerSnapshot) 'snapshot': _hostPlayerSnapshot.toJson()},
+    final hostPeer = _hostPeerService;
+    if (hostPeer == null || (_hostConnectedDevice == null && !hostPeer.isConnected)) return;
+    hostPeer.sendCommand(
+      RemoteCommand(
+        type: RemoteCommandType.syncState,
+        data: {'playerActive': active, if (_hasHostPlayerSnapshot) 'snapshot': _hostPlayerSnapshot.toJson()},
+      ),
     );
   }
 
   void sendCommand(RemoteCommandType type, {Map<String, dynamic>? data}) {
-    if (_peerService == null || !isConnected) {
+    if (_remotePeerService == null || !isConnected) {
       appLogger.w('CompanionRemote: Cannot send command - not connected');
       return;
     }
 
     appLogger.d('CompanionRemote: Sending command $type');
-    _peerService!.sendCommand(RemoteCommand(type: type, data: data));
+    _remotePeerService!.sendCommand(RemoteCommand(type: type, data: data));
   }
 
   void _scheduleReconnect(int generation) {
@@ -1696,7 +1820,7 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
     }
     if (_reconnectAttempts >= _maxReconnectAttempts) {
       appLogger.w('CompanionRemote: Max reconnect attempts reached');
-      _session = _session?.copyWith(
+      _remoteSession = _remoteSession?.copyWith(
         status: RemoteSessionStatus.error,
         errorMessage: t.companionRemote.errors.connectionLostAfterAttempts(attempts: _maxReconnectAttempts),
       );
@@ -1747,7 +1871,8 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
     if (isDisposed) return;
     if (_resumeReconnectPending) {
       _resumeReconnectPending = false;
-      if (_resumeReconnectGeneration == _remoteGeneration && _session?.status == RemoteSessionStatus.reconnecting) {
+      if (_resumeReconnectGeneration == _remoteGeneration &&
+          _remoteSession?.status == RemoteSessionStatus.reconnecting) {
         // Fresh budget: failures accumulated around backgrounding say nothing
         // about reachability now that the network is back.
         unawaited(retryReconnectNow());
@@ -1758,8 +1883,8 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
     // connected. A ping forces the dead socket to fail now, feeding the
     // normal disconnect → reconnect path instead of waiting for user input
     // to bounce.
-    if (isRemote && isConnected) {
-      _peerService?.sendPing();
+    if (isConnected) {
+      _remotePeerService?.sendPing();
     }
   }
 
@@ -1787,7 +1912,7 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
     final hostAddresses = _lastHostAddresses;
     if (hostAddresses == null || !isCryptoReady) {
       appLogger.w('CompanionRemote: No stored context for reconnect');
-      _session = _session?.copyWith(
+      _remoteSession = _remoteSession?.copyWith(
         status: RemoteSessionStatus.error,
         errorMessage: t.companionRemote.errors.connectionLost,
       );
@@ -1796,9 +1921,9 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
     }
 
     appLogger.d('CompanionRemote: Attempting reconnect...');
-    final oldPeer = _peerService;
-    _peerService = null;
-    _cleanupSubscriptions();
+    final oldPeer = _remotePeerService;
+    _remotePeerService = null;
+    _cleanupRemoteSubscriptions();
     if (oldPeer != null) {
       await _disposePeer(oldPeer);
     }
@@ -1820,11 +1945,11 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
       onConnected: (peer) {
         _lastAuthContextId = peer.selectedAuthContextId ?? authContextId;
         _lastHostClientId = peer.selectedHostClientId ?? _lastHostClientId;
-        _session = _session?.copyWith(status: RemoteSessionStatus.connected, errorMessage: null);
+        _remoteSession = _remoteSession?.copyWith(status: RemoteSessionStatus.connected, errorMessage: null);
         _reconnectAttempts = 0;
       },
       failureLog: 'CompanionRemote: Reconnect failed',
-      // Reschedule from the attempt's own intent, not from `_session.status`:
+      // Reschedule from the attempt's own intent, not from `_remoteSession.status`:
       // the candidate's status/error emissions overwrite `reconnecting` while
       // the join is in flight, which used to end the cycle after one failure.
       isReconnectAttempt: true,
@@ -1841,58 +1966,43 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
     return _attemptReconnect();
   }
 
-  Future<void> _restoreHostOrDiscoveryAfterRemoteLeave(int expectedGeneration) async {
-    if (isDisposed || expectedGeneration != _remoteGeneration) return;
-    final shouldRestoreHost = _suspendedHostForRemote;
-    _suspendedHostForRemote = false;
-    if (shouldRestoreHost && isCryptoReady && !isHostServerRunning) {
-      await _serializeLifecycle(() async {
-        if (isDisposed || expectedGeneration != _remoteGeneration) return;
-        await _startHostServerLocked();
-      });
-    }
-    if (!isDisposed && expectedGeneration == _remoteGeneration && _passiveDiscoveryRequested) {
-      startPassiveDiscovery();
-    }
-  }
-
   Future<void> cancelReconnect() async {
-    final wasHost = isHost || isHostServerRunning;
     final detachedPeers = _invalidateRemoteLifecycle();
     final cancelGeneration = _remoteGeneration;
     _reconnectAttempts = 0;
-    _session = null;
+    _remoteSession = null;
     _isPlayerActive = false;
+    _remotePlayerSnapshot = RemotePlayerSnapshot.idle;
     safeNotifyListeners();
     await _disposeDetachedPeers(detachedPeers);
-    if (wasHost) {
-      _suspendedHostForRemote = false;
-      await _serializeLifecycle(_stopHostServerLocked);
-    } else {
-      stopDiscovery();
-      await _restoreHostOrDiscoveryAfterRemoteLeave(cancelGeneration);
+    if (!isDisposed &&
+        cancelGeneration == _remoteGeneration &&
+        _passiveDiscoveryRequested &&
+        _passiveDiscoverySub == null &&
+        _authContexts.isNotEmpty) {
+      startPassiveDiscovery();
     }
   }
 
   Future<void> leaveSession() async {
     final leavingGeneration = _remoteGeneration;
-    _markIntentionalDisconnect(_peerService, leavingGeneration);
+    _markIntentionalDisconnect(_remotePeerService, leavingGeneration);
     _markIntentionalDisconnect(_pendingRemotePeer, leavingGeneration);
-    final wasHost = isHost || isHostServerRunning;
     final detachedPeers = _invalidateRemoteLifecycle();
     final nextGeneration = _remoteGeneration;
     _reconnectAttempts = 0;
-    _session = null;
+    _remoteSession = null;
     _isPlayerActive = false;
+    _remotePlayerSnapshot = RemotePlayerSnapshot.idle;
     safeNotifyListeners();
 
     await _disposeDetachedPeers(detachedPeers);
-    if (wasHost) {
-      _suspendedHostForRemote = false;
-      await _serializeLifecycle(_stopHostServerLocked);
-    } else {
-      stopDiscovery();
-      await _restoreHostOrDiscoveryAfterRemoteLeave(nextGeneration);
+    if (!isDisposed &&
+        nextGeneration == _remoteGeneration &&
+        _passiveDiscoveryRequested &&
+        _passiveDiscoverySub == null &&
+        _authContexts.isNotEmpty) {
+      startPassiveDiscovery();
     }
   }
 
@@ -1900,7 +2010,7 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _remoteGeneration++;
-    _suspendedHostForRemote = false;
+    _hostGeneration++;
     _passiveDiscoveryRequested = false;
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
@@ -1910,11 +2020,14 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
       _hostServerPort = null;
     }
     _boundSync?.removeListener(_onBoundSyncChanged);
-    final current = _peerService;
-    final pending = _pendingRemotePeer;
-    _peerService = null;
+    final currentRemote = _remotePeerService;
+    final pendingRemote = _pendingRemotePeer;
+    final currentHost = _hostPeerService;
+    _remotePeerService = null;
     _pendingRemotePeer = null;
-    _cleanupSubscriptions();
+    _hostPeerService = null;
+    _cleanupRemoteSubscriptions();
+    _cleanupHostSubscriptions();
 
     _boundActiveProfile?.removeListener(_scheduleAuthContextRefresh);
     for (final sub in _profileServiceSubs) {
@@ -1924,7 +2037,10 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
     _discoveryService?.dispose();
     unawaited(_passiveDiscoverySub?.cancel());
     _passiveDiscoverySub = null;
-    unawaited(_disposeDetachedPeers((current: current, pending: pending)));
+    unawaited(_disposeDetachedPeers((current: currentRemote, pending: pendingRemote)));
+    if (currentHost != null && !identical(currentHost, currentRemote) && !identical(currentHost, pendingRemote)) {
+      unawaited(_disposePeer(currentHost));
+    }
     RemoteAuthService.instance.clearCache();
     super.dispose();
   }
@@ -1933,13 +2049,11 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
 class _RemoteConnectRequest {
   const _RemoteConnectRequest({
     required this.generation,
-    required this.wasHost,
     required this.current,
     required this.pending,
   });
 
   final int generation;
-  final bool wasHost;
   final CompanionRemotePeerService? current;
   final CompanionRemotePeerService? pending;
 }
