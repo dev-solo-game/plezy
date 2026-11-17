@@ -608,7 +608,13 @@ extension _VideoPlayerCompanionRemoteMethods on VideoPlayerScreenState {
     }
     unawaited(provider.connectAndPlayMedia(selectedHost, target));
     if (navigator.mounted) {
-      unawaited(navigator.push(MaterialPageRoute<void>(builder: (_) => RemoteControlScreen(initialHost: selectedHost))));
+      unawaited(
+        navigator.push(
+          MaterialPageRoute<void>(
+            builder: (_) => RemoteControlScreen(initialHost: selectedHost, handoffInProgress: true),
+          ),
+        ),
+      );
     }
   }
 }

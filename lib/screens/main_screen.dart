@@ -81,6 +81,7 @@ import 'settings/settings_screen.dart';
 import 'profile/profile_switch_screen.dart';
 import 'video_player_screen.dart';
 import '../library/library_scan_service.dart';
+import '../library/local_library_client.dart';
 import '../library/sync/sync_coordinator.dart';
 import 'profile/profile_teardown.dart';
 import '../watch_together/watch_together.dart';
@@ -736,6 +737,15 @@ class _MainScreenState extends State<MainScreen>
     // Fast paths: binder may have already settled / first server may
     // already be online (binder finished before this microtask).
     primeServicesOnBindingSettle();
+    if (!_startupServicesPrimed &&
+        activeProfile.isBinding &&
+        !context.read<ActiveProfileBinder>().hasBoundOnce &&
+        manager.isServerOnline(ServerId(LocalLibraryClient.localServerId))) {
+      final mp = context.read<MultiServerProvider>();
+      final lp = context.read<LibrariesProvider>();
+      lp.initialize(mp.aggregationService);
+      unawaited(lp.loadLibraries());
+    }
     tryDownloadResume();
 
     // Held for the MainScreen lifetime (cancelled in dispose): every status

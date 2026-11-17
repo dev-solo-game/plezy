@@ -10,6 +10,7 @@ import '../../database/app_database.dart';
 import '../../media/work_identity.dart';
 import '../../services/credential_vault.dart';
 import '../../services/work_skip_settings_store.dart';
+import '../../utils/device_identity.dart';
 import '../library_watch_state_store.dart';
 import 'deterministic_keys.dart';
 import 'sync_crypto.dart';
@@ -129,6 +130,8 @@ class SyncLocalStore {
   static const String _kCloudPushedSeq = 'sync_cloud_pushed_seq';
   static const String _kRemappedSources = 'sync_remapped_sources';
   static const String _kJournalBootstrapped = 'sync_journal_bootstrapped_v1';
+  static const String _kLastCatalogSignature = 'sync_journal_catalog_sig_v1';
+  static const String _kLastStateSignature = 'sync_journal_state_sig_v1';
 
   static const String typeSource = 'source';
   static const String typeWork = 'work';
@@ -183,6 +186,44 @@ class SyncLocalStore {
   Future<bool> isJournalBootstrapped() async => await _getMeta(_kJournalBootstrapped) == 'true';
 
   Future<void> markJournalBootstrapped() => _putMeta(_kJournalBootstrapped, 'true');
+
+  /// Loads the last persisted DB signatures written when `sync_journal` finished
+  /// a full catalog/state reconciliation so cold starts can skip scanning.
+  Future<({String? catalogSig, String? stateSig})> getReconciledSignatures() async {
+    final rows = await (db.select(
+      db.syncMetadata,
+    )..where((t) => t.key.isIn([_kLastCatalogSignature, _kLastStateSignature]))).get();
+    String? catalogSig;
+    String? stateSig;
+    for (final row in rows) {
+      if (row.value.isEmpty) continue;
+      if (row.key == _kLastCatalogSignature) {
+        catalogSig = row.value;
+      } else if (row.key == _kLastStateSignature) {
+        stateSig = row.value;
+      }
+    }
+    return (catalogSig: catalogSig, stateSig: stateSig);
+  }
+
+  /// Persists non-null reconciled DB signatures to avoid full-catalog startup work.
+  Future<void> saveReconciledSignatures({String? catalogSig, String? stateSig}) async {
+    if (catalogSig == null && stateSig == null) return;
+    await db.transaction(() async {
+      if (catalogSig != null) await _putMeta(_kLastCatalogSignature, catalogSig);
+      if (stateSig != null) await _putMeta(_kLastStateSignature, stateSig);
+    });
+  }
+
+  /// Clears persisted reconciled DB signatures for [catalog] and/or [state].
+  Future<void> clearReconciledSignatures({bool catalog = true, bool state = true}) async {
+    final keys = <String>[
+      if (catalog) _kLastCatalogSignature,
+      if (state) _kLastStateSignature,
+    ];
+    if (keys.isEmpty) return;
+    await (db.delete(db.syncMetadata)..where((t) => t.key.isIn(keys))).go();
+  }
 
   Future<Map<String, String>> loadRemappedSources() async {
     final raw = await _getMeta(_kRemappedSources);
@@ -582,12 +623,26 @@ class SyncLocalStore {
 
   Future<void> setOnboardingCompleted(bool completed) => _putMeta(_kOnboardingDone, '$completed');
 
-  Future<String> getDeviceName() async {
+  /// Returns the user-saved custom device name when present and meaningful,
+  /// or null when falling back to platform-resolved defaults.
+  Future<String?> getCustomDeviceName() async {
     final saved = await _getMeta(_kDeviceName);
-    if (saved != null && saved.trim().isNotEmpty) return saved.trim();
+    if (!isMeaningfulDeviceName(saved)) return null;
+    return saved!.trim();
+  }
+
+  Future<String> getDeviceName() async {
+    final saved = await getCustomDeviceName();
+    if (saved != null) return saved;
+    try {
+      final identity = await DeviceIdentityService.resolve();
+      if (isMeaningfulDeviceName(identity.deviceName)) {
+        return identity.deviceName!.trim();
+      }
+    } catch (_) {}
     try {
       final host = Platform.localHostname.trim();
-      if (host.isNotEmpty) return host;
+      if (isMeaningfulDeviceName(host)) return host;
     } catch (_) {}
     return 'Plezy Device';
   }

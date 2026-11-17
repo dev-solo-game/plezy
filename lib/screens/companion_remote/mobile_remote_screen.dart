@@ -25,9 +25,10 @@ typedef MobileRemoteScreen = RemoteControlScreen;
 /// Unified cross-device Remote Playback Control Center replacing the legacy
 /// 3-tab D-Pad remote view. Works identically across Mobile, Tablet, Desktop, and TV.
 class RemoteControlScreen extends StatefulWidget {
-  const RemoteControlScreen({super.key, this.initialHost});
+  const RemoteControlScreen({super.key, this.initialHost, this.handoffInProgress = false});
 
   final DiscoveredHost? initialHost;
+  final bool handoffInProgress;
 
   @override
   State<RemoteControlScreen> createState() => _RemoteControlScreenState();
@@ -35,15 +36,37 @@ class RemoteControlScreen extends StatefulWidget {
 
 class _RemoteControlScreenState extends State<RemoteControlScreen> {
   static const List<double> _speedPresets = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0];
+  static int _activeScreenCount = 0;
 
   double? _dragPositionMs;
   double? _dragVolume;
   bool _initiatedInitialConnect = false;
+  CompanionRemoteProvider? _provider;
 
   @override
   void initState() {
     super.initState();
+    _activeScreenCount++;
     WidgetsBinding.instance.addPostFrameCallback((_) => _maybeConnectInitialHost());
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _provider = Provider.of<CompanionRemoteProvider?>(context, listen: false);
+  }
+
+  @override
+  void dispose() {
+    _activeScreenCount = math.max(0, _activeScreenCount - 1);
+    final provider = _provider;
+    if (_activeScreenCount == 0 &&
+        provider != null &&
+        !provider.isDisposed &&
+        provider.session?.isRemote == true) {
+      unawaited(provider.leaveSession());
+    }
+    super.dispose();
   }
 
   Future<void> _maybeConnectInitialHost() async {
@@ -51,10 +74,14 @@ class _RemoteControlScreenState extends State<RemoteControlScreen> {
     final host = widget.initialHost;
     if (host == null) return;
     _initiatedInitialConnect = true;
+    if (widget.handoffInProgress) return;
 
     final provider = context.read<CompanionRemoteProvider>();
     if (provider.isConnectedToHost(host)) {
       provider.sendCommand(RemoteCommandType.requestState);
+      return;
+    }
+    if (provider.isConnectingToHost(host)) {
       return;
     }
 

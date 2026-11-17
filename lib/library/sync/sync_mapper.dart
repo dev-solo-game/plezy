@@ -50,12 +50,14 @@ class SyncMapper {
   final SerialFutureQueue _journalQueue = SerialFutureQueue();
   String? _lastCatalogSignature;
   String? _lastStateSignature;
+  bool _signaturesHydrated = false;
 
   static int _nowMs() => clock.now().millisecondsSinceEpoch;
 
-  void _invalidateSignatureCache() {
-    _lastCatalogSignature = null;
-    _lastStateSignature = null;
+  Future<void> _invalidateSignatureCache({bool catalog = true, bool state = true}) async {
+    if (catalog) _lastCatalogSignature = null;
+    if (state) _lastStateSignature = null;
+    await syncStore.clearReconciledSignatures(catalog: catalog, state: state);
   }
 
   static StorageKind? _parseKind(String protocol) => StorageKind.fromId(protocol);
@@ -261,7 +263,7 @@ class SyncMapper {
     int? updatedAt,
   }) async {
     if (mount.kind == StorageKind.local) return;
-    _invalidateSignatureCache();
+    await _invalidateSignatureCache();
     final ts = updatedAt ?? await syncStore.calibratedNowMs();
     final payload = await _buildSourcePayload(
       mount,
@@ -279,7 +281,7 @@ class SyncMapper {
   }
 
   Future<void> enqueueMountDeletion(String mountId, {int? updatedAt}) async {
-    _invalidateSignatureCache();
+    await _invalidateSignatureCache();
     final ts = updatedAt ?? await syncStore.calibratedNowMs();
     await syncStore.enqueue(
       entityType: SyncLocalStore.typeSource,
@@ -294,41 +296,78 @@ class SyncMapper {
   }
 
   Future<({String catalogSig, String stateSig})> _computeDbSignatures() async {
-    final mountRow = await db.customSelect(
-      "SELECT COUNT(*) || ':' || COALESCE(SUM(LENGTH(config_json)),0) || ':' || "
-      "COALESCE(SUM(LENGTH(secrets)),0) || ':' || COALESCE(SUM(LENGTH(display_name)),0) AS s "
-      "FROM mounts WHERE kind != 'local'",
-    ).getSingle();
-    final fileRow = await db.customSelect(
-      "SELECT COUNT(*) || ':' || COALESCE(MAX(id),0) || ':' || "
-      "COALESCE(SUM(CASE WHEN match_state='matched' THEN 2 WHEN match_state='unmatched' THEN 1 ELSE 0 END),0) || ':' || "
-      "COALESCE(SUM(CASE WHEN match_locked=1 THEN 1 ELSE 0 END),0) || ':' || "
-      "COALESCE(SUM(item_id),0) || ':' || COALESCE(SUM(size),0) || ':' || COALESCE(SUM(modified_at),0) AS s "
-      "FROM library_files WHERE match_state != 'ignored'",
-    ).getSingle();
-    final itemRow = await db.customSelect(
-      'SELECT COUNT(*) || \':\' || COALESCE(MAX(updated_at),0) || \':\' || '
-      'COALESCE(MAX(id),0) || \':\' || COALESCE(SUM(CASE WHEN locked=1 THEN 1 ELSE 0 END),0) || \':\' || '
-      'COALESCE(SUM(LENGTH(library_type)),0) AS s FROM library_items',
-    ).getSingle();
-    final scanRow = await db.customSelect(
-      'SELECT COUNT(*) || \':\' || COALESCE(SUM(LENGTH(quark_checkpoint)),0) || \':\' || '
-      'COALESCE(SUM(finished_at),0) AS s FROM library_scan_states',
-    ).getSingle();
+    final row = await db.customSelect('''
+      SELECT
+        COALESCE((
+          SELECT GROUP_CONCAT(id || ':' || kind || ':' || display_name || ':' || config_json || ':' || secrets, '|')
+          FROM (SELECT id, kind, display_name, config_json, secrets FROM mounts WHERE kind != 'local' ORDER BY id)
+        ), '') AS mount_s,
+        COALESCE((
+          SELECT GROUP_CONCAT(mount_id || ':' || COALESCE(quark_checkpoint, '') || ':' || COALESCE(finished_at, 0), '|')
+          FROM (SELECT mount_id, quark_checkpoint, finished_at FROM library_scan_states ORDER BY mount_id)
+        ), '') AS scan_s,
+        (
+          SELECT COUNT(*) || ':' || COALESCE(MAX(id),0) || ':' || COALESCE(SUM(id),0) || ':' ||
+                 COALESCE(SUM(CASE WHEN match_state='matched' THEN 2 WHEN match_state='unmatched' THEN 1 ELSE 0 END),0) || ':' ||
+                 COALESCE(SUM(CASE WHEN match_locked=1 THEN 1 ELSE 0 END),0) || ':' ||
+                 COALESCE(SUM(COALESCE(item_id,-1)),0) || ':' ||
+                 COALESCE(SUM(COALESCE(size,0)),0) || ':' ||
+                 COALESCE(SUM(COALESCE(modified_at,0)),0) || ':' ||
+                 COALESCE(SUM(COALESCE(duration_ms,0)),0) || ':' ||
+                 COALESCE(SUM(LENGTH(path)),0) || ':' ||
+                 COALESCE(SUM(LENGTH(COALESCE(version_label,''))),0)
+          FROM library_files WHERE match_state != 'ignored'
+        ) AS file_s,
+        (
+          SELECT COUNT(*) || ':' || COALESCE(MAX(id),0) || ':' || COALESCE(SUM(id),0) || ':' ||
+                 COALESCE(MAX(updated_at),0) || ':' || COALESCE(SUM(updated_at),0) || ':' ||
+                 COALESCE(SUM(CASE WHEN locked=1 THEN 1 ELSE 0 END),0) || ':' ||
+                 COALESCE(SUM(COALESCE(tmdb_id,0)),0) || ':' ||
+                 COALESCE(SUM(LENGTH(title)),0) || ':' ||
+                 COALESCE(SUM(LENGTH(library_type)),0) || ':' ||
+                 COALESCE(SUM(LENGTH(COALESCE(poster_source,''))),0)
+          FROM library_items
+        ) AS item_s,
+        (
+          (SELECT COUNT(*) || ':' || COALESCE(SUM(item_id),0) || ':' || COALESCE(SUM(genre_id),0) FROM library_item_genres)
+          || ';' ||
+          (SELECT COUNT(*) || ':' || COALESCE(SUM(item_id),0) || ':' || COALESCE(SUM(person_id),0) FROM library_credits)
+        ) AS genre_credit_s,
+        (
+          SELECT COUNT(*) || ':' || COALESCE(MAX(local_seq),0)
+          FROM sync_journal
+          WHERE entity_type IN ('source','work','file') AND is_deleted = 0
+        ) AS cat_journal_s,
+        (
+          SELECT COUNT(*) || ':' || COALESCE(MAX(updated_at),0) || ':' || COALESCE(SUM(updated_at),0) || ':' ||
+                 COALESCE(SUM(position_ms),0) || ':' || COALESCE(SUM(COALESCE(duration_ms,0)),0) || ':' ||
+                 COALESCE(SUM(CASE WHEN watched=1 THEN 1 ELSE 0 END),0) || ':' ||
+                 COALESCE(SUM(CASE WHEN favorite=1 THEN 1 ELSE 0 END),0) || ':' ||
+                 COALESCE(SUM(CASE WHEN hidden_from_continue=1 THEN 1 ELSE 0 END),0)
+          FROM work_watch_states WHERE source = '${WorkIdentity.localSource}'
+        ) AS state_s,
+        COALESCE((
+          SELECT GROUP_CONCAT(key || '=' || value, '|')
+          FROM (SELECT key, value FROM library_settings WHERE key LIKE 'work-skip:%local-library%' ORDER BY key)
+        ), '') AS skip_s,
+        (
+          SELECT COUNT(*) || ':' || COALESCE(MAX(local_seq),0)
+          FROM sync_journal
+          WHERE entity_type IN ('work_pref','watch_progress') AND is_deleted = 0
+        ) AS state_journal_s
+    ''').getSingle();
 
-    final stateRow = await db.customSelect(
-      "SELECT COUNT(*) || ':' || COALESCE(MAX(updated_at),0) || ':' || "
-      "COALESCE(SUM(position_ms),0) || ':' || COALESCE(SUM(watched),0) || ':' || "
-      "COALESCE(SUM(favorite),0) || ':' || COALESCE(SUM(hidden_from_continue),0) AS s "
-      "FROM work_watch_states WHERE source = 'local'",
-    ).getSingle();
-    final skipRow = await db.customSelect(
-      "SELECT COUNT(*) || ':' || COALESCE(SUM(LENGTH(value)),0) AS s "
-      "FROM library_settings WHERE key LIKE 'work-skip:local:%'",
-    ).getSingle();
-
-    final catalogSig = '${mountRow.read<String>('s')}|${fileRow.read<String>('s')}|${itemRow.read<String>('s')}|${scanRow.read<String>('s')}';
-    final stateSig = '${stateRow.read<String>('s')}|${skipRow.read<String>('s')}';
+    final catalogSig =
+        '${row.read<String>('mount_s')}|'
+        '${row.read<String>('scan_s')}|'
+        '${row.read<String>('file_s')}|'
+        '${row.read<String>('item_s')}|'
+        '${row.read<String>('genre_credit_s')}|'
+        '${row.read<String>('cat_journal_s')}';
+    final stateSig =
+        '${row.read<String>('state_s')}|'
+        '${row.read<String>('skip_s')}|'
+        '${row.read<String>('state_journal_s')}';
     return (catalogSig: catalogSig, stateSig: stateSig);
   }
 
@@ -338,6 +377,12 @@ class SyncMapper {
   Future<int> ensureJournalUpToDate() {
     return _journalQueue.run(() async {
       final bootstrapped = await syncStore.isJournalBootstrapped();
+      if (!_signaturesHydrated) {
+        final saved = await syncStore.getReconciledSignatures();
+        _lastCatalogSignature ??= saved.catalogSig;
+        _lastStateSignature ??= saved.stateSig;
+        _signaturesHydrated = true;
+      }
       final sigs = await _computeDbSignatures();
       if (bootstrapped && sigs.catalogSig == _lastCatalogSignature && sigs.stateSig == _lastStateSignature) {
         return 0;
@@ -352,10 +397,15 @@ class SyncMapper {
         final refreshed = await _computeDbSignatures();
         _lastCatalogSignature = refreshed.catalogSig;
         _lastStateSignature = refreshed.stateSig;
+        await syncStore.saveReconciledSignatures(
+          catalogSig: refreshed.catalogSig,
+          stateSig: refreshed.stateSig,
+        );
       } else if (sigs.stateSig != _lastStateSignature) {
         touched = await _reconcileWorkStatesInternal();
         final refreshed = await _computeDbSignatures();
         _lastStateSignature = refreshed.stateSig;
+        await syncStore.saveReconciledSignatures(stateSig: refreshed.stateSig);
       }
       if (!bootstrapped) {
         await syncStore.markJournalBootstrapped();
@@ -384,8 +434,13 @@ class SyncMapper {
         final sigs = await _computeDbSignatures();
         _lastCatalogSignature = sigs.catalogSig;
         _lastStateSignature = sigs.stateSig;
+        _signaturesHydrated = true;
+        await syncStore.saveReconciledSignatures(
+          catalogSig: sigs.catalogSig,
+          stateSig: sigs.stateSig,
+        );
       } else {
-        _invalidateSignatureCache();
+        await _invalidateSignatureCache();
       }
       await syncStore.markJournalBootstrapped();
       return changed;
@@ -396,7 +451,7 @@ class SyncMapper {
   /// tombstones in `sync_journal` and cleans up orphaned `raw:` works.
   Future<int> reconcileMountRemovalToJournal(String mountId) {
     return _journalQueue.run(() async {
-      _invalidateSignatureCache();
+      await _invalidateSignatureCache();
       final calibratedNow = await syncStore.calibratedNowMs();
       final deviceId = await syncStore.getOrCreateDeviceId();
       final epoch = await syncStore.getOrCreateSyncEpoch();
@@ -1230,7 +1285,7 @@ class SyncMapper {
     if (tombstones.isNotEmpty) {
       await _commitJournalCandidates(tombstones, originDeviceId: myDeviceId, originEpoch: epoch);
       await _tombstoneOrphanedRawWorks(calibratedNow: calibratedNow, deviceId: myDeviceId, epoch: epoch);
-      _invalidateSignatureCache();
+      await _invalidateSignatureCache();
     }
     return pruned;
   }
@@ -1462,6 +1517,8 @@ class SyncMapper {
   }) async {
     var changes = 0;
     var dbMutations = 0;
+    var catalogMutations = 0;
+    var stateMutations = 0;
     final totalEntities = sources.length + works.length + files.length + workPrefs.length + watchProgress.length;
     var processedEntities = 0;
     if (totalEntities > 0) {
@@ -1524,6 +1581,7 @@ class SyncMapper {
       });
       changes += sourceProcessed;
       dbMutations += sourceMutations;
+      catalogMutations += sourceMutations;
       for (final (oldId, newId) in rehomedMounts) {
         await mountManager.dropCachedDriver(oldId);
         await syncStore.rekeyOutboxForRemappedSource(oldId, newId);
@@ -1568,6 +1626,7 @@ class SyncMapper {
       });
       changes += chunkProcessed;
       dbMutations += chunkMutations;
+      stateMutations += chunkMutations;
       processedEntities += slice.length;
       onProgress?.call(processedEntities, totalEntities);
       if (chunkTouchedIds.isNotEmpty && chunkMutations > 0) {
@@ -1599,6 +1658,7 @@ class SyncMapper {
       });
       changes += chunkProcessed;
       dbMutations += chunkMutations;
+      stateMutations += chunkMutations;
       processedEntities += slice.length;
       onProgress?.call(processedEntities, totalEntities);
       if (chunkTouchedIds.isNotEmpty && chunkMutations > 0) {
@@ -1650,6 +1710,7 @@ class SyncMapper {
       });
       changes += chunkProcessed;
       dbMutations += chunkMutations;
+      catalogMutations += chunkMutations;
       processedEntities += chunk.works.length + chunk.files.length;
       onProgress?.call(processedEntities, totalEntities);
       if (chunkMutations > 0) {
@@ -1673,15 +1734,19 @@ class SyncMapper {
     }
 
     if (isFinalPage && dbMutations > 0) {
-      await _tombstoneOrphanedRawWorks(
+      final tombstonedRaw = await _tombstoneOrphanedRawWorks(
         calibratedNow: await syncStore.calibratedNowMs(),
         deviceId: myDeviceId,
         epoch: myEpoch,
       );
+      if (tombstonedRaw > 0) catalogMutations += tombstonedRaw;
     }
 
-    if (dbMutations > 0) {
-      _invalidateSignatureCache();
+    if (catalogMutations > 0 || stateMutations > 0) {
+      await _invalidateSignatureCache(
+        catalog: catalogMutations > 0,
+        state: stateMutations > 0,
+      );
     }
 
     return changes;
@@ -1709,7 +1774,7 @@ class SyncMapper {
     });
     await mountManager.dropCachedDriver(oldMountId);
     await syncStore.rekeyOutboxForRemappedSource(oldMountId, newMountId);
-    _invalidateSignatureCache();
+    await _invalidateSignatureCache();
   }
 
   Future<void> _preemptConflictingScans(

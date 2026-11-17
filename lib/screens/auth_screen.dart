@@ -5,19 +5,20 @@ import 'package:material_symbols_icons/symbols.dart';
 import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
 
+import '../connection/connection_registry.dart';
 import '../database/app_database.dart';
 import '../focus/focusable_button.dart';
 import '../focus/key_event_utils.dart';
 import '../i18n/strings.g.dart';
 import '../library/local_library_client.dart';
 import '../library/sync/sync_coordinator.dart';
+import '../media/ids.dart';
 import '../navigation/profile_session_screen.dart';
 import '../profiles/active_profile_binder.dart';
 import '../profiles/active_profile_provider.dart';
 import '../profiles/profile.dart';
 import '../profiles/profile_registry.dart';
 import '../providers/multi_server_provider.dart';
-import '../utils/navigation_transitions.dart';
 import '../widgets/app_icon.dart';
 import 'storage/sync_settings_screen.dart';
 
@@ -114,6 +115,7 @@ class _AuthScreenState extends State<AuthScreen> {
       await local.refreshMounts();
       if (!mounted) return;
       multiServer.serverManager.registerLocalLibrary(local);
+      multiServer.addToVisibleServerIds(ServerId(LocalLibraryClient.localServerId));
     }
 
     final activeProfile = context.read<ActiveProfileProvider?>();
@@ -139,16 +141,37 @@ class _AuthScreenState extends State<AuthScreen> {
 
     final binder = context.read<ActiveProfileBinder?>();
     if (binder != null) {
-      binder.start();
-      await binder.rebindActive();
+      ConnectionRegistry? connectionRegistry;
+      try {
+        connectionRegistry = context.read<ConnectionRegistry?>();
+      } on ProviderNotFoundException {
+        connectionRegistry = null;
+      }
+      final hasRemoteConnections = (await connectionRegistry?.list() ?? const []).isNotEmpty;
+      if (!hasRemoteConnections && !binder.hasBoundOnce) {
+        binder.primeLocalOnlyStartup();
+      } else {
+        binder.start();
+        unawaited(binder.rebindActive());
+      }
     }
   }
 
   Future<void> _enterProfileSession() async {
     await _ensureLocalSessionReady();
     if (!mounted) return;
+    final page = widget.sessionBuilder?.call(context) ?? const ProfileSessionScreen();
     unawaited(
-      Navigator.pushReplacement(context, fadeRoute(widget.sessionBuilder?.call(context) ?? const ProfileSessionScreen())),
+      Navigator.pushReplacement(
+        context,
+        PageRouteBuilder<void>(
+          opaque: false,
+          pageBuilder: (_, _, _) => page,
+          transitionsBuilder: (_, animation, _, child) => FadeTransition(opacity: animation, child: child),
+          transitionDuration: const Duration(milliseconds: 120),
+          reverseTransitionDuration: const Duration(milliseconds: 120),
+        ),
+      ),
     );
   }
 

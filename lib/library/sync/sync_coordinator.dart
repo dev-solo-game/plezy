@@ -130,7 +130,7 @@ class SyncAndScanCoordinator extends ChangeNotifier {
       await lanService.stop();
     } else if (_onboardingCompleted && autoStartLanService) {
       await syncStore.setSyncMode(SyncMode.lanP2p);
-      await lanService.start();
+      await lanService.start(runTombstoneGc: false);
     }
 
     if (!_disposed) notifyListeners();

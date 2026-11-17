@@ -152,6 +152,11 @@ class LocalLibraryClient implements MediaServerClient {
   @override
   LiveTvSupport get liveTv => const _NoLiveTv();
 
+  /// Populates the cached mount table synchronously when mounts were already loaded at startup.
+  void seedMounts(Iterable<StorageMount> mounts) {
+    _mountsById = {for (final mount in mounts) mount.id: mount};
+  }
+
   /// Starts the stream proxy and loads the mounts. Call before first use and
   /// again whenever the set of mounts changes.
   Future<void> refreshMounts() async {

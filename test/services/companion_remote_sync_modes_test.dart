@@ -16,6 +16,7 @@ import 'package:plezy/library/sync/sync_coordinator.dart';
 import 'package:plezy/library/sync/sync_crypto.dart';
 import 'package:plezy/library/sync/sync_local_store.dart';
 import 'package:plezy/models/companion_remote/remote_command.dart';
+import 'package:plezy/models/companion_remote/remote_playback_models.dart';
 import 'package:plezy/models/companion_remote/remote_session.dart';
 import 'package:plezy/providers/companion_remote_provider.dart';
 import 'package:plezy/services/companion_remote/companion_remote_peer_service.dart';
@@ -25,6 +26,7 @@ import 'package:plezy/services/credential_vault.dart';
 import 'package:plezy/services/settings_service.dart';
 import 'package:plezy/storage/mount_manager.dart';
 import 'package:plezy/storage/mount_registry.dart';
+import 'package:plezy/utils/device_identity.dart';
 import 'package:plezy/widgets/companion_remote/discovery_view.dart';
 import 'package:provider/provider.dart';
 
@@ -610,5 +612,218 @@ void main() {
       await phone.dispose();
       await host.dispose();
     });
+  });
+
+  Future<void> pairLanDevices(_DeviceHarness a, _DeviceHarness b) async {
+    final sharedKey = await SyncCrypto.deriveLanSharedKey(
+      myPrivateKeyBase64: (await a.sync.syncStore.getOrCreateLanKeyPair()).privateKeyBase64,
+      myPublicKeyBase64: a.sync.lanService.publicKeyBase64!,
+      peerPublicKeyBase64: b.sync.lanService.publicKeyBase64!,
+    );
+    final portA = a.sync.lanService.listeningPort!;
+    final portB = b.sync.lanService.listeningPort!;
+    final nameA = await a.sync.syncStore.getDeviceName();
+    final nameB = await b.sync.syncStore.getDeviceName();
+    await a.sync.lanService.stop();
+    await b.sync.lanService.stop();
+    await a.sync.syncStore.saveTrustedLanPeers([
+      LanTrustedPeer(
+        deviceId: b.sync.deviceId,
+        deviceName: nameB,
+        pubKeyBase64: b.sync.lanService.publicKeyBase64!,
+        sharedKeyBase64: base64Encode(sharedKey),
+        lastSyncedRevision: 0,
+        pairedAtMs: 1,
+        lastHost: '127.0.0.1',
+        lastPort: portB,
+      ),
+    ]);
+    await b.sync.syncStore.saveTrustedLanPeers([
+      LanTrustedPeer(
+        deviceId: a.sync.deviceId,
+        deviceName: nameA,
+        pubKeyBase64: a.sync.lanService.publicKeyBase64!,
+        sharedKeyBase64: base64Encode(sharedKey),
+        lastSyncedRevision: 0,
+        pairedAtMs: 1,
+        lastHost: '127.0.0.1',
+        lastPort: portA,
+      ),
+    ]);
+    await a.sync.lanService.start(bindHttpPort: 0);
+    await b.sync.lanService.start(bindHttpPort: 0);
+    final livePortA = a.sync.lanService.listeningPort!;
+    final livePortB = b.sync.lanService.listeningPort!;
+    await a.sync.lanService.stop();
+    await b.sync.lanService.stop();
+    await a.sync.syncStore.saveTrustedLanPeers([
+      LanTrustedPeer(
+        deviceId: b.sync.deviceId,
+        deviceName: nameB,
+        pubKeyBase64: b.sync.lanService.publicKeyBase64!,
+        sharedKeyBase64: base64Encode(sharedKey),
+        lastSyncedRevision: 0,
+        pairedAtMs: 1,
+        lastHost: '127.0.0.1',
+        lastPort: livePortB,
+      ),
+    ]);
+    await b.sync.syncStore.saveTrustedLanPeers([
+      LanTrustedPeer(
+        deviceId: a.sync.deviceId,
+        deviceName: nameA,
+        pubKeyBase64: a.sync.lanService.publicKeyBase64!,
+        sharedKeyBase64: base64Encode(sharedKey),
+        lastSyncedRevision: 0,
+        pairedAtMs: 1,
+        lastHost: '127.0.0.1',
+        lastPort: livePortA,
+      ),
+    ]);
+    await a.sync.lanService.start(bindHttpPort: livePortA);
+    await b.sync.lanService.start(bindHttpPort: livePortB);
+  }
+
+  test('default device name ignores localhost and preserves DeviceIdentityService name', () async {
+    expect(isMeaningfulDeviceName('localhost'), isFalse);
+    expect(isMeaningfulDeviceName('LOCALHOST.localdomain'), isFalse);
+    expect(isMeaningfulDeviceName('   '), isFalse);
+    expect(isMeaningfulDeviceName('Xiaomi 23127PN0CC'), isTrue);
+
+    DeviceIdentityService.debugOverride(
+      const DeviceIdentity(platform: 'Android', deviceModel: '23127PN0CC', deviceName: 'Xiaomi 23127PN0CC'),
+    );
+    addTearDown(() => DeviceIdentityService.debugOverride(null));
+
+    final androidHost = await _DeviceHarness.create(selectLanMode: true);
+    final viewer = await _DeviceHarness.create(customDeviceName: 'Viewer PC', selectLanMode: true);
+    addTearDown(() async {
+      await viewer.dispose();
+      await androidHost.dispose();
+    });
+
+    expect(await androidHost.sync.syncStore.getCustomDeviceName(), isNull);
+    expect(await androidHost.sync.syncStore.getDeviceName(), 'Xiaomi 23127PN0CC');
+
+    await pairLanDevices(androidHost, viewer);
+    expect(await androidHost.remote.ensureSyncCryptoReady(androidHost.sync), isTrue);
+    expect(await viewer.remote.ensureSyncCryptoReady(viewer.sync), isTrue);
+    await androidHost.remote.startHostServer();
+
+    await viewer.remote.refreshOnlineDeviceStatuses();
+    final discovered = viewer.remote.onlineTrustedHosts;
+    expect(discovered, hasLength(1));
+    expect(discovered.single.name, 'Xiaomi 23127PN0CC');
+
+    await viewer.remote.connectToDiscoveredHost(discovered.single);
+    final deadline = DateTime.now().add(const Duration(seconds: 5));
+    while (viewer.remote.connectedDevice == null && DateTime.now().isBefore(deadline)) {
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+    }
+    expect(viewer.remote.connectedDevice?.name, 'Xiaomi 23127PN0CC');
+  });
+
+  test('overlapping connectAndPlayMedia and connectToDiscoveredHost deduplicates connect and delivers playMedia', () async {
+    final host = await _DeviceHarness.create(customDeviceName: 'Office PC', selectLanMode: true);
+    final phone = await _DeviceHarness.create(customDeviceName: 'Emulator A', selectLanMode: true);
+    addTearDown(() async {
+      await phone.dispose();
+      await host.dispose();
+    });
+
+    await pairLanDevices(host, phone);
+    expect(await host.remote.ensureSyncCryptoReady(host.sync), isTrue);
+    expect(await phone.remote.ensureSyncCryptoReady(phone.sync), isTrue);
+
+    final receivedTargets = <RemoteMediaTarget>[];
+    host.remote.onPlayMediaRequested = (target) async {
+      receivedTargets.add(target);
+      return true;
+    };
+    await host.remote.startHostServer();
+
+    await phone.remote.refreshOnlineDeviceStatuses();
+    final hostTarget = phone.remote.onlineTrustedHosts.single;
+
+    const mediaTarget = RemoteMediaTarget(kind: 'movie', title: 'Spirited Away', workKey: 'tmdb:movie:129');
+    final f1 = phone.remote.connectAndPlayMedia(hostTarget, mediaTarget);
+    final f2 = phone.remote.connectToDiscoveredHost(hostTarget);
+    await Future.wait([f1, f2]);
+
+    final deadline = DateTime.now().add(const Duration(seconds: 5));
+    while (receivedTargets.isEmpty && DateTime.now().isBefore(deadline)) {
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+    }
+    expect(phone.remote.isConnectedToHost(hostTarget), isTrue);
+    expect(receivedTargets, hasLength(1));
+    expect(receivedTargets.single.title, 'Spirited Away');
+  });
+
+  test('bidirectional handoff restores suspended host server on leaveSession and probes updated remotePort', () async {
+    final deviceA = await _DeviceHarness.create(customDeviceName: 'Emulator A', selectLanMode: true);
+    final deviceB = await _DeviceHarness.create(customDeviceName: 'Desktop B', selectLanMode: true);
+    addTearDown(() async {
+      await deviceB.dispose();
+      await deviceA.dispose();
+    });
+
+    await pairLanDevices(deviceA, deviceB);
+    expect(await deviceA.remote.ensureSyncCryptoReady(deviceA.sync), isTrue);
+    expect(await deviceB.remote.ensureSyncCryptoReady(deviceB.sync), isTrue);
+
+    final targetsA = <RemoteMediaTarget>[];
+    final targetsB = <RemoteMediaTarget>[];
+    deviceA.remote.onPlayMediaRequested = (target) async {
+      targetsA.add(target);
+      return true;
+    };
+    deviceB.remote.onPlayMediaRequested = (target) async {
+      targetsB.add(target);
+      return true;
+    };
+
+    await deviceA.remote.startHostServer();
+    await deviceB.remote.startHostServer();
+    expect(deviceA.remote.isHostServerRunning, isTrue);
+    expect(deviceB.remote.isHostServerRunning, isTrue);
+
+    // Step 1: B pushes playback to A, suspending B's own host server.
+    await deviceB.remote.refreshOnlineDeviceStatuses();
+    final hostA = deviceB.remote.onlineTrustedHosts.single;
+    await deviceB.remote.connectAndPlayMedia(
+      hostA,
+      const RemoteMediaTarget(kind: 'movie', title: 'Movie One', workKey: 'tmdb:movie:1001'),
+    );
+
+    final deadlineA = DateTime.now().add(const Duration(seconds: 5));
+    while (targetsA.isEmpty && DateTime.now().isBefore(deadlineA)) {
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+    }
+    expect(targetsA.map((t) => t.title), ['Movie One']);
+    expect(deviceB.remote.isHostServerRunning, isFalse);
+
+    // Step 2: B leaves RemoteControlScreen / session -> B's host server automatically restarts.
+    await deviceB.remote.leaveSession();
+    expect(deviceB.remote.isHostServerRunning, isTrue);
+    final restartedPortB = deviceB.sync.lanService.advertisedRemotePort;
+    expect(restartedPortB, isNotNull);
+    expect(restartedPortB, greaterThan(0));
+
+    // Step 3: A refreshes status (unicast probe discovers B's new port) and pushes back to B.
+    await deviceA.remote.refreshOnlineDeviceStatuses();
+    final discoveredOnA = deviceA.remote.onlineTrustedHosts;
+    expect(discoveredOnA, hasLength(1));
+    expect(discoveredOnA.single.port, restartedPortB);
+
+    await deviceA.remote.connectAndPlayMedia(
+      discoveredOnA.single,
+      const RemoteMediaTarget(kind: 'movie', title: 'Movie Two', workKey: 'tmdb:movie:1002'),
+    );
+
+    final deadlineB = DateTime.now().add(const Duration(seconds: 5));
+    while (targetsB.isEmpty && DateTime.now().isBefore(deadlineB)) {
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+    }
+    expect(targetsB.map((t) => t.title), ['Movie Two']);
   });
 }

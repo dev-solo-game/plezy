@@ -175,7 +175,9 @@ extension _MediaDetailActionButtons on _MediaDetailScreenState {
       unawaited(provider.connectAndPlayMedia(selectedHost, remoteTarget));
       if (!btnContext.mounted) return;
       await Navigator.of(btnContext).push(
-        MaterialPageRoute<void>(builder: (_) => RemoteControlScreen(initialHost: selectedHost)),
+        MaterialPageRoute<void>(
+          builder: (_) => RemoteControlScreen(initialHost: selectedHost, handoffInProgress: true),
+        ),
       );
     }
 

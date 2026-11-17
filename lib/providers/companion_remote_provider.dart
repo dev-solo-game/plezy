@@ -98,6 +98,12 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
   final Expando<int> _intentionalDisconnectGeneration = Expando<int>(
     'companion remote intentional disconnect generation',
   );
+  Future<void>? _inFlightHostConnect;
+  int? _inFlightHostGeneration;
+  String? _inFlightHostClientId;
+  String? _inFlightAuthContextId;
+  bool _suspendedHostForRemote = false;
+  bool _passiveDiscoveryRequested = false;
 
   // Reconnection context (only hostAddresses and hostClientId are connection-specific)
   List<String>? _lastHostAddresses;
@@ -152,7 +158,8 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
 
   Future<void> _initializeDeviceInfo() async {
     final identity = await DeviceIdentityService.resolve();
-    _deviceName = identity.deviceName ?? t.companionRemote.unknownDevice;
+    final resolvedName = identity.deviceName?.trim();
+    _deviceName = isMeaningfulDeviceName(resolvedName) ? resolvedName! : t.companionRemote.unknownDevice;
     _platform = identity.platform;
 
     safeNotifyListeners();
@@ -319,13 +326,13 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
       bindSyncCoordinator(effectiveSync);
       await effectiveSync.initialize();
       checkCurrent?.call();
-      final customName = (await effectiveSync.syncStore.getDeviceName()).trim();
-      if (customName.isNotEmpty) {
+      final customName = await effectiveSync.syncStore.getCustomDeviceName();
+      if (customName != null && customName.isNotEmpty) {
         _deviceName = customName;
-      } else if (_deviceName == t.companionRemote.unknownDevice) {
-        final lanName = effectiveSync.lanService.deviceName.trim();
-        if (lanName.isNotEmpty) {
-          _deviceName = lanName;
+      } else if (!isMeaningfulDeviceName(_deviceName) || _deviceName == t.companionRemote.unknownDevice) {
+        final fallbackName = (await effectiveSync.syncStore.getDeviceName()).trim();
+        if (isMeaningfulDeviceName(fallbackName)) {
+          _deviceName = fallbackName;
         }
       }
       checkCurrent?.call();
@@ -668,6 +675,10 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
     _resumeReconnectPending = false;
+    _inFlightHostConnect = null;
+    _inFlightHostGeneration = null;
+    _inFlightHostClientId = null;
+    _inFlightAuthContextId = null;
     cancelPendingTrust();
 
     final pending = _pendingRemotePeer;
@@ -708,6 +719,9 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
 
   _RemoteConnectRequest _beginRemoteConnectRequest() {
     final wasHost = isHost || isHostServerRunning;
+    if (wasHost) {
+      _suspendedHostForRemote = true;
+    }
     final peers = _invalidateRemoteLifecycle();
     _reconnectAttempts = 0;
     _session = null;
@@ -735,6 +749,8 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
   /// Used by logout so an app-level provider surviving route replacement does
   /// not keep broadcasting with the previous Plex Home identity.
   Future<void> resetForLogout() {
+    _suspendedHostForRemote = false;
+    _passiveDiscoveryRequested = false;
     final detachedPeers = _invalidateRemoteLifecycle();
     _reconnectAttempts = 0;
     _lastHostAddresses = null;
@@ -856,6 +872,7 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
   /// Stop the host server and LAN broadcasting.
   Future<void> stopHostServer({void Function()? checkCurrent}) => _serializeLifecycle(() async {
     checkCurrent?.call();
+    _suspendedHostForRemote = false;
     await _stopHostServerLocked();
   });
 
@@ -937,7 +954,9 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
   /// Starts passive background listening for UDP beacons across active auth
   /// contexts (when crypto is ready) so PopMenus can list online hosts immediately.
   void startPassiveDiscovery() {
-    if (isDisposed || !isCryptoReady || _authContexts.isEmpty || _passiveDiscoverySub != null) {
+    if (isDisposed) return;
+    _passiveDiscoveryRequested = true;
+    if (!isCryptoReady || _authContexts.isEmpty || _passiveDiscoverySub != null) {
       return;
     }
     final stream = discoverHosts();
@@ -966,6 +985,21 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
     return _lastAuthContextId == null || _lastAuthContextId == host.authContextId;
   }
 
+  bool isConnectingToHost(DiscoveredHost host) {
+    if (_inFlightHostConnect == null || _inFlightHostGeneration != _remoteGeneration) return false;
+    if (_inFlightHostClientId != host.clientId) return false;
+    return _inFlightAuthContextId == null || _inFlightAuthContextId == host.authContextId;
+  }
+
+  DiscoveredHost _resolveLatestDiscoveredHost(DiscoveredHost host) {
+    for (final latest in onlineTrustedHosts) {
+      if (latest.clientId == host.clientId && latest.authContextId == host.authContextId) {
+        return latest;
+      }
+    }
+    return host;
+  }
+
   /// Live snapshot cards for every currently reachable trusted remote device.
   List<RemoteOnlineDevice> get onlineTrustedDevices {
     return [
@@ -985,6 +1019,11 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
   Future<void> refreshOnlineDeviceStatuses() async {
     if (isDisposed) return;
     startPassiveDiscovery();
+    final sync = _boundSync;
+    if (sync != null && !sync.isSignedIn && sync.lanService.isRunning) {
+      await sync.lanService.probeTrustedPeers();
+      if (isDisposed) return;
+    }
     final hosts = onlineTrustedHosts;
     if (hosts.isEmpty) return;
 
@@ -1032,10 +1071,15 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
 
   /// Connects to [host] (if not already connected) and launches playback of [target].
   Future<void> connectAndPlayMedia(DiscoveredHost host, RemoteMediaTarget target) async {
-    if (!isConnectedToHost(host)) {
-      await connectToDiscoveredHost(host);
+    try {
+      if (!isConnectedToHost(host)) {
+        await connectToDiscoveredHost(host);
+      }
+    } catch (e, stackTrace) {
+      appLogger.w('CompanionRemote: Failed to connect for media handoff', error: e, stackTrace: stackTrace);
+      return;
     }
-    if (isDisposed || !isConnected) return;
+    if (isDisposed || !isConnectedToHost(host)) return;
     _remotePlayerSnapshot = RemotePlayerSnapshot(
       active: true,
       stage: 'opening',
@@ -1220,47 +1264,72 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
     if (!isCryptoReady) {
       throw RemotePeerError(type: RemotePeerErrorType.authFailed, message: t.companionRemote.pairing.cryptoInitFailed);
     }
-    final authContext = _authContextForId(host.authContextId);
+    if (isConnectedToHost(host)) return;
+    if (isConnectingToHost(host)) {
+      await _inFlightHostConnect!;
+      return;
+    }
+
+    final resolvedHost = _resolveLatestDiscoveredHost(host);
+    final authContext = _authContextForId(resolvedHost.authContextId);
     if (authContext == null) {
       throw RemotePeerError(type: RemotePeerErrorType.authFailed, message: t.companionRemote.pairing.authFailed);
     }
 
     final request = _beginRemoteConnectRequest();
-    if (!await _prepareRemoteConnect(request)) return;
+    late final Future<void> connectFuture;
+    connectFuture = () async {
+      if (!await _prepareRemoteConnect(request)) return;
 
-    final generation = request.generation;
-    _lastHostAddresses = host.addresses;
-    _lastHostClientId = host.clientId;
-    _lastAuthContextId = authContext.id;
+      final generation = request.generation;
+      _lastHostAddresses = resolvedHost.addresses;
+      _lastHostClientId = resolvedHost.clientId;
+      _lastAuthContextId = authContext.id;
 
-    appLogger.d('CompanionRemote: Connecting to ${host.name} at ${host.addresses}');
+      appLogger.d('CompanionRemote: Connecting to ${resolvedHost.name} at ${resolvedHost.addresses}');
 
-    String? winner;
-    final connected = await _runRemoteConnect(
-      generation: generation,
-      seedConnectingSession: true,
-      rethrowOnFailure: true,
-      join: (peer) async {
-        winner = await peer.joinSessionRacingWithContexts(
-          _deviceName,
-          _platform,
-          host.addresses,
-          _authContexts,
-          authContextId: authContext.id,
-          expectedHostClientId: host.clientId,
-        );
-      },
-      onConnected: (peer) {
-        _lastHostAddresses = [winner!];
-        _lastAuthContextId = peer.selectedAuthContextId ?? authContext.id;
-        _lastHostClientId = peer.selectedHostClientId ?? host.clientId;
-        _session = _session?.copyWith(status: RemoteSessionStatus.connected);
-      },
-      failureLog: 'CompanionRemote: Failed to connect to host',
-      onFailure: _failRemoteConnectSession,
-    );
-    if (connected) {
-      appLogger.d('CompanionRemote: Connected to ${host.name} via $winner');
+      String? winner;
+      final connected = await _runRemoteConnect(
+        generation: generation,
+        seedConnectingSession: true,
+        rethrowOnFailure: true,
+        join: (peer) async {
+          winner = await peer.joinSessionRacingWithContexts(
+            _deviceName,
+            _platform,
+            resolvedHost.addresses,
+            _authContexts,
+            authContextId: authContext.id,
+            expectedHostClientId: resolvedHost.clientId,
+          );
+        },
+        onConnected: (peer) {
+          _lastHostAddresses = [winner!];
+          _lastAuthContextId = peer.selectedAuthContextId ?? authContext.id;
+          _lastHostClientId = peer.selectedHostClientId ?? resolvedHost.clientId;
+          _session = _session?.copyWith(status: RemoteSessionStatus.connected);
+        },
+        failureLog: 'CompanionRemote: Failed to connect to host',
+        onFailure: _failRemoteConnectSession,
+      );
+      if (connected) {
+        appLogger.d('CompanionRemote: Connected to ${resolvedHost.name} via $winner');
+      }
+    }();
+
+    _inFlightHostConnect = connectFuture;
+    _inFlightHostGeneration = request.generation;
+    _inFlightHostClientId = resolvedHost.clientId;
+    _inFlightAuthContextId = authContext.id;
+    try {
+      await connectFuture;
+    } finally {
+      if (identical(_inFlightHostConnect, connectFuture)) {
+        _inFlightHostConnect = null;
+        _inFlightHostGeneration = null;
+        _inFlightHostClientId = null;
+        _inFlightAuthContextId = null;
+      }
     }
   }
 
@@ -1772,18 +1841,36 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
     return _attemptReconnect();
   }
 
+  Future<void> _restoreHostOrDiscoveryAfterRemoteLeave(int expectedGeneration) async {
+    if (isDisposed || expectedGeneration != _remoteGeneration) return;
+    final shouldRestoreHost = _suspendedHostForRemote;
+    _suspendedHostForRemote = false;
+    if (shouldRestoreHost && isCryptoReady && !isHostServerRunning) {
+      await _serializeLifecycle(() async {
+        if (isDisposed || expectedGeneration != _remoteGeneration) return;
+        await _startHostServerLocked();
+      });
+    }
+    if (!isDisposed && expectedGeneration == _remoteGeneration && _passiveDiscoveryRequested) {
+      startPassiveDiscovery();
+    }
+  }
+
   Future<void> cancelReconnect() async {
     final wasHost = isHost || isHostServerRunning;
     final detachedPeers = _invalidateRemoteLifecycle();
+    final cancelGeneration = _remoteGeneration;
     _reconnectAttempts = 0;
     _session = null;
     _isPlayerActive = false;
     safeNotifyListeners();
     await _disposeDetachedPeers(detachedPeers);
     if (wasHost) {
+      _suspendedHostForRemote = false;
       await _serializeLifecycle(_stopHostServerLocked);
     } else {
       stopDiscovery();
+      await _restoreHostOrDiscoveryAfterRemoteLeave(cancelGeneration);
     }
   }
 
@@ -1793,6 +1880,7 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
     _markIntentionalDisconnect(_pendingRemotePeer, leavingGeneration);
     final wasHost = isHost || isHostServerRunning;
     final detachedPeers = _invalidateRemoteLifecycle();
+    final nextGeneration = _remoteGeneration;
     _reconnectAttempts = 0;
     _session = null;
     _isPlayerActive = false;
@@ -1800,9 +1888,11 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
 
     await _disposeDetachedPeers(detachedPeers);
     if (wasHost) {
+      _suspendedHostForRemote = false;
       await _serializeLifecycle(_stopHostServerLocked);
     } else {
       stopDiscovery();
+      await _restoreHostOrDiscoveryAfterRemoteLeave(nextGeneration);
     }
   }
 
@@ -1810,6 +1900,8 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _remoteGeneration++;
+    _suspendedHostForRemote = false;
+    _passiveDiscoveryRequested = false;
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
     cancelPendingTrust();

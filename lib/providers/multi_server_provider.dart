@@ -92,23 +92,27 @@ class MultiServerProvider extends ChangeNotifier with DisposableChangeNotifierMi
   /// Replace the active visibility filter and notify listeners. Pass `null`
   /// to clear the filter (all servers visible). Idempotent — does nothing
   /// when [ids] equals the current filter.
-  void setVisibleServerIds(Set<String>? ids) {
+  void setVisibleServerIds(Set<String>? ids, {bool notify = true}) {
     if (setEquals(_visibleServerIds, ids)) return;
     _serverManager.setVisibleServerIds(ids);
     _pruneLiveTvServersForVisibility();
-    safeNotifyListeners();
-    _refreshLiveTvAvailabilitySoon();
+    if (notify) {
+      safeNotifyListeners();
+      _refreshLiveTvAvailabilitySoon();
+    }
   }
 
   /// Replace the expected active-profile server ids. Pass `null` to fall back
   /// to the live visible ids when no profile-scoped expectation is known.
-  void setExpectedVisibleServerIds(Set<String>? ids) {
+  void setExpectedVisibleServerIds(Set<String>? ids, {bool notify = true}) {
     if (setEquals(_expectedVisibleServerIds, ids)) return;
     // Defensive copy: callers (the binder) keep mutating their set after
     // handing it over, which would silently edit provider state and defeat
     // the idempotence check above.
     _expectedVisibleServerIds = ids == null ? null : Set.of(ids);
-    safeNotifyListeners();
+    if (notify) {
+      safeNotifyListeners();
+    }
   }
 
   /// Add [serverId] to the active visibility filter. Used after adding a

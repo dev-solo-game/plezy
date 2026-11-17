@@ -1065,7 +1065,9 @@ class MediaContextMenuState extends State<MediaContextMenu> {
     if (!context.mounted) return;
     outcome.didNavigate = true;
     await Navigator.of(context).push(
-      MaterialPageRoute<void>(builder: (_) => RemoteControlScreen(initialHost: selectedHost)),
+      MaterialPageRoute<void>(
+        builder: (_) => RemoteControlScreen(initialHost: selectedHost, handoffInProgress: true),
+      ),
     );
   }
 

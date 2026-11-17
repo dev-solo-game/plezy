@@ -89,9 +89,11 @@ import 'library/local_library_client.dart';
 import 'library/library_scan_service.dart';
 import 'library/library_scanner.dart';
 import 'library/sync/sync_coordinator.dart';
+import 'library/sync/sync_local_store.dart';
 import 'storage/http_range_reader.dart';
 import 'storage/mount_manager.dart';
 import 'storage/mount_registry.dart';
+import 'storage/storage_mount.dart';
 import 'database/app_database.dart';
 import 'database/download_operations.dart';
 import 'database/tvos_database_recovery_store.dart';
@@ -200,8 +202,12 @@ void _bootstrapApp() {
         storage: dependencies.storage,
         appDatabase: dependencies.appDatabase,
         databaseRecoveryOutcome: dependencies.databaseRecoveryOutcome,
+        sessionBootstrap: dependencies.sessionBootstrap,
       ),
-      discard: (dependencies) => dependencies.appDatabase.close(),
+      discard: (dependencies) async {
+        await dependencies.sessionBootstrap.dispose();
+        await dependencies.appDatabase.close();
+      },
       onCommitted: (dependencies) => _startNonessentialInitialization(dependencies.settings),
       lightTheme: monoTheme(MonoPalette.light),
       darkTheme: monoTheme(MonoPalette.dark),
@@ -901,18 +907,205 @@ class _StartupBootstrapState<T> extends State<StartupBootstrap<T>> {
   }
 }
 
+enum StartupSessionMode { recoveryRequired, onboardingRequired, readyForHome }
+
+@visibleForTesting
+final class StartupSessionBootstrap {
+  StartupSessionBootstrap._({
+    required this.mode,
+    this.initialMounts = const [],
+    this.initialConnections = const [],
+    this.connections,
+    this.profileConnections,
+    this.plexHomeService,
+    this.activeProfileProvider,
+    this.requiresProfilePrompt = false,
+    this.shouldGuideToMounts = false,
+  });
+
+  StartupSessionBootstrap.recoveryRequired() : this._(mode: StartupSessionMode.recoveryRequired);
+
+  StartupSessionBootstrap.onboardingRequired({
+    List<StorageMount> initialMounts = const [],
+    List<Connection> initialConnections = const [],
+  }) : this._(
+         mode: StartupSessionMode.onboardingRequired,
+         initialMounts: initialMounts,
+         initialConnections: initialConnections,
+       );
+
+  StartupSessionBootstrap.readyForHome({
+    required List<StorageMount> initialMounts,
+    required List<Connection> initialConnections,
+    required ConnectionRegistry connections,
+    required ProfileConnectionRegistry profileConnections,
+    required PlexHomeService plexHomeService,
+    required ActiveProfileProvider activeProfileProvider,
+    required bool requiresProfilePrompt,
+    required bool shouldGuideToMounts,
+  }) : this._(
+         mode: StartupSessionMode.readyForHome,
+         initialMounts: initialMounts,
+         initialConnections: initialConnections,
+         connections: connections,
+         profileConnections: profileConnections,
+         plexHomeService: plexHomeService,
+         activeProfileProvider: activeProfileProvider,
+         requiresProfilePrompt: requiresProfilePrompt,
+         shouldGuideToMounts: shouldGuideToMounts,
+       );
+
+  final StartupSessionMode mode;
+  final List<StorageMount> initialMounts;
+  final List<Connection> initialConnections;
+  final ConnectionRegistry? connections;
+  final ProfileConnectionRegistry? profileConnections;
+  final PlexHomeService? plexHomeService;
+  final ActiveProfileProvider? activeProfileProvider;
+  final bool requiresProfilePrompt;
+  final bool shouldGuideToMounts;
+
+  bool get isReadyForHome => mode == StartupSessionMode.readyForHome;
+
+  bool _adoptedByApp = false;
+  bool _disposed = false;
+
+  void markAdoptedByApp() {
+    _adoptedByApp = true;
+  }
+
+  Future<void> dispose() async {
+    if (_disposed) return;
+    _disposed = true;
+    if (!_adoptedByApp) {
+      activeProfileProvider?.dispose();
+    }
+    await plexHomeService?.dispose();
+  }
+}
+
+/// Resolves the initial UI destination strictly from local SQLite/storage
+/// without any network round-trips or HTTP/UDP service startup.
+@visibleForTesting
+Future<StartupSessionBootstrap> resolveStartupSessionBootstrap({
+  required AppDatabase appDatabase,
+  required StorageService storage,
+  required SettingsService settings,
+  required TvosDatabaseRecoveryOutcome databaseRecoveryOutcome,
+}) async {
+  if (shouldBypassSetupForDatabaseRecovery(databaseRecoveryOutcome)) {
+    return StartupSessionBootstrap.recoveryRequired();
+  }
+
+  final connRegistry = ConnectionRegistry(appDatabase, includePlex: plexSupportEnabled);
+  final mountRegistry = MountRegistry(appDatabase);
+  final syncStore = SyncLocalStore(appDatabase);
+
+  final (
+    initialMounts,
+    initialConnections,
+    onboardingDoneRaw,
+    hasExplicitOnboarding,
+    syncSession,
+    trustedPeers,
+    existingLibraryRow,
+  ) = await (
+    mountRegistry.list(),
+    connRegistry.list(),
+    syncStore.isOnboardingCompleted(),
+    syncStore.hasExplicitOnboardingState(),
+    syncStore.loadSession(),
+    syncStore.loadTrustedLanPeers(),
+    appDatabase.customSelect('SELECT 1 FROM library_items LIMIT 1').getSingleOrNull(),
+  ).wait;
+
+  final hasSyncSession = syncSession != null;
+  var onboardingDone = onboardingDoneRaw;
+  if (!onboardingDone &&
+      !hasExplicitOnboarding &&
+      (initialMounts.isNotEmpty || initialConnections.isNotEmpty || hasSyncSession)) {
+    await syncStore.setOnboardingCompleted(true);
+    if (!hasSyncSession) {
+      await syncStore.setSyncMode(SyncMode.lanP2p);
+    }
+    onboardingDone = true;
+  }
+
+  if (!onboardingDone) {
+    return StartupSessionBootstrap.onboardingRequired(
+      initialMounts: initialMounts,
+      initialConnections: initialConnections,
+    );
+  }
+
+  final profileRegistry = ProfileRegistry(appDatabase);
+  final profileConnections = ProfileConnectionRegistry(appDatabase);
+  final plexHomeService = PlexHomeService(
+    connections: connRegistry,
+    profileConnections: profileConnections,
+    storage: storage,
+  );
+  await plexHomeService.hydrate();
+
+  if ((await profileRegistry.list()).isEmpty) {
+    await profileRegistry.upsert(
+      Profile.local(id: const Uuid().v4(), displayName: t.storage.defaultProfileName, createdAt: DateTime.now()),
+    );
+  }
+
+  final activeProfileProvider = ActiveProfileProvider(
+    registry: profileRegistry,
+    plexHome: plexHomeService,
+    connections: connRegistry,
+    profileConnections: profileConnections,
+    storage: storage,
+  );
+  await activeProfileProvider.initialize();
+  if (activeProfileProvider.active == null && activeProfileProvider.profiles.isNotEmpty) {
+    final candidate = activeProfileProvider.profiles.where((p) => !p.isPinProtected).firstOrNull;
+    if (candidate != null) {
+      await activeProfileProvider.activate(candidate);
+    }
+  }
+
+  final requiresProfilePrompt =
+      (activeProfileProvider.active == null && activeProfileProvider.profiles.isNotEmpty) ||
+      activeProfileProvider.requiresSelectionOnOpen(settings);
+  final shouldGuideToMounts =
+      initialMounts.isEmpty &&
+      initialConnections.isEmpty &&
+      !hasSyncSession &&
+      trustedPeers.isEmpty &&
+      existingLibraryRow == null;
+
+  AndroidExitDiagnostics.markStartupPhase(AndroidStartupPhase.credentialsLoaded);
+
+  return StartupSessionBootstrap.readyForHome(
+    initialMounts: initialMounts,
+    initialConnections: initialConnections,
+    connections: connRegistry,
+    profileConnections: profileConnections,
+    plexHomeService: plexHomeService,
+    activeProfileProvider: activeProfileProvider,
+    requiresProfilePrompt: requiresProfilePrompt,
+    shouldGuideToMounts: shouldGuideToMounts,
+  );
+}
+
 class _StartupDependencies {
   const _StartupDependencies({
     required this.settings,
     required this.storage,
     required this.appDatabase,
     required this.databaseRecoveryOutcome,
+    required this.sessionBootstrap,
   });
 
   final SettingsService settings;
   final StorageService storage;
   final AppDatabase appDatabase;
   final TvosDatabaseRecoveryOutcome databaseRecoveryOutcome;
+  final StartupSessionBootstrap sessionBootstrap;
 }
 
 @visibleForTesting
@@ -957,10 +1150,7 @@ Future<_StartupDependencies> _initializeStartup(SettingsService settings) async 
   }
 
   AppDatabase? openedDatabase;
-  // Started first so the store walk overlaps the phases below. Every request
-  // to a user-entered server verifies against the result, so it is awaited
-  // before any client can exist (#2339); the load itself never throws.
-  final userAuthorities = Platform.isAndroid ? CertificateTrust.loadUserAuthorities() : null;
+  Future<AppDatabaseBootstrap>? databaseFuture;
   try {
     // Slang builds the base locale eagerly, so `t` already resolves before
     // this runs; a failure here degrades to English rather than no app.
@@ -970,59 +1160,74 @@ Future<_StartupDependencies> _initializeStartup(SettingsService settings) async 
     });
     markStartupPhase('locale');
 
-    // Window chrome is cosmetic; losing it costs the custom titlebar and the
-    // remembered size, not the app. It is also the step most exposed to a
-    // stalled platform thread, so it must not sit in the same combined future
-    // as the services the first build genuinely needs.
-    if (PlatformDetector.isDesktopOS()) {
-      await _optionalGatePhase(StartupPhase.windowManager, () async {
-        await windowManager.ensureInitialized();
-        if (Platform.isMacOS) await MacOSWindowService.setupCustomTitlebar();
-      });
-    }
+    final userAuthorities = Platform.isAndroid ? CertificateTrust.loadUserAuthorities() : null;
 
-    // MainApp reads the first two synchronous facades during its first build
-    // and the Jellyfin device profile the third at playback negotiation. All
-    // three have a working sync fallback, so a detection failure is not fatal.
-    await _optionalGatePhase(StartupPhase.deviceCapabilities, () async {
-      await (
-        TvDetectionService.getInstance(forceTv: settings.read(SettingsService.forceTvMode)),
-        DevicePerformance.getInstance(override: settings.read(SettingsService.visualEffects)),
-        VideoDecodeCapabilities.getInstance(),
-      ).wait;
-    });
+    final optionalFuture = Future.wait<void>([
+      if (PlatformDetector.isDesktopOS())
+        _optionalGatePhase(StartupPhase.windowManager, () async {
+          await windowManager.ensureInitialized();
+          if (Platform.isMacOS) await MacOSWindowService.setupCustomTitlebar();
+        }),
+      _optionalGatePhase(StartupPhase.deviceCapabilities, () async {
+        await (
+          TvDetectionService.getInstance(forceTv: settings.read(SettingsService.forceTvMode)),
+          DevicePerformance.getInstance(override: settings.read(SettingsService.visualEffects)),
+          VideoDecodeCapabilities.getInstance(),
+        ).wait;
+      }),
+      if (userAuthorities != null) _optionalGatePhase(StartupPhase.certificateTrust, () => userAuthorities),
+    ]);
 
-    if (userAuthorities != null) {
-      await _optionalGatePhase(StartupPhase.certificateTrust, () => userAuthorities);
-    }
+    final storageFuture = _gatePhase(StartupPhase.storage, StorageService.getInstance);
 
-    final storage = await _gatePhase(StartupPhase.storage, StorageService.getInstance);
-    markStartupPhase('platform-services');
-
-    AndroidExitDiagnostics.markStartupPhase(AndroidStartupPhase.databaseOpenStarted);
-    final databaseBootstrap = await _gatePhase(
-      StartupPhase.database,
-      () => openAppDatabaseWithDownloadRecovery(
+    databaseFuture = _gatePhase(StartupPhase.database, () async {
+      AndroidExitDiagnostics.markStartupPhase(AndroidStartupPhase.databaseOpenStarted);
+      final bootstrap = await openAppDatabaseWithDownloadRecovery(
         openDatabase: () => AppDatabase.open(isTvos: PlatformDetector.isAppleTV()),
         recoverNativeDownloads: DownloadManagerService.discardInterruptedNativeDownloadsAfterStorageFailure,
         storageFullMessage: t.downloads.storageFull,
-      ),
-    );
-    openedDatabase = databaseBootstrap.database;
-    AndroidExitDiagnostics.markStartupPhase(AndroidStartupPhase.databaseReady);
-    markStartupPhase('database-recovery');
+      );
+      openedDatabase = bootstrap.database;
+      AndroidExitDiagnostics.markStartupPhase(AndroidStartupPhase.databaseReady);
+      return bootstrap;
+    });
+
+    // Attach no-op error handlers before awaiting so a background failure never
+    // escapes as an unhandled async error if an earlier await throws first.
+    optionalFuture.ignore();
+    storageFuture.ignore();
+    databaseFuture.ignore();
+
+    final storage = await storageFuture;
+    final databaseBootstrap = await databaseFuture;
+    await optionalFuture;
+    markStartupPhase('platform-and-database');
 
     await _optionalGatePhase(StartupPhase.imageCache, () async => DevicePerformance.applyImageCacheBudget());
-
     markStartupPhase('image-cache');
+
+    final sessionBootstrap = await _gatePhase(
+      StartupPhase.database,
+      () => resolveStartupSessionBootstrap(
+        appDatabase: databaseBootstrap.database,
+        storage: storage,
+        settings: settings,
+        databaseRecoveryOutcome: databaseBootstrap.recoveryOutcome,
+      ),
+    );
+    markStartupPhase('session-bootstrap');
 
     return _StartupDependencies(
       settings: settings,
       storage: storage,
       appDatabase: databaseBootstrap.database,
       databaseRecoveryOutcome: databaseBootstrap.recoveryOutcome,
+      sessionBootstrap: sessionBootstrap,
     );
   } catch (_) {
+    try {
+      await databaseFuture;
+    } catch (_) {}
     await openedDatabase?.close();
     rethrow;
   }
@@ -1347,6 +1552,9 @@ class MainApp extends StatefulWidget {
   final StorageService storage;
   final AppDatabase appDatabase;
   final TvosDatabaseRecoveryOutcome databaseRecoveryOutcome;
+  final StartupSessionBootstrap? sessionBootstrap;
+  @visibleForTesting
+  final bool enableBackgroundSyncServices;
 
   const MainApp({
     super.key,
@@ -1354,6 +1562,8 @@ class MainApp extends StatefulWidget {
     required this.storage,
     required this.appDatabase,
     required this.databaseRecoveryOutcome,
+    this.sessionBootstrap,
+    this.enableBackgroundSyncServices = true,
   });
 
   @override
@@ -1366,11 +1576,18 @@ class _MainAppState extends State<MainApp> with WidgetsBindingObserver {
   late final LibraryEventService _libraryEventService;
   late final AppDatabase _appDatabase;
   late final MountManager _mountManager;
+  late final LibraryRepository _libraryRepository;
+  late final LibrarySettingsStore _librarySettingsStore;
+  late final LibraryScrapeRunner _libraryScrapeRunner;
+  late final LocalLibraryClient _localLibraryClient;
+  late final LibraryScanService _libraryScanService;
   late final DownloadManagerService _downloadManager;
   late final OfflineWatchSyncService _offlineWatchSyncService;
   late final ConnectionRegistry _connections;
   late final ProfileConnectionRegistry _profileConnections;
   late final PlexHomeService _plexHomeService;
+  ActiveProfileProvider? _precreatedActiveProfile;
+  bool _activeProfileAdopted = false;
   late final AppLifecycleListener _appLifecycleListener;
   StreamSubscription<WatchStateEvent>? _watchStateSubscription;
 
@@ -1403,12 +1620,6 @@ class _MainAppState extends State<MainApp> with WidgetsBindingObserver {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
 
-    // The watchdog's first useful sample is at least 15 seconds away; install
-    // its timer only after the first app frame has completed.
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _startRssWatchdog();
-    });
-
     _serverManager = MultiServerManager();
     _aggregationService = DataAggregationService(_serverManager);
     _libraryEventService = LibraryEventService(_serverManager);
@@ -1417,10 +1628,53 @@ class _MainAppState extends State<MainApp> with WidgetsBindingObserver {
     PlexApiCache.initialize(_appDatabase);
     JellyfinApiCache.initialize(_appDatabase);
 
+    final bootstrap = widget.sessionBootstrap;
+    bootstrap?.markAdoptedByApp();
+    _connections = bootstrap?.connections ?? ConnectionRegistry(_appDatabase, includePlex: plexSupportEnabled);
+    _profileConnections = bootstrap?.profileConnections ?? ProfileConnectionRegistry(_appDatabase);
+    // Owned here rather than by its provider: exit teardown must settle it
+    // before the database closes.
+    _plexHomeService =
+        bootstrap?.plexHomeService ??
+        PlexHomeService(
+          connections: _connections,
+          profileConnections: _profileConnections,
+          storage: widget.storage,
+        );
+    if (bootstrap?.plexHomeService == null) {
+      unawaited(_plexHomeService.hydrate());
+    }
+    _precreatedActiveProfile = bootstrap?.activeProfileProvider;
+
     _mountManager = MountManager(
       MountRegistry(_appDatabase),
       bulkOptions: () => SettingsService.instanceOrNull?.bulkReadOptions ?? BulkReadOptions.defaults,
-    )..startReachabilityMonitor();
+    );
+    _libraryRepository = LibraryRepository(_appDatabase)..hiddenMountIds = () => _mountManager.hiddenOfflineMountIds;
+    _librarySettingsStore = LibrarySettingsStore(_appDatabase);
+    _libraryScrapeRunner = LibraryScrapeRunner(
+      database: _appDatabase,
+      repository: _libraryRepository,
+      settings: _librarySettingsStore,
+      mounts: _mountManager,
+    );
+    _localLibraryClient = LocalLibraryClient(repository: _libraryRepository, mounts: _mountManager);
+    _libraryScanService = LibraryScanService(
+      repository: _libraryRepository,
+      scanner: LibraryScanner(_appDatabase, _libraryRepository),
+      mounts: _mountManager,
+      scrape: _libraryScrapeRunner.scrapePending,
+    );
+    _mountManager.onReachabilityChanged = _libraryScanService.notifyLibraryChanged;
+
+    if (bootstrap != null && bootstrap.isReadyForHome) {
+      configureLocalLibraryClientLabels(_localLibraryClient);
+      _localLibraryClient.seedMounts(bootstrap.initialMounts);
+      _serverManager.registerLocalLibrary(_localLibraryClient);
+      _libraryScanService.onLibraryChanged ??= () => unawaited(_localLibraryClient.refreshMounts());
+      AndroidExitDiagnostics.markStartupPhase(AndroidStartupPhase.mainScreen);
+    }
+
     _downloadManager = DownloadManagerService(
       database: _appDatabase,
       storageService: DownloadStorageService.instance,
@@ -1429,25 +1683,12 @@ class _MainAppState extends State<MainApp> with WidgetsBindingObserver {
       useAppNativeDownloader: true,
     );
     // Keep the awaitable assigned synchronously, but do not let recovery's
-    // Drift/native work compete with SetupScreen's first frame.
-    _downloadManager.recoveryFuture = WidgetsBinding.instance.endOfFrame.then(
-      (_) => _downloadManager.recoverInterruptedDownloads(),
-    );
+    // Drift/native work compete with the first app frame.
+    _downloadManager.recoveryFuture = WidgetsBinding.instance.endOfFrame.then((_) async {
+      if (mounted) await _downloadManager.recoverInterruptedDownloads();
+    });
 
     _offlineWatchSyncService = OfflineWatchSyncService(database: _appDatabase, serverManager: _serverManager);
-
-    _connections = ConnectionRegistry(_appDatabase, includePlex: plexSupportEnabled);
-    _profileConnections = ProfileConnectionRegistry(_appDatabase);
-    // Owned here rather than by its provider: exit teardown must settle it
-    // before the database closes. Hydrate the disk cache eagerly for profile
-    // resolution; live refresh starts only after MainScreen has settled the
-    // startup offline decision.
-    _plexHomeService = PlexHomeService(
-      connections: _connections,
-      profileConnections: _profileConnections,
-      storage: widget.storage,
-    );
-    unawaited(_plexHomeService.hydrate());
 
     // The first read registers the link channel handler.
     DeepLinkService.instance.host = const _RootDeepLinkProfileHost();
@@ -1458,6 +1699,48 @@ class _MainAppState extends State<MainApp> with WidgetsBindingObserver {
         return AppExitResponse.exit;
       },
     );
+
+    // Defer non-critical background work until after Frame 1 has painted.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _startRssWatchdog();
+      if (widget.enableBackgroundSyncServices) {
+        _mountManager.startReachabilityMonitor();
+        unawaited(_mountManager.proxy.start());
+      }
+      unawaited(OrientationHelper.restoreDefaultOrientations());
+      unawaited(DeepLinkService.instance.fetchInitialLink());
+
+      if (bootstrap != null && bootstrap.isReadyForHome) {
+        if (bootstrap.initialConnections.isNotEmpty) {
+          unawaited(
+            ProfileConnectionCleanup(
+              profileConnections: _profileConnections,
+              connections: _connections,
+              storage: widget.storage,
+              serverManager: _serverManager,
+            ).pruneUnreferencedJellyfinConnections(),
+          );
+        }
+        if (widget.enableBackgroundSyncServices) {
+          unawaited(
+            () async {
+              if (await _librarySettingsStore.namingVersion() < LibraryScanner.namingVersion) {
+                await _libraryScanService.refileAll();
+                await _librarySettingsStore.setNamingVersion(LibraryScanner.namingVersion);
+              }
+              await _libraryScanService.scrapeLibrary();
+            }().catchError((Object e) => appLogger.w('Preparing the local library failed: $e')),
+          );
+        }
+        if (bootstrap.shouldGuideToMounts) {
+          final navigator = rootNavigatorKey.currentState;
+          if (navigator != null) {
+            unawaited(navigator.push(MaterialPageRoute<void>(builder: (_) => const MountsScreen())));
+          }
+        }
+      }
+    });
   }
 
   Future<void> _shutdownForExit() => _shutdownFuture ??= _runShutdownForExit().timeout(
@@ -1536,6 +1819,10 @@ class _MainAppState extends State<MainApp> with WidgetsBindingObserver {
     _removeConnectivitySyncListener();
     _memoryCheckTimer?.cancel();
     _appLifecycleListener.dispose();
+    if (!_activeProfileAdopted) {
+      _precreatedActiveProfile?.dispose();
+    }
+    _libraryScanService.dispose();
     if (_shutdownFuture == null) {
       _libraryEventService.dispose();
       _downloadManager.dispose();
@@ -1774,49 +2061,24 @@ class _MainAppState extends State<MainApp> with WidgetsBindingObserver {
         Provider<StorageService>.value(value: widget.storage),
         Provider<AppDatabase>.value(value: _appDatabase),
         Provider<MountManager>(create: (_) => _mountManager, dispose: (_, manager) => unawaited(manager.dispose())),
-        Provider<LibraryRepository>(
-          create: (_) => LibraryRepository(_appDatabase)..hiddenMountIds = () => _mountManager.hiddenOfflineMountIds,
-        ),
-        Provider<LibrarySettingsStore>(create: (_) => LibrarySettingsStore(_appDatabase)),
-        Provider<LibraryScrapeRunner>(
-          create: (context) => LibraryScrapeRunner(
-            database: _appDatabase,
-            repository: context.read<LibraryRepository>(),
-            settings: context.read<LibrarySettingsStore>(),
-            mounts: context.read<MountManager>(),
-          ),
-        ),
-        Provider<LocalLibraryClient>(
-          create: (context) =>
-              LocalLibraryClient(repository: context.read<LibraryRepository>(), mounts: context.read<MountManager>()),
-        ),
-        ChangeNotifierProvider<LibraryScanService>(
-          create: (context) {
-            final repository = context.read<LibraryRepository>();
-            final service = LibraryScanService(
-              repository: repository,
-              scanner: LibraryScanner(_appDatabase, repository),
-              mounts: _mountManager,
-              scrape: context.read<LibraryScrapeRunner>().scrapePending,
-            );
-            _mountManager.onReachabilityChanged = service.notifyLibraryChanged;
-            return service;
-          },
-        ),
+        Provider<LibraryRepository>.value(value: _libraryRepository),
+        Provider<LibrarySettingsStore>.value(value: _librarySettingsStore),
+        Provider<LibraryScrapeRunner>.value(value: _libraryScrapeRunner),
+        Provider<LocalLibraryClient>.value(value: _localLibraryClient),
+        ChangeNotifierProvider<LibraryScanService>.value(value: _libraryScanService),
         ChangeNotifierProvider<SyncAndScanCoordinator>(
           lazy: false,
           create: (context) {
-            final repository = context.read<LibraryRepository>();
-            final scanService = context.read<LibraryScanService>();
-            final localClient = context.read<LocalLibraryClient>();
             final coordinator = SyncAndScanCoordinator(
               db: _appDatabase,
-              repo: repository,
+              repo: _libraryRepository,
               mountManager: _mountManager,
-              scanService: scanService,
+              scanService: _libraryScanService,
               isTvDevice: TvDetectionService.isTVSync(),
+              enableLanUdp: widget.enableBackgroundSyncServices,
+              autoStartLanService: widget.enableBackgroundSyncServices,
             );
-            scanService.onScopedCatalogChanged =
+            _libraryScanService.onScopedCatalogChanged =
                 (mountIds, {directoryPrefixes, allowTombstones = true}) => unawaited(
                   coordinator.onCatalogChanged(
                     mountIds: mountIds,
@@ -1824,14 +2086,18 @@ class _MainAppState extends State<MainApp> with WidgetsBindingObserver {
                     allowTombstones: allowTombstones,
                   ),
                 );
-            localClient.onSyncOutboxEnqueued = () => unawaited(coordinator.onPlaybackOutboxQueued());
-            unawaited(
-              coordinator.initialize().then((_) {
-                if (coordinator.isSignedIn) {
-                  unawaited(coordinator.syncNow());
-                }
-              }),
-            );
+            _localLibraryClient.onSyncOutboxEnqueued = () => unawaited(coordinator.onPlaybackOutboxQueued());
+            if (widget.enableBackgroundSyncServices) {
+              unawaited(
+                WidgetsBinding.instance.endOfFrame.then((_) async {
+                  if (!mounted) return;
+                  await coordinator.initialize();
+                  if (mounted && coordinator.isSignedIn) {
+                    unawaited(coordinator.syncNow());
+                  }
+                }),
+              );
+            }
             return coordinator;
           },
         ),
@@ -1841,6 +2107,11 @@ class _MainAppState extends State<MainApp> with WidgetsBindingObserver {
         Provider<PlexHomeService>.value(value: _plexHomeService),
         ChangeNotifierProvider<ActiveProfileProvider>(
           create: (context) {
+            final precreated = _precreatedActiveProfile;
+            if (precreated != null) {
+              _activeProfileAdopted = true;
+              return precreated;
+            }
             final provider = ActiveProfileProvider(
               registry: context.read<ProfileRegistry>(),
               plexHome: context.read<PlexHomeService>(),
@@ -1855,7 +2126,19 @@ class _MainAppState extends State<MainApp> with WidgetsBindingObserver {
         ChangeNotifierProvider(
           create: (context) {
             _serverManager.onJellyfinConnectionUpdated = context.read<ConnectionRegistry>().upsert;
-            return MultiServerProvider(_serverManager, _aggregationService);
+            final provider = MultiServerProvider(_serverManager, _aggregationService);
+            final bootstrap = widget.sessionBootstrap;
+            if (bootstrap != null &&
+                bootstrap.isReadyForHome &&
+                bootstrap.initialConnections.isEmpty &&
+                !bootstrap.requiresProfilePrompt) {
+              provider.setExpectedVisibleServerIds(<String>{}, notify: false);
+              provider.setVisibleServerIds(<String>{
+                if (_serverManager.registeredServerIds.contains(LocalLibraryClient.localServerId))
+                  LocalLibraryClient.localServerId,
+              }, notify: false);
+            }
+            return provider;
           },
         ),
         ChangeNotifierProxyProvider<MultiServerProvider, OfflineModeProvider>(
@@ -1874,18 +2157,14 @@ class _MainAppState extends State<MainApp> with WidgetsBindingObserver {
             return provider;
           },
         ),
-        // Profile binder owns the cold-start client connect: Plex token
-        // refresh + Jellyfin client creation. Hoisted out of MainScreen so
-        // the splash can await its first settle — without this, MainScreen
-        // mounts (and discover/libraries query) before any client exists.
-        // It is intentionally not auto-started here: SetupScreen starts it
-        // once the active profile is hydrated and the OS connectivity check
-        // has chosen the initial bind's PIN policy.
+        // Profile binder owns background remote MediaBrowser connects. When the
+        // cold start is strictly local, prime it synchronously so Frame 1
+        // queries LocalLibraryClient immediately without waiting for rebinds.
         Provider<ActiveProfileBinder>(
           lazy: false,
           create: (context) {
             final activeProfile = context.read<ActiveProfileProvider>();
-            return ActiveProfileBinder(
+            final binder = ActiveProfileBinder(
               activeProfile: activeProfile,
               connections: context.read<ConnectionRegistry>(),
               profileConnections: context.read<ProfileConnectionRegistry>(),
@@ -1900,6 +2179,14 @@ class _MainAppState extends State<MainApp> with WidgetsBindingObserver {
                 return activeProfile.requiresSelectionOnOpen(settings);
               },
             );
+            final bootstrap = widget.sessionBootstrap;
+            if (bootstrap != null &&
+                bootstrap.isReadyForHome &&
+                bootstrap.initialConnections.isEmpty &&
+                !bootstrap.requiresProfilePrompt) {
+              binder.primeLocalOnlyStartup(notify: false);
+            }
+            return binder;
           },
           dispose: (_, binder) => binder.dispose(),
         ),
@@ -2021,7 +2308,10 @@ class _MainAppState extends State<MainApp> with WidgetsBindingObserver {
           },
         ),
       ],
-      child: _AppShell(databaseRecoveryOutcome: widget.databaseRecoveryOutcome),
+      child: _AppShell(
+        databaseRecoveryOutcome: widget.databaseRecoveryOutcome,
+        sessionBootstrap: widget.sessionBootstrap,
+      ),
     );
   }
 }
@@ -2031,9 +2321,27 @@ class _MainAppState extends State<MainApp> with WidgetsBindingObserver {
 /// [ProfileSessionScreen], not here, so root auth/PIN/global dialogs survive a
 /// profile switch.
 class _AppShell extends StatelessWidget {
-  const _AppShell({required this.databaseRecoveryOutcome});
+  const _AppShell({required this.databaseRecoveryOutcome, this.sessionBootstrap});
 
   final TvosDatabaseRecoveryOutcome databaseRecoveryOutcome;
+  final StartupSessionBootstrap? sessionBootstrap;
+
+  Widget _resolveInitialHome() {
+    final bootstrap = sessionBootstrap;
+    if (bootstrap == null) {
+      return SetupScreen(databaseRecoveryOutcome: databaseRecoveryOutcome);
+    }
+    return switch (bootstrap.mode) {
+      StartupSessionMode.recoveryRequired => AuthScreen(
+        initialErrorMessage: t.auth.localDataRecoveryRequired,
+        databaseRecoveryRequired: true,
+      ),
+      StartupSessionMode.onboardingRequired => const AuthScreen(),
+      StartupSessionMode.readyForHome => ProfileSessionScreen(
+        initialPromptHandled: !bootstrap.requiresProfilePrompt,
+      ),
+    };
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -2071,7 +2379,7 @@ class _AppShell extends StatelessWidget {
                     themeMode: themeProvider.materialThemeMode,
                     navigatorKey: rootNavigatorKey,
                     navigatorObservers: [BackKeySuppressorObserver()],
-                    home: SetupScreen(databaseRecoveryOutcome: databaseRecoveryOutcome),
+                    home: _resolveInitialHome(),
                     // Siri Remote select + gamepad A report as
                     // LogicalKeyboardKey.{select,gameButtonA} which aren't
                     // in Flutter's default shortcut set — Material-level

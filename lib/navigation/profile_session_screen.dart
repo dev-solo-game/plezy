@@ -12,6 +12,7 @@ import '../focus/covered_route_focus_boundary.dart';
 import '../focus/key_event_utils.dart';
 import '../media/ids.dart';
 import '../media/media_server_client.dart';
+import '../profiles/active_profile_binder.dart';
 import '../profiles/active_profile_provider.dart';
 import '../profiles/plex_home_service.dart';
 import '../profiles/profile_connection_registry.dart';
@@ -229,10 +230,16 @@ class _ProfileSessionScreenState extends State<ProfileSessionScreen> {
               ChangeNotifierProvider(
                 create: (context) {
                   final activeProfile = context.read<ActiveProfileProvider>();
+                  ActiveProfileBinder? binder;
+                  try {
+                    binder = context.read<ActiveProfileBinder>();
+                  } on ProviderNotFoundException {
+                    binder = null;
+                  }
                   final libraries = LibrariesProvider(
                     storageService: context.read<StorageService>(),
                     multiServer: context.read<MultiServerProvider>(),
-                    isProfileBinding: () => activeProfile.isBinding,
+                    isProfileBinding: () => activeProfile.isBinding && (binder?.hasBoundOnce ?? true),
                   );
                   // A scan or scrape changes what the local library holds:
                   // reload the shelves so the new titles show up.
@@ -256,6 +263,12 @@ class _ProfileSessionScreenState extends State<ProfileSessionScreen> {
               ChangeNotifierProvider(
                 create: (context) {
                   final activeProfile = context.read<ActiveProfileProvider>();
+                  ActiveProfileBinder? binder;
+                  try {
+                    binder = context.read<ActiveProfileBinder>();
+                  } on ProviderNotFoundException {
+                    binder = null;
+                  }
                   final discover = DiscoverProvider(
                     context.read<MultiServerProvider>(),
                     context.read<HiddenLibrariesProvider>(),
@@ -264,7 +277,7 @@ class _ProfileSessionScreenState extends State<ProfileSessionScreen> {
                     // matches; the proxy reuses `previous`, so the reference
                     // stays valid for as long as this provider does.
                     watchStateStore: context.read<WatchStateStore>(),
-                    isProfileBinding: () => activeProfile.isBinding,
+                    isProfileBinding: () => activeProfile.isBinding && (binder?.hasBoundOnce ?? true),
                     // Defers push-triggered hub refetches while the player is
                     // up — same playback-quiet policy as the resume gate.
                     isRefreshBlocked: () => VideoPlayerScreenState.activeGlobalKey != null,

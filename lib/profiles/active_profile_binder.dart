@@ -161,6 +161,9 @@ class ActiveProfileBinder {
   @visibleForTesting
   String? get debugLastBoundProfileId => _lastBoundProfileId;
 
+  /// True once at least one profile bind (or local-only startup prime) has completed.
+  bool get hasBoundOnce => _hasBoundOnce;
+
   bool get lastBindFailureConnectivityOnly => _lastBindFailureConnectivityOnly;
 
   void markPlexHomePreVerified(String profileId) {
@@ -181,6 +184,25 @@ class ActiveProfileBinder {
   @visibleForTesting
   bool consumeUserInitiatedActivation(String profileId) {
     return _userInitiatedActivations.remove(profileId);
+  }
+
+  /// Fast cold-start path when no remote MediaBrowser/Plex connections exist
+  /// and the active profile is already a local profile. Marks binding settled
+  /// synchronously without issuing an initial rebind pass.
+  void primeLocalOnlyStartup({bool notify = true}) {
+    if (_started) return;
+    final profile = activeProfile.active;
+    if (profile == null || !profile.isLocal) return;
+    _started = true;
+    _hasBoundOnce = true;
+    _lastBoundProfileId = profile.id;
+    _lastFailedProfileId = null;
+    multiServerProvider.setExpectedVisibleServerIds(<String>{}, notify: notify);
+    multiServerProvider.setVisibleServerIds(<String>{
+      if (serverManager.registeredServerIds.contains(LocalLibraryClient.localServerId))
+        LocalLibraryClient.localServerId,
+    }, notify: notify);
+    activeProfile.addListener(_onActiveProfileChanged);
   }
 
   /// [allowInitialPinPrompt] false keeps the session's initial bind from

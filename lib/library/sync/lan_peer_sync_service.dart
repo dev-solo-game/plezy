@@ -8,6 +8,7 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import '../../utils/app_logger.dart';
+import '../../utils/device_identity.dart';
 import '../../utils/udp_broadcast_sockets.dart';
 import 'deterministic_keys.dart';
 import 'sync_crypto.dart';
@@ -160,12 +161,65 @@ class LanPeerSyncService extends ChangeNotifier {
 
   String get deviceName {
     final saved = _deviceName?.trim();
-    if (saved != null && saved.isNotEmpty) return saved;
+    if (isMeaningfulDeviceName(saved)) return saved!;
     try {
       final host = Platform.localHostname.trim();
-      if (host.isNotEmpty) return host;
+      if (isMeaningfulDeviceName(host)) return host;
     } catch (_) {}
     return 'Plezy';
+  }
+
+  /// Unicast-probes trusted peers with known host/HTTP ports over `/lan/v1/hello`
+  /// so `remote_port` and device metadata refresh immediately even when UDP
+  /// broadcasts are delayed or dropped (e.g., emulator NAT or recent host restarts).
+  Future<void> probeTrustedPeers({Duration timeout = const Duration(milliseconds: 1200)}) async {
+    final client = _httpClient;
+    if (!_running || _disposed || client == null) return;
+    final peers = List<LanTrustedPeer>.from(_trustedPeers);
+    if (peers.isEmpty) return;
+
+    await Future.wait([
+      for (final trusted in peers)
+        if (trusted.lastHost != null &&
+            trusted.lastHost!.isNotEmpty &&
+            trusted.lastPort != null &&
+            trusted.lastPort! > 0)
+          _probeSingleTrustedPeer(client, trusted, timeout),
+    ]);
+  }
+
+  Future<void> _probeSingleTrustedPeer(http.Client client, LanTrustedPeer trusted, Duration timeout) async {
+    final rawHost = trusted.lastHost!;
+    final hostAuthority = (rawHost.contains(':') && !rawHost.startsWith('[')) ? '[$rawHost]' : rawHost;
+    final uri = Uri.parse('http://$hostAuthority:${trusted.lastPort}/lan/v1/hello');
+    try {
+      final resp = await client.get(uri).timeout(timeout);
+      if (!_running || _disposed || resp.statusCode != HttpStatus.ok) return;
+      final decoded = jsonDecode(resp.body);
+      if (decoded is! Map<String, dynamic>) return;
+      final peerId = decoded['device_id'] as String?;
+      final peerPub = decoded['pub_key'] as String?;
+      if (peerId != trusted.deviceId || peerPub != trusted.pubKeyBase64) return;
+
+      final rawRemotePort = (decoded['remote_port'] as num?)?.toInt();
+      final remotePort = (rawRemotePort != null && rawRemotePort > 0) ? rawRemotePort : null;
+      registerDiscoveredPeer(
+        LanDiscoveredPeer(
+          deviceId: peerId!,
+          deviceName: decoded['device_name'] as String? ?? trusted.deviceName,
+          platform: decoded['platform'] as String? ?? 'unknown',
+          host: rawHost,
+          httpPort: trusted.lastPort!,
+          pubKeyBase64: peerPub!,
+          revision: (decoded['revision'] as num?)?.toInt() ?? trusted.lastSyncedRevision,
+          lastSeen: clock.now(),
+          remotePort: remotePort,
+          syncEpoch: decoded['sync_epoch'] as String?,
+        ),
+      );
+    } catch (_) {
+      // Best-effort probe; unreachable/offline peers are simply skipped.
+    }
   }
 
   List<LanDiscoveredPeer> get discoveredPeers => List.unmodifiable(_discovered.values);
@@ -221,7 +275,7 @@ class LanPeerSyncService extends ChangeNotifier {
     if (!_disposed) notifyListeners();
   }
 
-  Future<void> start({int bindHttpPort = 0}) async {
+  Future<void> start({int bindHttpPort = 0, bool runTombstoneGc = true}) async {
     if (_running || _disposed) return;
 
     _deviceId = await syncStore.getOrCreateDeviceId();
@@ -243,12 +297,14 @@ class LanPeerSyncService extends ChangeNotifier {
       await syncStore.savePromptedLanPeerIds(_promptedPeerIds);
     }
 
-    // Prune tombstones older than 30 days and advance min_retained_seq.
-    final gc = await syncStore.journal.pruneExpiredTombstones(nowMs: clock.now().millisecondsSinceEpoch);
-    if (gc.maxPurgedSeq > 0) {
-      final oldMin = await syncStore.getMinRetainedSeq();
-      if (gc.maxPurgedSeq > oldMin) {
-        await syncStore.saveMinRetainedSeq(gc.maxPurgedSeq);
+    if (runTombstoneGc) {
+      // Prune tombstones older than 30 days and advance min_retained_seq.
+      final gc = await syncStore.journal.pruneExpiredTombstones(nowMs: clock.now().millisecondsSinceEpoch);
+      if (gc.maxPurgedSeq > 0) {
+        final oldMin = await syncStore.getMinRetainedSeq();
+        if (gc.maxPurgedSeq > oldMin) {
+          await syncStore.saveMinRetainedSeq(gc.maxPurgedSeq);
+        }
       }
     }
 

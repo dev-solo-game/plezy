@@ -31,6 +31,16 @@ class DeviceIdentity {
   const DeviceIdentity({required this.platform, this.deviceModel, this.deviceName, this.isTv = false});
 }
 
+/// Returns true when [value] is a non-empty device name that is not a generic
+/// loopback placeholder like `localhost`.
+bool isMeaningfulDeviceName(String? value) {
+  if (value == null) return false;
+  final trimmed = value.trim();
+  if (trimmed.isEmpty) return false;
+  final lower = trimmed.toLowerCase();
+  return lower != 'localhost' && lower != 'localhost.localdomain';
+}
+
 /// Resolves the device identity once per process and memoizes it. Never
 /// throws — platform-channel failures (tests, exotic platforms) degrade to
 /// [Platform.operatingSystem] with null name/model.
@@ -53,11 +63,13 @@ class DeviceIdentityService {
     try {
       if (Platform.isAndroid) {
         final androidInfo = await deviceInfo.androidInfo;
-        final assignedName = await TvDetectionService.getAndroidDeviceName();
+        final rawAssigned = await TvDetectionService.getAndroidDeviceName();
+        final assignedName = isMeaningfulDeviceName(rawAssigned) ? rawAssigned!.trim() : null;
+        final fallbackModel = '${androidInfo.brand} ${androidInfo.model}'.trim();
         return DeviceIdentity(
           platform: 'Android',
           deviceModel: androidInfo.model,
-          deviceName: assignedName ?? '${androidInfo.brand} ${androidInfo.model}',
+          deviceName: assignedName ?? (isMeaningfulDeviceName(fallbackModel) ? fallbackModel : null),
           isTv: isTv,
         );
       }
@@ -88,7 +100,7 @@ class DeviceIdentityService {
       }
       if (Platform.isLinux) {
         final host = Platform.localHostname.trim();
-        final name = (host.isNotEmpty && host != 'localhost') ? host : (await deviceInfo.linuxInfo).name;
+        final name = isMeaningfulDeviceName(host) ? host : (await deviceInfo.linuxInfo).name;
         return DeviceIdentity(platform: 'Linux', deviceModel: 'Linux', deviceName: name, isTv: isTv);
       }
     } catch (e) {
