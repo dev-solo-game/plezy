@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:clock/clock.dart';
 import 'package:flutter/foundation.dart';
@@ -8,6 +9,7 @@ import 'package:http/http.dart' as http;
 
 import '../../utils/app_logger.dart';
 import '../../utils/udp_broadcast_sockets.dart';
+import 'deterministic_keys.dart';
 import 'sync_crypto.dart';
 import 'sync_local_store.dart';
 import 'sync_mapper.dart';
@@ -24,6 +26,7 @@ class LanDiscoveredPeer {
     required this.revision,
     required this.lastSeen,
     this.remotePort,
+    this.syncEpoch,
   });
 
   final String deviceId;
@@ -35,6 +38,7 @@ class LanDiscoveredPeer {
   final int revision;
   final DateTime lastSeen;
   final int? remotePort;
+  final String? syncEpoch;
 
   String pairingCodeFor(String myPubKeyBase64) => SyncCrypto.computePairingCode(myPubKeyBase64, pubKeyBase64);
 }
@@ -75,6 +79,7 @@ class LanPeerSyncService extends ChangeNotifier {
   });
 
   static const int defaultDiscoveryPort = 48635;
+  static const int defaultPullLimit = 500;
   static const Duration _broadcastInterval = Duration(seconds: 3);
   static const Duration _peerStaleTimeout = Duration(seconds: 15);
   static const Duration _hmacWindow = Duration(minutes: 5);
@@ -98,6 +103,18 @@ class LanPeerSyncService extends ChangeNotifier {
   String? _deviceName;
   String? _privKeyB64;
   String? _pubKeyB64;
+  String? _syncEpoch;
+  int _cachedLocalRev = 0;
+
+  @visibleForTesting
+  int syncPageLimit = defaultPullLimit;
+
+  @visibleForTesting
+  FutureOr<void> Function(int pageIndex, int nextSeq)? debugOnPullPageCommitted;
+
+  /// Count of network pull/push HTTP requests issued during [syncWithPeer], exposed for tests.
+  @visibleForTesting
+  int debugSyncHttpRequestCount = 0;
 
   final Map<String, LanDiscoveredPeer> _discovered = {};
   final Map<String, LanPairRequest> _incomingRequests = {};
@@ -208,6 +225,8 @@ class LanPeerSyncService extends ChangeNotifier {
     if (_running || _disposed) return;
 
     _deviceId = await syncStore.getOrCreateDeviceId();
+    _syncEpoch = await syncStore.getOrCreateSyncEpoch();
+    _cachedLocalRev = await syncStore.getLocalLanRevision();
     _deviceName = await syncStore.getDeviceName();
     final keyPair = await syncStore.getOrCreateLanKeyPair();
     _privKeyB64 = keyPair.privateKeyBase64;
@@ -222,6 +241,15 @@ class LanPeerSyncService extends ChangeNotifier {
     }
     if (promptedDirty) {
       await syncStore.savePromptedLanPeerIds(_promptedPeerIds);
+    }
+
+    // Prune tombstones older than 30 days and advance min_retained_seq.
+    final gc = await syncStore.journal.pruneExpiredTombstones(nowMs: clock.now().millisecondsSinceEpoch);
+    if (gc.maxPurgedSeq > 0) {
+      final oldMin = await syncStore.getMinRetainedSeq();
+      if (gc.maxPurgedSeq > oldMin) {
+        await syncStore.saveMinRetainedSeq(gc.maxPurgedSeq);
+      }
     }
 
     _httpClient = http.Client();
@@ -283,7 +311,10 @@ class LanPeerSyncService extends ChangeNotifier {
     final pubKey = _pubKeyB64;
     if (!_running || sockSet == null || port == null || devId == null || pubKey == null) return;
 
-    final rev = await syncStore.getLocalLanRevision();
+    await mapper.ensureJournalUpToDate();
+    if (!_running || _disposed) return;
+    final rev = _cachedLocalRev = await syncStore.getLocalLanRevision();
+    final epoch = _syncEpoch ??= await syncStore.getOrCreateSyncEpoch();
     final payload = utf8.encode(
       jsonEncode({
         'type': 'plezy_lan_sync_v1',
@@ -293,6 +324,7 @@ class LanPeerSyncService extends ChangeNotifier {
         'http_port': port,
         'pub_key': pubKey,
         'revision': rev,
+        'sync_epoch': epoch,
         if (_advertisedRemotePort != null) 'remote_port': _advertisedRemotePort,
       }),
     );
@@ -323,6 +355,7 @@ class LanPeerSyncService extends ChangeNotifier {
           revision: (decoded['revision'] as num?)?.toInt() ?? 0,
           lastSeen: clock.now(),
           remotePort: remotePort,
+          syncEpoch: decoded['sync_epoch'] as String?,
         ),
       );
     } catch (_) {
@@ -360,9 +393,24 @@ class LanPeerSyncService extends ChangeNotifier {
         );
         unawaited(syncStore.saveTrustedLanPeers(_trustedPeers));
       }
-      if (peer.revision > trusted.lastSyncedRevision) {
+      final currentTrusted = _trustedPeers[idx];
+      final peerEpoch = peer.syncEpoch;
+      final epochChanged =
+          peerEpoch != null &&
+          peerEpoch.isNotEmpty &&
+          currentTrusted.lastSyncedEpoch != null &&
+          peerEpoch != currentTrusted.lastSyncedEpoch &&
+          peer.revision > 0;
+      final peerAhead = peer.revision > currentTrusted.lastSyncedRevision;
+      final needsOutboundPush = _cachedLocalRev > currentTrusted.peerAckedMySeq;
+      if (epochChanged || peerAhead || needsOutboundPush) {
         unawaited(
-          syncWithPeer(_trustedPeers[idx], hostOverride: peer.host, portOverride: peer.httpPort).catchError((Object _) {}),
+          syncWithPeer(
+            currentTrusted,
+            hostOverride: peer.host,
+            portOverride: peer.httpPort,
+            skipPullIfBeaconUnchanged: true,
+          ).catchError((Object _) {}),
         );
       }
     }
@@ -470,20 +518,30 @@ class LanPeerSyncService extends ChangeNotifier {
     if (!_disposed) notifyListeners();
   }
 
-  Future<void> notifyTrustedPeersOfLocalChange() async {
+  Future<void> notifyTrustedPeersOfLocalChange({bool bumpRevision = false}) async {
     if (!_running || _disposed || _httpServer == null) return;
-    final rev = await syncStore.bumpLocalLanRevision();
+    await mapper.ensureJournalUpToDate();
+    if (!_running || _disposed) return;
+    final rev = bumpRevision ? await syncStore.bumpLocalLanRevision() : await syncStore.getLocalLanRevision();
+    _cachedLocalRev = rev;
+    final epoch = _syncEpoch ??= await syncStore.getOrCreateSyncEpoch();
     unawaited(_sendBeacon());
     final snapshot = List<LanTrustedPeer>.from(_trustedPeers);
     for (final peer in snapshot) {
       final host = _discovered[peer.deviceId]?.host ?? peer.lastHost;
       final port = _discovered[peer.deviceId]?.httpPort ?? peer.lastPort;
       if (host == null || port == null || port <= 0) continue;
-      unawaited(_postNotify(peer, host: host, port: port, revision: rev));
+      unawaited(_postNotify(peer, host: host, port: port, revision: rev, syncEpoch: epoch));
     }
   }
 
-  Future<void> _postNotify(LanTrustedPeer peer, {required String host, required int port, required int revision}) async {
+  Future<void> _postNotify(
+    LanTrustedPeer peer, {
+    required String host,
+    required int port,
+    required int revision,
+    String? syncEpoch,
+  }) async {
     if (!_running || _httpClient == null || _httpServer == null) return;
     try {
       final ts = clock.now().millisecondsSinceEpoch;
@@ -498,7 +556,11 @@ class LanPeerSyncService extends ChangeNotifier {
               'X-Plezy-Timestamp': '$ts',
               'X-Plezy-Signature': sig,
             },
-            body: jsonEncode({'revision': revision, 'http_port': _httpServer!.port}),
+            body: jsonEncode({
+              'revision': revision,
+              'sync_epoch': ?syncEpoch,
+              'http_port': _httpServer!.port,
+            }),
           )
           .timeout(const Duration(seconds: 3));
     } catch (_) {
@@ -532,6 +594,7 @@ class LanPeerSyncService extends ChangeNotifier {
     String? hostOverride,
     int? portOverride,
     bool notifyBack = false,
+    bool skipPullIfBeaconUnchanged = false,
   }) async {
     if (!_running || _disposed || _httpClient == null) return;
     final active = _activePeerSyncs[peer.deviceId];
@@ -543,29 +606,12 @@ class LanPeerSyncService extends ChangeNotifier {
 
     final run = () async {
       _lastError = null;
-      _setProgress(SyncProgress(phase: SyncPhase.pulling, peerName: peer.deviceName));
       try {
-        final ts = clock.now().millisecondsSinceEpoch;
-        final path = '/lan/v1/sync/snapshot';
-        final sig = SyncCrypto.hmacSha256Base64(key: peer.sharedKey, message: 'GET:$path:$ts');
-        final resp = await _httpClient!
-            .get(
-              Uri.parse('http://$host:$port$path'),
-              headers: {
-                'Accept-Encoding': 'gzip',
-                'X-Plezy-Device': _deviceId!,
-                'X-Plezy-Timestamp': '$ts',
-                'X-Plezy-Signature': sig,
-              },
-            )
-            .timeout(const Duration(seconds: 10));
-        if (resp.statusCode != HttpStatus.ok) {
-          throw HttpException('LAN snapshot failed (${resp.statusCode})');
-        }
+        await mapper.ensureJournalUpToDate();
+        if (!_running || _disposed) return;
 
-        final payload = jsonDecode(utf8.decode(resp.bodyBytes)) as Map<String, dynamic>;
-        final peerRev = (payload['revision'] as num?)?.toInt() ?? 0;
-        final bundle = payload['bundle'] as Map<String, dynamic>? ?? const {};
+        final myEpoch = _syncEpoch ??= await syncStore.getOrCreateSyncEpoch();
+        _cachedLocalRev = await syncStore.getLocalLanRevision();
 
         DateTime? lastLiveNotify;
         void maybeNotifyLive({bool force = false}) {
@@ -578,43 +624,286 @@ class LanPeerSyncService extends ChangeNotifier {
           }
         }
 
-        final touched = await mapper.applyPullBatch(
-          masterKey: peer.sharedKey,
-          sources: _listOfMaps(bundle['sources']),
-          works: _listOfMaps(bundle['works']),
-          files: _listOfMaps(bundle['files']),
-          workPrefs: _listOfMaps(bundle['work_prefs']),
-          watchProgress: _listOfMaps(bundle['watch_progress']),
-          userSettings: _mapOf(bundle['user_settings']),
-          nextSeq: 0,
-          isFinalPage: true,
-          updateCloudCursor: false,
-          deterministicP2pSourceTieBreak: true,
-          onProgress: (done, total) => _setProgress(
+        final currentTrusted = _trustedPeers.where((p) => p.deviceId == peer.deviceId).firstOrNull ?? peer;
+        final discovered = _discovered[peer.deviceId];
+        final canSkipPull =
+            skipPullIfBeaconUnchanged &&
+            discovered != null &&
+            currentTrusted.lastSyncedEpoch != null &&
+            discovered.syncEpoch == currentTrusted.lastSyncedEpoch &&
+            discovered.revision <= currentTrusted.lastSyncedRevision;
+
+        var knownPeerEpoch = currentTrusted.lastSyncedEpoch;
+        var peerAckedMySeq = currentTrusted.peerAckedMySeq;
+        var anyPullApplied = false;
+
+        if (!canSkipPull) {
+          _setProgress(SyncProgress(phase: SyncPhase.pulling, peerName: peer.deviceName));
+          var sinceSeq = currentTrusted.lastSyncedEpoch == null ? 0 : currentTrusted.lastSyncedRevision;
+          var hasMore = true;
+          var resetAttempted = false;
+          var isRebuild = false;
+          var appliedAcrossPages = 0;
+          var pageIndex = 0;
+          final sessionWorkCache = <String, int>{};
+          final survivingFileIdsByMount = <String, Set<String>>{};
+          final authoritativeMountIds = <String>{};
+
+          while (hasMore && !_disposed) {
+            final ts = clock.now().millisecondsSinceEpoch;
+            const path = '/lan/v1/sync/pull';
+            final sig = SyncCrypto.hmacSha256Base64(key: peer.sharedKey, message: 'GET:$path:$ts');
+            final uri = Uri.parse('http://$host:$port$path').replace(
+              queryParameters: {
+                'since_seq': '$sinceSeq',
+                if (knownPeerEpoch != null && knownPeerEpoch.isNotEmpty) 'epoch': knownPeerEpoch,
+                'caller_epoch': myEpoch,
+                'limit': '$syncPageLimit',
+              },
+            );
+            debugSyncHttpRequestCount++;
+            final resp = await _httpClient!
+                .get(
+                  uri,
+                  headers: {
+                    'Accept-Encoding': 'gzip',
+                    'X-Plezy-Device': _deviceId!,
+                    'X-Plezy-Timestamp': '$ts',
+                    'X-Plezy-Signature': sig,
+                  },
+                )
+                .timeout(const Duration(seconds: 15));
+
+            if (resp.statusCode == HttpStatus.notFound) {
+              await _legacyPullSnapshot(
+                peer: peer,
+                host: host,
+                port: port,
+                maybeNotifyLive: maybeNotifyLive,
+              );
+              break;
+            }
+            if (resp.statusCode != HttpStatus.ok) {
+              throw HttpException('LAN pull failed (${resp.statusCode})');
+            }
+
+            final payload = jsonDecode(utf8.decode(resp.bodyBytes)) as Map<String, dynamic>;
+            final respSyncEpoch = payload['sync_epoch'] as String?;
+            final resetRequired = payload['reset_required'] == true;
+            final ackedCallerEpoch = payload['acked_caller_epoch'] as String?;
+            final ackedCallerSeq = (payload['acked_caller_seq'] as num?)?.toInt() ?? 0;
+            if (ackedCallerEpoch == myEpoch) {
+              peerAckedMySeq = math.max(peerAckedMySeq, ackedCallerSeq);
+            } else if (ackedCallerEpoch != null && ackedCallerEpoch.isNotEmpty) {
+              peerAckedMySeq = 0;
+            }
+
+            if (resetRequired) {
+              if (resetAttempted) break;
+              resetAttempted = true;
+              isRebuild = true;
+              sinceSeq = 0;
+              knownPeerEpoch = respSyncEpoch;
+              survivingFileIdsByMount.clear();
+              authoritativeMountIds.clear();
+              await _updateTrustedPeerState(
+                peer.deviceId,
+                lastSyncedRevision: 0,
+                lastSyncedEpoch: respSyncEpoch,
+                peerAckedMySeq: peerAckedMySeq,
+                host: host,
+                port: port,
+              );
+              continue;
+            }
+
+            final bundle = payload['bundle'] as Map<String, dynamic>? ?? const {};
+            final sources = _listOfMaps(bundle['sources']);
+            final works = _listOfMaps(bundle['works']);
+            final files = _listOfMaps(bundle['files']);
+            final workPrefs = _listOfMaps(bundle['work_prefs']);
+            final watchProgress = _listOfMaps(bundle['watch_progress']);
+            final pageTotal = sources.length + works.length + files.length + workPrefs.length + watchProgress.length;
+            final respNextSeq = (payload['next_seq'] as num?)?.toInt() ?? sinceSeq;
+            final respHasMore = payload['has_more'] == true;
+
+            if (isRebuild) {
+              final remaps = await syncStore.loadRemappedSources();
+              for (final src in sources) {
+                final srcId = src['source_id'] as String?;
+                if (srcId != null && srcId.isNotEmpty && src['is_deleted'] != true) {
+                  authoritativeMountIds.add(SyncLocalStore.resolveRemappedSourceIdFromMap(remaps, srcId));
+                }
+              }
+              for (final f in files) {
+                final rawSrcId = f['source_id'] as String?;
+                final relPath = f['relative_path'] as String?;
+                if (rawSrcId != null &&
+                    rawSrcId.isNotEmpty &&
+                    relPath != null &&
+                    relPath.isNotEmpty &&
+                    f['is_deleted'] != true) {
+                  final srcId = SyncLocalStore.resolveRemappedSourceIdFromMap(remaps, rawSrcId);
+                  authoritativeMountIds.add(srcId);
+                  survivingFileIdsByMount
+                      .putIfAbsent(srcId, () => <String>{})
+                      .add(DeterministicKeys.generateFileId(sourceId: srcId, mountRelativePath: relPath));
+                }
+              }
+            }
+
+            if (pageTotal > 0) {
+              await mapper.applyPullBatch(
+                masterKey: peer.sharedKey,
+                sources: sources,
+                works: works,
+                files: files,
+                workPrefs: workPrefs,
+                watchProgress: watchProgress,
+                userSettings: _mapOf(bundle['user_settings']),
+                nextSeq: respNextSeq,
+                isFinalPage: !respHasMore,
+                updateCloudCursor: false,
+                deterministicP2pSourceTieBreak: true,
+                originDeviceId: peer.deviceId,
+                originEpoch: respSyncEpoch,
+                sharedWorkItemCache: sessionWorkCache,
+                onProgress: (done, total) => _setProgress(
+                  SyncProgress(
+                    phase: SyncPhase.applying,
+                    processed: appliedAcrossPages + done,
+                    total: respHasMore ? 0 : appliedAcrossPages + total,
+                    peerName: peer.deviceName,
+                  ),
+                ),
+                onChunkApplied: () {
+                  anyPullApplied = true;
+                  maybeNotifyLive();
+                },
+              );
+              appliedAcrossPages += pageTotal;
+            }
+
+            await _updateTrustedPeerState(
+              peer.deviceId,
+              lastSyncedRevision: respNextSeq,
+              lastSyncedEpoch: respSyncEpoch,
+              peerAckedMySeq: peerAckedMySeq,
+              host: host,
+              port: port,
+            );
+
+            sinceSeq = respNextSeq;
+            knownPeerEpoch = respSyncEpoch;
+            hasMore = respHasMore;
+            pageIndex++;
+            if (debugOnPullPageCommitted != null) {
+              await debugOnPullPageCommitted!(pageIndex, respNextSeq);
+            }
+          }
+
+          if (isRebuild && authoritativeMountIds.isNotEmpty) {
+            final pruned = await mapper.pruneStaleFilesAfterRebuild(
+              survivingFileIdsByMount: survivingFileIdsByMount,
+              authoritativeMountIds: authoritativeMountIds,
+              remoteOriginId: peer.deviceId,
+            );
+            if (pruned > 0) anyPullApplied = true;
+          }
+
+          if (anyPullApplied) {
+            maybeNotifyLive(force: true);
+          }
+        }
+
+        // Phase 2: Outbound incremental push over the same working connection
+        // so asymmetric firewalls still achieve bidirectional convergence.
+        _cachedLocalRev = await syncStore.getLocalLanRevision();
+        var pushCursor = peerAckedMySeq;
+        final peerEpochForEcho = knownPeerEpoch ?? '';
+        while (pushCursor < _cachedLocalRev && !_disposed) {
+          _setProgress(
             SyncProgress(
-              phase: SyncPhase.applying,
-              processed: done,
-              total: total,
+              phase: SyncPhase.pushing,
+              processed: pushCursor,
+              total: _cachedLocalRev,
               peerName: peer.deviceName,
             ),
-          ),
-          onChunkApplied: () => maybeNotifyLive(),
-        );
-
-        final idx = _trustedPeers.indexWhere((p) => p.deviceId == peer.deviceId);
-        if (idx >= 0 && peerRev > _trustedPeers[idx].lastSyncedRevision) {
-          _trustedPeers[idx] = _trustedPeers[idx].copyWith(lastSyncedRevision: peerRev, lastHost: host, lastPort: port);
-          await syncStore.saveTrustedLanPeers(_trustedPeers);
-        }
-
-        if (touched > 0) {
-          maybeNotifyLive(force: true);
-        }
-        if (notifyBack) {
-          final myRev = await syncStore.getLocalLanRevision();
-          if (myRev > 0) {
-            await _postNotify(peer, host: host, port: port, revision: myRev);
+          );
+          final delta = await mapper.buildDeltaBundle(
+            encryptionKey: peer.sharedKey,
+            sinceSeq: pushCursor,
+            limit: syncPageLimit,
+            skipOriginDeviceId: peer.deviceId,
+            skipOriginEpoch: peerEpochForEcho,
+            skipEchoEvenFromZero: true,
+          );
+          final nextPushSeq = delta.nextSeq;
+          final ts = clock.now().millisecondsSinceEpoch;
+          const pushPath = '/lan/v1/sync/push';
+          final sig = SyncCrypto.hmacSha256Base64(key: peer.sharedKey, message: 'POST:$pushPath:$ts');
+          final bodyBytes = utf8.encode(
+            jsonEncode({
+              'sender_epoch': myEpoch,
+              'from_seq': pushCursor,
+              'to_seq': nextPushSeq,
+              'bundle': {
+                'user_settings': delta.userSettings,
+                'sources': delta.sources,
+                'works': delta.works,
+                'files': delta.files,
+                'work_prefs': delta.workPrefs,
+                'watch_progress': delta.watchProgress,
+              },
+            }),
+          );
+          final useGzip = bodyBytes.length > 512;
+          debugSyncHttpRequestCount++;
+          final pushResp = await _httpClient!
+              .post(
+                Uri.parse('http://$host:$port$pushPath'),
+                headers: {
+                  'Content-Type': 'application/json; charset=utf-8',
+                  if (useGzip) 'Content-Encoding': 'gzip',
+                  'Accept-Encoding': 'gzip',
+                  'X-Plezy-Device': _deviceId!,
+                  'X-Plezy-Timestamp': '$ts',
+                  'X-Plezy-Signature': sig,
+                },
+                body: useGzip ? gzip.encode(bodyBytes) : bodyBytes,
+              )
+              .timeout(const Duration(seconds: 15));
+          if (pushResp.statusCode == HttpStatus.notFound) {
+            if (notifyBack) {
+              await _postNotify(peer, host: host, port: port, revision: _cachedLocalRev, syncEpoch: myEpoch);
+            }
+            break;
           }
+          if (pushResp.statusCode < 200 || pushResp.statusCode >= 300) {
+            throw HttpException('LAN push failed (${pushResp.statusCode})');
+          }
+          final pushDecoded = jsonDecode(utf8.decode(pushResp.bodyBytes)) as Map<String, dynamic>;
+          final ackedSeq = (pushDecoded['acked_seq'] as num?)?.toInt() ?? nextPushSeq;
+          final prevMaxSeq = (pushDecoded['prev_max_seq'] as num?)?.toInt();
+          final respMaxSeq = (pushDecoded['current_max_seq'] as num?)?.toInt();
+          final respEpoch = pushDecoded['sync_epoch'] as String?;
+          final latestPeer = _trustedPeers.where((p) => p.deviceId == peer.deviceId).firstOrNull ?? peer;
+          final bumpSyncedRev =
+              prevMaxSeq != null &&
+              respMaxSeq != null &&
+              respEpoch != null &&
+              latestPeer.lastSyncedEpoch == respEpoch &&
+              latestPeer.lastSyncedRevision == prevMaxSeq &&
+              respMaxSeq >= prevMaxSeq;
+          await _updateTrustedPeerState(
+            peer.deviceId,
+            lastSyncedRevision: bumpSyncedRev ? respMaxSeq : null,
+            peerAckedMySeq: ackedSeq,
+            host: host,
+            port: port,
+          );
+          if (ackedSeq <= pushCursor) break;
+          pushCursor = ackedSeq;
         }
       } catch (e) {
         _lastError = '$e';
@@ -634,17 +923,108 @@ class LanPeerSyncService extends ChangeNotifier {
     }
   }
 
+  Future<void> _updateTrustedPeerState(
+    String deviceId, {
+    int? lastSyncedRevision,
+    String? lastSyncedEpoch,
+    int? peerAckedMySeq,
+    String? host,
+    int? port,
+  }) async {
+    final idx = _trustedPeers.indexWhere((p) => p.deviceId == deviceId);
+    if (idx < 0) return;
+    final cur = _trustedPeers[idx];
+    final next = cur.copyWith(
+      lastSyncedRevision: lastSyncedRevision,
+      lastSyncedEpoch: lastSyncedEpoch,
+      peerAckedMySeq: peerAckedMySeq,
+      lastHost: host,
+      lastPort: port,
+    );
+    if (next.lastSyncedRevision == cur.lastSyncedRevision &&
+        next.lastSyncedEpoch == cur.lastSyncedEpoch &&
+        next.peerAckedMySeq == cur.peerAckedMySeq &&
+        next.lastHost == cur.lastHost &&
+        next.lastPort == cur.lastPort) {
+      return;
+    }
+    _trustedPeers[idx] = next;
+    await syncStore.saveTrustedLanPeers(_trustedPeers);
+  }
+
+  Future<void> _legacyPullSnapshot({
+    required LanTrustedPeer peer,
+    required String host,
+    required int port,
+    required void Function({bool force}) maybeNotifyLive,
+  }) async {
+    final ts = clock.now().millisecondsSinceEpoch;
+    const path = '/lan/v1/sync/snapshot';
+    final sig = SyncCrypto.hmacSha256Base64(key: peer.sharedKey, message: 'GET:$path:$ts');
+    final resp = await _httpClient!
+        .get(
+          Uri.parse('http://$host:$port$path'),
+          headers: {
+            'Accept-Encoding': 'gzip',
+            'X-Plezy-Device': _deviceId!,
+            'X-Plezy-Timestamp': '$ts',
+            'X-Plezy-Signature': sig,
+          },
+        )
+        .timeout(const Duration(seconds: 10));
+    if (resp.statusCode != HttpStatus.ok) {
+      throw HttpException('LAN snapshot failed (${resp.statusCode})');
+    }
+    final payload = jsonDecode(utf8.decode(resp.bodyBytes)) as Map<String, dynamic>;
+    final peerRev = (payload['revision'] as num?)?.toInt() ?? 0;
+    final bundle = payload['bundle'] as Map<String, dynamic>? ?? const {};
+    var changed = false;
+    await mapper.applyPullBatch(
+      masterKey: peer.sharedKey,
+      sources: _listOfMaps(bundle['sources']),
+      works: _listOfMaps(bundle['works']),
+      files: _listOfMaps(bundle['files']),
+      workPrefs: _listOfMaps(bundle['work_prefs']),
+      watchProgress: _listOfMaps(bundle['watch_progress']),
+      userSettings: _mapOf(bundle['user_settings']),
+      nextSeq: 0,
+      isFinalPage: true,
+      updateCloudCursor: false,
+      deterministicP2pSourceTieBreak: true,
+      originDeviceId: peer.deviceId,
+      originEpoch: payload['sync_epoch'] as String?,
+      onProgress: (done, total) => _setProgress(
+        SyncProgress(phase: SyncPhase.applying, processed: done, total: total, peerName: peer.deviceName),
+      ),
+      onChunkApplied: () {
+        changed = true;
+        maybeNotifyLive();
+      },
+    );
+    await _updateTrustedPeerState(
+      peer.deviceId,
+      lastSyncedRevision: peerRev,
+      lastSyncedEpoch: payload['sync_epoch'] as String?,
+      host: host,
+      port: port,
+    );
+    if (changed) maybeNotifyLive(force: true);
+  }
+
   Future<void> _handleHttp(HttpRequest req) async {
     try {
       final path = req.uri.path;
       if (req.method == 'GET' && path == '/lan/v1/hello') {
-        final rev = await syncStore.getLocalLanRevision();
+        await mapper.ensureJournalUpToDate();
+        final rev = _cachedLocalRev = await syncStore.getLocalLanRevision();
+        final epoch = _syncEpoch ??= await syncStore.getOrCreateSyncEpoch();
         await _writeJson(req.response, HttpStatus.ok, {
           'device_id': _deviceId,
           'device_name': deviceName,
           'platform': Platform.operatingSystem,
           'pub_key': _pubKeyB64,
           'revision': rev,
+          'sync_epoch': epoch,
           if (_advertisedRemotePort != null) 'remote_port': _advertisedRemotePort,
         });
         return;
@@ -666,13 +1046,140 @@ class LanPeerSyncService extends ChangeNotifier {
         return;
       }
 
+      if (req.method == 'GET' && path == '/lan/v1/sync/pull') {
+        await mapper.ensureJournalUpToDate();
+        final myEpoch = _syncEpoch ??= await syncStore.getOrCreateSyncEpoch();
+        final currentMaxSeq = _cachedLocalRev = await syncStore.getLocalLanRevision();
+        final minRetained = await syncStore.getMinRetainedSeq();
+        final sinceSeq = int.tryParse(req.uri.queryParameters['since_seq'] ?? '') ?? 0;
+        final requestedEpoch = req.uri.queryParameters['epoch'];
+        final callerEpoch = req.uri.queryParameters['caller_epoch'];
+        final limit = (int.tryParse(req.uri.queryParameters['limit'] ?? '') ?? defaultPullLimit).clamp(1, 2000);
+
+        final currentTrusted = _trustedPeers.where((p) => p.deviceId == verifiedPeer.deviceId).firstOrNull ?? verifiedPeer;
+        final needsReset =
+            (requestedEpoch != null && requestedEpoch.isNotEmpty && requestedEpoch != myEpoch) ||
+            (sinceSeq > 0 && sinceSeq < minRetained) ||
+            (sinceSeq > currentMaxSeq);
+
+        if (needsReset) {
+          await _writeJson(
+            req.response,
+            HttpStatus.ok,
+            {
+              'sync_epoch': myEpoch,
+              'current_max_seq': currentMaxSeq,
+              'next_seq': 0,
+              'has_more': false,
+              'reset_required': true,
+              'acked_caller_seq': currentTrusted.lastSyncedRevision,
+              'acked_caller_epoch': currentTrusted.lastSyncedEpoch,
+              'bundle': const <String, Object?>{},
+            },
+            compress: req.headers.value('Accept-Encoding')?.contains('gzip') == true,
+          );
+          return;
+        }
+
+        final delta = await mapper.buildDeltaBundle(
+          encryptionKey: verifiedPeer.sharedKey,
+          sinceSeq: sinceSeq,
+          limit: limit,
+          skipOriginDeviceId: verifiedPeer.deviceId,
+          skipOriginEpoch: callerEpoch,
+        );
+        await _writeJson(
+          req.response,
+          HttpStatus.ok,
+          {
+            'sync_epoch': myEpoch,
+            'current_max_seq': delta.currentMaxSeq,
+            'next_seq': delta.nextSeq,
+            'has_more': delta.hasMore,
+            'reset_required': false,
+            'acked_caller_seq': currentTrusted.lastSyncedRevision,
+            'acked_caller_epoch': currentTrusted.lastSyncedEpoch,
+            'bundle': {
+              'user_settings': delta.userSettings,
+              'sources': delta.sources,
+              'works': delta.works,
+              'files': delta.files,
+              'work_prefs': delta.workPrefs,
+              'watch_progress': delta.watchProgress,
+            },
+          },
+          compress: req.headers.value('Accept-Encoding')?.contains('gzip') == true,
+        );
+        return;
+      }
+
+      if (req.method == 'POST' && path == '/lan/v1/sync/push') {
+        final body = await _readJsonBody(req);
+        final senderEpoch = body['sender_epoch'] as String?;
+        final toSeq = (body['to_seq'] as num?)?.toInt() ?? 0;
+        final bundle = body['bundle'] as Map<String, dynamic>? ?? const {};
+        final sources = _listOfMaps(bundle['sources']);
+        final works = _listOfMaps(bundle['works']);
+        final files = _listOfMaps(bundle['files']);
+        final workPrefs = _listOfMaps(bundle['work_prefs']);
+        final watchProgress = _listOfMaps(bundle['watch_progress']);
+        final total = sources.length + works.length + files.length + workPrefs.length + watchProgress.length;
+
+        final prevMaxSeq = await syncStore.getLocalLanRevision();
+        var changed = false;
+        if (total > 0) {
+          await mapper.applyPullBatch(
+            masterKey: verifiedPeer.sharedKey,
+            sources: sources,
+            works: works,
+            files: files,
+            workPrefs: workPrefs,
+            watchProgress: watchProgress,
+            userSettings: _mapOf(bundle['user_settings']),
+            nextSeq: 0,
+            isFinalPage: true,
+            updateCloudCursor: false,
+            deterministicP2pSourceTieBreak: true,
+            originDeviceId: verifiedPeer.deviceId,
+            originEpoch: senderEpoch,
+            onChunkApplied: () => changed = true,
+          );
+          if (changed && onLibraryChanged != null && !_disposed) {
+            onLibraryChanged!();
+          }
+        }
+
+        final latestTrusted = _trustedPeers.where((p) => p.deviceId == verifiedPeer.deviceId).firstOrNull ?? verifiedPeer;
+        if (toSeq > latestTrusted.lastSyncedRevision ||
+            (senderEpoch != null && senderEpoch != latestTrusted.lastSyncedEpoch)) {
+          await _updateTrustedPeerState(
+            verifiedPeer.deviceId,
+            lastSyncedRevision: toSeq,
+            lastSyncedEpoch: senderEpoch,
+          );
+        }
+
+        final myEpoch = _syncEpoch ??= await syncStore.getOrCreateSyncEpoch();
+        final currentMaxSeq = _cachedLocalRev = await syncStore.getLocalLanRevision();
+        await _writeJson(req.response, HttpStatus.ok, {
+          'ok': true,
+          'acked_seq': toSeq,
+          'sync_epoch': myEpoch,
+          'prev_max_seq': prevMaxSeq,
+          'current_max_seq': currentMaxSeq,
+        });
+        return;
+      }
+
       if (req.method == 'GET' && path == '/lan/v1/sync/snapshot') {
-        final rev = await syncStore.getLocalLanRevision();
+        await mapper.ensureJournalUpToDate();
+        final rev = _cachedLocalRev = await syncStore.getLocalLanRevision();
+        final epoch = _syncEpoch ??= await syncStore.getOrCreateSyncEpoch();
         final bundle = await mapper.buildSnapshotBundle(encryptionKey: verifiedPeer.sharedKey);
         await _writeJson(
           req.response,
           HttpStatus.ok,
-          {'revision': rev, 'bundle': bundle},
+          {'revision': rev, 'sync_epoch': epoch, 'bundle': bundle},
           compress: req.headers.value('Accept-Encoding')?.contains('gzip') == true,
         );
         return;
@@ -682,21 +1189,51 @@ class LanPeerSyncService extends ChangeNotifier {
         final body = await _readJsonBody(req);
         final remoteHost = req.connectionInfo?.remoteAddress.address ?? verifiedPeer.lastHost;
         final remotePort = (body['http_port'] as num?)?.toInt() ?? verifiedPeer.lastPort;
+        final notifyRev = (body['revision'] as num?)?.toInt();
+        final notifyEpoch = body['sync_epoch'] as String?;
+        final curTrusted = _trustedPeers.where((p) => p.deviceId == verifiedPeer.deviceId).firstOrNull ?? verifiedPeer;
+        final existingDiscovered = _discovered[verifiedPeer.deviceId];
+        if (existingDiscovered != null && notifyRev != null) {
+          final nextEpoch = (notifyEpoch != null && notifyEpoch.isNotEmpty) ? notifyEpoch : existingDiscovered.syncEpoch;
+          final sameEpoch = nextEpoch == existingDiscovered.syncEpoch;
+          _discovered[verifiedPeer.deviceId] = LanDiscoveredPeer(
+            deviceId: existingDiscovered.deviceId,
+            deviceName: existingDiscovered.deviceName,
+            platform: existingDiscovered.platform,
+            host: remoteHost ?? existingDiscovered.host,
+            httpPort: remotePort ?? existingDiscovered.httpPort,
+            pubKeyBase64: existingDiscovered.pubKeyBase64,
+            revision: sameEpoch ? math.max(existingDiscovered.revision, notifyRev) : notifyRev,
+            lastSeen: clock.now(),
+            remotePort: existingDiscovered.remotePort,
+            syncEpoch: nextEpoch,
+          );
+        }
+        final epochChanged = notifyEpoch != null &&
+            notifyEpoch.isNotEmpty &&
+            curTrusted.lastSyncedEpoch != null &&
+            notifyEpoch != curTrusted.lastSyncedEpoch;
+        final shouldSync = notifyRev == null || notifyRev > curTrusted.lastSyncedRevision || epochChanged;
         await _writeJson(req.response, HttpStatus.ok, {'ok': true});
-        unawaited(
-          syncWithPeer(
-            verifiedPeer,
-            hostOverride: remoteHost,
-            portOverride: remotePort,
-            notifyBack: false,
-          ).catchError((Object _) {}),
-        );
+        if (shouldSync) {
+          unawaited(
+            syncWithPeer(
+              curTrusted,
+              hostOverride: remoteHost,
+              portOverride: remotePort,
+              notifyBack: false,
+            ).catchError((Object _) {}),
+          );
+        }
         return;
       }
 
       await _writeJson(req.response, HttpStatus.notFound, {'error': 'not_found'});
     } catch (e) {
       appLogger.d('[LanP2P] Request handler error', error: e);
+      try {
+        await req.drain<void>();
+      } catch (_) {}
       try {
         await _writeJson(req.response, HttpStatus.badRequest, {'error': '$e'});
       } catch (_) {}
@@ -840,7 +1377,9 @@ class LanPeerSyncService extends ChangeNotifier {
   }
 
   static Future<Map<String, dynamic>> _readJsonBody(HttpRequest req) async {
-    final raw = await utf8.decodeStream(req);
+    final isGzip = req.headers.value(HttpHeaders.contentEncodingHeader)?.toLowerCase().contains('gzip') == true;
+    final Stream<List<int>> byteStream = isGzip ? gzip.decoder.bind(req) : req;
+    final raw = await utf8.decodeStream(byteStream);
     if (raw.trim().isEmpty) return const {};
     final decoded = jsonDecode(raw);
     return decoded is Map<String, dynamic> ? decoded : const {};

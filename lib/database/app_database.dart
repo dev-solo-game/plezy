@@ -386,7 +386,7 @@ class AppDatabase extends _$AppDatabase {
   static const FormatException _invalidRecoveryImage = FormatException('Invalid tvOS database recovery image');
 
   @override
-  int get schemaVersion => 35;
+  int get schemaVersion => 36;
 
   @override
   MigrationStrategy get migration {
@@ -403,6 +403,7 @@ class AppDatabase extends _$AppDatabase {
       },
       onCreate: (Migrator m) async {
         await m.createAll();
+        await _ensureSyncJournalSchema();
       },
       onUpgrade: (Migrator m, int from, int to) async {
         if (from < 7) {
@@ -897,8 +898,37 @@ class AppDatabase extends _$AppDatabase {
           await _ignoreAlreadyExists('Index idx_sync_outbox_updated', () => m.create(idxSyncOutboxUpdated));
           await _ignoreAlreadyExists('SyncMetadata table', () => m.createTable(syncMetadata));
         }
+        if (from < 36) {
+          appLogger.i('Adding sync_journal table and indexes (v36 migration)');
+          await _ensureSyncJournalSchema();
+        }
       },
     );
+  }
+
+  Future<void> _ensureSyncJournalSchema() async {
+    await customStatement('''
+      CREATE TABLE IF NOT EXISTS sync_journal (
+        entity_type       TEXT NOT NULL,
+        entity_key        TEXT NOT NULL,
+        source_id         TEXT,
+        relative_path     TEXT,
+        work_key          TEXT,
+        local_seq         INTEGER NOT NULL,
+        payload_hash      TEXT NOT NULL,
+        payload_json      TEXT NOT NULL,
+        client_updated_at INTEGER NOT NULL,
+        is_deleted        INTEGER NOT NULL DEFAULT 0,
+        origin_device_id  TEXT,
+        origin_epoch      TEXT,
+        PRIMARY KEY (entity_type, entity_key)
+      )
+    ''');
+    await customStatement('CREATE INDEX IF NOT EXISTS idx_sync_journal_seq ON sync_journal (local_seq)');
+    await customStatement(
+      'CREATE INDEX IF NOT EXISTS idx_sync_journal_source_path ON sync_journal (source_id, relative_path)',
+    );
+    await customStatement('CREATE INDEX IF NOT EXISTS idx_sync_journal_work ON sync_journal (work_key)');
   }
 
   Future<void> _ignoreAlreadyExists(String label, Future<void> Function() operation) async {

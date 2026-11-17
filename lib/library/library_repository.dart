@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:clock/clock.dart';
 import 'package:drift/drift.dart';
 
@@ -633,7 +635,10 @@ class LibraryRepository {
   Future<void> _writeState(int itemId, LibraryUserStatesCompanion changes) async {
     await _db.transaction(() async {
       if (!await _watchStates.prepareWrite(itemId)) return;
-      final now = _now();
+      final existing = await (_db.select(
+        _db.libraryUserStates,
+      )..where((t) => t.itemId.equals(itemId))).getSingleOrNull();
+      final now = existing != null ? math.max(_now(), existing.updatedAt + 1) : _now();
       final updated = await (_db.update(
         _db.libraryUserStates,
       )..where((t) => t.itemId.equals(itemId))).write(changes.copyWith(updatedAt: Value(now)));

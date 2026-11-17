@@ -92,6 +92,7 @@ class LibraryScanService extends ChangeNotifier {
     this.scrape,
     this.onLibraryChanged,
     this.onCatalogChanged,
+    this.onScopedCatalogChanged,
   }) : _libraryScanner = scanner,
        _mountManager = mounts;
 
@@ -102,6 +103,22 @@ class LibraryScanService extends ChangeNotifier {
 
   /// Called with touched mount ids after scans, JIT refreshes, or scrapes finish.
   void Function(Set<String>? mountIds)? onCatalogChanged;
+
+  /// Optional scoped catalog change callback passing directory prefixes and tombstone scope.
+  void Function(Set<String>? mountIds, {Set<String>? directoryPrefixes, bool allowTombstones})? onScopedCatalogChanged;
+
+  void _emitCatalogChanged(
+    Set<String>? mountIds, {
+    Set<String>? directoryPrefixes,
+    bool allowTombstones = true,
+  }) {
+    final scoped = onScopedCatalogChanged;
+    if (scoped != null) {
+      scoped(mountIds, directoryPrefixes: directoryPrefixes, allowTombstones: allowTombstones);
+    } else {
+      onCatalogChanged?.call(mountIds);
+    }
+  }
 
   final Set<VoidCallback> _libraryListeners = {};
 
@@ -344,6 +361,7 @@ class LibraryScanService extends ChangeNotifier {
 
     var anyChanged = false;
     final changedMounts = <String>{};
+    final changedDirectories = <String>{};
     for (final (mountId, dir) in seenTargets) {
       if (_disposed) break;
       final mount = await _mountManager.registry.get(mountId);
@@ -356,6 +374,7 @@ class LibraryScanService extends ChangeNotifier {
         if (changed) {
           anyChanged = true;
           changedMounts.add(mount.id);
+          changedDirectories.add(dir);
         }
       } catch (e) {
         appLogger.d('JIT directory refresh failed for ${mount.displayName}:$dir', error: e);
@@ -372,7 +391,11 @@ class LibraryScanService extends ChangeNotifier {
     }
     if (!_disposed) {
       _libraryChanged();
-      onCatalogChanged?.call(changedMounts);
+      _emitCatalogChanged(
+        changedMounts,
+        directoryPrefixes: changedDirectories,
+        allowTombstones: true,
+      );
     }
     return true;
   }
@@ -427,7 +450,13 @@ class LibraryScanService extends ChangeNotifier {
       _automaticFailures.remove(mount.id);
       if (!silent || result.hasChanges) _publish(mount.id, MountScanStatus(lastResult: result));
       if (job?._refreshWhenFinished != true && (!silent || result.hasChanges)) _libraryChanged();
-      if (result.hasChanges) onCatalogChanged?.call({mount.id});
+      if (result.hasChanges) {
+        _emitCatalogChanged(
+          {mount.id},
+          directoryPrefixes: result.touchedDirectories,
+          allowTombstones: result.isFullScan || result.removed > 0 || result.touchedDirectories != null,
+        );
+      }
       return result;
     } catch (e) {
       _running.remove(mount.id);
@@ -579,7 +608,7 @@ class LibraryScanService extends ChangeNotifier {
       _publishScrape(LibraryScrapeStatus(note: isCancelled() ? null : note, runs: _scrapeStatus.runs + 1));
     }
     if (job?._refreshWhenFinished != true && hasChanges) _libraryChanged();
-    if (hasChanges) onCatalogChanged?.call(mountIds);
+    if (hasChanges) _emitCatalogChanged(mountIds, allowTombstones: false);
   }
 
   /// Stops a running lookup after the title it is on.

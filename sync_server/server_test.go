@@ -370,6 +370,148 @@ func TestSourceDedupFileRekeyMonotonicAndLww(t *testing.T) {
 	}
 }
 
+func TestPushIdempotencyDoesNotAdvanceSeqForUnchangedEntities(t *testing.T) {
+	store, err := OpenSyncStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer store.Close()
+	mux := NewSyncMux(store)
+
+	regRec := doReq(t, mux, "POST", "/api/v1/auth/register", "", RegisterRequest{
+		Username:                 "idemp",
+		AuthVerifier:             "v1",
+		KdfSalt:                  "salt",
+		KdfParams:                KdfParams{Algo: "argon2id", M: 1024, T: 1, P: 1},
+		EncryptedMasterKeyBackup: "enc:mk",
+		DeviceID:                 "pc-1",
+	})
+	var auth AuthResponse
+	_ = json.Unmarshal(regRec.Body.Bytes(), &auth)
+	tok := auth.AccessToken
+
+	cp := "0:1000"
+	providerTmdb := "tmdb"
+	extID := "693134"
+	workKey := "tmdb:movie:693134"
+	fileID := generateFileID("src-1", "/Movies/Dune2.mkv")
+	srcPayload := SyncSource{
+		SourceID:        "src-1",
+		CanonicalKey:    "quark:111:0",
+		Name:            "Quark",
+		Protocol:        "quark",
+		PrimaryURL:      "quark://0",
+		IncludePaths:    []string{},
+		ExcludePaths:    []string{},
+		EncryptedAuth:   "enc:a",
+		AuthUpdatedAt:   1000,
+		QuarkCheckpoint: &cp,
+		ScanFinishedAt:  1000,
+		ClientUpdatedAt: 1000,
+	}
+	workPayload := SyncWork{
+		WorkKey:         workKey,
+		Kind:            "movie",
+		LibraryType:     "movie",
+		Provider:        &providerTmdb,
+		ExternalID:      &extID,
+		MatchStatus:     3,
+		MetadataJSON:    map[string]any{"title": "沙丘2", "year": 2024},
+		ClientUpdatedAt: 1000,
+	}
+	filePayload := SyncFile{
+		FileID:          fileID,
+		SourceID:        "src-1",
+		RelativePath:    "/Movies/Dune2.mkv",
+		Role:            "video",
+		FileName:        "Dune2.mkv",
+		FileSize:        9000,
+		FileMtime:       1000,
+		WorkKey:         &workKey,
+		SeasonNum:       -1,
+		EpisodeNum:      -1,
+		MatchStatus:     3,
+		MediaSpecJSON:   map[string]any{"width": 3840},
+		ClientUpdatedAt: 1000,
+	}
+	prefPayload := SyncWorkPref{
+		WorkKey:         workKey,
+		IntroEnabled:    true,
+		IntroEndMs:      90000,
+		IsFavorite:      true,
+		ClientUpdatedAt: 1000,
+	}
+	progPayload := SyncWatchProgress{
+		ProgressKey:     workKey,
+		WorkKey:         workKey,
+		SeasonNum:       -1,
+		EpisodeNum:      -1,
+		PositionMs:      60000,
+		DurationMs:      3600000,
+		Watched:         false,
+		ClientUpdatedAt: 1000,
+	}
+
+	firstPush := doReq(t, mux, "POST", "/api/v1/sync/push", tok, PushRequest{
+		DeviceID: "pc-1",
+		Mutations: []PushMutation{
+			{OpID: "op-1", EntityType: "source", EntityKey: "src-1", Payload: mustJSON(t, srcPayload)},
+			{OpID: "op-2", EntityType: "work", EntityKey: workKey, Payload: mustJSON(t, workPayload)},
+			{OpID: "op-3", EntityType: "file", EntityKey: fileID, Payload: mustJSON(t, filePayload)},
+			{OpID: "op-4", EntityType: "work_pref", EntityKey: workKey, Payload: mustJSON(t, prefPayload)},
+			{OpID: "op-5", EntityType: "watch_progress", EntityKey: workKey, Payload: mustJSON(t, progPayload)},
+		},
+	})
+	if firstPush.Code != http.StatusOK {
+		t.Fatalf("first push failed: %d %s", firstPush.Code, firstPush.Body.String())
+	}
+
+	pull1 := doReq(t, mux, "GET", "/api/v1/sync/pull?since_seq=0", tok, nil)
+	var p1 PullResponse
+	_ = json.Unmarshal(pull1.Body.Bytes(), &p1)
+	if p1.NextSeq != 5 {
+		t.Fatalf("expected next_seq=5 after initial 5 entities, got %d", p1.NextSeq)
+	}
+
+	// Re-push identical semantics with brand-new opIds, newer ClientUpdatedAt, ScanFinishedAt, and re-encrypted auth nonce.
+	srcPayload.ScanFinishedAt = 2000
+	srcPayload.EncryptedAuth = "enc:re-encrypted-with-new-nonce"
+	srcPayload.ClientUpdatedAt = 2000
+	workPayload.ClientUpdatedAt = 2000
+	filePayload.ClientUpdatedAt = 2000
+	prefPayload.ClientUpdatedAt = 2000
+	progPayload.ClientUpdatedAt = 2000
+
+	secondPush := doReq(t, mux, "POST", "/api/v1/sync/push", tok, PushRequest{
+		DeviceID: "pc-1",
+		Mutations: []PushMutation{
+			{OpID: "op-2-1", EntityType: "source", EntityKey: "src-1", Payload: mustJSON(t, srcPayload)},
+			{OpID: "op-2-2", EntityType: "work", EntityKey: workKey, Payload: mustJSON(t, workPayload)},
+			{OpID: "op-2-3", EntityType: "file", EntityKey: fileID, Payload: mustJSON(t, filePayload)},
+			{OpID: "op-2-4", EntityType: "work_pref", EntityKey: workKey, Payload: mustJSON(t, prefPayload)},
+			{OpID: "op-2-5", EntityType: "watch_progress", EntityKey: workKey, Payload: mustJSON(t, progPayload)},
+		},
+	})
+	if secondPush.Code != http.StatusOK {
+		t.Fatalf("second push failed: %d", secondPush.Code)
+	}
+	var push2Resp PushResponse
+	_ = json.Unmarshal(secondPush.Body.Bytes(), &push2Resp)
+	if len(push2Resp.AcceptedOpIDs) != 5 {
+		t.Fatalf("expected all 5 opIds acked, got %d", len(push2Resp.AcceptedOpIDs))
+	}
+
+	pull2 := doReq(t, mux, "GET", "/api/v1/sync/pull?since_seq="+itoa64(p1.NextSeq), tok, nil)
+	var p2 PullResponse
+	_ = json.Unmarshal(pull2.Body.Bytes(), &p2)
+	if p2.NextSeq != p1.NextSeq || p2.CurrentMaxSeq != p1.CurrentMaxSeq ||
+		len(p2.Data.Sources)+len(p2.Data.Works)+len(p2.Data.Files)+len(p2.Data.WorkPrefs)+len(p2.Data.WatchProgress) != 0 {
+		t.Fatalf("expected 0 deltas and unchanged seq=%d, got next=%d max=%d counts=(%d,%d,%d,%d,%d)",
+			p1.NextSeq, p2.NextSeq, p2.CurrentMaxSeq,
+			len(p2.Data.Sources), len(p2.Data.Works), len(p2.Data.Files), len(p2.Data.WorkPrefs), len(p2.Data.WatchProgress))
+	}
+}
+
 func itoa64(v int64) string {
 	b, _ := json.Marshal(v)
 	return string(b)

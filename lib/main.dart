@@ -1816,7 +1816,14 @@ class _MainAppState extends State<MainApp> with WidgetsBindingObserver {
               scanService: scanService,
               isTvDevice: TvDetectionService.isTVSync(),
             );
-            scanService.onCatalogChanged = (mountIds) => unawaited(coordinator.onCatalogChanged(mountIds: mountIds));
+            scanService.onScopedCatalogChanged =
+                (mountIds, {directoryPrefixes, allowTombstones = true}) => unawaited(
+                  coordinator.onCatalogChanged(
+                    mountIds: mountIds,
+                    directoryPrefixes: directoryPrefixes,
+                    allowTombstones: allowTombstones,
+                  ),
+                );
             localClient.onSyncOutboxEnqueued = () => unawaited(coordinator.onPlaybackOutboxQueued());
             unawaited(
               coordinator.initialize().then((_) {

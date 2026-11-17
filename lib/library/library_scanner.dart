@@ -32,7 +32,14 @@ class ScanProgress {
 }
 
 class ScanResult {
-  const ScanResult({required this.videos, required this.removed, required this.cancelled, this.hasChanges = true});
+  const ScanResult({
+    required this.videos,
+    required this.removed,
+    required this.cancelled,
+    this.hasChanges = true,
+    this.isFullScan = false,
+    this.touchedDirectories,
+  });
 
   /// Videos seen by this run.
   final int videos;
@@ -44,6 +51,12 @@ class ScanResult {
   final bool cancelled;
 
   final bool hasChanges;
+
+  /// True when every allowed directory on the mount was traversed without cancellation.
+  final bool isFullScan;
+
+  /// Directories updated during an incremental scan when not checking full-mount deletions.
+  final Set<String>? touchedDirectories;
 }
 
 /// Walks a mount, records what it finds in the library tables, and files each
@@ -196,7 +209,7 @@ class LibraryScanner {
               : Value('${quark.rootFolderId}:$watermark'),
         ),
       );
-      return ScanResult(videos: videos, removed: removed, cancelled: false);
+      return ScanResult(videos: videos, removed: removed, cancelled: false, isFullScan: true);
     });
   }
 
@@ -324,6 +337,8 @@ class LibraryScanner {
           removed: removed,
           cancelled: false,
           hasChanges: listings.isNotEmpty || removed > 0,
+          isFullScan: false,
+          touchedDirectories: removed > 0 ? null : listings.keys.toSet(),
         );
       });
     } on _IncrementalCancelled {

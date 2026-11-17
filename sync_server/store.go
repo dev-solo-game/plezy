@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -764,8 +765,8 @@ func (s *SyncStore) applySourceLocked(u *UserSyncState, incoming *SyncSource, ba
 	}
 
 	existing, exists := u.Sources[incoming.SourceID]
-	seq := u.allocSeq()
 	if !exists {
+		seq := u.allocSeq()
 		copySrc := *incoming
 		copySrc.ServerSeq = seq
 		u.Sources[copySrc.SourceID] = &copySrc
@@ -775,8 +776,13 @@ func (s *SyncStore) applySourceLocked(u *UserSyncState, incoming *SyncSource, ba
 		return seq
 	}
 
+	if existing.IsDeleted && incoming.IsDeleted {
+		return existing.ServerSeq
+	}
+
 	if incoming.IsDeleted && !existing.IsDeleted {
 		if incoming.ClientUpdatedAt >= existing.ClientUpdatedAt {
+			seq := u.allocSeq()
 			existing.IsDeleted = true
 			existing.ClientUpdatedAt = incoming.ClientUpdatedAt
 			existing.ServerSeq = seq
@@ -791,23 +797,44 @@ func (s *SyncStore) applySourceLocked(u *UserSyncState, incoming *SyncSource, ba
 					f.ServerSeq = u.allocSeq()
 				}
 			}
+			return seq
 		}
-		return seq
+		return existing.ServerSeq
 	}
 
 	// Update / merge non-deleted (or resurrected) source.
-	existing.IsDeleted = incoming.IsDeleted
-	existing.QuarkCheckpoint = mergeQuarkCheckpoint(existing.QuarkCheckpoint, incoming.QuarkCheckpoint)
+	resurrected := existing.IsDeleted != incoming.IsDeleted
+	mergedCp := mergeQuarkCheckpoint(existing.QuarkCheckpoint, incoming.QuarkCheckpoint)
+	cpChanged := !strPtrEqual(mergedCp, existing.QuarkCheckpoint)
 	if incoming.ScanFinishedAt > existing.ScanFinishedAt {
 		existing.ScanFinishedAt = incoming.ScanFinishedAt
 	}
-	if incoming.EncryptedAuth != "" && (incoming.ForceAuthOverride || incoming.AuthUpdatedAt >= existing.AuthUpdatedAt || existing.EncryptedAuth == "") {
+
+	authChanged := false
+	if incoming.EncryptedAuth != "" &&
+		(incoming.ForceAuthOverride ||
+			incoming.AuthUpdatedAt > existing.AuthUpdatedAt ||
+			existing.EncryptedAuth == "") {
 		existing.EncryptedAuth = incoming.EncryptedAuth
 		if incoming.AuthUpdatedAt > existing.AuthUpdatedAt {
 			existing.AuthUpdatedAt = incoming.AuthUpdatedAt
 		}
+		authChanged = true
 	}
+
+	metaChanged := false
 	if incoming.ClientUpdatedAt >= existing.ClientUpdatedAt {
+		if incoming.Name != existing.Name ||
+			incoming.Protocol != existing.Protocol ||
+			incoming.IsLanOnly != existing.IsLanOnly ||
+			incoming.PrimaryURL != existing.PrimaryURL ||
+			(incoming.FallbackURL != nil && !strPtrEqual(incoming.FallbackURL, existing.FallbackURL)) ||
+			(len(incoming.ConfigJSON) > 0 && !jsonMapEqual(incoming.ConfigJSON, existing.ConfigJSON)) ||
+			!strSliceEqual(incoming.IncludePaths, existing.IncludePaths) ||
+			!strSliceEqual(incoming.ExcludePaths, existing.ExcludePaths) ||
+			(incoming.CanonicalKey != "" && incoming.CanonicalKey != existing.CanonicalKey) {
+			metaChanged = true
+		}
 		existing.Name = incoming.Name
 		existing.Protocol = incoming.Protocol
 		existing.IsLanOnly = incoming.IsLanOnly
@@ -825,11 +852,135 @@ func (s *SyncStore) applySourceLocked(u *UserSyncState, incoming *SyncSource, ba
 		}
 		existing.ClientUpdatedAt = incoming.ClientUpdatedAt
 	}
-	existing.ServerSeq = seq
+
+	existing.IsDeleted = incoming.IsDeleted
+	existing.QuarkCheckpoint = mergedCp
 	if !existing.IsDeleted && existing.CanonicalKey != "" {
 		u.CanonicalToSource[existing.CanonicalKey] = existing.SourceID
 	}
+
+	if !resurrected && !cpChanged && !authChanged && !metaChanged {
+		return existing.ServerSeq
+	}
+	seq := u.allocSeq()
+	existing.ServerSeq = seq
 	return seq
+}
+
+func strPtrEqual(a, b *string) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	return *a == *b
+}
+
+func intPtrEqual(a, b *int) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	return *a == *b
+}
+
+func int64PtrEqual(a, b *int64) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	return *a == *b
+}
+
+func strSliceEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func jsonMapEqual(a, b map[string]any) bool {
+	if len(a) == 0 && len(b) == 0 {
+		return true
+	}
+	ba, errA := json.Marshal(a)
+	bb, errB := json.Marshal(b)
+	if errA != nil || errB != nil {
+		return false
+	}
+	return bytes.Equal(ba, bb)
+}
+
+func sameSyncWork(a, b *SyncWork) bool {
+	return a.Kind == b.Kind &&
+		a.LibraryType == b.LibraryType &&
+		strPtrEqual(a.Provider, b.Provider) &&
+		strPtrEqual(a.ExternalID, b.ExternalID) &&
+		a.MatchStatus == b.MatchStatus &&
+		a.IsDeleted == b.IsDeleted &&
+		jsonMapEqual(a.MetadataJSON, b.MetadataJSON)
+}
+
+func sameSyncFile(a, b *SyncFile) bool {
+	return a.SourceID == b.SourceID &&
+		a.RelativePath == b.RelativePath &&
+		strPtrEqual(a.RemoteID, b.RemoteID) &&
+		a.Role == b.Role &&
+		strPtrEqual(a.OwnerFileID, b.OwnerFileID) &&
+		strPtrEqual(a.Language, b.Language) &&
+		a.FileName == b.FileName &&
+		a.FileSize == b.FileSize &&
+		a.FileMtime == b.FileMtime &&
+		a.FileCreatedAt == b.FileCreatedAt &&
+		strPtrEqual(a.WorkKey, b.WorkKey) &&
+		a.SeasonNum == b.SeasonNum &&
+		a.EpisodeNum == b.EpisodeNum &&
+		intPtrEqual(a.EpisodeEndNum, b.EpisodeEndNum) &&
+		a.MatchStatus == b.MatchStatus &&
+		strPtrEqual(a.VersionLabel, b.VersionLabel) &&
+		strPtrEqual(a.ParsedJSON, b.ParsedJSON) &&
+		a.IsDeleted == b.IsDeleted &&
+		jsonMapEqual(a.MediaSpecJSON, b.MediaSpecJSON)
+}
+
+func sameSyncWorkPref(a, b *SyncWorkPref) bool {
+	return a.WorkKey == b.WorkKey &&
+		a.IntroEnabled == b.IntroEnabled &&
+		a.IntroStartMs == b.IntroStartMs &&
+		a.IntroEndMs == b.IntroEndMs &&
+		a.CreditsEnabled == b.CreditsEnabled &&
+		a.CreditsFromEndMs == b.CreditsFromEndMs &&
+		a.KeepEasterEggMs == b.KeepEasterEggMs &&
+		strPtrEqual(a.PreferredAudioLang, b.PreferredAudioLang) &&
+		strPtrEqual(a.PreferredSubLang, b.PreferredSubLang) &&
+		a.PlaybackSpeed == b.PlaybackSpeed &&
+		a.DanmakuOffsetMs == b.DanmakuOffsetMs &&
+		a.IsFavorite == b.IsFavorite &&
+		a.HiddenFromContinue == b.HiddenFromContinue
+}
+
+func sameSyncWatchProgress(a, b *SyncWatchProgress) bool {
+	return a.ProgressKey == b.ProgressKey &&
+		a.WorkKey == b.WorkKey &&
+		a.SeasonNum == b.SeasonNum &&
+		a.EpisodeNum == b.EpisodeNum &&
+		strPtrEqual(a.LastFileID, b.LastFileID) &&
+		a.PositionMs == b.PositionMs &&
+		a.DurationMs == b.DurationMs &&
+		a.Watched == b.Watched &&
+		a.PlayCount == b.PlayCount &&
+		int64PtrEqual(a.LastPlayedAt, b.LastPlayedAt) &&
+		jsonMapEqual(a.EpisodeExtJSON, b.EpisodeExtJSON)
 }
 
 func shouldOverrideEntity(remoteDeleted, localDeleted bool, remoteMatch, localMatch int, remoteUpdated, localUpdated int64, explicitUnlock bool) bool {
@@ -850,16 +1001,18 @@ func (s *SyncStore) applyWorkLocked(u *UserSyncState, incoming *SyncWork) int64 
 		incoming.MetadataJSON = map[string]any{}
 	}
 	existing, exists := u.Works[incoming.WorkKey]
-	if exists && !shouldOverrideEntity(
-		incoming.IsDeleted,
-		existing.IsDeleted,
-		incoming.MatchStatus,
-		existing.MatchStatus,
-		incoming.ClientUpdatedAt,
-		existing.ClientUpdatedAt,
-		incoming.ExplicitUnlock,
-	) {
-		return existing.ServerSeq
+	if exists {
+		if !shouldOverrideEntity(
+			incoming.IsDeleted,
+			existing.IsDeleted,
+			incoming.MatchStatus,
+			existing.MatchStatus,
+			incoming.ClientUpdatedAt,
+			existing.ClientUpdatedAt,
+			incoming.ExplicitUnlock,
+		) || sameSyncWork(existing, incoming) {
+			return existing.ServerSeq
+		}
 	}
 	seq := u.allocSeq()
 	copyWork := *incoming
@@ -894,16 +1047,18 @@ func (s *SyncStore) applyFileLocked(u *UserSyncState, incoming *SyncFile) int64 
 	}
 
 	existing, exists := u.Files[incoming.FileID]
-	if exists && !shouldOverrideEntity(
-		incoming.IsDeleted,
-		existing.IsDeleted,
-		incoming.MatchStatus,
-		existing.MatchStatus,
-		incoming.ClientUpdatedAt,
-		existing.ClientUpdatedAt,
-		incoming.ExplicitUnlock,
-	) {
-		return existing.ServerSeq
+	if exists {
+		if !shouldOverrideEntity(
+			incoming.IsDeleted,
+			existing.IsDeleted,
+			incoming.MatchStatus,
+			existing.MatchStatus,
+			incoming.ClientUpdatedAt,
+			existing.ClientUpdatedAt,
+			incoming.ExplicitUnlock,
+		) || sameSyncFile(existing, incoming) {
+			return existing.ServerSeq
+		}
 	}
 	seq := u.allocSeq()
 	copyFile := *incoming
@@ -915,7 +1070,7 @@ func (s *SyncStore) applyFileLocked(u *UserSyncState, incoming *SyncFile) int64 
 
 func (s *SyncStore) applyWorkPrefLocked(u *UserSyncState, incoming *SyncWorkPref) int64 {
 	existing, exists := u.WorkPrefs[incoming.WorkKey]
-	if exists && incoming.ClientUpdatedAt < existing.ClientUpdatedAt {
+	if exists && (incoming.ClientUpdatedAt < existing.ClientUpdatedAt || sameSyncWorkPref(existing, incoming)) {
 		return existing.ServerSeq
 	}
 	seq := u.allocSeq()
@@ -930,7 +1085,7 @@ func (s *SyncStore) applyWatchProgressLocked(u *UserSyncState, incoming *SyncWat
 		incoming.EpisodeExtJSON = map[string]any{}
 	}
 	existing, exists := u.WatchProgress[incoming.ProgressKey]
-	if exists && incoming.ClientUpdatedAt < existing.ClientUpdatedAt {
+	if exists && (incoming.ClientUpdatedAt < existing.ClientUpdatedAt || sameSyncWatchProgress(existing, incoming)) {
 		return existing.ServerSeq
 	}
 	seq := u.allocSeq()

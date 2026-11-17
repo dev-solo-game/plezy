@@ -13,6 +13,7 @@ import '../../utils/app_logger.dart';
 import '../library_repository.dart';
 import '../library_scan_service.dart';
 import '../library_settings.dart';
+import 'deterministic_keys.dart';
 import 'lan_peer_sync_service.dart';
 import 'sync_api_client.dart';
 import 'sync_crypto.dart';
@@ -115,6 +116,14 @@ class SyncAndScanCoordinator extends ChangeNotifier {
     _pendingOutboxCount = (await syncStore.readPendingOutbox(limit: 1000)).length;
     if (_disposed) return;
     _initialized = true;
+
+    final gc = await syncStore.journal.pruneExpiredTombstones(nowMs: clock.now().millisecondsSinceEpoch);
+    if (gc.maxPurgedSeq > 0) {
+      final oldMin = await syncStore.getMinRetainedSeq();
+      if (gc.maxPurgedSeq > oldMin) {
+        await syncStore.saveMinRetainedSeq(gc.maxPurgedSeq);
+      }
+    }
 
     if (_session != null) {
       await syncStore.setSyncMode(SyncMode.cloudServer);
@@ -361,17 +370,13 @@ class SyncAndScanCoordinator extends ChangeNotifier {
 
   Future<void> onMountSaved(StorageMount mount) async {
     await initialize();
+    if (mount.kind == StorageKind.local) return;
     final sess = _session;
-    if (mount.kind != StorageKind.local) {
-      await syncStore.bumpLocalLanRevision();
-    }
     if (sess == null) {
-      if (mount.kind != StorageKind.local) {
-        unawaited(lanService.notifyTrustedPeersOfLocalChange());
-      }
+      await mapper.reconcileCatalogToJournal(mountIds: {mount.id}, allowTombstones: false);
+      unawaited(lanService.notifyTrustedPeersOfLocalChange());
       return;
     }
-    if (mount.kind == StorageKind.local) return;
     await syncStore.setAuthUpdatedAt(mount.id, await syncStore.calibratedNowMs());
     await mapper.enqueueMount(mount, masterKey: sess.masterKey, forceAuthOverride: true);
     await refreshOutboxCount();
@@ -380,25 +385,37 @@ class SyncAndScanCoordinator extends ChangeNotifier {
 
   Future<void> onMountRemoved(String mountId) async {
     await initialize();
-    await syncStore.bumpLocalLanRevision();
-    if (_session == null) {
-      unawaited(lanService.notifyTrustedPeersOfLocalChange());
-      return;
-    }
-    await mapper.enqueueMountDeletion(mountId);
-    await refreshOutboxCount();
-    unawaited(pushOutboxOnly());
-  }
-
-  Future<void> onCatalogChanged({Set<String>? mountIds}) async {
-    await initialize();
-    await syncStore.bumpLocalLanRevision();
+    await mapper.reconcileMountRemovalToJournal(mountId);
     final sess = _session;
     if (sess == null) {
       unawaited(lanService.notifyTrustedPeersOfLocalChange());
       return;
     }
-    await mapper.enqueueSharedCatalog(masterKey: sess.masterKey, mountIds: mountIds, includeAllWorkStates: true);
+    await mapper.enqueuePendingJournalForCloud(masterKey: sess.masterKey);
+    await mapper.enqueueMountDeletion(mountId);
+    await refreshOutboxCount();
+    unawaited(pushOutboxOnly());
+  }
+
+  Future<void> onCatalogChanged({
+    Set<String>? mountIds,
+    Set<String>? directoryPrefixes,
+    bool allowTombstones = true,
+  }) async {
+    await initialize();
+    final changed = await mapper.reconcileCatalogToJournal(
+      mountIds: mountIds,
+      directoryPrefixes: directoryPrefixes,
+      allowTombstones: allowTombstones,
+      includeWorkStates: false,
+    );
+    if (changed == 0) return;
+    final sess = _session;
+    if (sess == null) {
+      unawaited(lanService.notifyTrustedPeersOfLocalChange());
+      return;
+    }
+    await mapper.enqueuePendingJournalForCloud(masterKey: sess.masterKey);
     await refreshOutboxCount();
     unawaited(pushOutboxOnly());
   }
@@ -455,16 +472,20 @@ class SyncAndScanCoordinator extends ChangeNotifier {
       // [Stage 2] Pull-Before-Scan (_pullAllDeltas fires throttled + final live refreshes immediately).
       await _pullAllDeltas(sess);
 
-      // Export pre-login offline library baseline once so offline devices merge cleanly.
+      // Export pre-login / unsynced local journal delta cleanly without re-pushing unchanged items.
       final exportedRow = await (db.select(
         db.syncMetadata,
       )..where((t) => t.key.equals(_kExportedUserKey))).getSingleOrNull();
       if (exportedRow?.value != sess.userId) {
-        await mapper.enqueueSharedCatalog(masterKey: sess.masterKey, includeAllWorkStates: true);
+        await mapper.reconcileCatalogToJournal(allowTombstones: true, includeWorkStates: true);
         await db
             .into(db.syncMetadata)
             .insertOnConflictUpdate(SyncMetadataCompanion.insert(key: _kExportedUserKey, value: sess.userId));
+      } else {
+        await mapper.ensureJournalUpToDate();
       }
+      await mapper.enqueuePendingJournalForCloud(masterKey: sess.masterKey);
+      await refreshOutboxCount();
 
       // [Stage 5 / Push local mutations]
       final remapped = await _pushPendingOutbox(sess);
@@ -517,7 +538,11 @@ class SyncAndScanCoordinator extends ChangeNotifier {
     var hasMore = true;
     var anyChanges = false;
     var resetAttempted = false;
+    var isRebuild = false;
     var appliedAcrossPages = 0;
+    final sessionWorkCache = <String, int>{};
+    final survivingFileIdsByMount = <String, Set<String>>{};
+    final authoritativeMountIds = <String>{};
     DateTime? lastLiveNotify;
 
     void maybeNotifyLive({bool force = false}) {
@@ -539,11 +564,39 @@ class SyncAndScanCoordinator extends ChangeNotifier {
       if (resp.resetRequired) {
         if (resetAttempted) break;
         resetAttempted = true;
+        isRebuild = true;
+        survivingFileIdsByMount.clear();
+        authoritativeMountIds.clear();
         await syncStore.resetSyncCursorsForFullRebuild();
         localSeq = 0;
         appliedAcrossPages = 0;
         hasMore = true;
         continue;
+      }
+
+      if (isRebuild) {
+        final remaps = await syncStore.loadRemappedSources();
+        for (final src in resp.sources) {
+          final srcId = src['source_id'] as String?;
+          if (srcId != null && srcId.isNotEmpty && src['is_deleted'] != true) {
+            authoritativeMountIds.add(SyncLocalStore.resolveRemappedSourceIdFromMap(remaps, srcId));
+          }
+        }
+        for (final f in resp.files) {
+          final rawSrcId = f['source_id'] as String?;
+          final relPath = f['relative_path'] as String?;
+          if (rawSrcId != null &&
+              rawSrcId.isNotEmpty &&
+              relPath != null &&
+              relPath.isNotEmpty &&
+              f['is_deleted'] != true) {
+            final srcId = SyncLocalStore.resolveRemappedSourceIdFromMap(remaps, rawSrcId);
+            authoritativeMountIds.add(srcId);
+            survivingFileIdsByMount
+                .putIfAbsent(srcId, () => <String>{})
+                .add(DeterministicKeys.generateFileId(sourceId: srcId, mountRelativePath: relPath));
+          }
+        }
       }
 
       final pageTotal = resp.sources.length +
@@ -562,13 +615,18 @@ class SyncAndScanCoordinator extends ChangeNotifier {
         userSettings: resp.userSettings,
         nextSeq: resp.nextSeq,
         isFinalPage: !resp.hasMore,
-        onProgress: (done, total) => _setProgress(
-          SyncProgress(
-            phase: SyncPhase.applying,
-            processed: appliedAcrossPages + done,
-            total: resp.hasMore ? 0 : appliedAcrossPages + total,
-          ),
-        ),
+        originDeviceId: 'cloud',
+        originEpoch: sess.userId,
+        sharedWorkItemCache: sessionWorkCache,
+        onProgress: pageTotal == 0
+            ? null
+            : (done, total) => _setProgress(
+                  SyncProgress(
+                    phase: SyncPhase.applying,
+                    processed: appliedAcrossPages + done,
+                    total: resp.hasMore ? 0 : appliedAcrossPages + total,
+                  ),
+                ),
         onChunkApplied: () {
           anyChanges = true;
           maybeNotifyLive();
@@ -578,6 +636,15 @@ class SyncAndScanCoordinator extends ChangeNotifier {
       appliedAcrossPages += pageTotal;
       localSeq = resp.nextSeq;
       hasMore = resp.hasMore;
+    }
+
+    if (isRebuild && authoritativeMountIds.isNotEmpty) {
+      final pruned = await mapper.pruneStaleFilesAfterRebuild(
+        survivingFileIdsByMount: survivingFileIdsByMount,
+        authoritativeMountIds: authoritativeMountIds,
+        remoteOriginId: 'cloud',
+      );
+      if (pruned > 0) anyChanges = true;
     }
 
     if (anyChanges) {

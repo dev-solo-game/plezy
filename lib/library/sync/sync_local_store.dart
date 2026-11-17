@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:clock/clock.dart';
 import 'package:drift/drift.dart';
@@ -12,6 +13,7 @@ import '../../services/work_skip_settings_store.dart';
 import '../library_watch_state_store.dart';
 import 'deterministic_keys.dart';
 import 'sync_crypto.dart';
+import 'sync_journal_store.dart';
 
 enum SyncMode { lanP2p, cloudServer }
 
@@ -26,6 +28,8 @@ class LanTrustedPeer {
     this.lastHost,
     this.lastPort,
     this.lastRemotePort,
+    this.lastSyncedEpoch,
+    this.peerAckedMySeq = 0,
   });
 
   final String deviceId;
@@ -37,6 +41,8 @@ class LanTrustedPeer {
   final String? lastHost;
   final int? lastPort;
   final int? lastRemotePort;
+  final String? lastSyncedEpoch;
+  final int peerAckedMySeq;
 
   Uint8List get sharedKey => Uint8List.fromList(base64Decode(sharedKeyBase64));
 
@@ -47,6 +53,9 @@ class LanTrustedPeer {
     int? lastPort,
     int? lastRemotePort,
     bool clearLastRemotePort = false,
+    String? lastSyncedEpoch,
+    bool clearLastSyncedEpoch = false,
+    int? peerAckedMySeq,
   }) => LanTrustedPeer(
     deviceId: deviceId,
     deviceName: deviceName ?? this.deviceName,
@@ -57,6 +66,8 @@ class LanTrustedPeer {
     lastHost: lastHost ?? this.lastHost,
     lastPort: lastPort ?? this.lastPort,
     lastRemotePort: clearLastRemotePort ? null : (lastRemotePort ?? this.lastRemotePort),
+    lastSyncedEpoch: clearLastSyncedEpoch ? null : (lastSyncedEpoch ?? this.lastSyncedEpoch),
+    peerAckedMySeq: peerAckedMySeq ?? this.peerAckedMySeq,
   );
 
   Map<String, Object?> toJson() => {
@@ -69,6 +80,8 @@ class LanTrustedPeer {
     if (lastHost != null) 'last_host': lastHost,
     if (lastPort != null) 'last_port': lastPort,
     if (lastRemotePort != null) 'last_remote_port': lastRemotePort,
+    if (lastSyncedEpoch != null) 'last_synced_epoch': lastSyncedEpoch,
+    if (peerAckedMySeq > 0) 'peer_acked_my_seq': peerAckedMySeq,
   };
 
   factory LanTrustedPeer.fromJson(Map<String, dynamic> json) => LanTrustedPeer(
@@ -81,6 +94,8 @@ class LanTrustedPeer {
     lastHost: json['last_host'] as String?,
     lastPort: (json['last_port'] as num?)?.toInt(),
     lastRemotePort: (json['last_remote_port'] as num?)?.toInt(),
+    lastSyncedEpoch: json['last_synced_epoch'] as String?,
+    peerAckedMySeq: (json['peer_acked_my_seq'] as num?)?.toInt() ?? 0,
   );
 }
 
@@ -90,6 +105,7 @@ class SyncLocalStore {
   SyncLocalStore(this.db);
 
   final AppDatabase db;
+  late final SyncJournalStore journal = SyncJournalStore(db);
 
   static const String _kLastPullSeq = 'last_pull_seq';
   static const String _kServerTimeOffsetMs = 'server_time_offset_ms';
@@ -108,12 +124,20 @@ class SyncLocalStore {
   static const String _kLanTrustedPeers = 'sync_lan_trusted_peers';
   static const String _kLanPromptedPeers = 'sync_lan_prompted_peers';
   static const String _kLanRevision = 'sync_lan_revision';
+  static const String _kSyncEpoch = 'sync_journal_epoch';
+  static const String _kMinRetainedSeq = 'sync_journal_min_retained_seq';
+  static const String _kCloudPushedSeq = 'sync_cloud_pushed_seq';
+  static const String _kRemappedSources = 'sync_remapped_sources';
+  static const String _kJournalBootstrapped = 'sync_journal_bootstrapped_v1';
 
   static const String typeSource = 'source';
   static const String typeWork = 'work';
   static const String typeFile = 'file';
   static const String typeWorkPref = 'work_pref';
   static const String typeWatchProgress = 'watch_progress';
+
+  static int computeNextHlc(int proposedMs, int existingMs) =>
+      proposedMs > existingMs ? proposedMs : existingMs + 1;
 
   Future<String?> _getMeta(String key) async {
     final row = await (db.select(db.syncMetadata)..where((t) => t.key.equals(key))).getSingleOrNull();
@@ -140,6 +164,64 @@ class SyncLocalStore {
     return generated;
   }
 
+  Future<String> getOrCreateSyncEpoch() async {
+    final existing = await _getMeta(_kSyncEpoch);
+    if (existing != null && existing.isNotEmpty) return existing;
+    final generated = const Uuid().v4();
+    await _putMeta(_kSyncEpoch, generated);
+    return generated;
+  }
+
+  Future<int> getMinRetainedSeq() async => int.tryParse(await _getMeta(_kMinRetainedSeq) ?? '') ?? 0;
+
+  Future<void> saveMinRetainedSeq(int seq) => _putMeta(_kMinRetainedSeq, '$seq');
+
+  Future<int> getCloudPushedSeq() async => int.tryParse(await _getMeta(_kCloudPushedSeq) ?? '') ?? 0;
+
+  Future<void> saveCloudPushedSeq(int seq) => _putMeta(_kCloudPushedSeq, '$seq');
+
+  Future<bool> isJournalBootstrapped() async => await _getMeta(_kJournalBootstrapped) == 'true';
+
+  Future<void> markJournalBootstrapped() => _putMeta(_kJournalBootstrapped, 'true');
+
+  Future<Map<String, String>> loadRemappedSources() async {
+    final raw = await _getMeta(_kRemappedSources);
+    if (raw == null || raw.isEmpty) return {};
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return {};
+      return {
+        for (final entry in decoded.entries)
+          if (entry.key is String && entry.value is String) '${entry.key}': '${entry.value}',
+      };
+    } on FormatException {
+      return {};
+    }
+  }
+
+  Future<void> recordRemappedSource(String oldSourceId, String newSourceId) async {
+    if (oldSourceId == newSourceId || oldSourceId.isEmpty || newSourceId.isEmpty) return;
+    final current = await loadRemappedSources();
+    // Collapse any chain already pointing to oldSourceId directly onto newSourceId.
+    final resolvedTarget = resolveRemappedSourceIdFromMap(current, newSourceId);
+    current[oldSourceId] = resolvedTarget;
+    for (final entry in current.entries.toList()) {
+      current[entry.key] = resolveRemappedSourceIdFromMap(current, entry.value);
+    }
+    await _putMeta(_kRemappedSources, jsonEncode(current));
+  }
+
+  static String resolveRemappedSourceIdFromMap(Map<String, String> remaps, String sourceId) {
+    final visited = <String>{};
+    var cur = sourceId;
+    while (visited.add(cur)) {
+      final next = remaps[cur];
+      if (next == null || next.isEmpty || next == cur) break;
+      cur = next;
+    }
+    return cur;
+  }
+
   Future<int> calibratedNowMs() async => clock.now().millisecondsSinceEpoch + await getServerTimeOffsetMs();
 
   /// Inserts or collapses an outbox mutation for `(entityType, entityKey)`,
@@ -149,8 +231,48 @@ class SyncLocalStore {
     required String entityKey,
     required Map<String, Object?> payload,
     int? updatedAt,
+    bool recordInJournal = true,
+    bool writeOutbox = true,
+    Map<String, String>? sourceSecrets,
   }) async {
-    final clientUpdatedAt = updatedAt ?? await calibratedNowMs();
+    final existingJournal = recordInJournal ? await journal.getEntry(entityType, entityKey) : null;
+    final proposedUpdatedAt = updatedAt ?? await calibratedNowMs();
+    final effectiveUpdatedAt = (updatedAt == null && existingJournal != null)
+        ? computeNextHlc(proposedUpdatedAt, existingJournal.clientUpdatedAt)
+        : proposedUpdatedAt;
+
+    final normalizedPayload = Map<String, Object?>.from(payload);
+    if (normalizedPayload.containsKey('client_updated_at')) {
+      normalizedPayload['client_updated_at'] = effectiveUpdatedAt;
+    }
+
+    if (recordInJournal) {
+      final hash = SyncJournalStore.computeEntityHash(entityType, normalizedPayload, rawSecrets: sourceSecrets);
+      final isDeleted = normalizedPayload['is_deleted'] == true;
+      if (existingJournal == null || existingJournal.payloadHash != hash || existingJournal.isDeleted != isDeleted) {
+        final localSeq = await allocNextLocalSeq();
+        final deviceId = await getOrCreateDeviceId();
+        final epoch = await getOrCreateSyncEpoch();
+        await journal.upsertEntry(
+          SyncJournalEntry(
+            entityType: entityType,
+            entityKey: entityKey,
+            sourceId: SyncJournalStore.extractSourceId(entityType, normalizedPayload),
+            relativePath: SyncJournalStore.extractRelativePath(normalizedPayload),
+            workKey: SyncJournalStore.extractWorkKey(normalizedPayload),
+            localSeq: localSeq,
+            payloadHash: hash,
+            payloadJson: SyncJournalStore.sanitizePayloadJsonForStorage(entityType, normalizedPayload),
+            clientUpdatedAt: effectiveUpdatedAt,
+            isDeleted: isDeleted,
+            originDeviceId: deviceId,
+            originEpoch: epoch,
+          ),
+        );
+      }
+    }
+
+    if (!writeOutbox) return;
     final createdAt = clock.now().millisecondsSinceEpoch;
     final opId = const Uuid().v4();
     await db
@@ -160,8 +282,8 @@ class SyncLocalStore {
             entityType: entityType,
             entityKey: entityKey,
             opId: opId,
-            payloadJson: jsonEncode(payload),
-            clientUpdatedAt: clientUpdatedAt,
+            payloadJson: jsonEncode(normalizedPayload),
+            clientUpdatedAt: effectiveUpdatedAt,
             createdAt: createdAt,
           ),
         );
@@ -208,7 +330,23 @@ class SyncLocalStore {
       seasonNum: state.seasonNumber,
       episodeNum: state.episodeNumber,
     );
-    final effectiveUpdatedAt = updatedAt ?? await calibratedNowMs();
+    final existingJournal = await journal.getEntry(typeWatchProgress, progressKey);
+    final int effectiveUpdatedAt;
+    if (updatedAt != null) {
+      effectiveUpdatedAt = updatedAt;
+    } else {
+      final calibratedNow = await calibratedNowMs();
+      final floor = math.max(state.updatedAt, existingJournal?.clientUpdatedAt ?? 0);
+      effectiveUpdatedAt = computeNextHlc(calibratedNow, floor);
+      if (effectiveUpdatedAt > state.updatedAt) {
+        await (db.update(db.workWatchStates)..where((t) => t.stateKey.equals(binding.stateKey))).write(
+          WorkWatchStatesCompanion(updatedAt: Value(effectiveUpdatedAt)),
+        );
+        await (db.update(db.libraryUserStates)..where((t) => t.itemId.equals(itemId))).write(
+          LibraryUserStatesCompanion(updatedAt: Value(effectiveUpdatedAt)),
+        );
+      }
+    }
     await enqueue(
       entityType: typeWatchProgress,
       entityKey: progressKey,
@@ -241,7 +379,32 @@ class SyncLocalStore {
     final workKey = '${work.provider}:${work.kind}:${work.externalId}';
     final skip = await WorkSkipSettingsStore(db).read(work);
     final wholeState = await LibraryWatchStateStore(db).read(work.stateKey());
-    final effectiveUpdatedAt = updatedAt ?? await calibratedNowMs();
+    final existingJournal = await journal.getEntry(typeWorkPref, workKey);
+    final stampKey = 'sync-pref-ts:${work.stateKey()}';
+    final localStamp = int.tryParse(
+          (await (db.select(db.librarySettings)..where((t) => t.key.equals(stampKey))).getSingleOrNull())?.value ?? '',
+        ) ??
+        0;
+
+    final int effectiveUpdatedAt;
+    if (updatedAt != null) {
+      effectiveUpdatedAt = updatedAt;
+    } else {
+      final calibratedNow = await calibratedNowMs();
+      final floor = math.max(
+        math.max(localStamp, wholeState?.updatedAt ?? 0),
+        existingJournal?.clientUpdatedAt ?? 0,
+      );
+      effectiveUpdatedAt = computeNextHlc(calibratedNow, floor);
+      await db
+          .into(db.librarySettings)
+          .insertOnConflictUpdate(LibrarySettingsCompanion.insert(key: stampKey, value: '$effectiveUpdatedAt'));
+      if (wholeState != null && effectiveUpdatedAt > wholeState.updatedAt) {
+        await (db.update(db.workWatchStates)..where((t) => t.stateKey.equals(work.stateKey()))).write(
+          WorkWatchStatesCompanion(updatedAt: Value(effectiveUpdatedAt)),
+        );
+      }
+    }
     await enqueue(
       entityType: typeWorkPref,
       entityKey: workKey,
@@ -329,6 +492,7 @@ class SyncLocalStore {
                 _kMasterKey,
                 _kLastPullSeq,
                 _kServerTimeOffsetMs,
+                _kCloudPushedSeq,
               ]),
             ))
           .go();
@@ -396,6 +560,7 @@ class SyncLocalStore {
           entityKey: newFileId,
           updatedAt: entry.row.clientUpdatedAt,
           payload: map.cast<String, Object?>(),
+          recordInJournal: false,
         );
       }
     });
@@ -429,13 +594,24 @@ class SyncLocalStore {
 
   Future<void> setDeviceName(String name) => _putMeta(_kDeviceName, name.trim());
 
-  Future<int> getLocalLanRevision() async => int.tryParse(await _getMeta(_kLanRevision) ?? '') ?? 0;
-
-  Future<int> bumpLocalLanRevision() async {
-    final next = (await getLocalLanRevision()) + 1;
-    await _putMeta(_kLanRevision, '$next');
-    return next;
+  Future<int> getLocalLanRevision() async {
+    final metaRev = int.tryParse(await _getMeta(_kLanRevision) ?? '') ?? 0;
+    final maxJournalSeq = await journal.getMaxLocalSeq();
+    return math.max(metaRev, maxJournalSeq);
   }
+
+  Future<int> allocNextLocalSeq() => allocLocalSeqRange(1);
+
+  /// Allocates [count] contiguous strictly monotonic local sequence numbers and
+  /// returns the first sequence number allocated (`base + 1 .. base + count`).
+  Future<int> allocLocalSeqRange(int count) async {
+    final base = await getLocalLanRevision();
+    if (count <= 0) return base + 1;
+    await _putMeta(_kLanRevision, '${base + count}');
+    return base + 1;
+  }
+
+  Future<int> bumpLocalLanRevision() => allocNextLocalSeq();
 
   Future<({String privateKeyBase64, String publicKeyBase64})> getOrCreateLanKeyPair() async {
     final encPriv = await _getMeta(_kLanPrivKey);
