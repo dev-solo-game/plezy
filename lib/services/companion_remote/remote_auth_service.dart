@@ -222,6 +222,93 @@ class RemoteAuthService {
     return key.extractBytes();
   }
 
+  /// Derives the AES-256-GCM key used to authenticate and encrypt stateless
+  /// `/status` and `/action` HTTP envelopes between trusted LAN/Sync peers.
+  Future<List<int>> deriveStatusEncKey(List<int> homeSecret) async {
+    final key = await _hkdf.deriveKey(
+      secretKey: SecretKey(homeSecret),
+      nonce: utf8.encode('plezy-remote-v2'),
+      info: utf8.encode('http-status-v1'),
+    );
+    return key.extractBytes();
+  }
+
+  /// Encrypts [payload] into a replay-bounded AES-256-GCM envelope bound to [context].
+  Future<Map<String, dynamic>> sealStatusPayload({
+    required RemoteAuthContext context,
+    required Map<String, dynamic> payload,
+    int? timestampMs,
+  }) async {
+    final key = await deriveStatusEncKey(context.homeSecret);
+    final ts = timestampMs ?? DateTime.now().millisecondsSinceEpoch;
+    final random = Random.secure();
+    final nonce = List<int>.generate(12, (_) => random.nextInt(256));
+    final aad = utf8.encode('${context.id}|$ts');
+    final secretBox = await _aesGcm.encrypt(
+      utf8.encode(jsonEncode(payload)),
+      secretKey: SecretKey(key),
+      nonce: nonce,
+      aad: aad,
+    );
+    return {
+      'ctx': context.id,
+      'ts': ts,
+      'nonce': base64Encode(nonce),
+      'box': base64Encode([...secretBox.cipherText, ...secretBox.mac.bytes]),
+    };
+  }
+
+  /// Decrypts and authenticates an HTTP `/status` or `/action` envelope against
+  /// any matching context in [contexts], rejecting stale timestamps.
+  Future<({RemoteAuthContext context, Map<String, dynamic> payload})?> openStatusPayload({
+    required Map<String, dynamic> envelope,
+    required List<RemoteAuthContext> contexts,
+    Duration maxSkew = const Duration(minutes: 5),
+    int? nowMs,
+  }) async {
+    final ctxId = envelope['ctx'];
+    final tsValue = envelope['ts'];
+    final nonceB64 = envelope['nonce'];
+    final boxB64 = envelope['box'];
+    if (ctxId is! String || tsValue is! num || nonceB64 is! String || boxB64 is! String) {
+      return null;
+    }
+
+    RemoteAuthContext? matched;
+    for (final ctx in contexts) {
+      if (ctx.id == ctxId) {
+        matched = ctx;
+        break;
+      }
+    }
+    if (matched == null) return null;
+
+    final ts = tsValue.toInt();
+    final effectiveNow = nowMs ?? DateTime.now().millisecondsSinceEpoch;
+    if ((effectiveNow - ts).abs() > maxSkew.inMilliseconds) {
+      return null;
+    }
+
+    try {
+      final nonce = base64Decode(nonceB64);
+      final rawBox = base64Decode(boxB64);
+      if (nonce.length != 12 || rawBox.length < 16) return null;
+      final cipherText = rawBox.sublist(0, rawBox.length - 16);
+      final mac = Mac(rawBox.sublist(rawBox.length - 16));
+      final key = await deriveStatusEncKey(matched.homeSecret);
+      final clearBytes = await _aesGcm.decrypt(
+        SecretBox(cipherText, nonce: nonce, mac: mac),
+        secretKey: SecretKey(key),
+        aad: utf8.encode('${matched.id}|$ts'),
+      );
+      final decoded = jsonDecode(utf8.decode(clearBytes));
+      if (decoded is! Map<String, dynamic>) return null;
+      return (context: matched, payload: decoded);
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// Stable, non-secret identifier used to select the matching auth context
   /// during the WebSocket handshake without broadcasting it over UDP.
   String computeAuthContextId(List<int> homeSecret) {

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 
@@ -31,17 +33,34 @@ class CompanionRemoteReceiver {
   VoidCallback? onTabSettings;
   VoidCallback? onHome;
   void Function(String? query)? onSearchAction;
+  VoidCallback? onPlay;
+  VoidCallback? onPause;
+  VoidCallback? onPlayPause;
   VoidCallback? onNextTrack;
   VoidCallback? onPreviousTrack;
   VoidCallback? onStop;
   VoidCallback? onSeekForward;
   VoidCallback? onSeekBackward;
+  VoidCallback? onSkipIntro;
+  VoidCallback? onSkipCredits;
   VoidCallback? onVolumeUp;
   VoidCallback? onVolumeDown;
   VoidCallback? onVolumeMute;
+  void Function(double volume)? onVolumeSet;
   VoidCallback? onSubtitles;
   VoidCallback? onAudioTracks;
   VoidCallback? onFullscreen;
+  void Function(Duration position)? onSeekTo;
+  void Function(double rate)? onSetRate;
+  void Function(String trackId)? onSelectAudioTrack;
+  void Function(String trackId)? onSelectSubtitleTrack;
+  void Function(String qualityId)? onSelectQuality;
+  void Function({int? audioMs, int? subtitleMs})? onSetSyncOffset;
+  void Function(int mode)? onSetBoxFitMode;
+  void Function(int seasonNumber)? onBrowseSeason;
+  void Function(String itemKey)? onPlayEpisodeItem;
+  Future<void> Function(Map<String, dynamic> data)? onPlayMedia;
+  VoidCallback? onRequestState;
 
   /// The live music session's transport, installed by the session for its
   /// lifetime; returns whether it acted on the command. Transport commands go
@@ -54,9 +73,9 @@ class CompanionRemoteReceiver {
     appLogger.d('CompanionRemoteReceiver: Handling command: ${command.type}');
 
     // A paired phone cannot point, so any viewer command is evidence of a
-    // pointerless device. Protocol frames are not viewer input: promoting on the
-    // periodic ping would flip an idle desktop host into keyboard mode — and hide
-    // its cursor — on every heartbeat.
+    // pointerless device. Protocol frames and playback-parameter updates are not
+    // viewer input: promoting on periodic heartbeats or phone sliders would flip
+    // an idle desktop host into keyboard mode and hide its cursor.
     if (_isViewerInput(command.type)) {
       InputModeTracker.reportNonPointerInput();
       scheduleFrameIfIdle();
@@ -81,15 +100,31 @@ class CompanionRemoteReceiver {
         simulateKeyPress(LogicalKeyboardKey.contextMenu);
 
       case RemoteCommandType.play:
-        simulateKeyPress(LogicalKeyboardKey.space);
+        if (onPlay != null) {
+          onPlay!.call();
+        } else {
+          simulateKeyPress(LogicalKeyboardKey.space);
+        }
       case RemoteCommandType.pause:
-        simulateKeyPress(LogicalKeyboardKey.space);
+        if (onPause != null) {
+          onPause!.call();
+        } else {
+          simulateKeyPress(LogicalKeyboardKey.space);
+        }
       case RemoteCommandType.playPause:
-        simulateKeyPress(LogicalKeyboardKey.space);
+        if (onPlayPause != null) {
+          onPlayPause!.call();
+        } else {
+          simulateKeyPress(LogicalKeyboardKey.space);
+        }
       case RemoteCommandType.seekForward:
         onSeekForward?.call();
       case RemoteCommandType.seekBackward:
         onSeekBackward?.call();
+      case RemoteCommandType.skipIntro:
+        onSkipIntro?.call();
+      case RemoteCommandType.skipCredits:
+        onSkipCredits?.call();
 
       case RemoteCommandType.volumeUp:
         onVolumeUp?.call();
@@ -97,6 +132,9 @@ class CompanionRemoteReceiver {
         onVolumeDown?.call();
       case RemoteCommandType.volumeMute:
         onVolumeMute?.call();
+      case RemoteCommandType.volumeSet:
+        final volume = (command.data?['volume'] as num?)?.toDouble();
+        if (volume != null) onVolumeSet?.call(volume);
 
       case RemoteCommandType.tabNext:
         onTabNext?.call();
@@ -138,6 +176,46 @@ class CompanionRemoteReceiver {
           simulateKeyPress(LogicalKeyboardKey.keyF);
         }
 
+      case RemoteCommandType.playMedia:
+        final data = command.data;
+        if (data != null && onPlayMedia != null) {
+          unawaited(onPlayMedia!(data));
+        }
+      case RemoteCommandType.seekTo:
+        final positionMs = (command.data?['positionMs'] as num?)?.toInt();
+        if (positionMs != null) {
+          onSeekTo?.call(Duration(milliseconds: positionMs));
+        }
+      case RemoteCommandType.setRate:
+        final rate = (command.data?['rate'] as num?)?.toDouble();
+        if (rate != null) onSetRate?.call(rate);
+      case RemoteCommandType.selectAudioTrack:
+        final trackId = command.data?['trackId'] as String?;
+        if (trackId != null) onSelectAudioTrack?.call(trackId);
+      case RemoteCommandType.selectSubtitleTrack:
+        final trackId = command.data?['trackId'] as String?;
+        if (trackId != null) onSelectSubtitleTrack?.call(trackId);
+      case RemoteCommandType.selectQuality:
+        final qualityId = command.data?['qualityId'] as String?;
+        if (qualityId != null) onSelectQuality?.call(qualityId);
+      case RemoteCommandType.setSyncOffset:
+        final audioMs = (command.data?['audioMs'] as num?)?.toInt();
+        final subtitleMs = (command.data?['subtitleMs'] as num?)?.toInt();
+        if (audioMs != null || subtitleMs != null) {
+          onSetSyncOffset?.call(audioMs: audioMs, subtitleMs: subtitleMs);
+        }
+      case RemoteCommandType.setBoxFitMode:
+        final mode = (command.data?['mode'] as num?)?.toInt();
+        if (mode != null) onSetBoxFitMode?.call(mode);
+      case RemoteCommandType.browseSeason:
+        final seasonNumber = (command.data?['seasonNumber'] as num?)?.toInt();
+        if (seasonNumber != null) onBrowseSeason?.call(seasonNumber);
+      case RemoteCommandType.playEpisodeItem:
+        final itemKey = command.data?['itemKey'] as String?;
+        if (itemKey != null && itemKey.isNotEmpty) onPlayEpisodeItem?.call(itemKey);
+      case RemoteCommandType.requestState:
+        onRequestState?.call();
+
       case RemoteCommandType.ping:
       case RemoteCommandType.pong:
       case RemoteCommandType.ack:
@@ -146,7 +224,7 @@ class CompanionRemoteReceiver {
       case RemoteCommandType.syncState:
         break;
 
-      default:
+      case RemoteCommandType.qualitySettings:
         appLogger.w('CompanionRemoteReceiver: Unhandled command type: ${command.type}');
     }
   }
@@ -172,7 +250,18 @@ bool _isViewerInput(RemoteCommandType type) => switch (type) {
   RemoteCommandType.ack ||
   RemoteCommandType.deviceInfo ||
   RemoteCommandType.disconnect ||
-  RemoteCommandType.syncState => false,
+  RemoteCommandType.syncState ||
+  RemoteCommandType.requestState ||
+  RemoteCommandType.playMedia ||
+  RemoteCommandType.seekTo ||
+  RemoteCommandType.setRate ||
+  RemoteCommandType.selectAudioTrack ||
+  RemoteCommandType.selectSubtitleTrack ||
+  RemoteCommandType.selectQuality ||
+  RemoteCommandType.setSyncOffset ||
+  RemoteCommandType.setBoxFitMode ||
+  RemoteCommandType.browseSeason ||
+  RemoteCommandType.playEpisodeItem => false,
   RemoteCommandType.dpadUp ||
   RemoteCommandType.dpadDown ||
   RemoteCommandType.dpadLeft ||
@@ -186,14 +275,14 @@ bool _isViewerInput(RemoteCommandType type) => switch (type) {
   RemoteCommandType.stop ||
   RemoteCommandType.seekForward ||
   RemoteCommandType.seekBackward ||
-  RemoteCommandType.nextTrack ||
-  RemoteCommandType.previousTrack ||
   RemoteCommandType.skipIntro ||
   RemoteCommandType.skipCredits ||
   RemoteCommandType.volumeUp ||
   RemoteCommandType.volumeDown ||
   RemoteCommandType.volumeMute ||
   RemoteCommandType.volumeSet ||
+  RemoteCommandType.nextTrack ||
+  RemoteCommandType.previousTrack ||
   RemoteCommandType.tabNext ||
   RemoteCommandType.tabPrevious ||
   RemoteCommandType.tabDiscover ||

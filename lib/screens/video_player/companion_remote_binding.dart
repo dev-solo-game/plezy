@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 
+import '../../models/companion_remote/remote_playback_models.dart';
 import '../../mpv/mpv.dart';
 import '../../providers/companion_remote_provider.dart';
 import '../../services/companion_remote/companion_remote_receiver.dart';
@@ -35,6 +36,21 @@ class CompanionRemoteBinding {
     required this._onCycleAudio,
     required this._onHome,
     required this._readProvider,
+    this.onPlay,
+    this.onPause,
+    this.onPlayPause,
+    this.onSeekTo,
+    this.onSetRate,
+    this.onSelectAudioTrack,
+    this.onSelectSubtitleTrack,
+    this.onSelectQuality,
+    this.onSetSyncOffset,
+    this.onSetBoxFitMode,
+    this.onSkipIntro,
+    this.onSkipCredits,
+    this.onBrowseSeason,
+    this.onPlayEpisodeItem,
+    this.onRequestState,
   });
 
   final Player? Function() _player;
@@ -50,6 +66,21 @@ class CompanionRemoteBinding {
   final void Function() _onCycleAudio;
   final void Function() _onHome;
   final CompanionRemoteProvider Function() _readProvider;
+  final void Function()? onPlay;
+  final void Function()? onPause;
+  final void Function()? onPlayPause;
+  final void Function(Duration position)? onSeekTo;
+  final void Function(double rate)? onSetRate;
+  final void Function(String trackId)? onSelectAudioTrack;
+  final void Function(String trackId)? onSelectSubtitleTrack;
+  final void Function(String qualityId)? onSelectQuality;
+  final void Function({int? audioMs, int? subtitleMs})? onSetSyncOffset;
+  final void Function(int mode)? onSetBoxFitMode;
+  final void Function()? onSkipIntro;
+  final void Function()? onSkipCredits;
+  final void Function(int seasonNumber)? onBrowseSeason;
+  final void Function(String itemKey)? onPlayEpisodeItem;
+  final void Function()? onRequestState;
 
   CompanionRemoteProvider? _provider;
   VoidCallback? _savedOnHome;
@@ -66,6 +97,15 @@ class CompanionRemoteBinding {
     receiver.onStop = () {
       if (_isMounted()) _onStop();
     };
+    receiver.onPlay = () {
+      if (_isMounted() && _canControlPlayback()) onPlay?.call();
+    };
+    receiver.onPause = () {
+      if (_isMounted() && _canControlPlayback()) onPause?.call();
+    };
+    receiver.onPlayPause = () {
+      if (_isMounted() && _canControlPlayback()) onPlayPause?.call();
+    };
     receiver.onNextTrack = () {
       if (_isMounted() && _hasNextItem()) unawaited(_onNavigateToNextItem());
     };
@@ -74,14 +114,53 @@ class CompanionRemoteBinding {
     };
     receiver.onSeekForward = () => _dispatchSeek(forward: true);
     receiver.onSeekBackward = () => _dispatchSeek(forward: false);
+    receiver.onSeekTo = (pos) {
+      if (_isMounted() && _canControlPlayback()) onSeekTo?.call(pos);
+    };
     receiver.onVolumeUp = () => _dispatchVolume(10);
     receiver.onVolumeDown = () => _dispatchVolume(-10);
     receiver.onVolumeMute = _dispatchMute;
+    receiver.onVolumeSet = _dispatchVolumeSet;
     receiver.onSubtitles = () {
       if (_canControlPlayback()) _onCycleSubtitles();
     };
     receiver.onAudioTracks = () {
       if (_canControlPlayback()) _onCycleAudio();
+    };
+    receiver.onSetRate = (rate) {
+      if (_isMounted() && _canControlPlayback()) onSetRate?.call(rate);
+    };
+    receiver.onSelectAudioTrack = (id) {
+      if (_isMounted() && _canControlPlayback()) onSelectAudioTrack?.call(id);
+    };
+    receiver.onSelectSubtitleTrack = (id) {
+      if (_isMounted() && _canControlPlayback()) onSelectSubtitleTrack?.call(id);
+    };
+    receiver.onSelectQuality = (id) {
+      if (_isMounted() && _canControlPlayback()) onSelectQuality?.call(id);
+    };
+    receiver.onSetSyncOffset = ({audioMs, subtitleMs}) {
+      if (_isMounted() && _canControlPlayback()) {
+        onSetSyncOffset?.call(audioMs: audioMs, subtitleMs: subtitleMs);
+      }
+    };
+    receiver.onSetBoxFitMode = (mode) {
+      if (_isMounted() && _canControlPlayback()) onSetBoxFitMode?.call(mode);
+    };
+    receiver.onSkipIntro = () {
+      if (_isMounted() && _canControlPlayback()) onSkipIntro?.call();
+    };
+    receiver.onSkipCredits = () {
+      if (_isMounted() && _canControlPlayback()) onSkipCredits?.call();
+    };
+    receiver.onBrowseSeason = (seasonNumber) {
+      if (_isMounted()) onBrowseSeason?.call(seasonNumber);
+    };
+    receiver.onPlayEpisodeItem = (itemKey) {
+      if (_isMounted() && _canControlPlayback()) onPlayEpisodeItem?.call(itemKey);
+    };
+    receiver.onRequestState = () {
+      if (_isMounted()) onRequestState?.call();
     };
     receiver.onFullscreen = _toggleFullscreen;
 
@@ -96,6 +175,7 @@ class CompanionRemoteBinding {
     try {
       _provider = _readProvider();
       _provider!.setHostPlayerActive(true);
+      onRequestState?.call();
     } catch (e) {
       appLogger.d('CompanionRemote provider unavailable', error: e);
     }
@@ -117,6 +197,7 @@ class CompanionRemoteBinding {
       return;
     }
     controller.adjust(delta);
+    onRequestState?.call();
   }
 
   void _dispatchMute() {
@@ -126,11 +207,23 @@ class CompanionRemoteBinding {
       return;
     }
     controller.toggleMute();
+    onRequestState?.call();
+  }
+
+  void _dispatchVolumeSet(double volume) {
+    final currentPlayer = _player();
+    final controller = _volumeController();
+    if (!_isMounted() || currentPlayer == null || controller == null || !controller.ownsPlayer(currentPlayer)) {
+      return;
+    }
+    controller.commit(volume);
+    onRequestState?.call();
   }
 
   Future<void> _toggleFullscreen() async {
     if (!PlatformDetector.isDesktopOS()) return;
     await FullscreenStateManager().toggleFullscreen();
+    onRequestState?.call();
   }
 
   void unbind() {
@@ -140,15 +233,31 @@ class CompanionRemoteBinding {
       return;
     }
     receiver.onStop = null;
+    receiver.onPlay = null;
+    receiver.onPause = null;
+    receiver.onPlayPause = null;
     receiver.onNextTrack = null;
     receiver.onPreviousTrack = null;
     receiver.onSeekForward = null;
     receiver.onSeekBackward = null;
+    receiver.onSeekTo = null;
     receiver.onVolumeUp = null;
     receiver.onVolumeDown = null;
     receiver.onVolumeMute = null;
+    receiver.onVolumeSet = null;
     receiver.onSubtitles = null;
     receiver.onAudioTracks = null;
+    receiver.onSetRate = null;
+    receiver.onSelectAudioTrack = null;
+    receiver.onSelectSubtitleTrack = null;
+    receiver.onSelectQuality = null;
+    receiver.onSetSyncOffset = null;
+    receiver.onSetBoxFitMode = null;
+    receiver.onSkipIntro = null;
+    receiver.onSkipCredits = null;
+    receiver.onBrowseSeason = null;
+    receiver.onPlayEpisodeItem = null;
+    receiver.onRequestState = null;
     receiver.onFullscreen = null;
     receiver.onHome = receiver.playerHomeFallback;
     receiver.playerHomeFallback = null;
@@ -156,6 +265,7 @@ class CompanionRemoteBinding {
     _savedOnHome = null;
 
     // Notify only when the active player owner exits.
+    _provider?.updateHostPlayerSnapshot(RemotePlayerSnapshot.idle);
     _provider?.setHostPlayerActive(false);
     _provider = null;
   }

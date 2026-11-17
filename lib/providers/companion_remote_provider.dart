@@ -8,6 +8,7 @@ import '../i18n/strings.g.dart';
 import '../library/sync/lan_peer_sync_service.dart';
 import '../library/sync/sync_coordinator.dart';
 import '../models/companion_remote/remote_command.dart';
+import '../models/companion_remote/remote_playback_models.dart';
 import '../models/companion_remote/remote_session.dart';
 import '../models/plex/plex_home.dart';
 import '../profiles/active_plex_identity.dart';
@@ -16,6 +17,7 @@ import '../profiles/plex_home_service.dart';
 import '../profiles/profile.dart';
 import '../profiles/profile_connection_registry.dart';
 import '../services/companion_remote/companion_remote_peer_service.dart';
+import '../services/companion_remote/companion_remote_receiver.dart';
 import '../services/companion_remote/lan_discovery_service.dart';
 import '../services/companion_remote/remote_auth_context.dart';
 import '../services/companion_remote/remote_auth_service.dart';
@@ -67,6 +69,13 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
   // Whether this device's own video player is up, as last advertised to a
   // remote. Kept so a remote that pairs mid-playback is told on connect.
   bool _hostPlayerActive = false;
+  RemotePlayerSnapshot _hostPlayerSnapshot = RemotePlayerSnapshot.idle;
+  bool _hasHostPlayerSnapshot = false;
+  RemotePlayerSnapshot _remotePlayerSnapshot = RemotePlayerSnapshot.idle;
+  final Map<String, RemotePlayerSnapshot> _deviceSnapshots = {};
+  final Set<String> _loadingDeviceKeys = {};
+  List<DiscoveredHost> _beaconHosts = const [];
+  StreamSubscription<List<DiscoveredHost>>? _passiveDiscoverySub;
   // Listen addresses of a running host server (`ip:port`), surfaced so the
   // host UI can show what a phone's manual connection should target.
   List<String> _hostServerAddresses = const [];
@@ -126,6 +135,7 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
   StreamSubscription<RemoteSessionStatus>? _statusSubscription;
 
   CommandReceivedCallback? onCommandReceived;
+  Future<bool> Function(RemoteMediaTarget target)? onPlayMediaRequested;
 
   bool get isInSession => _session != null && _session!.status != RemoteSessionStatus.disconnected;
   bool get isHost => _session?.isHost ?? false;
@@ -135,6 +145,8 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
   RemoteSessionStatus get status => _session?.status ?? RemoteSessionStatus.disconnected;
   RemoteDevice? get connectedDevice => _session?.connectedDevice;
   bool get isPlayerActive => _isPlayerActive;
+  RemotePlayerSnapshot get hostPlayerSnapshot => _hostPlayerSnapshot;
+  RemotePlayerSnapshot get remotePlayerSnapshot => _remotePlayerSnapshot;
   bool get isHostServerRunning => _peerService?.isServerRunning ?? false;
   List<String> get hostServerAddresses => _hostServerAddresses;
 
@@ -771,6 +783,14 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
     appLogger.d('CompanionRemote: Starting host server');
 
     final peer = _peerService ??= _peerServiceFactory();
+    peer.hostStatusSnapshotBuilder = () => _hostPlayerSnapshot;
+    peer.onHostQuickAction = (action, _) async {
+      if (action == 'playPause') {
+        CompanionRemoteReceiver.instance.handleCommand(const RemoteCommand(type: RemoteCommandType.playPause), null);
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      }
+      return _hostPlayerSnapshot;
+    };
     _setupPeerServiceListeners(peer, _remoteGeneration);
 
     try {
@@ -846,7 +866,7 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
 
     try {
       await _discoveryService?.stopBroadcasting();
-      _discoveryService?.stopListening();
+      stopDiscovery();
       _hostServerAddresses = const [];
       _hostServerPort = null;
       _boundSync?.lanService.setAdvertisedRemotePort(null);
@@ -912,6 +932,125 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
       );
     }
     return result;
+  }
+
+  /// Starts passive background listening for UDP beacons across active auth
+  /// contexts (when crypto is ready) so PopMenus can list online hosts immediately.
+  void startPassiveDiscovery() {
+    if (isDisposed || !isCryptoReady || _authContexts.isEmpty || _passiveDiscoverySub != null) {
+      return;
+    }
+    final stream = discoverHosts();
+    if (stream == null) return;
+    _passiveDiscoverySub = stream.listen((hosts) {
+      if (isDisposed) return;
+      _beaconHosts = hosts;
+      safeNotifyListeners();
+    });
+  }
+
+  /// Combined online trusted LAN peers and same-account Sync hosts.
+  List<DiscoveredHost> get onlineTrustedHosts {
+    final myDeviceId = _boundSync?.deviceId ?? '';
+    final merged = <String, DiscoveredHost>{};
+    for (final host in [...trustedLanRemoteHosts, ..._beaconHosts]) {
+      if (myDeviceId.isNotEmpty && host.clientId == myDeviceId) continue;
+      merged['${host.authContextId}:${host.clientId}'] = host;
+    }
+    return merged.values.toList(growable: false);
+  }
+
+  bool isConnectedToHost(DiscoveredHost host) {
+    if (!isRemote || !isConnected) return false;
+    if (_lastHostClientId != host.clientId) return false;
+    return _lastAuthContextId == null || _lastAuthContextId == host.authContextId;
+  }
+
+  /// Live snapshot cards for every currently reachable trusted remote device.
+  List<RemoteOnlineDevice> get onlineTrustedDevices {
+    return [
+      for (final host in onlineTrustedHosts)
+        () {
+          final key = '${host.authContextId}:${host.clientId}';
+          final snapshot = isConnectedToHost(host)
+              ? _remotePlayerSnapshot
+              : (_deviceSnapshots[key] ?? RemotePlayerSnapshot.idle);
+          return RemoteOnlineDevice(host: host, snapshot: snapshot, loadingStatus: _loadingDeviceKeys.contains(key));
+        }(),
+    ];
+  }
+
+  /// Polls every online trusted device's live playback snapshot over encrypted
+  /// HTTP `/status` without disrupting any active `/ws` control session.
+  Future<void> refreshOnlineDeviceStatuses() async {
+    if (isDisposed) return;
+    startPassiveDiscovery();
+    final hosts = onlineTrustedHosts;
+    if (hosts.isEmpty) return;
+
+    await Future.wait([
+      for (final host in hosts)
+        () async {
+          if (isConnectedToHost(host)) return;
+          final ctx = _authContextForId(host.authContextId);
+          if (ctx == null) return;
+          final key = '${host.authContextId}:${host.clientId}';
+          _loadingDeviceKeys.add(key);
+          safeNotifyListeners();
+          try {
+            final snapshot = await CompanionRemotePeerService.fetchHostStatus(host: host, context: ctx);
+            if (!isDisposed && snapshot != null) {
+              _deviceSnapshots[key] = snapshot;
+            }
+          } finally {
+            _loadingDeviceKeys.remove(key);
+            safeNotifyListeners();
+          }
+        }(),
+    ]);
+  }
+
+  /// Toggles play/pause on [host], reusing the active `/ws` session if connected
+  /// to [host] or issuing an authenticated HTTP `POST /action` otherwise.
+  Future<void> toggleOnlineDevicePlayPause(DiscoveredHost host) async {
+    if (isConnectedToHost(host)) {
+      sendCommand(RemoteCommandType.playPause);
+      return;
+    }
+    final ctx = _authContextForId(host.authContextId);
+    if (ctx == null) return;
+    final snapshot = await CompanionRemotePeerService.sendHostQuickAction(
+      host: host,
+      context: ctx,
+      action: 'playPause',
+    );
+    if (!isDisposed && snapshot != null) {
+      _deviceSnapshots['${host.authContextId}:${host.clientId}'] = snapshot;
+      safeNotifyListeners();
+    }
+  }
+
+  /// Connects to [host] (if not already connected) and launches playback of [target].
+  Future<void> connectAndPlayMedia(DiscoveredHost host, RemoteMediaTarget target) async {
+    if (!isConnectedToHost(host)) {
+      await connectToDiscoveredHost(host);
+    }
+    if (isDisposed || !isConnected) return;
+    _remotePlayerSnapshot = RemotePlayerSnapshot(
+      active: true,
+      stage: 'opening',
+      mediaKind: target.kind,
+      title: target.title,
+      seriesTitle: target.seriesTitle,
+      seasonNumber: target.seasonNumber,
+      episodeNumber: target.episodeNumber,
+      posterUrl: target.posterUrl,
+      positionMs: target.positionMs ?? 0,
+      updatedAtMs: DateTime.now().millisecondsSinceEpoch,
+    );
+    _isPlayerActive = true;
+    safeNotifyListeners();
+    sendCommand(RemoteCommandType.playMedia, data: target.toJson());
   }
 
   /// Discovered nearby LAN P2P peers running a remote server that have not yet been trusted.
@@ -1070,6 +1209,9 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
 
   /// Stop listening for host beacons.
   void stopDiscovery() {
+    unawaited(_passiveDiscoverySub?.cancel());
+    _passiveDiscoverySub = null;
+    _beaconHosts = const [];
     _discoveryService?.stopListening();
   }
 
@@ -1255,6 +1397,22 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
           _handleDeviceInfo(command);
         } else if (command.type == RemoteCommandType.syncState) {
           _handleSyncState(command);
+        } else if (command.type == RemoteCommandType.requestState) {
+          if (isHost) {
+            peer.sendCommand(
+              RemoteCommand(
+                type: RemoteCommandType.syncState,
+                data: {
+                  'playerActive': _hostPlayerActive,
+                  if (_hasHostPlayerSnapshot) 'snapshot': _hostPlayerSnapshot.toJson(),
+                },
+              ),
+            );
+          }
+        } else if (command.type == RemoteCommandType.playMedia) {
+          if (isHost && command.data != null) {
+            unawaited(_handlePlayMediaRequest(RemoteMediaTarget.fromJson(command.data!)));
+          }
         } else if (command.type != RemoteCommandType.ping &&
             command.type != RemoteCommandType.pong &&
             command.type != RemoteCommandType.ack) {
@@ -1277,7 +1435,17 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
       // browse controls over a running player, or the player controls after
       // it closed while the remote was away.
       if (isHost) {
-        peer.sendCommand(RemoteCommand(type: RemoteCommandType.syncState, data: {'playerActive': _hostPlayerActive}));
+        peer.sendCommand(
+          RemoteCommand(
+            type: RemoteCommandType.syncState,
+            data: {
+              'playerActive': _hostPlayerActive,
+              if (_hasHostPlayerSnapshot) 'snapshot': _hostPlayerSnapshot.toJson(),
+            },
+          ),
+        );
+      } else {
+        peer.sendCommand(const RemoteCommand(type: RemoteCommandType.requestState));
       }
     });
 
@@ -1349,9 +1517,50 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
 
   void _handleSyncState(RemoteCommand command) {
     final playerActive = command.data?['playerActive'] as bool? ?? false;
-    if (_isPlayerActive != playerActive) {
-      _isPlayerActive = playerActive;
-      safeNotifyListeners();
+    final rawSnapshot = command.data?['snapshot'];
+    if (rawSnapshot is Map) {
+      _remotePlayerSnapshot = RemotePlayerSnapshot.fromJson(Map<String, dynamic>.from(rawSnapshot));
+      if (_lastHostClientId != null && _lastAuthContextId != null) {
+        _deviceSnapshots['${_lastAuthContextId!}:${_lastHostClientId!}'] = _remotePlayerSnapshot;
+      }
+    } else {
+      _remotePlayerSnapshot = playerActive ? _remotePlayerSnapshot.copyWith(active: true) : RemotePlayerSnapshot.idle;
+    }
+    _isPlayerActive = playerActive || _remotePlayerSnapshot.active;
+    safeNotifyListeners();
+  }
+
+  Future<void> _handlePlayMediaRequest(RemoteMediaTarget target) async {
+    updateHostPlayerSnapshot(
+      RemotePlayerSnapshot(
+        active: true,
+        stage: 'opening',
+        mediaKind: target.kind,
+        title: target.title,
+        seriesTitle: target.seriesTitle,
+        seasonNumber: target.seasonNumber,
+        episodeNumber: target.episodeNumber,
+        posterUrl: target.posterUrl,
+        positionMs: target.positionMs ?? 0,
+        updatedAtMs: DateTime.now().millisecondsSinceEpoch,
+      ),
+    );
+    final ok = await (onPlayMediaRequested?.call(target) ?? Future.value(false));
+    if (!ok && !isDisposed) {
+      updateHostPlayerSnapshot(
+        RemotePlayerSnapshot(
+          active: false,
+          stage: 'error',
+          errorMessage: t.companionRemote.mediaNotFoundOnDevice,
+          mediaKind: target.kind,
+          title: target.title,
+          seriesTitle: target.seriesTitle,
+          seasonNumber: target.seasonNumber,
+          episodeNumber: target.episodeNumber,
+          posterUrl: target.posterUrl,
+          updatedAtMs: DateTime.now().millisecondsSinceEpoch,
+        ),
+      );
     }
   }
 
@@ -1368,12 +1577,32 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
     _statusSubscription = null;
   }
 
+  /// Updates the rich playback snapshot advertised by this host over both
+  /// WebSocket `syncState` and authenticated HTTP `/status`.
+  void updateHostPlayerSnapshot(RemotePlayerSnapshot snapshot) {
+    _hostPlayerSnapshot = snapshot;
+    _hasHostPlayerSnapshot = snapshot.active;
+    _hostPlayerActive = snapshot.active;
+    if (!isHost || _peerService == null || !isConnected) return;
+    sendCommand(
+      RemoteCommandType.syncState,
+      data: {'playerActive': snapshot.active, 'snapshot': snapshot.toJson()},
+    );
+  }
+
   /// Advertise whether this device's video player is up to the connected
   /// remote, and remember it for a remote that connects later.
   void setHostPlayerActive(bool active) {
     _hostPlayerActive = active;
+    if (!active && _hostPlayerSnapshot.active) {
+      _hostPlayerSnapshot = RemotePlayerSnapshot.idle;
+      _hasHostPlayerSnapshot = false;
+    }
     if (_peerService == null || !isConnected) return;
-    sendCommand(RemoteCommandType.syncState, data: {'playerActive': active});
+    sendCommand(
+      RemoteCommandType.syncState,
+      data: {'playerActive': active, if (_hasHostPlayerSnapshot) 'snapshot': _hostPlayerSnapshot.toJson()},
+    );
   }
 
   void sendCommand(RemoteCommandType type, {Map<String, dynamic>? data}) {
@@ -1601,6 +1830,8 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
     }
     _profileServiceSubs.clear();
     _discoveryService?.dispose();
+    unawaited(_passiveDiscoverySub?.cancel());
+    _passiveDiscoverySub = null;
     unawaited(_disposeDetachedPeers((current: current, pending: pending)));
     RemoteAuthService.instance.clearCache();
     super.dispose();

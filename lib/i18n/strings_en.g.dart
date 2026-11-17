@@ -5138,6 +5138,90 @@ class Translations$companionRemote$en {
 	/// en: 'Unknown Device'
 	String get unknownDevice => 'Unknown Device';
 
+	/// en: 'Play on Remote Device'
+	String get playOnRemote => 'Play on Remote Device';
+
+	/// en: 'Continue on Remote Device'
+	String get handoffToRemote => 'Continue on Remote Device';
+
+	/// en: 'Select Remote Device'
+	String get selectRemoteDevice => 'Select Remote Device';
+
+	/// en: 'Remote Devices'
+	String get remoteDevices => 'Remote Devices';
+
+	/// en: 'No online remote devices'
+	String get noOnlineDevices => 'No online remote devices';
+
+	/// en: 'Make sure trusted devices are on the same network with Remote Control enabled'
+	String get noOnlineDevicesHint => 'Make sure trusted devices are on the same network with Remote Control enabled';
+
+	/// en: 'Idle'
+	String get idle => 'Idle';
+
+	/// en: 'Playing'
+	String get playingNow => 'Playing';
+
+	/// en: 'Paused'
+	String get paused => 'Paused';
+
+	/// en: 'Buffering...'
+	String get buffering => 'Buffering...';
+
+	/// en: 'Opening on remote device...'
+	String get openingOnRemote => 'Opening on remote device...';
+
+	/// en: 'Controlling: ${name}'
+	String controllingDevice({required Object name}) => 'Controlling: ${name}';
+
+	/// en: 'Stop Remote Playback'
+	String get stopRemotePlayback => 'Stop Remote Playback';
+
+	/// en: 'Nothing is playing on this device. Start playback from any title's detail page or player.'
+	String get idleControlHint => 'Nothing is playing on this device. Start playback from any title\'s detail page or player.';
+
+	/// en: 'Media not available on target device'
+	String get mediaNotFoundOnDevice => 'Media not available on target device';
+
+	/// en: 'Episodes'
+	String get episodes => 'Episodes';
+
+	/// en: 'Season ${number}'
+	String seasonNumber({required Object number}) => 'Season ${number}';
+
+	/// en: 'Playback Speed'
+	String get playbackSpeed => 'Playback Speed';
+
+	/// en: 'Aspect Ratio'
+	String get aspectRatio => 'Aspect Ratio';
+
+	/// en: 'Fit'
+	String get aspectContain => 'Fit';
+
+	/// en: 'Fill'
+	String get aspectCover => 'Fill';
+
+	/// en: 'Stretch'
+	String get aspectStretch => 'Stretch';
+
+	/// en: 'Off'
+	String get subtitleTrackOff => 'Off';
+
+	/// en: 'Audio Delay'
+	String get audioDelay => 'Audio Delay';
+
+	/// en: 'Subtitle Delay'
+	String get subtitleDelay => 'Subtitle Delay';
+
+	/// en: 'Quality'
+	String get qualityLabel => 'Quality';
+
+	/// en: 'Skip Intro'
+	String get skipIntro => 'Skip Intro';
+
+	/// en: 'Skip Credits'
+	String get skipCredits => 'Skip Credits';
+
 	late final Translations$companionRemote$session$en session = Translations$companionRemote$session$en.internal(_root);
 	late final Translations$companionRemote$pairing$en pairing = Translations$companionRemote$pairing$en.internal(_root);
 	late final Translations$companionRemote$remote$en remote = Translations$companionRemote$remote$en.internal(_root);
@@ -10965,6 +11049,34 @@ extension on Translations {
 			'companionRemote.title' => 'Companion Remote',
 			'companionRemote.connectedTo' => ({required Object name}) => 'Connected to ${name}',
 			'companionRemote.unknownDevice' => 'Unknown Device',
+			'companionRemote.playOnRemote' => 'Play on Remote Device',
+			'companionRemote.handoffToRemote' => 'Continue on Remote Device',
+			'companionRemote.selectRemoteDevice' => 'Select Remote Device',
+			'companionRemote.remoteDevices' => 'Remote Devices',
+			'companionRemote.noOnlineDevices' => 'No online remote devices',
+			'companionRemote.noOnlineDevicesHint' => 'Make sure trusted devices are on the same network with Remote Control enabled',
+			'companionRemote.idle' => 'Idle',
+			'companionRemote.playingNow' => 'Playing',
+			'companionRemote.paused' => 'Paused',
+			'companionRemote.buffering' => 'Buffering...',
+			'companionRemote.openingOnRemote' => 'Opening on remote device...',
+			'companionRemote.controllingDevice' => ({required Object name}) => 'Controlling: ${name}',
+			'companionRemote.stopRemotePlayback' => 'Stop Remote Playback',
+			'companionRemote.idleControlHint' => 'Nothing is playing on this device. Start playback from any title\'s detail page or player.',
+			'companionRemote.mediaNotFoundOnDevice' => 'Media not available on target device',
+			'companionRemote.episodes' => 'Episodes',
+			'companionRemote.seasonNumber' => ({required Object number}) => 'Season ${number}',
+			'companionRemote.playbackSpeed' => 'Playback Speed',
+			'companionRemote.aspectRatio' => 'Aspect Ratio',
+			'companionRemote.aspectContain' => 'Fit',
+			'companionRemote.aspectCover' => 'Fill',
+			'companionRemote.aspectStretch' => 'Stretch',
+			'companionRemote.subtitleTrackOff' => 'Off',
+			'companionRemote.audioDelay' => 'Audio Delay',
+			'companionRemote.subtitleDelay' => 'Subtitle Delay',
+			'companionRemote.qualityLabel' => 'Quality',
+			'companionRemote.skipIntro' => 'Skip Intro',
+			'companionRemote.skipCredits' => 'Skip Credits',
 			'companionRemote.session.startingServer' => 'Starting remote server...',
 			'companionRemote.session.hostAddress' => 'Host Address',
 			'companionRemote.session.connected' => 'Connected',
@@ -11057,6 +11169,8 @@ extension on Translations {
 			'videoSettings.audioNormalization' => 'Normalize Loudness',
 			'videoSettings.audioNormalizationDisablesPassthrough' => 'Decodes audio to PCM; passthrough is off while this is on',
 			'performanceOverlay.color' => 'Color',
+			_ => null,
+		} ?? switch (path) {
 			'performanceOverlay.performance' => 'Performance',
 			'performanceOverlay.buffer' => 'Buffer',
 			'performanceOverlay.app' => 'App',
@@ -11085,8 +11199,6 @@ extension on Translations {
 			'performanceOverlay.renderFps' => 'Render FPS',
 			'performanceOverlay.displayFps' => 'Display FPS',
 			'performanceOverlay.avSync' => 'A/V Sync',
-			_ => null,
-		} ?? switch (path) {
 			'performanceOverlay.dropped' => 'Dropped',
 			'performanceOverlay.dvRpus' => 'DV RPUs',
 			'performanceOverlay.dvRpuAverage' => 'DV RPU Avg',
@@ -11571,6 +11683,8 @@ extension on Translations {
 			'workSkip.behavior' => 'Intro skips immediately. Credits use the delay in playback settings (5 seconds by default).',
 			'workSkip.invalid' => 'Check the time ranges: end must follow start, credits must fit, and ranges cannot overlap.',
 			'workSkip.unavailable' => 'Match this movie or series to TMDB or IMDb before saving skip settings.',
+			_ => null,
+		} ?? switch (path) {
 			'workSkip.loadFailed' => 'Unable to load skip settings. Please try again.',
 			'workSkip.saveFailed' => 'Unable to save. Your changes have not been applied.',
 			'workSkip.delay' => 'Skip credits delay',
@@ -11599,8 +11713,6 @@ extension on Translations {
 			'sync.lanSyncNow' => 'Sync LAN Now',
 			'sync.lanPairingCode' => ({required Object code}) => 'Pairing code: ${code}',
 			'sync.lanSettingsSubtitle' => ({required Object count}) => 'LAN P2P (${count} trusted device(s))',
-			_ => null,
-		} ?? switch (path) {
 			'sync.cloudSettingsSubtitle' => ({required Object name}) => 'Sync Server: ${name}',
 			'sync.serverUrl' => 'Sync Server URL',
 			'sync.username' => 'Username',

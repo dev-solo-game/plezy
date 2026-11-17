@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 
 import '../i18n/app_locale_utils.dart';
 import '../i18n/strings.g.dart';
+import '../library/sync/sync_coordinator.dart';
 import '../profiles/active_profile_provider.dart';
 import '../providers/companion_remote_provider.dart';
 import '../providers/discover_provider.dart';
@@ -149,7 +150,10 @@ class SettingsMutationService {
     final owner = context.read<CompanionRemoteProvider?>();
     if (owner == null) return;
     final enabled = settings.read(SettingsService.enableCompanionRemoteServer);
-    if (enabled && context.read<ActiveProfileProvider?>()?.active == null) return;
+    final hasActiveProfile = context.read<ActiveProfileProvider?>()?.active != null;
+    final sync = context.read<SyncAndScanCoordinator?>();
+    final hasSync = sync != null && (sync.isSignedIn || sync.onboardingCompleted);
+    if (enabled && !hasActiveProfile && !hasSync) return;
     final applied = await applyCompanionRemoteServerSetting(context, enabled, checkCurrent: checkCurrent);
     checkCurrent?.call();
     if (!applied) {

@@ -65,9 +65,8 @@ import 'main_screen.dart';
 import '../navigation/settings_shortcut.dart';
 import '../watch_together/watch_together.dart';
 import '../providers/companion_remote_provider.dart';
-import '../widgets/companion_remote/remote_session_dialog.dart';
+import '../widgets/companion_remote/remote_device_menu.dart';
 import '../widgets/library_scan_controls.dart';
-import 'companion_remote/mobile_remote_screen.dart';
 
 class DiscoverScreen extends StatefulWidget {
   const DiscoverScreen({super.key});
@@ -125,6 +124,7 @@ class _DiscoverScreenState extends State<DiscoverScreen>
   late FocusNode _heroFocusNode;
   final _actionBarKey = GlobalKey<FocusableActionBarState>();
   final _serverActivitiesButtonKey = GlobalKey<ServerActivitiesButtonState>();
+  final _remoteMenuButtonKey = GlobalKey();
   final _userMenuKey = GlobalKey<AppMenuButtonState<String>>();
 
   /// Backend-neutral hero client lookup. Returns the actual
@@ -945,16 +945,8 @@ class _DiscoverScreenState extends State<DiscoverScreen>
           ),
           Consumer2<WatchTogetherProvider, CompanionRemoteProvider>(
             builder: (context, watchTogether, companionRemote, _) {
-              final isDesktop = PlatformDetector.shouldActAsRemoteHost(context);
               void openWatchTogether() =>
                   Navigator.push(context, MaterialPageRoute(builder: (_) => const WatchTogetherScreen()));
-              void openCompanionRemote() {
-                if (isDesktop) {
-                  RemoteSessionDialog.show(context);
-                } else {
-                  Navigator.push(context, MaterialPageRoute(builder: (context) => const MobileRemoteScreen()));
-                }
-              }
 
               return FocusableActionBar(
                 key: _actionBarKey,
@@ -1004,37 +996,43 @@ class _DiscoverScreenState extends State<DiscoverScreen>
                       ],
                     ),
                   ),
-                  // Companion Remote
+                  // Companion Remote & Multi-Device Playback Status
                   FocusableAction(
-                    onPressed: openCompanionRemote,
-                    child: Stack(
-                      children: [
-                        IconButton(
-                          icon: AppIcon(
-                            Symbols.phone_android_rounded,
-                            fill: companionRemote.isConnected ? 1 : 0,
-                            color: companionRemote.isConnected ? colorScheme.primary : foregroundColor,
+                    onPressed: () {
+                      final btnCtx = _remoteMenuButtonKey.currentContext ?? context;
+                      unawaited(showRemoteDevicesStatusMenu(btnCtx));
+                    },
+                    child: Builder(
+                      key: _remoteMenuButtonKey,
+                      builder: (remoteBtnContext) => Stack(
+                        children: [
+                          IconButton(
+                            icon: AppIcon(
+                              companionRemote.isConnected ? Symbols.cast_connected_rounded : Symbols.devices_rounded,
+                              fill: companionRemote.isConnected ? 1 : 0,
+                              color: companionRemote.isConnected ? colorScheme.primary : foregroundColor,
+                            ),
+                            onPressed: () => unawaited(showRemoteDevicesStatusMenu(remoteBtnContext)),
+                            tooltip: t.companionRemote.remoteDevices,
                           ),
-                          onPressed: openCompanionRemote,
-                          tooltip: t.companionRemote.title,
-                        ),
-                        if (companionRemote.isConnected)
-                          Positioned(
-                            top: 6,
-                            right: 6,
-                            child: IgnorePointer(
-                              child: Container(
-                                width: 8,
-                                height: 8,
-                                decoration: BoxDecoration(
-                                  color: Colors.green,
-                                  shape: BoxShape.circle,
-                                  border: Border.fromBorderSide(BorderSide(color: foregroundColor, width: 1)),
+                          if (companionRemote.isConnected)
+                            Positioned(
+                              top: 6,
+                              right: 6,
+                              child: IgnorePointer(
+                                child: Container(
+                                  width: 8,
+                                  height: 8,
+                                  decoration: BoxDecoration(
+                                    color: Colors.green,
+                                    shape: BoxShape.circle,
+                                    border: Border.fromBorderSide(BorderSide(color: foregroundColor, width: 1)),
+                                  ),
                                 ),
                               ),
                             ),
-                          ),
-                      ],
+                        ],
+                      ),
                     ),
                   ),
                   // Server Tasks — Plex-only (`/activities` API has no

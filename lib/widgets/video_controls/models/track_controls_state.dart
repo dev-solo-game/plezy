@@ -45,6 +45,7 @@ class TrackControlsState {
   final bool isRotationLocked;
   final bool isFullscreen;
   final bool isAlwaysOnTop;
+  final Future<void> Function(BuildContext context)? onRemoteHandoff;
   final VoidCallback? onTogglePIPMode;
   final VoidCallback? onCycleBoxFitMode;
   final ValueChanged<double>? onVideoZoomChanged;
@@ -117,6 +118,7 @@ class TrackControlsState {
     this.isRotationLocked = false,
     this.isFullscreen = false,
     this.isAlwaysOnTop = false,
+    this.onRemoteHandoff,
     this.onTogglePIPMode,
     this.onCycleBoxFitMode,
     this.onVideoZoomChanged,

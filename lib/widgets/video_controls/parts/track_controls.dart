@@ -181,6 +181,7 @@ extension _PlexVideoControlsTrackMethods on _PlexVideoControlsState {
       isRotationLocked: _isRotationLocked,
       isFullscreen: FullscreenStateManager().isFullscreen,
       isAlwaysOnTop: _isAlwaysOnTop,
+      onRemoteHandoff: widget.onRemoteHandoff,
       onTogglePIPMode: (_isPipSupported && !PlatformDetector.isTV()) ? widget.onTogglePIPMode : null,
       onCycleBoxFitMode: widget.onCycleBoxFitMode,
       onVideoZoomChanged: widget.onVideoZoomChanged,

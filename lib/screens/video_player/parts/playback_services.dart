@@ -145,7 +145,12 @@ extension _VideoPlayerPlaybackServiceMethods on VideoPlayerScreenState {
     // outgoing player's timeline.
     _relativeSkip.attachPlayheadJumps(currentPlayer.streams.playheadJump);
 
-    _playerStreamSubscriptions.add(currentPlayer.streams.playing.listen(_onPlayingStateChanged));
+    _playerStreamSubscriptions.add(
+      currentPlayer.streams.playing.listen((playing) {
+        _onPlayingStateChanged(playing);
+        _pushRemotePlayerSnapshot();
+      }),
+    );
 
     _playerStreamSubscriptions.add(
       currentPlayer.streams.completed.listen((done) {
@@ -207,8 +212,14 @@ extension _VideoPlayerPlaybackServiceMethods on VideoPlayerScreenState {
     _playerStreamSubscriptions.add(
       currentPlayer.streams.buffering.listen((isBuffering) {
         _isBuffering.value = isBuffering;
+        _pushRemotePlayerSnapshot();
       }),
     );
+
+    _playerStreamSubscriptions.add(currentPlayer.streams.rate.listen((_) => _pushRemotePlayerSnapshot()));
+    _playerStreamSubscriptions.add(currentPlayer.streams.tracks.listen((_) => _pushRemotePlayerSnapshot()));
+    _playerStreamSubscriptions.add(currentPlayer.streams.track.listen((_) => _pushRemotePlayerSnapshot()));
+    _playerStreamSubscriptions.add(currentPlayer.streams.duration.listen((_) => _pushRemotePlayerSnapshot()));
 
     // When server comes back online while buffering, force mpv to reconnect
     // immediately instead of waiting for ffmpeg's exponential backoff.
@@ -295,6 +306,7 @@ extension _VideoPlayerPlaybackServiceMethods on VideoPlayerScreenState {
           promptVisible: _episode.showPlayNextDialog,
           countdownActive: _episode.autoPlayTimer?.isActive == true,
         );
+        _pushRemotePlayerSnapshot(throttled: true);
       }),
     );
   }
@@ -457,6 +469,9 @@ extension _VideoPlayerPlaybackServiceMethods on VideoPlayerScreenState {
       }
       unawaited(TrackerCoordinator.instance.startPlayback(metadata, mediaClient, isLive: widget.isLive));
     }
+
+    _loadRemoteShowCatalogAndSkipSettings();
+    _pushRemotePlayerSnapshot();
   }
 
   /// Media controls metadata. Fire-and-forget — the OS plugin downloads the

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:material_symbols_icons/symbols.dart';
 import 'package:flutter/services.dart';
@@ -348,6 +350,28 @@ class TrackChapterControls extends StatelessWidget {
                     .show(builder: (_) => QueueSheet(onItemSelected: state.onQueueItemSelected!))
                     .whenComplete(() => state.onStartAutoHide?.call());
               },
+            ),
+          );
+          buttonIndex++;
+        }
+
+        if (state.onRemoteHandoff != null && !state.isLive) {
+          final currentIndex = buttonIndex;
+          buttons.add(
+            Builder(
+              builder: (btnContext) => _buildTrackButton(
+                buttonIndex: currentIndex,
+                icon: Symbols.connected_tv_rounded,
+                tooltip: t.companionRemote.handoffToRemote,
+                semanticLabel: t.companionRemote.handoffToRemote,
+                buttons: buttons,
+                onPressed: () {
+                  state.onCancelAutoHide?.call();
+                  unawaited(
+                    state.onRemoteHandoff!(btnContext).whenComplete(() => state.onStartAutoHide?.call()),
+                  );
+                },
+              ),
             ),
           );
           buttonIndex++;

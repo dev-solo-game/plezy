@@ -265,8 +265,7 @@ class _SettingsScreenState extends State<SettingsScreen> with FocusableTab, Moun
 
                   if (!PlatformDetector.isAppleTV()) _buildDownloadsSection(),
 
-                  if (_keyboardShortcutsSupported || PlatformDetector.shouldActAsRemoteHost(sheetContext))
-                    _buildControlsSection(sheetContext),
+                  _buildControlsSection(),
 
                   _buildAdvancedSection(),
 
@@ -537,10 +536,8 @@ class _SettingsScreenState extends State<SettingsScreen> with FocusableTab, Moun
   }
 
   /// Input devices: keyboard shortcuts on platforms with a physical keyboard,
-  /// and the companion-remote host on surfaces that can be controlled from a
-  /// phone. Either half may be absent; the caller skips the section when both
-  /// are.
-  Widget _buildControlsSection(BuildContext context) {
+  /// and the companion-remote host toggle on all surfaces.
+  Widget _buildControlsSection() {
     final children = <Widget>[
       if (_keyboardService != null) ...[
         SettingNavigationTile(
@@ -563,18 +560,14 @@ class _SettingsScreenState extends State<SettingsScreen> with FocusableTab, Moun
           subtitle: t.settings.videoPlayerNavigationDescription,
         ),
       ],
-      if (PlatformDetector.shouldActAsRemoteHost(context))
-        SettingSwitchTile(
-          focusNode: _focusTracker.get(_kCompanionRemoteServer),
-          pref: settings.SettingsService.enableCompanionRemoteServer,
-          icon: Symbols.phone_android_rounded,
-          title: t.settings.companionRemoteServer,
-          subtitle: t.settings.companionRemoteServerDescription,
-        ),
+      SettingSwitchTile(
+        focusNode: _focusTracker.get(_kCompanionRemoteServer),
+        pref: settings.SettingsService.enableCompanionRemoteServer,
+        icon: Symbols.phone_android_rounded,
+        title: t.settings.companionRemoteServer,
+        subtitle: t.settings.companionRemoteServerDescription,
+      ),
     ];
-    // Keyboard platforms render nothing until the shortcuts service loads; an
-    // empty SettingsGroup would paint a bare section title.
-    if (children.isEmpty) return const SizedBox.shrink();
     return SettingsGroup(title: t.settings.controls, children: children);
   }
 

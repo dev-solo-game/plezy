@@ -1,759 +1,797 @@
-import 'dart:math';
+import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:material_symbols_icons/symbols.dart';
 import 'package:provider/provider.dart';
 
-import '../../focus/focusable_text_field.dart';
-import '../../models/companion_remote/remote_command.dart';
-import '../../models/companion_remote/remote_session.dart';
 import '../../i18n/strings.g.dart';
-import '../../mixins/controller_disposer_mixin.dart';
+import '../../models/companion_remote/remote_command.dart';
+import '../../models/companion_remote/remote_playback_models.dart';
+import '../../models/companion_remote/remote_session.dart';
 import '../../providers/companion_remote_provider.dart';
-import '../../utils/platform_detector.dart';
+import '../../services/companion_remote/companion_remote_host_controller.dart';
+import '../../services/settings_service.dart';
 import '../../theme/mono_tokens.dart';
-import '../../utils/app_logger.dart';
 import '../../utils/dialogs.dart';
-import '../../widgets/companion_remote/discovery_view.dart';
+import '../../utils/formatters.dart';
 import '../../widgets/app_icon.dart';
+import '../../widgets/companion_remote/discovery_view.dart';
+import '../../widgets/companion_remote/remote_device_menu.dart';
 import '../../widgets/overlay_sheet.dart';
-import '../../widgets/pill_input_decoration.dart';
 
-class MobileRemoteScreen extends StatefulWidget {
-  const MobileRemoteScreen({super.key});
+typedef MobileRemoteScreen = RemoteControlScreen;
+
+/// Unified cross-device Remote Playback Control Center replacing the legacy
+/// 3-tab D-Pad remote view. Works identically across Mobile, Tablet, Desktop, and TV.
+class RemoteControlScreen extends StatefulWidget {
+  const RemoteControlScreen({super.key, this.initialHost});
+
+  final DiscoveredHost? initialHost;
 
   @override
-  State<MobileRemoteScreen> createState() => _MobileRemoteScreenState();
+  State<RemoteControlScreen> createState() => _RemoteControlScreenState();
 }
 
-class _MobileRemoteScreenState extends State<MobileRemoteScreen> {
-  // Owned here rather than by the remote controls: a reconnect swaps those
-  // controls out for the progress view, and the selected tab has to outlive it.
-  int _selectedTab = 0;
+class _RemoteControlScreenState extends State<RemoteControlScreen> {
+  static const List<double> _speedPresets = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0];
 
-  void _selectTab(int tab) {
-    setState(() => _selectedTab = tab);
+  double? _dragPositionMs;
+  double? _dragVolume;
+  bool _initiatedInitialConnect = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _maybeConnectInitialHost());
+  }
+
+  Future<void> _maybeConnectInitialHost() async {
+    if (!mounted || _initiatedInitialConnect) return;
+    final host = widget.initialHost;
+    if (host == null) return;
+    _initiatedInitialConnect = true;
+
+    final provider = context.read<CompanionRemoteProvider>();
+    if (provider.isConnectedToHost(host)) {
+      provider.sendCommand(RemoteCommandType.requestState);
+      return;
+    }
+
+    if (!provider.isCryptoReady) {
+      await ensureCompanionRemoteCryptoFromContext(context);
+      if (!mounted) return;
+    }
+    try {
+      await provider.connectToDiscoveredHost(host);
+    } catch (_) {
+      // Errors surface through provider.session and DiscoveryView.
+    }
+  }
+
+  Future<void> _handleDisconnect(BuildContext context, CompanionRemoteProvider provider) async {
+    final confirmed = await showConfirmDialog(
+      context,
+      title: t.common.disconnect,
+      message: t.companionRemote.remote.disconnectConfirm,
+      confirmText: t.common.disconnect,
+      isDestructive: true,
+    );
+    if (!confirmed || !context.mounted) return;
+
+    await provider.leaveSession();
+    if (!context.mounted) return;
+
+    final settings = SettingsService.instanceOrNull ?? await SettingsService.getInstance();
+    if (context.mounted && settings.read(SettingsService.enableCompanionRemoteServer)) {
+      unawaited(startCompanionRemoteHost(context));
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return OverlaySheetHost(
-      // Close an open sheet on system back instead of popping the screen.
       canPop: true,
-      child: Scaffold(
-        appBar: AppBar(
-          title: Text(t.companionRemote.title),
-          actions: [
-            Consumer<CompanionRemoteProvider>(
-              builder: (context, provider, child) {
-                if (provider.isConnected) {
-                  return IconButton(
+      child: Consumer<CompanionRemoteProvider>(
+        builder: (context, provider, _) {
+          final deviceName = provider.connectedDevice?.name ?? widget.initialHost?.name;
+          final title = (provider.isConnected && deviceName != null && deviceName.isNotEmpty)
+              ? t.companionRemote.controllingDevice(name: deviceName)
+              : t.companionRemote.title;
+
+          return Scaffold(
+            appBar: AppBar(
+              title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
+              actions: [
+                if (provider.isConnected || provider.onlineTrustedDevices.isNotEmpty)
+                  Builder(
+                    builder: (btnContext) => IconButton(
+                      icon: const AppIcon(Symbols.devices_rounded),
+                      tooltip: t.companionRemote.remoteDevices,
+                      onPressed: () => unawaited(showRemoteDevicesStatusMenu(btnContext)),
+                    ),
+                  ),
+                if (provider.isConnected)
+                  IconButton(
                     icon: const AppIcon(Symbols.link_off_rounded),
-                    onPressed: () async {
-                      final confirmed = await showConfirmDialog(
-                        context,
-                        title: t.common.disconnect,
-                        message: t.companionRemote.remote.disconnectConfirm,
-                        confirmText: t.common.disconnect,
-                        isDestructive: true,
-                      );
-
-                      if (confirmed && context.mounted) {
-                        await context.read<CompanionRemoteProvider>().leaveSession();
-                      }
-                    },
                     tooltip: t.common.disconnect,
-                  );
-                }
-                return const SizedBox.shrink();
-              },
+                    onPressed: () => unawaited(_handleDisconnect(context, provider)),
+                  ),
+              ],
             ),
-          ],
-        ),
-        body: Consumer<CompanionRemoteProvider>(
-          builder: (context, provider, child) {
-            if (provider.status == RemoteSessionStatus.reconnecting) {
-              return Center(
-                child: Column(
-                  mainAxisAlignment: .center,
-                  children: [
-                    const CircularProgressIndicator(),
-                    const SizedBox(height: 24),
-                    Text(t.companionRemote.remote.reconnecting, style: Theme.of(context).textTheme.titleLarge),
-                    const SizedBox(height: 8),
-                    Text(
-                      t.companionRemote.remote.attemptOf(current: provider.reconnectAttempts),
-                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: tokens(context).textMuted),
-                    ),
-                    const SizedBox(height: 32),
-                    Row(
-                      mainAxisAlignment: .center,
-                      children: [
-                        OutlinedButton(
-                          onPressed: () async {
-                            await provider.cancelReconnect();
-                          },
-                          child: Text(t.common.cancel),
-                        ),
-                        const SizedBox(width: 16),
-                        FilledButton(
-                          onPressed: () async {
-                            await provider.retryReconnectNow();
-                          },
-                          child: Text(t.companionRemote.remote.retryNow),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              );
-            }
-
-            if (!provider.isConnected) {
-              return const DiscoveryView();
-            }
-
-            return _RemoteControlLayout(selectedTab: _selectedTab, onTabSelected: _selectTab);
-          },
-        ),
+            body: _buildBody(context, provider),
+          );
+        },
       ),
     );
   }
-}
 
-class _RemoteControlLayout extends StatelessWidget {
-  const _RemoteControlLayout({required this.selectedTab, required this.onTabSelected});
-
-  final int selectedTab;
-  final ValueChanged<int> onTabSelected;
-
-  @override
-  Widget build(BuildContext context) {
-    final content = _RemoteControlContent(selectedTab: selectedTab, onTabSelected: onTabSelected);
-    if (PlatformDetector.isDesktop(context)) {
+  Widget _buildBody(BuildContext context, CompanionRemoteProvider provider) {
+    if (provider.status == RemoteSessionStatus.reconnecting) {
       return Center(
-        child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 400), child: content),
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const CircularProgressIndicator(),
+              const SizedBox(height: 24),
+              Text(t.companionRemote.remote.reconnecting, style: Theme.of(context).textTheme.titleLarge),
+              const SizedBox(height: 8),
+              Text(
+                t.companionRemote.remote.attemptOf(current: provider.reconnectAttempts),
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: tokens(context).textMuted),
+              ),
+              const SizedBox(height: 32),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  OutlinedButton(
+                    onPressed: () => unawaited(provider.cancelReconnect()),
+                    child: Text(t.common.cancel),
+                  ),
+                  const SizedBox(width: 16),
+                  FilledButton(
+                    onPressed: () => unawaited(provider.retryReconnectNow()),
+                    child: Text(t.companionRemote.remote.retryNow),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
       );
     }
 
-    return content;
-  }
-}
-
-class _RemoteControlContent extends StatefulWidget {
-  const _RemoteControlContent({required this.selectedTab, required this.onTabSelected});
-
-  final int selectedTab;
-  final ValueChanged<int> onTabSelected;
-
-  @override
-  State<_RemoteControlContent> createState() => _RemoteControlContentState();
-}
-
-class _RemoteControlContentState extends State<_RemoteControlContent> {
-  void _showSearchSheet({bool switchToSearchTab = false}) {
-    if (switchToSearchTab) {
-      _sendCommand(RemoteCommandType.tabSearch);
+    if (provider.status == RemoteSessionStatus.connecting) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const CircularProgressIndicator(),
+            const SizedBox(height: 16),
+            Text(t.companionRemote.pairing.connecting, style: Theme.of(context).textTheme.titleMedium),
+          ],
+        ),
+      );
     }
-    final provider = context.read<CompanionRemoteProvider>();
-    OverlaySheetController.of(
-      context,
-    ).show(showDragHandle: true, builder: (_) => _SearchBottomSheet(provider: provider));
+
+    if (!provider.isConnected) {
+      return const DiscoveryView();
+    }
+
+    final snapshot = provider.remotePlayerSnapshot;
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 720),
+        child: ListView(
+          key: const PageStorageKey<String>('remote_control_scroll'),
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
+          children: [
+            _buildNowPlayingCard(context, provider, snapshot),
+            const SizedBox(height: 16),
+            if (snapshot.active) ...[
+              _buildProgressCard(context, provider, snapshot),
+              const SizedBox(height: 16),
+            ],
+            _buildTransportCard(context, provider, snapshot),
+            if (snapshot.seasons.isNotEmpty || snapshot.episodes.isNotEmpty) ...[
+              const SizedBox(height: 16),
+              _buildEpisodesCard(context, provider, snapshot),
+            ],
+            const SizedBox(height: 16),
+            _buildVolumeAndSpeedCard(context, provider, snapshot),
+            const SizedBox(height: 16),
+            _buildTracksAndDisplayCard(context, provider, snapshot),
+          ],
+        ),
+      ),
+    );
   }
 
-  void _sendCommand(RemoteCommandType type) {
-    HapticFeedback.lightImpact();
-    appLogger.d('MobileRemoteScreen: Sending command: $type');
-    final provider = context.read<CompanionRemoteProvider>();
-    provider.sendCommand(type);
-  }
+  Widget _buildNowPlayingCard(
+    BuildContext context,
+    CompanionRemoteProvider provider,
+    RemotePlayerSnapshot snapshot,
+  ) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
 
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      children: [
-        Consumer<CompanionRemoteProvider>(
-          builder: (context, provider, child) {
-            final device = provider.connectedDevice;
-            if (device == null) return const SizedBox.shrink();
-
-            return Container(
-              padding: const EdgeInsets.all(16),
-              color: Theme.of(context).colorScheme.primaryContainer,
-              child: Row(
-                children: [
-                  AppIcon(Symbols.computer_rounded, color: Theme.of(context).colorScheme.onPrimaryContainer),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: .start,
-                      children: [
-                        Text(
-                          device.name,
-                          style: Theme.of(
-                            context,
-                          ).textTheme.titleMedium?.copyWith(color: Theme.of(context).colorScheme.onPrimaryContainer),
-                        ),
-                        Text(
-                          device.platform,
-                          style: Theme.of(
-                            context,
-                          ).textTheme.bodySmall?.copyWith(color: Theme.of(context).colorScheme.onPrimaryContainer),
-                        ),
-                      ],
+    if (!snapshot.active) {
+      final isOpening = snapshot.stage == 'opening';
+      final isError = snapshot.stage == 'error';
+      return Card(
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Row(
+            children: [
+              if (isOpening)
+                const SizedBox(width: 28, height: 28, child: CircularProgressIndicator(strokeWidth: 2.5))
+              else
+                AppIcon(
+                  isError ? Symbols.error_outline_rounded : Symbols.live_tv_rounded,
+                  size: 32,
+                  color: isError ? colorScheme.error : tokens(context).textMuted,
+                ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      isOpening
+                          ? t.companionRemote.openingOnRemote
+                          : isError
+                          ? (snapshot.errorMessage ?? t.companionRemote.mediaNotFoundOnDevice)
+                          : t.companionRemote.idle,
+                      style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
                     ),
-                  ),
-                  Container(
-                    width: 8,
-                    height: 8,
-                    decoration: const BoxDecoration(color: Colors.green, shape: BoxShape.circle),
-                  ),
-                ],
-              ),
-            );
-          },
-        ),
-        Expanded(
-          child: ListView(
-            // Restores the scroll offset when a reconnect rebuilds the controls.
-            key: const PageStorageKey('companionRemoteControls'),
-            padding: .fromLTRB(16, 16, 16, 16 + MediaQuery.paddingOf(context).bottom),
-            children: [
-              SegmentedButton<int>(
-                showSelectedIcon: false,
-                segments: [
-                  ButtonSegment(
-                    value: 0,
-                    label: Text(t.companionRemote.remote.tabRemote),
-                    icon: const AppIcon(Symbols.navigation_rounded),
-                  ),
-                  ButtonSegment(
-                    value: 1,
-                    label: Text(t.companionRemote.remote.tabPlay),
-                    icon: const AppIcon(Symbols.play_arrow_rounded),
-                  ),
-                  ButtonSegment(
-                    value: 2,
-                    label: Text(t.companionRemote.remote.tabMore),
-                    icon: const AppIcon(Symbols.flash_on_rounded),
-                  ),
-                ],
-                selected: {widget.selectedTab},
-                onSelectionChanged: (Set<int> selection) => widget.onTabSelected(selection.first),
-              ),
-              const SizedBox(height: 24),
-              if (widget.selectedTab == 0) _buildNavigationTab(),
-              if (widget.selectedTab == 1) _buildPlaybackTab(),
-              if (widget.selectedTab == 2) _buildQuickActionsTab(),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildNavigationTab() {
-    final isPlayerActive = context.watch<CompanionRemoteProvider>().isPlayerActive;
-
-    return Column(
-      children: [
-        const SizedBox(height: 16),
-        Row(
-          mainAxisAlignment: .spaceEvenly,
-          children: [
-            _RemoteButton(
-              icon: Symbols.home_rounded,
-              label: t.common.home,
-              onPressed: () => _sendCommand(RemoteCommandType.home),
-            ),
-            _RemoteButton(
-              icon: Symbols.arrow_back_rounded,
-              label: t.common.back,
-              onPressed: () => _sendCommand(RemoteCommandType.back),
-            ),
-            _RemoteButton(
-              icon: Symbols.menu_rounded,
-              label: t.companionRemote.remote.menu,
-              onPressed: () => _sendCommand(RemoteCommandType.contextMenu),
-            ),
-          ],
-        ),
-        const SizedBox(height: 32),
-        Center(child: _DPad(onCommand: _sendCommand)),
-        if (!isPlayerActive) ...[
-          const SizedBox(height: 32),
-          Text(t.companionRemote.remote.tabNavigation, style: Theme.of(context).textTheme.titleMedium),
-          const SizedBox(height: 16),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            alignment: WrapAlignment.center,
-            children: [
-              _RemoteChip(
-                icon: Symbols.explore_rounded,
-                label: t.companionRemote.remote.tabDiscover,
-                onPressed: () => _sendCommand(RemoteCommandType.tabDiscover),
-              ),
-              _RemoteChip(
-                icon: Symbols.video_library_rounded,
-                label: t.companionRemote.remote.tabLibraries,
-                onPressed: () => _sendCommand(RemoteCommandType.tabLibraries),
-              ),
-              _RemoteChip(
-                icon: Symbols.search_rounded,
-                label: t.companionRemote.remote.tabSearch,
-                onPressed: () => _showSearchSheet(switchToSearchTab: true),
-              ),
-              _RemoteChip(
-                icon: Symbols.download_rounded,
-                label: t.companionRemote.remote.tabDownloads,
-                onPressed: () => _sendCommand(RemoteCommandType.tabDownloads),
-              ),
-              _RemoteChip(
-                icon: Symbols.settings_rounded,
-                label: t.companionRemote.remote.tabSettings,
-                onPressed: () => _sendCommand(RemoteCommandType.tabSettings),
+                    const SizedBox(height: 4),
+                    Text(
+                      isOpening ? (snapshot.title ?? '') : t.companionRemote.idleControlHint,
+                      style: theme.textTheme.bodySmall?.copyWith(color: tokens(context).textMuted),
+                    ),
+                  ],
+                ),
               ),
             ],
           ),
-        ],
-      ],
-    );
-  }
-
-  Widget _buildPlaybackTab() {
-    return Column(
-      children: [
-        const SizedBox(height: 16),
-        Row(
-          mainAxisAlignment: .center,
-          children: [
-            _RemoteButton(
-              icon: Symbols.skip_previous_rounded,
-              label: t.companionRemote.remote.previous,
-              onPressed: () => _sendCommand(RemoteCommandType.previousTrack),
-            ),
-            const SizedBox(width: 16),
-            _RemoteButton(
-              icon: Symbols.play_arrow_rounded,
-              label: t.companionRemote.remote.playPause,
-              size: 64,
-              iconSize: 36,
-              onPressed: () => _sendCommand(RemoteCommandType.playPause),
-            ),
-            const SizedBox(width: 16),
-            _RemoteButton(
-              icon: Symbols.skip_next_rounded,
-              label: t.companionRemote.remote.next,
-              onPressed: () => _sendCommand(RemoteCommandType.nextTrack),
-            ),
-          ],
         ),
-        const SizedBox(height: 24),
-        Row(
-          mainAxisAlignment: .center,
-          children: [
-            _RemoteButton(
-              icon: Symbols.replay_10_rounded,
-              label: t.companionRemote.remote.seekBack,
-              onPressed: () => _sendCommand(RemoteCommandType.seekBackward),
-            ),
-            const SizedBox(width: 16),
-            _RemoteButton(
-              icon: Symbols.stop_rounded,
-              label: t.companionRemote.remote.stop,
-              onPressed: () => _sendCommand(RemoteCommandType.stop),
-            ),
-            const SizedBox(width: 16),
-            _RemoteButton(
-              icon: Symbols.forward_10_rounded,
-              label: t.companionRemote.remote.seekForward,
-              onPressed: () => _sendCommand(RemoteCommandType.seekForward),
-            ),
-          ],
-        ),
-        const SizedBox(height: 32),
-        Text(t.companionRemote.remote.volume, style: Theme.of(context).textTheme.titleMedium),
-        const SizedBox(height: 16),
-        Row(
-          mainAxisAlignment: .center,
-          children: [
-            _RemoteButton(
-              icon: Symbols.volume_off_rounded,
-              label: t.common.mute,
-              onPressed: () => _sendCommand(RemoteCommandType.volumeMute),
-            ),
-            const SizedBox(width: 16),
-            _RemoteButton(
-              icon: Symbols.volume_down_rounded,
-              label: t.companionRemote.remote.volumeDown,
-              onPressed: () => _sendCommand(RemoteCommandType.volumeDown),
-            ),
-            const SizedBox(width: 16),
-            _RemoteButton(
-              icon: Symbols.volume_up_rounded,
-              label: t.companionRemote.remote.volumeUp,
-              onPressed: () => _sendCommand(RemoteCommandType.volumeUp),
-            ),
-          ],
-        ),
-      ],
-    );
-  }
-
-  Widget _buildQuickActionsTab() {
-    final isPlayerActive = context.watch<CompanionRemoteProvider>().isPlayerActive;
-
-    return Column(
-      children: [
-        const SizedBox(height: 16),
-        Wrap(
-          spacing: 12,
-          runSpacing: 12,
-          alignment: WrapAlignment.center,
-          children: [
-            if (!isPlayerActive)
-              _RemoteCard(icon: Symbols.search_rounded, label: t.common.search, onPressed: _showSearchSheet),
-            if (isPlayerActive) ...[
-              _RemoteCard(
-                icon: Symbols.fullscreen_rounded,
-                label: t.companionRemote.remote.fullscreen,
-                onPressed: () => _sendCommand(RemoteCommandType.fullscreen),
-              ),
-              _RemoteCard(
-                icon: Symbols.subtitles_rounded,
-                label: t.companionRemote.remote.subtitles,
-                onPressed: () => _sendCommand(RemoteCommandType.subtitles),
-              ),
-              _RemoteCard(
-                icon: Symbols.audiotrack_rounded,
-                label: t.companionRemote.remote.audio,
-                onPressed: () => _sendCommand(RemoteCommandType.audioTracks),
-              ),
-            ],
-          ],
-        ),
-      ],
-    );
-  }
-}
-
-class _DPad extends StatelessWidget {
-  final Function(RemoteCommandType) onCommand;
-
-  const _DPad({required this.onCommand});
-
-  static const _diameter = 220.0;
-  static const _centerSize = 80.0;
-  static const _gapWidth = 3.0;
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
-
-    return SizedBox(
-      width: _diameter,
-      height: _diameter,
-      child: ClipOval(
-        child: Stack(
-          children: [
-            Container(
-              decoration: BoxDecoration(shape: BoxShape.circle, color: colors.surface),
-            ),
-            _DPadZone(
-              startAngle: -135,
-              icon: Symbols.keyboard_arrow_up_rounded,
-              onTap: () => onCommand(RemoteCommandType.dpadUp),
-            ),
-            _DPadZone(
-              startAngle: -45,
-              icon: Symbols.keyboard_arrow_right_rounded,
-              onTap: () => onCommand(RemoteCommandType.dpadRight),
-            ),
-            _DPadZone(
-              startAngle: 45,
-              icon: Symbols.keyboard_arrow_down_rounded,
-              onTap: () => onCommand(RemoteCommandType.dpadDown),
-            ),
-            _DPadZone(
-              startAngle: 135,
-              icon: Symbols.keyboard_arrow_left_rounded,
-              onTap: () => onCommand(RemoteCommandType.dpadLeft),
-            ),
-            Center(child: _DPadCenter(onTap: () => onCommand(RemoteCommandType.select))),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _DPadZone extends StatefulWidget {
-  final double startAngle;
-  final IconData icon;
-  final VoidCallback onTap;
-
-  const _DPadZone({required this.startAngle, required this.icon, required this.onTap});
-
-  Alignment get iconAlignment {
-    final midRad = (startAngle + 45) * pi / 180;
-    const r = 0.78;
-    return Alignment(r * cos(midRad), r * sin(midRad));
-  }
-
-  @override
-  State<_DPadZone> createState() => _DPadZoneState();
-}
-
-class _DPadZoneState extends State<_DPadZone> {
-  bool _pressed = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
-
-    return Positioned.fill(
-      child: ClipPath(
-        clipper: _SectorClipper(
-          startAngle: widget.startAngle,
-          innerRadius: _DPad._centerSize / 2 + _DPad._gapWidth,
-          gapWidth: _DPad._gapWidth,
-        ),
-        child: GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTapDown: (_) => setState(() => _pressed = true),
-          onTapUp: (_) => setState(() => _pressed = false),
-          onTapCancel: () => setState(() => _pressed = false),
-          onTap: () {
-            HapticFeedback.lightImpact();
-            widget.onTap();
-          },
-          child: AnimatedContainer(
-            duration: tokens(context).fast,
-            color: _pressed ? colors.primary.withValues(alpha: 0.8) : colors.primary,
-            alignment: widget.iconAlignment,
-            child: AppIcon(widget.icon, size: 28, color: colors.onPrimary),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _DPadCenter extends StatefulWidget {
-  final VoidCallback onTap;
-
-  const _DPadCenter({required this.onTap});
-
-  @override
-  State<_DPadCenter> createState() => _DPadCenterState();
-}
-
-class _DPadCenterState extends State<_DPadCenter> {
-  bool _pressed = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
-
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTapDown: (_) => setState(() => _pressed = true),
-      onTapUp: (_) => setState(() => _pressed = false),
-      onTapCancel: () => setState(() => _pressed = false),
-      onTap: () {
-        HapticFeedback.lightImpact();
-        widget.onTap();
-      },
-      child: AnimatedContainer(
-        duration: tokens(context).fast,
-        width: _DPad._centerSize,
-        height: _DPad._centerSize,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          color: _pressed ? colors.primary.withValues(alpha: 0.8) : colors.primary,
-        ),
-        child: const SizedBox.shrink(),
-      ),
-    );
-  }
-}
-
-class _SectorClipper extends CustomClipper<Path> {
-  final double startAngle;
-  final double innerRadius;
-  final double gapWidth;
-
-  const _SectorClipper({required this.startAngle, required this.innerRadius, required this.gapWidth});
-
-  @override
-  Path getClip(Size size) {
-    final center = Offset(size.width / 2, size.height / 2);
-    final outerRadius = size.width / 2;
-    final halfGap = gapWidth / 2;
-    final startRad = startAngle * pi / 180;
-    final endRad = startRad + pi / 2;
-
-    // Use arcsin to compute angular offset at each radius for constant-width gap
-    final innerOffset = asin(halfGap / innerRadius);
-    final outerOffset = asin(halfGap / outerRadius);
-
-    final innerStart = startRad + innerOffset;
-    final outerStart = startRad + outerOffset;
-    final outerEnd = endRad - outerOffset;
-    final innerEnd = endRad - innerOffset;
-
-    return Path()
-      ..moveTo(center.dx + innerRadius * cos(innerStart), center.dy + innerRadius * sin(innerStart))
-      ..lineTo(center.dx + outerRadius * cos(outerStart), center.dy + outerRadius * sin(outerStart))
-      ..arcTo(Rect.fromCircle(center: center, radius: outerRadius), outerStart, outerEnd - outerStart, false)
-      ..lineTo(center.dx + innerRadius * cos(innerEnd), center.dy + innerRadius * sin(innerEnd))
-      ..arcTo(Rect.fromCircle(center: center, radius: innerRadius), innerEnd, innerStart - innerEnd, false)
-      ..close();
-  }
-
-  @override
-  bool shouldReclip(covariant _SectorClipper oldClipper) =>
-      startAngle != oldClipper.startAngle || innerRadius != oldClipper.innerRadius || gapWidth != oldClipper.gapWidth;
-}
-
-class _RemoteButton extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final VoidCallback onPressed;
-  final double size;
-  final double iconSize;
-
-  const _RemoteButton({
-    required this.icon,
-    required this.label,
-    required this.onPressed,
-    this.size = 56,
-    this.iconSize = 24,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      mainAxisSize: .min,
-      children: [
-        SizedBox(
-          width: size,
-          height: size,
-          child: FilledButton(
-            onPressed: () {
-              HapticFeedback.lightImpact();
-              onPressed();
-            },
-            style: FilledButton.styleFrom(padding: .zero, shape: const CircleBorder()),
-            child: AppIcon(icon, size: iconSize),
-          ),
-        ),
-        const SizedBox(height: 4),
-        Text(label, style: Theme.of(context).textTheme.bodySmall, textAlign: TextAlign.center),
-      ],
-    );
-  }
-}
-
-class _RemoteChip extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final VoidCallback onPressed;
-
-  const _RemoteChip({required this.icon, required this.label, required this.onPressed});
-
-  @override
-  Widget build(BuildContext context) {
-    return FilledButton.icon(
-      onPressed: () {
-        HapticFeedback.lightImpact();
-        onPressed();
-      },
-      icon: AppIcon(icon, size: 18),
-      label: Text(label),
-    );
-  }
-}
-
-class _SearchBottomSheet extends StatefulWidget {
-  final CompanionRemoteProvider provider;
-
-  const _SearchBottomSheet({required this.provider});
-
-  @override
-  State<_SearchBottomSheet> createState() => _SearchBottomSheetState();
-}
-
-class _SearchBottomSheetState extends State<_SearchBottomSheet> with ControllerDisposerMixin {
-  late final _controller = createTextEditingController();
-
-  void _submit(String text) {
-    final trimmed = text.trim();
-    if (trimmed.isNotEmpty) {
-      widget.provider.sendCommand(RemoteCommandType.search, data: {'query': trimmed});
+      );
     }
-    OverlaySheetController.of(context).close();
-  }
 
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: .only(bottom: MediaQuery.viewInsetsOf(context).bottom, left: 16, right: 16, top: 16),
-      child: Column(
-        mainAxisSize: .min,
-        children: [
-          FocusableTextField(
-            controller: _controller,
-            autofocus: true,
-            decoration: pillInputDecoration(
-              context,
-              hintText: t.companionRemote.remote.searchHint,
-              prefixIcon: const AppIcon(Symbols.search_rounded),
-              suffixIcon: IconButton(
-                icon: const AppIcon(Symbols.send_rounded),
-                onPressed: () => _submit(_controller.text),
+    final episodeTag = (snapshot.mediaKind == 'episode' &&
+            snapshot.seasonNumber != null &&
+            snapshot.episodeNumber != null)
+        ? 'S${snapshot.seasonNumber!.toString().padLeft(2, '0')}E${snapshot.episodeNumber!.toString().padLeft(2, '0')}'
+        : null;
+    final stateText = snapshot.buffering
+        ? t.companionRemote.buffering
+        : snapshot.playing
+        ? t.companionRemote.playingNow
+        : t.companionRemote.paused;
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (snapshot.posterUrl != null) ...[
+              ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: Image.network(
+                  snapshot.posterUrl!,
+                  width: 64,
+                  height: 92,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, _, _) => _posterPlaceholder(context),
+                ),
+              ),
+              const SizedBox(width: 14),
+            ],
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (snapshot.seriesTitle != null && snapshot.seriesTitle!.isNotEmpty)
+                    Text(
+                      snapshot.seriesTitle!,
+                      style: theme.textTheme.labelLarge?.copyWith(color: colorScheme.primary),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  Text(
+                    episodeTag != null ? '$episodeTag · ${snapshot.title ?? ''}' : (snapshot.title ?? ''),
+                    style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      Chip(
+                        avatar: AppIcon(
+                          snapshot.playing ? Symbols.play_arrow_rounded : Symbols.pause_rounded,
+                          size: 16,
+                        ),
+                        label: Text(stateText),
+                        visualDensity: VisualDensity.compact,
+                      ),
+                      OutlinedButton.icon(
+                        onPressed: () => provider.sendCommand(RemoteCommandType.stop),
+                        icon: const AppIcon(Symbols.stop_circle_rounded, size: 18),
+                        label: Text(t.companionRemote.stopRemotePlayback),
+                        style: OutlinedButton.styleFrom(visualDensity: VisualDensity.compact),
+                      ),
+                    ],
+                  ),
+                ],
               ),
             ),
-            onSubmitted: _submit,
-          ),
-          const SizedBox(height: 16),
-        ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _posterPlaceholder(BuildContext context) {
+    return Container(
+      width: 64,
+      height: 92,
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      alignment: Alignment.center,
+      child: AppIcon(Symbols.movie_rounded, color: tokens(context).textMuted),
+    );
+  }
+
+  Widget _buildProgressCard(
+    BuildContext context,
+    CompanionRemoteProvider provider,
+    RemotePlayerSnapshot snapshot,
+  ) {
+    final maxMs = math.max(snapshot.durationMs, 1).toDouble();
+    final displayMs = (_dragPositionMs ?? snapshot.positionMs.toDouble()).clamp(0.0, maxMs);
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+        child: Column(
+          children: [
+            Slider(
+              value: displayMs,
+              min: 0,
+              max: maxMs,
+              onChanged: (v) => setState(() => _dragPositionMs = v),
+              onChangeEnd: (v) {
+                setState(() => _dragPositionMs = null);
+                provider.sendCommand(RemoteCommandType.seekTo, data: {'positionMs': v.round()});
+              },
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(formatDurationTimestamp(Duration(milliseconds: displayMs.round()))),
+                  Text(formatDurationTimestamp(Duration(milliseconds: snapshot.durationMs))),
+                ],
+              ),
+            ),
+            if (snapshot.canSkipIntro || snapshot.canSkipCredits) ...[
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 8,
+                children: [
+                  if (snapshot.canSkipIntro)
+                    FilledButton.tonalIcon(
+                      onPressed: () => provider.sendCommand(RemoteCommandType.skipIntro),
+                      icon: const AppIcon(Symbols.skip_next_rounded, size: 18),
+                      label: Text(t.companionRemote.skipIntro),
+                    ),
+                  if (snapshot.canSkipCredits)
+                    FilledButton.tonalIcon(
+                      onPressed: () => provider.sendCommand(RemoteCommandType.skipCredits),
+                      icon: const AppIcon(Symbols.skip_next_rounded, size: 18),
+                      label: Text(t.companionRemote.skipCredits),
+                    ),
+                ],
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTransportCard(
+    BuildContext context,
+    CompanionRemoteProvider provider,
+    RemotePlayerSnapshot snapshot,
+  ) {
+    final canPrev = !snapshot.active || snapshot.canPrevious;
+    final canNext = !snapshot.active || snapshot.canNext;
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 16),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+          children: [
+            IconButton(
+              icon: const AppIcon(Symbols.skip_previous_rounded, size: 28),
+              tooltip: t.companionRemote.remote.previous,
+              onPressed: canPrev ? () => provider.sendCommand(RemoteCommandType.previousTrack) : null,
+            ),
+            IconButton(
+              icon: const AppIcon(Symbols.replay_10_rounded, size: 28),
+              tooltip: t.companionRemote.remote.seekBack,
+              onPressed: () => provider.sendCommand(RemoteCommandType.seekBackward),
+            ),
+            FilledButton(
+              onPressed: () => provider.sendCommand(RemoteCommandType.playPause),
+              style: FilledButton.styleFrom(
+                shape: const CircleBorder(),
+                padding: const EdgeInsets.all(18),
+              ),
+              child: Semantics(
+                label: t.companionRemote.remote.playPause,
+                child: AppIcon(
+                  snapshot.playing ? Symbols.pause_rounded : Symbols.play_arrow_rounded,
+                  size: 32,
+                  fill: 1,
+                ),
+              ),
+            ),
+            IconButton(
+              icon: const AppIcon(Symbols.forward_10_rounded, size: 28),
+              tooltip: t.companionRemote.remote.seekForward,
+              onPressed: () => provider.sendCommand(RemoteCommandType.seekForward),
+            ),
+            IconButton(
+              icon: const AppIcon(Symbols.skip_next_rounded, size: 28),
+              tooltip: t.companionRemote.remote.next,
+              onPressed: canNext ? () => provider.sendCommand(RemoteCommandType.nextTrack) : null,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildEpisodesCard(
+    BuildContext context,
+    CompanionRemoteProvider provider,
+    RemotePlayerSnapshot snapshot,
+  ) {
+    final theme = Theme.of(context);
+    final selectedSeason = snapshot.browsedSeasonNumber ?? snapshot.seasonNumber;
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(t.companionRemote.episodes, style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
+            if (snapshot.seasons.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: [
+                    for (final season in snapshot.seasons) ...[
+                      ChoiceChip(
+                        label: Text(
+                          season.title.isNotEmpty
+                              ? season.title
+                              : t.companionRemote.seasonNumber(number: season.seasonNumber),
+                        ),
+                        selected: season.seasonNumber == selectedSeason,
+                        onSelected: (_) => provider.sendCommand(
+                          RemoteCommandType.browseSeason,
+                          data: {'seasonNumber': season.seasonNumber},
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                    ],
+                  ],
+                ),
+              ),
+            ],
+            if (snapshot.episodes.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 240),
+                child: ListView.separated(
+                  shrinkWrap: true,
+                  itemCount: snapshot.episodes.length,
+                  separatorBuilder: (_, _) => const Divider(height: 1),
+                  itemBuilder: (context, index) {
+                    final ep = snapshot.episodes[index];
+                    return ListTile(
+                      dense: true,
+                      selected: ep.current,
+                      leading: CircleAvatar(
+                        radius: 15,
+                        child: Text('${ep.episodeNumber}', style: theme.textTheme.labelSmall),
+                      ),
+                      title: Text(ep.title, maxLines: 1, overflow: TextOverflow.ellipsis),
+                      subtitle: ep.durationMs != null
+                          ? Text(formatDurationTimestamp(Duration(milliseconds: ep.durationMs!)))
+                          : null,
+                      trailing: ep.current
+                          ? AppIcon(Symbols.graphic_eq_rounded, color: theme.colorScheme.primary)
+                          : ep.watched
+                          ? AppIcon(Symbols.check_circle_rounded, size: 18, color: tokens(context).textMuted)
+                          : null,
+                      onTap: () => provider.sendCommand(
+                        RemoteCommandType.playEpisodeItem,
+                        data: {'itemKey': ep.itemKey},
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildVolumeAndSpeedCard(
+    BuildContext context,
+    CompanionRemoteProvider provider,
+    RemotePlayerSnapshot snapshot,
+  ) {
+    final theme = Theme.of(context);
+    final displayVol = (_dragVolume ?? snapshot.volume).clamp(0.0, 100.0);
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                IconButton(
+                  icon: AppIcon(
+                    snapshot.muted || displayVol <= 0.5 ? Symbols.volume_off_rounded : Symbols.volume_up_rounded,
+                  ),
+                  tooltip: t.companionRemote.remote.volume,
+                  onPressed: () => provider.sendCommand(RemoteCommandType.volumeMute),
+                ),
+                Expanded(
+                  child: Slider(
+                    value: displayVol,
+                    min: 0,
+                    max: 100,
+                    divisions: 100,
+                    onChanged: (v) => setState(() => _dragVolume = v),
+                    onChangeEnd: (v) {
+                      setState(() => _dragVolume = null);
+                      provider.sendCommand(RemoteCommandType.volumeSet, data: {'volume': v});
+                    },
+                  ),
+                ),
+                SizedBox(
+                  width: 44,
+                  child: Text('${displayVol.round()}%', textAlign: TextAlign.end, style: theme.textTheme.bodyMedium),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Text(
+              t.companionRemote.playbackSpeed,
+              style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final speed in _speedPresets)
+                  ChoiceChip(
+                    label: Text('${speed}x'),
+                    selected: (snapshot.playbackRate - speed).abs() < 0.05,
+                    onSelected: (_) => provider.sendCommand(RemoteCommandType.setRate, data: {'rate': speed}),
+                  ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTracksAndDisplayCard(
+    BuildContext context,
+    CompanionRemoteProvider provider,
+    RemotePlayerSnapshot snapshot,
+  ) {
+    final theme = Theme.of(context);
+    final selectedSubtitle = snapshot.subtitleTracks.where((t) => t.selected).firstOrNull?.label ??
+        t.companionRemote.subtitleTrackOff;
+    final selectedAudio = snapshot.audioTracks.where((t) => t.selected).firstOrNull?.label ?? '-';
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const AppIcon(Symbols.subtitles_rounded),
+              title: Text(t.companionRemote.remote.subtitles),
+              subtitle: Text(selectedSubtitle, maxLines: 1, overflow: TextOverflow.ellipsis),
+              trailing: const AppIcon(Symbols.chevron_right_rounded),
+              onTap: snapshot.subtitleTracks.isEmpty
+                  ? null
+                  : () => _pickTrackSheet(
+                        context,
+                        title: t.companionRemote.remote.subtitles,
+                        tracks: snapshot.subtitleTracks,
+                        onPick: (id) => provider.sendCommand(
+                          RemoteCommandType.selectSubtitleTrack,
+                          data: {'trackId': id},
+                        ),
+                      ),
+            ),
+            _SyncOffsetStepperRow(
+              label: t.companionRemote.subtitleDelay,
+              offsetMs: snapshot.subtitleSyncOffsetMs,
+              onChanged: (next) => provider.sendCommand(RemoteCommandType.setSyncOffset, data: {'subtitleMs': next}),
+            ),
+            const Divider(),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const AppIcon(Symbols.audiotrack_rounded),
+              title: Text(t.companionRemote.remote.audio),
+              subtitle: Text(selectedAudio, maxLines: 1, overflow: TextOverflow.ellipsis),
+              trailing: const AppIcon(Symbols.chevron_right_rounded),
+              onTap: snapshot.audioTracks.isEmpty
+                  ? null
+                  : () => _pickTrackSheet(
+                        context,
+                        title: t.companionRemote.remote.audio,
+                        tracks: snapshot.audioTracks,
+                        onPick: (id) => provider.sendCommand(
+                          RemoteCommandType.selectAudioTrack,
+                          data: {'trackId': id},
+                        ),
+                      ),
+            ),
+            _SyncOffsetStepperRow(
+              label: t.companionRemote.audioDelay,
+              offsetMs: snapshot.audioSyncOffsetMs,
+              onChanged: (next) => provider.sendCommand(RemoteCommandType.setSyncOffset, data: {'audioMs': next}),
+            ),
+            if (snapshot.qualities.isNotEmpty) ...[
+              const Divider(),
+              const SizedBox(height: 6),
+              Text(t.companionRemote.qualityLabel, style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600)),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (final quality in snapshot.qualities)
+                    ChoiceChip(
+                      label: Text(quality.label),
+                      selected: quality.selected,
+                      onSelected: (_) =>
+                          provider.sendCommand(RemoteCommandType.selectQuality, data: {'qualityId': quality.id}),
+                    ),
+                ],
+              ),
+            ],
+            const Divider(),
+            const SizedBox(height: 6),
+            Text(t.companionRemote.aspectRatio, style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600)),
+            const SizedBox(height: 8),
+            SizedBox(
+              width: double.infinity,
+              child: SegmentedButton<int>(
+                segments: [
+                  ButtonSegment(value: 0, label: Text(t.companionRemote.aspectContain)),
+                  ButtonSegment(value: 1, label: Text(t.companionRemote.aspectCover)),
+                  ButtonSegment(value: 2, label: Text(t.companionRemote.aspectStretch)),
+                ],
+                selected: {snapshot.boxFitMode.clamp(0, 2)},
+                onSelectionChanged: (set) {
+                  if (set.isEmpty) return;
+                  provider.sendCommand(RemoteCommandType.setBoxFitMode, data: {'mode': set.first});
+                },
+              ),
+            ),
+            if (snapshot.isDesktopHost) ...[
+              const SizedBox(height: 12),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                secondary: const AppIcon(Symbols.fullscreen_rounded),
+                title: Text(t.companionRemote.remote.fullscreen),
+                value: snapshot.isFullscreen,
+                onChanged: (_) => provider.sendCommand(RemoteCommandType.fullscreen),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _pickTrackSheet(
+    BuildContext context, {
+    required String title,
+    required List<RemoteTrackOption> tracks,
+    required ValueChanged<String> onPick,
+  }) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      builder: (sheetContext) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+              child: Text(title, style: Theme.of(sheetContext).textTheme.titleMedium),
+            ),
+            const Divider(height: 1),
+            for (final track in tracks)
+              ListTile(
+                leading: track.selected ? const AppIcon(Symbols.check_rounded) : const SizedBox(width: 24),
+                title: Text(track.label),
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  onPick(track.id);
+                },
+              ),
+          ],
+        ),
       ),
     );
   }
 }
 
-class _RemoteCard extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final VoidCallback onPressed;
+class _SyncOffsetStepperRow extends StatelessWidget {
+  const _SyncOffsetStepperRow({required this.label, required this.offsetMs, required this.onChanged});
 
-  const _RemoteCard({required this.icon, required this.label, required this.onPressed});
+  final String label;
+  final int offsetMs;
+  final ValueChanged<int> onChanged;
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      width: 100,
-      height: 100,
-      child: Card(
-        child: InkWell(
-          onTap: () {
-            HapticFeedback.lightImpact();
-            onPressed();
-          },
-          borderRadius: const BorderRadius.all(Radius.circular(12)),
-          child: Column(
-            mainAxisAlignment: .center,
-            children: [
-              AppIcon(icon, size: 32),
-              const SizedBox(height: 8),
-              Text(label, style: Theme.of(context).textTheme.bodySmall, textAlign: TextAlign.center),
-            ],
-          ),
+    final text = offsetMs == 0 ? '0 ms' : '${offsetMs > 0 ? '+' : ''}$offsetMs ms';
+    return Row(
+      children: [
+        Expanded(child: Text(label, style: Theme.of(context).textTheme.bodySmall)),
+        IconButton(
+          icon: const AppIcon(Symbols.remove_rounded, size: 18),
+          tooltip: '-100 ms',
+          visualDensity: VisualDensity.compact,
+          onPressed: () => onChanged(offsetMs - 100),
         ),
-      ),
+        TextButton(
+          onPressed: offsetMs == 0 ? null : () => onChanged(0),
+          child: Text(text),
+        ),
+        IconButton(
+          icon: const AppIcon(Symbols.add_rounded, size: 18),
+          tooltip: '+100 ms',
+          visualDensity: VisualDensity.compact,
+          onPressed: () => onChanged(offsetMs + 100),
+        ),
+      ],
     );
   }
 }

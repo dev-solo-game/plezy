@@ -30,10 +30,15 @@ import '../utils/delete_impact.dart';
 import '../utils/download_utils.dart';
 import '../utils/focus_utils.dart';
 import '../utils/global_key_utils.dart';
+import '../database/app_database.dart';
+import '../providers/companion_remote_provider.dart';
 import '../providers/download_provider.dart';
 import '../providers/multi_server_provider.dart';
 import '../providers/offline_mode_provider.dart';
 import '../providers/catalog_sources_provider.dart';
+import '../screens/companion_remote/mobile_remote_screen.dart';
+import '../services/companion_remote/remote_playback_launcher.dart';
+import '../widgets/companion_remote/remote_device_menu.dart';
 import '../profiles/active_profile_provider.dart';
 import '../profiles/profile.dart';
 import '../utils/provider_extensions.dart';
@@ -635,11 +640,14 @@ class MediaContextMenuState extends State<MediaContextMenu> {
         : ancestorMeta?.id;
     // For episodes, the show key is grandparentId; for seasons, it's parentId
     final itemSeriesKey = mediaKind == MediaKind.episode ? mediaItem.grandparentId : mediaItem.parentId;
+    final hasCompanionRemote = !widget.isOffline && _hasCompanionRemote(context);
 
     return [
       if (mediaKind.isMusic) ..._musicMenuActions(context, menu, mediaItem),
       if (hasActiveProgress)
         _MenuAction(value: 'play_from_beginning', icon: Symbols.replay_rounded, label: t.mediaMenu.playFromBeginning),
+      if (isMovieOrEpisode && hasCompanionRemote)
+        _MenuAction(value: 'remote_play', icon: Symbols.connected_tv_rounded, label: t.companionRemote.playOnRemote),
       // Trailer playback. The detail row may hide its trailer button on small
       // screens, so surface it here whenever the screen wires up onPlayTrailer.
       if (widget.onPlayTrailer != null)
@@ -902,6 +910,9 @@ class MediaContextMenuState extends State<MediaContextMenu> {
           await navigateToVideoPlayer(context, metadata: mediaItem.copyWith(viewOffsetMs: 0), resolveWatchState: false);
         }
         break;
+      case 'remote_play':
+        await _handleRemotePlay(context, mediaItem, outcome);
+        break;
       case 'play_trailer':
         outcome.didNavigate = true;
         widget.onPlayTrailer?.call();
@@ -1021,6 +1032,41 @@ class MediaContextMenuState extends State<MediaContextMenu> {
         );
         break;
     }
+  }
+
+  bool _hasCompanionRemote(BuildContext context) {
+    try {
+      return Provider.of<CompanionRemoteProvider?>(context, listen: false) != null;
+    } on ProviderNotFoundException {
+      return false;
+    }
+  }
+
+  Future<void> _handleRemotePlay(BuildContext context, MediaItem item, _MenuOutcome outcome) async {
+    CompanionRemoteProvider? provider;
+    try {
+      provider = Provider.of<CompanionRemoteProvider?>(context, listen: false);
+    } on ProviderNotFoundException {
+      provider = null;
+    }
+    if (provider == null || !context.mounted) return;
+
+    final selectedHost = await showRemotePlayPickerMenu(context);
+    if (selectedHost == null || !context.mounted) return;
+
+    AppDatabase? db;
+    try {
+      db = Provider.of<AppDatabase?>(context, listen: false);
+    } on ProviderNotFoundException {
+      db = null;
+    }
+    final target = await buildRemoteMediaTarget(metadata: item, db: db);
+    unawaited(provider.connectAndPlayMedia(selectedHost, target));
+    if (!context.mounted) return;
+    outcome.didNavigate = true;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(builder: (_) => RemoteControlScreen(initialHost: selectedHost)),
+    );
   }
 
   /// Mark [item] watched or unwatched; offline, the change is queued for

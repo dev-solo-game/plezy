@@ -56,6 +56,7 @@ import '../services/settings_service.dart';
 import '../providers/offline_mode_provider.dart';
 import '../services/companion_remote/companion_remote_host_controller.dart';
 import '../services/companion_remote/companion_remote_receiver.dart';
+import '../services/companion_remote/remote_playback_launcher.dart';
 import '../services/fullscreen_state_manager.dart';
 import '../providers/companion_remote_provider.dart';
 import '../utils/desktop_window_padding.dart';
@@ -948,6 +949,7 @@ class _MainScreenState extends State<MainScreen>
 
   bool _companionRemoteSetup = false;
   bool _autoStartingCompanionRemote = false;
+  CompanionRemoteProvider? _companionRemoteForCleanup;
   SyncAndScanCoordinator? _syncForCompanionRemote;
   WatchTogetherProvider? _watchTogether;
 
@@ -987,8 +989,9 @@ class _MainScreenState extends State<MainScreen>
       _catalogSourcesProvider!.addListener(_handleCatalogSourcesChanged);
     }
 
-    // Wire up Companion Remote command routing (host devices only, once)
-    if (!_companionRemoteSetup && PlatformDetector.shouldActAsRemoteHost(context)) {
+    // Wire up Companion Remote command routing on all platforms so any
+    // device can receive handoffs when enableCompanionRemoteServer is enabled.
+    if (!_companionRemoteSetup) {
       _companionRemoteSetup = true;
       _setupCompanionRemote();
     }
@@ -1008,6 +1011,8 @@ class _MainScreenState extends State<MainScreen>
 
   void _setupCompanionRemote() {
     final companionRemote = context.read<CompanionRemoteProvider>();
+    _companionRemoteForCleanup = companionRemote;
+    companionRemote.onPlayMediaRequested = (target) => launchRemoteMediaTarget(context: context, target: target);
     try {
       final sync = Provider.of<SyncAndScanCoordinator?>(context, listen: false);
       if (sync != null && !identical(_syncForCompanionRemote, sync)) {
@@ -1024,6 +1029,15 @@ class _MainScreenState extends State<MainScreen>
         CompanionRemoteReceiver.instance.handleCommand(command, context);
       }
     };
+    if (!_isOffline) {
+      unawaited(
+        ensureCompanionRemoteCryptoFromContext(context).then((ready) {
+          if (ready && mounted) companionRemote.startPassiveDiscovery();
+        }).catchError((Object e) {
+          appLogger.d('CompanionRemote: Initial crypto setup deferred', error: e);
+        }),
+      );
+    }
 
     final receiver = CompanionRemoteReceiver.instance;
     receiver.navigationOwner = this;
@@ -1119,6 +1133,10 @@ class _MainScreenState extends State<MainScreen>
     // Clean up only callbacks still owned by this screen. A replacement
     // MainScreen may already have installed its callbacks this frame.
     if (_companionRemoteSetup) {
+      if (_companionRemoteForCleanup?.onPlayMediaRequested != null) {
+        _companionRemoteForCleanup!.onPlayMediaRequested = null;
+      }
+      _companionRemoteForCleanup = null;
       final receiver = CompanionRemoteReceiver.instance;
       if (identical(receiver.navigationOwner, this)) {
         receiver.onTabNext = null;

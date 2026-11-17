@@ -205,10 +205,6 @@ class AgentSettingsCommands {
         if (!PlatformDetector.shouldUseSideNavigation(context)) return 'This setting requires the sidebar layout.';
       case 'show_nav_bar_labels':
         if (PlatformDetector.shouldUseSideNavigation(context)) return 'This setting requires bottom navigation.';
-      case 'enable_companion_remote_server':
-        if (!PlatformDetector.shouldActAsRemoteHost(context)) {
-          return 'This device is a companion controller, not a host.';
-        }
       case 'start_in_fullscreen' || 'exit_fullscreen_on_player_close' || 'player_always_on_top':
         if (!desktop) return 'Window behavior requires a desktop platform.';
       case 'auto_pip':

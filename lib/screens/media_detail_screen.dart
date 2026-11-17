@@ -109,6 +109,11 @@ import '../widgets/rasterized_gradient.dart';
 import '../widgets/tv_browse_rail.dart';
 import '../widgets/tv_spotlight_background.dart';
 import '../providers/account_preferences_controller.dart';
+import '../providers/companion_remote_provider.dart';
+import '../database/app_database.dart';
+import '../services/companion_remote/remote_playback_launcher.dart';
+import '../widgets/companion_remote/remote_device_menu.dart';
+import 'companion_remote/mobile_remote_screen.dart';
 import '../services/playback_track_preview.dart';
 import '../utils/error_message_utils.dart';
 
@@ -449,6 +454,7 @@ class _MediaDetailScreenState extends State<MediaDetailScreen>
   List<WatchlistCandidate> _watchlistCandidates = const [];
   List<CatalogSource> _watchlistListenedSources = const [];
   final GlobalKey _watchlistButtonKey = GlobalKey();
+  final GlobalKey _remotePlayButtonKey = GlobalKey();
   bool _watchlistMutationInFlight = false;
 
   // The connected trackers' scores for this title, merged as each answers

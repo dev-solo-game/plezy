@@ -2062,6 +2062,34 @@ class Translations$companionRemote$zh extends Translations$companionRemote$en {
 	@override String get title => '遥控器';
 	@override String connectedTo({required Object name}) => '已连接到 ${name}';
 	@override String get unknownDevice => '未知设备';
+	@override String get playOnRemote => '远端播放';
+	@override String get handoffToRemote => '接力到远端播放';
+	@override String get selectRemoteDevice => '选择远端播放设备';
+	@override String get remoteDevices => '远端设备';
+	@override String get noOnlineDevices => '暂无在线的远端设备';
+	@override String get noOnlineDevicesHint => '请确认已信任的设备处于同一局域网并开启远端控制';
+	@override String get idle => '空闲中';
+	@override String get playingNow => '播放中';
+	@override String get paused => '已暂停';
+	@override String get buffering => '缓冲中…';
+	@override String get openingOnRemote => '正在远端打开…';
+	@override String controllingDevice({required Object name}) => '正在控制：${name}';
+	@override String get stopRemotePlayback => '结束远端播放';
+	@override String get idleControlHint => '当前设备未在播放视频，可在影视详情页或播放器中点击「远端播放」投送到此设备';
+	@override String get mediaNotFoundOnDevice => '目标设备上未找到该影片的可播放源';
+	@override String get episodes => '选集';
+	@override String seasonNumber({required Object number}) => '第 ${number} 季';
+	@override String get playbackSpeed => '播放速度';
+	@override String get aspectRatio => '画面比例';
+	@override String get aspectContain => '适应';
+	@override String get aspectCover => '填充';
+	@override String get aspectStretch => '拉伸';
+	@override String get subtitleTrackOff => '关闭字幕';
+	@override String get audioDelay => '音频延迟';
+	@override String get subtitleDelay => '字幕延迟';
+	@override String get qualityLabel => '清晰度';
+	@override String get skipIntro => '跳过片头';
+	@override String get skipCredits => '跳过片尾';
 	@override late final Translations$companionRemote$session$zh session = Translations$companionRemote$session$zh.internal(_root);
 	@override late final Translations$companionRemote$pairing$zh pairing = Translations$companionRemote$pairing$zh.internal(_root);
 	@override late final Translations$companionRemote$remote$zh remote = Translations$companionRemote$remote$zh.internal(_root);
@@ -5691,6 +5719,34 @@ extension on TranslationsZh {
 			'companionRemote.title' => '遥控器',
 			'companionRemote.connectedTo' => ({required Object name}) => '已连接到 ${name}',
 			'companionRemote.unknownDevice' => '未知设备',
+			'companionRemote.playOnRemote' => '远端播放',
+			'companionRemote.handoffToRemote' => '接力到远端播放',
+			'companionRemote.selectRemoteDevice' => '选择远端播放设备',
+			'companionRemote.remoteDevices' => '远端设备',
+			'companionRemote.noOnlineDevices' => '暂无在线的远端设备',
+			'companionRemote.noOnlineDevicesHint' => '请确认已信任的设备处于同一局域网并开启远端控制',
+			'companionRemote.idle' => '空闲中',
+			'companionRemote.playingNow' => '播放中',
+			'companionRemote.paused' => '已暂停',
+			'companionRemote.buffering' => '缓冲中…',
+			'companionRemote.openingOnRemote' => '正在远端打开…',
+			'companionRemote.controllingDevice' => ({required Object name}) => '正在控制：${name}',
+			'companionRemote.stopRemotePlayback' => '结束远端播放',
+			'companionRemote.idleControlHint' => '当前设备未在播放视频，可在影视详情页或播放器中点击「远端播放」投送到此设备',
+			'companionRemote.mediaNotFoundOnDevice' => '目标设备上未找到该影片的可播放源',
+			'companionRemote.episodes' => '选集',
+			'companionRemote.seasonNumber' => ({required Object number}) => '第 ${number} 季',
+			'companionRemote.playbackSpeed' => '播放速度',
+			'companionRemote.aspectRatio' => '画面比例',
+			'companionRemote.aspectContain' => '适应',
+			'companionRemote.aspectCover' => '填充',
+			'companionRemote.aspectStretch' => '拉伸',
+			'companionRemote.subtitleTrackOff' => '关闭字幕',
+			'companionRemote.audioDelay' => '音频延迟',
+			'companionRemote.subtitleDelay' => '字幕延迟',
+			'companionRemote.qualityLabel' => '清晰度',
+			'companionRemote.skipIntro' => '跳过片头',
+			'companionRemote.skipCredits' => '跳过片尾',
 			'companionRemote.session.startingServer' => '正在启动远程服务器…',
 			'companionRemote.session.hostAddress' => '主机地址',
 			'companionRemote.session.connected' => '已连接',
@@ -5790,6 +5846,8 @@ extension on TranslationsZh {
 			'performanceOverlay.rawDecoder' => '原始解码器',
 			'performanceOverlay.tunneling' => '隧道',
 			'performanceOverlay.passthrough' => '直通',
+			_ => null,
+		} ?? switch (path) {
 			'performanceOverlay.aspect' => '宽高比',
 			'performanceOverlay.rotation' => '旋转',
 			'performanceOverlay.dvSource' => 'DV 来源',
@@ -5818,8 +5876,6 @@ extension on TranslationsZh {
 			'performanceOverlay.maxLuma' => '最大亮度',
 			'performanceOverlay.minLuma' => '最小亮度',
 			'performanceOverlay.maxCll' => 'MaxCLL',
-			_ => null,
-		} ?? switch (path) {
 			'performanceOverlay.maxFall' => 'MaxFALL',
 			'performanceOverlay.cacheUsed' => '已用缓存',
 			'performanceOverlay.cacheLimit' => '缓存限制',
@@ -6304,6 +6360,8 @@ extension on TranslationsZh {
 			'workSkip.legend' => '蓝色：片头 · 金色：片尾',
 			'sync.title' => '多端同步模式',
 			'sync.subtitle' => '端到端加密媒体库索引、网盘配置与播放进度同步',
+			_ => null,
+		} ?? switch (path) {
 			'sync.modeLanTitle' => '本地与局域网同步（免登录）',
 			'sync.modeLanDesc' => '无需部署服务器，离线可用并在同一 Wi-Fi 下自动发现可信设备点对点同步。',
 			'sync.modeCloudTitle' => '登录云同步服务器',
@@ -6332,8 +6390,6 @@ extension on TranslationsZh {
 			'sync.login' => '密码登录',
 			'sync.qrLoginTitle' => '电视 / 大屏快捷登录',
 			'sync.qrGenerate' => '生成登录二维码',
-			_ => null,
-		} ?? switch (path) {
 			'sync.qrHint' => '使用已登录同账号的手机或电脑确认授权，即可零密码安全移交加密主密钥。',
 			'sync.qrAuthorizeTitle' => '授权电视端登录',
 			'sync.qrAuthorizeHint' => '粘贴电视端展示的配对链接（plezy://qr-auth?...）。',

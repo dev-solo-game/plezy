@@ -300,6 +300,10 @@ extension _VideoPlayerBuildMethods on VideoPlayerScreenState {
                         sourceSubtitleSidecars: sourceSubtitleSidecars,
                         sourcePartId: _currentMediaInfo?.partId,
                         onPlaybackSourceChanged: _switchPlaybackSource,
+                        onRemoteHandoff:
+                            (!widget.isLive && !_isOfflinePlayback && _hasCompanionRemoteProvider())
+                                ? _handoffToRemoteDevice
+                                : null,
                         onTogglePIPMode: _togglePIPMode,
                         boxFitMode: _videoFilterManager?.boxFitMode ?? 0,
                         videoZoomScale: _videoFilterManager?.zoomScale ?? 1.0,

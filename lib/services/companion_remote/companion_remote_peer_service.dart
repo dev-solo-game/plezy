@@ -8,12 +8,14 @@ import '../../utils/future_extensions.dart';
 
 import '../../i18n/strings.g.dart';
 import '../../models/companion_remote/remote_command.dart';
+import '../../models/companion_remote/remote_playback_models.dart';
 import '../../models/companion_remote/remote_session.dart';
 import '../../utils/app_logger.dart';
 import '../../utils/serial_future_queue.dart';
 import '../../utils/web_socket_connect.dart';
 import '../base_peer_service.dart';
 import '../trackers/future_coalescer.dart';
+import 'lan_discovery_service.dart';
 import 'remote_auth_context.dart';
 import 'remote_auth_service.dart';
 
@@ -190,6 +192,14 @@ class CompanionRemotePeerService with KeepaliveMixin {
   Stream<RemotePeerError> get onError => _errorController.stream;
   Stream<RemoteSessionStatus> get onConnectionStateChanged => _connectionStateController.stream;
 
+  /// Builds the current playback snapshot returned to authenticated peers
+  /// polling `POST /status` or `POST /action`.
+  RemotePlayerSnapshot Function()? hostStatusSnapshotBuilder;
+
+  /// Handles lightweight authenticated actions (`playPause`) on `POST /action`
+  /// and returns the resulting snapshot.
+  Future<RemotePlayerSnapshot> Function(String action, Map<String, dynamic>? data)? onHostQuickAction;
+
   String? get myPeerId => _myPeerId;
   String? get hostAddress => _hostAddress;
   RemoteSessionRole? get role => _role;
@@ -341,7 +351,13 @@ class CompanionRemotePeerService with KeepaliveMixin {
     String hostDeviceName,
     String hostPlatform,
   ) async {
-    if (request.uri.path != '/ws') {
+    final path = request.uri.path;
+    if ((path == '/status' || path == '/action') && request.method == 'POST') {
+      await _serveEncryptedHttpRequest(request, server, path, hostDeviceName, hostPlatform);
+      return;
+    }
+
+    if (path != '/ws') {
       request.response.statusCode = HttpStatus.notFound;
       await request.response.close();
       return;
@@ -1369,6 +1385,154 @@ class CompanionRemotePeerService with KeepaliveMixin {
   void sendPing() {
     if (isConnected) {
       sendCommand(const RemoteCommand(type: RemoteCommandType.ping));
+    }
+  }
+
+  Future<void> _serveEncryptedHttpRequest(
+    HttpRequest request,
+    HttpServer server,
+    String path,
+    String hostDeviceName,
+    String hostPlatform,
+  ) async {
+    final sourceIp = request.connectionInfo?.remoteAddress.address ?? 'unknown';
+    if (!_acceptingHostConnections || !identical(_server, server) || _isSourceLockedOut(sourceIp)) {
+      request.response.statusCode = HttpStatus.tooManyRequests;
+      await request.response.close();
+      return;
+    }
+
+    try {
+      final bytes = <int>[];
+      await for (final chunk in request) {
+        if (bytes.length + chunk.length > _maxPreAuthMessageBytes) {
+          request.response.statusCode = HttpStatus.requestEntityTooLarge;
+          await request.response.close();
+          return;
+        }
+        bytes.addAll(chunk);
+      }
+
+      final decoded = jsonDecode(utf8.decode(bytes));
+      if (decoded is! Map<String, dynamic>) {
+        _recordFailedAuth(sourceIp);
+        request.response.statusCode = HttpStatus.forbidden;
+        await request.response.close();
+        return;
+      }
+
+      final opened = await RemoteAuthService.instance.openStatusPayload(
+        envelope: decoded,
+        contexts: _hostAuthContexts,
+      );
+      if (opened == null) {
+        _recordFailedAuth(sourceIp);
+        request.response.statusCode = HttpStatus.forbidden;
+        await request.response.close();
+        return;
+      }
+      _failedAuthAttempts.remove(sourceIp);
+
+      late final RemotePlayerSnapshot snapshot;
+      if (path == '/action') {
+        final action = opened.payload['action'] as String? ?? '';
+        final rawData = opened.payload['data'];
+        final data = rawData is Map ? Map<String, dynamic>.from(rawData) : null;
+        final handler = onHostQuickAction;
+        snapshot = handler != null
+            ? await handler(action, data)
+            : (hostStatusSnapshotBuilder?.call() ?? RemotePlayerSnapshot.idle);
+      } else {
+        snapshot = hostStatusSnapshotBuilder?.call() ?? RemotePlayerSnapshot.idle;
+      }
+
+      final envelope = await RemoteAuthService.instance.sealStatusPayload(
+        context: opened.context,
+        payload: {'deviceName': hostDeviceName, 'platform': hostPlatform, 'snapshot': snapshot.toJson()},
+      );
+      request.response.statusCode = HttpStatus.ok;
+      request.response.headers.contentType = ContentType.json;
+      request.response.write(jsonEncode(envelope));
+      await request.response.close();
+    } catch (e) {
+      appLogger.d('CompanionRemote: Encrypted HTTP $path error', error: e);
+      try {
+        request.response.statusCode = HttpStatus.badRequest;
+        await request.response.close();
+      } catch (_) {}
+    }
+  }
+
+  /// Queries a host's live playback snapshot over authenticated HTTP without
+  /// disrupting any active WebSocket remote session.
+  static Future<RemotePlayerSnapshot?> fetchHostStatus({
+    required DiscoveredHost host,
+    required RemoteAuthContext context,
+    Duration timeout = const Duration(milliseconds: 1500),
+  }) => _postEncryptedHostEndpoint(
+    host: host,
+    context: context,
+    path: '/status',
+    payload: const {'op': 'status'},
+    timeout: timeout,
+  );
+
+  /// Sends a quick playback action (`playPause`) to a host over authenticated
+  /// HTTP and returns the resulting playback snapshot.
+  static Future<RemotePlayerSnapshot?> sendHostQuickAction({
+    required DiscoveredHost host,
+    required RemoteAuthContext context,
+    required String action,
+    Map<String, dynamic>? data,
+    Duration timeout = const Duration(milliseconds: 2000),
+  }) => _postEncryptedHostEndpoint(
+    host: host,
+    context: context,
+    path: '/action',
+    payload: {'action': action, 'data': ?data},
+    timeout: timeout,
+  );
+
+  static Future<RemotePlayerSnapshot?> _postEncryptedHostEndpoint({
+    required DiscoveredHost host,
+    required RemoteAuthContext context,
+    required String path,
+    required Map<String, dynamic> payload,
+    required Duration timeout,
+  }) async {
+    final envelope = await RemoteAuthService.instance.sealStatusPayload(context: context, payload: payload);
+    final encodedBody = jsonEncode(envelope);
+    final client = HttpClient()..connectionTimeout = timeout;
+    try {
+      for (final addr in host.addresses) {
+        try {
+          final request = await client.postUrl(Uri.parse('http://$addr$path')).timeout(timeout);
+          request.headers.contentType = ContentType.json;
+          request.write(encodedBody);
+          final response = await request.close().timeout(timeout);
+          if (response.statusCode != HttpStatus.ok) {
+            await response.drain<void>();
+            continue;
+          }
+          final responseBody = await utf8.decoder.bind(response).join().timeout(timeout);
+          final decoded = jsonDecode(responseBody);
+          if (decoded is! Map<String, dynamic>) continue;
+          final opened = await RemoteAuthService.instance.openStatusPayload(
+            envelope: decoded,
+            contexts: [context],
+          );
+          if (opened == null) continue;
+          final rawSnapshot = opened.payload['snapshot'];
+          if (rawSnapshot is Map) {
+            return RemotePlayerSnapshot.fromJson(Map<String, dynamic>.from(rawSnapshot));
+          }
+        } catch (_) {
+          // Try next advertised address.
+        }
+      }
+      return null;
+    } finally {
+      client.close(force: true);
     }
   }
 

@@ -1027,9 +1027,15 @@ class SettingsService extends BaseSharedPreferencesService {
     'video_player_navigation_enabled',
     defaultValueProvider: PlatformDetector.isTV,
   );
+  @visibleForTesting
+  static bool defaultEnableCompanionRemoteServerFor({required bool isDesktop, required bool isTv}) =>
+      isDesktop || isTv;
+
+  static bool _defaultEnableCompanionRemoteServer() =>
+      defaultEnableCompanionRemoteServerFor(isDesktop: PlatformDetector.isDesktopOS(), isTv: PlatformDetector.isTV());
   static const enableCompanionRemoteServer = BoolPref(
     'enable_companion_remote_server',
-    defaultValueProvider: PlatformDetector.isDesktopOS,
+    defaultValueProvider: _defaultEnableCompanionRemoteServer,
   );
   static const startInFullscreen = BoolPref('start_in_fullscreen');
   static const exitFullscreenOnPlayerClose = BoolPref('exit_fullscreen_on_player_close');

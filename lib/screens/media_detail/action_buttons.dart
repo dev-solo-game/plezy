@@ -137,6 +137,48 @@ extension _MediaDetailActionButtons on _MediaDetailScreenState {
     final qualityTextStyle = TextStyle(fontSize: isTv ? 15 * tvScale : 14, fontWeight: .w600);
     String qualityLabel() => streamQualityName(SettingsService.instance.read(SettingsService.streamQuality));
 
+    CompanionRemoteProvider? companionRemoteProvider;
+    try {
+      companionRemoteProvider = Provider.of<CompanionRemoteProvider?>(context, listen: false);
+    } on ProviderNotFoundException {
+      companionRemoteProvider = null;
+    }
+
+    Future<void> onRemotePlayPressed(BuildContext btnContext) async {
+      final provider = companionRemoteProvider;
+      if (!_canUseDetail || provider == null) return;
+      var target = _playbackTargetItem(metadata);
+      if (target == null) {
+        final client = _getMediaClientForMetadata(context);
+        if (client != null) {
+          final descendants = await client.fetchPlayableDescendants(metadata.id);
+          if (descendants.isNotEmpty) target = descendants.first;
+        }
+      }
+      if (target == null || !btnContext.mounted || !_canUseDetail) return;
+
+      final selectedHost = await showRemotePlayPickerMenu(btnContext);
+      if (selectedHost == null || !btnContext.mounted || !_canUseDetail) return;
+
+      AppDatabase? db;
+      try {
+        db = Provider.of<AppDatabase?>(context, listen: false);
+      } on ProviderNotFoundException {
+        db = null;
+      }
+      final settings = await SettingsService.getInstance();
+      final remoteTarget = await buildRemoteMediaTarget(
+        metadata: target,
+        db: db,
+        streamQuality: showQuality ? settings.read(SettingsService.streamQuality) : null,
+      );
+      unawaited(provider.connectAndPlayMedia(selectedHost, remoteTarget));
+      if (!btnContext.mounted) return;
+      await Navigator.of(btnContext).push(
+        MaterialPageRoute<void>(builder: (_) => RemoteControlScreen(initialHost: selectedHost)),
+      );
+    }
+
     Future<void> onQualityPressed() async {
       final target = _playbackTargetItem(metadata);
       final client = qualityClient;
@@ -344,6 +386,25 @@ extension _MediaDetailActionButtons on _MediaDetailScreenState {
           )
         : null;
 
+    final remotePlayAction = (!widget.isOffline && companionRemoteProvider != null)
+        ? FocusableAction(
+            debugLabel: 'detail_remote_play',
+            onPressed: () {
+              final btnCtx = _remotePlayButtonKey.currentContext ?? context;
+              unawaited(onRemotePlayPressed(btnCtx));
+            },
+            builder: (btnContext, state) => KeyedSubtree(
+              key: _remotePlayButtonKey,
+              child: iconActionButton(
+                state,
+                onPressed: () => unawaited(onRemotePlayPressed(btnContext)),
+                icon: const AppIcon(Symbols.connected_tv_rounded, fill: 1),
+                tooltip: t.companionRemote.playOnRemote,
+              ),
+            ),
+          )
+        : null;
+
     final trailerAction = primaryTrailer == null
         ? null
         : FocusableAction(
@@ -443,6 +504,7 @@ extension _MediaDetailActionButtons on _MediaDetailScreenState {
       playAction,
       ?versionAction,
       ?qualityAction,
+      ?remotePlayAction,
       ?trailerAction,
       ?shuffleAction,
       ?downloadAction,

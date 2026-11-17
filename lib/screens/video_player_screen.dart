@@ -22,6 +22,8 @@ import '../media/media_display_criteria.dart';
 import '../media/media_server_user_profile.dart';
 import '../media/media_item.dart';
 import '../media/media_item_types.dart';
+import '../media/media_kind.dart';
+import '../utils/quality_preset_labels.dart';
 import '../media/media_server_client.dart';
 import '../media/episode_collection.dart';
 import '../media/live_tv_support.dart';
@@ -98,7 +100,16 @@ import '../utils/platform_detector.dart';
 import '../utils/provider_extensions.dart';
 import '../utils/snackbar_helper.dart';
 import '../utils/stream_buffer_sizing.dart';
+import '../models/companion_remote/remote_playback_models.dart';
+import '../media/work_skip_settings.dart';
+import '../services/companion_remote/remote_playback_launcher.dart';
+import '../services/work_skip_settings_store.dart';
+import '../storage/mount_manager.dart';
+import '../utils/track_label_builder.dart';
+import '../widgets/companion_remote/remote_device_menu.dart';
+import '../widgets/video_controls/helpers/track_filter_helper.dart';
 import '../utils/video_player_navigation.dart';
+import 'companion_remote/mobile_remote_screen.dart';
 import '../utils/android_exit_diagnostics.dart';
 import 'video_player/completion_latch.dart';
 import 'video_player/episode_session_state.dart';
@@ -1077,7 +1088,31 @@ class VideoPlayerScreenState extends State<VideoPlayerScreen>
     onCycleAudio: () => _cycleAudioTrack(),
     onHome: () => _handleHomeButton(),
     readProvider: () => context.read<CompanionRemoteProvider>(),
+    onPlay: _remotePlay,
+    onPause: _remotePause,
+    onPlayPause: _remoteTogglePlayPause,
+    onSeekTo: _remoteSeekTo,
+    onSetRate: _remoteSetRate,
+    onSelectAudioTrack: _remoteSelectAudioTrack,
+    onSelectSubtitleTrack: _remoteSelectSubtitleTrack,
+    onSelectQuality: _remoteSelectQuality,
+    onSetSyncOffset: _remoteSetSyncOffset,
+    onSetBoxFitMode: _remoteSetBoxFitMode,
+    onSkipIntro: _remoteSkipIntro,
+    onSkipCredits: _remoteSkipCredits,
+    onBrowseSeason: _browseRemoteSeason,
+    onPlayEpisodeItem: _playRemoteEpisodeItem,
+    onRequestState: _pushRemotePlayerSnapshot,
   );
+
+  // Cached remote-control show catalog, skip ranges, and position push throttling.
+  List<RemoteSeasonSummary> _remoteSeasons = const [];
+  int? _remoteBrowsedSeasonNumber;
+  List<RemoteEpisodeSummary> _remoteSeasonEpisodes = const [];
+  String? _remoteLoadedShowKey;
+  WorkSkipSettings _remoteSkipSettings = const WorkSkipSettings();
+  String? _remoteSkipSettingsKey;
+  DateTime? _lastRemotePositionPushAt;
 
   /// Backend-neutral lookup. Returns whichever client (Plex or Jellyfin)
   /// owns this item. Used by the player initialization path.
