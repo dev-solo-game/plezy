@@ -234,7 +234,7 @@ class SyncAndScanCoordinator extends ChangeNotifier {
       deviceName: deviceName,
     );
     final uri = Uri(
-      scheme: 'plezy',
+      scheme: 'ttplay',
       host: 'qr-auth',
       queryParameters: {
         'server': serverUrl.trim().replaceAll(RegExp(r'/+$'), ''),
@@ -285,7 +285,7 @@ class SyncAndScanCoordinator extends ChangeNotifier {
 
     final trimmed = rawInput.trim();
     final uri = Uri.tryParse(trimmed);
-    if (uri == null || uri.scheme != 'plezy' || uri.host != 'qr-auth') {
+    if (uri == null || (uri.scheme != 'ttplay' && uri.scheme != 'plezy') || uri.host != 'qr-auth') {
       throw const FormatException('Invalid QR pairing URI');
     }
     final sessionId = uri.queryParameters['session_id'] ?? '';

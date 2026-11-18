@@ -166,7 +166,7 @@ class LanPeerSyncService extends ChangeNotifier {
       final host = Platform.localHostname.trim();
       if (isMeaningfulDeviceName(host)) return host;
     } catch (_) {}
-    return 'Plezy';
+    return 'TTPlay';
   }
 
   /// Unicast-probes trusted peers with known host/HTTP ports over `/lan/v1/hello`

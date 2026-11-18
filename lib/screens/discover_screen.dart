@@ -865,7 +865,7 @@ class _DiscoverScreenState extends State<DiscoverScreen>
       ];
     }
 
-    final deviceName = sync?.lanService.deviceName ?? 'Plezy';
+    final deviceName = sync?.lanService.deviceName ?? 'TTPlay';
     final discoveredCount = sync?.lanService.discoveredPeers.length ?? 0;
     final requestCount = sync?.lanService.incomingPairRequests.length ?? 0;
 

@@ -644,7 +644,7 @@ class SyncLocalStore {
       final host = Platform.localHostname.trim();
       if (isMeaningfulDeviceName(host)) return host;
     } catch (_) {}
-    return 'Plezy Device';
+    return 'TTPlay Device';
   }
 
   Future<void> setDeviceName(String name) => _putMeta(_kDeviceName, name.trim());

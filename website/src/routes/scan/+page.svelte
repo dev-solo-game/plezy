@@ -22,16 +22,16 @@
   });
 </script>
 
-<PageMetadata title="Open in Plezy" description="Open this QR code with the Plezy app." url="https://plezy.app/scan" noindex />
+<PageMetadata title="Open in TTPlay" description="Open this QR code with the TTPlay app." url="https://play.ttai.net/scan" noindex />
 
 <div class="centered-page">
   <div class="centered-card">
     <span class="card-logo"><Logo /></span>
 
-    <h1 class="scan-heading">Scan in Plezy</h1>
-    <p class="scan-description">To use this feature, scan this QR code with the Plezy app.</p>
+    <h1 class="scan-heading">Scan in TTPlay</h1>
+    <p class="scan-description">To use this feature, scan this QR code with the TTPlay app.</p>
 
-    <div class="store-buttons" role="group" aria-label="Download Plezy">
+    <div class="store-buttons" role="group" aria-label="Download TTPlay">
       {#each availableStores as store}
         <a
           href={store.url}

@@ -91,7 +91,7 @@ void main() {
     service.attach(session.session);
     service.attach(session.session);
     await pumpEventQueue();
-    expect(session.launched, ['plezy://play?server=s1&id=1']);
+    expect(session.launched, ['ttplay://play?server=s1&id=1']);
   });
 
   test('a newer link replaces one still waiting', () async {
@@ -102,7 +102,7 @@ void main() {
     final session = _Session('parents');
     service.attach(session.session);
     await pumpEventQueue();
-    expect(session.launched, ['plezy://live?channel=4.1']);
+    expect(session.launched, ['ttplay://live?channel=4.1']);
   });
 
   test('a link naming another profile switches first, then plays in that profile', () async {
@@ -127,7 +127,7 @@ void main() {
     service.detach(parentsSession.session);
     await pumpEventQueue();
     expect(parentsSession.launched, isEmpty);
-    expect(kidsSession.launched, ['plezy://play?server=s1&id=1&profile=Kids']);
+    expect(kidsSession.launched, ['ttplay://play?server=s1&id=1&profile=Kids']);
     expect(service.selectsProfile, isFalse);
   });
 
@@ -241,7 +241,7 @@ void main() {
       service.attach(session.session);
       await pumpEventQueue();
 
-      expect(session.launched, ['plezy://play?server=s1&id=1']);
+      expect(session.launched, ['ttplay://play?server=s1&id=1']);
     });
   });
 

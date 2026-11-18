@@ -15,7 +15,8 @@ class DeepLinkPlugin :
   MethodChannel.MethodCallHandler {
   companion object {
     private const val METHOD_CHANNEL = "com.plezy/deep_link"
-    private const val SCHEME = "plezy"
+    private const val SCHEME = "ttplay"
+    private const val LEGACY_SCHEME = "plezy"
 
     // One slot, latest link wins. It lives here rather than on the instance so a
     // link Dart has not accepted yet survives the engine being re-created.
@@ -23,7 +24,8 @@ class DeepLinkPlugin :
 
     fun linkFrom(intent: Intent?): String? {
       val data = intent?.data ?: return null
-      if (!SCHEME.equals(data.scheme, ignoreCase = true)) return null
+      val scheme = data.scheme
+      if (!SCHEME.equals(scheme, ignoreCase = true) && !LEGACY_SCHEME.equals(scheme, ignoreCase = true)) return null
       return data.toString()
     }
   }

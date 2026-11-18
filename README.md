@@ -1,20 +1,20 @@
 <h1>
-  <img src="assets/plezy.png" alt="Plezy Logo" height="24" style="vertical-align: middle;" />
-  Plezy
+  <img src="assets/plezy.png" alt="TTPlay Logo" height="24" style="vertical-align: middle;" />
+  TTPlay
 </h1>
 
 A modern client for Plex, Jellyfin, and Emby on desktop, mobile, and TV. Built with Flutter for native performance and a clean interface.
 
 <p>
-  <a href="https://plezy.app">Website</a> ·
-  <a href="https://plezy.app/#screenshots">Screenshots</a> ·
+  <a href="https://play.ttai.net">Website</a> ·
+  <a href="https://play.ttai.net/#screenshots">Screenshots</a> ·
   <a href="#download">Download</a> ·
   <a href="CONTRIBUTING.md">Contributing</a> ·
   <a href="LICENSE">License</a>
 </p>
 
 <p align="center">
-  <img src="assets/readme-showcase.webp" alt="Plezy mobile screenshots" width="900" />
+  <img src="assets/readme-showcase.webp" alt="TTPlay mobile screenshots" width="900" />
 </p>
 
 ## Download
@@ -169,18 +169,18 @@ sudo moss pad plezy
 - Offline browsing with watch state sync-back on reconnect
 
 ### <img src="assets/readme_icons/watch-together.svg" height="20" alt="" align="center" /> Watch Together
-- Rooms on [Open Watch Party](https://openwatch.party) — share a six-character code; friends join from Plezy or another Open Watch Party app
+- Rooms on [Open Watch Party](https://openwatch.party) — share a six-character code; friends join from TTPlay or another Open Watch Party app
 - Everyone plays their own copy from their own server — Plex, Jellyfin, or Emby — matched by catalogue IDs, with a picker when several copies fit
 - Synchronized play / pause / seek, host or shared control, room lock, and host handoff
-- Public relays by default, or point Plezy at your own self-hosted relay
+- Public relays by default, or point TTPlay at your own self-hosted relay
 
 ### <img src="assets/readme_icons/integrations.svg" height="20" alt="" align="center" /> Integrations
 - Discord Rich Presence[^desktop]
 - Trakt, MyAnimeList, AniList, and Simkl — ratings, watched sync, and real-time scrobbling[^rt]
 - Scores from connected trackers on detail pages — Trakt, Simkl, MyAnimeList, and AniList, plus Rotten Tomatoes, Metacritic, Letterboxd, IMDb, and TMDB through MDBList
-- Plezy Remote — control desktop and TV from mobile
+- TTPlay Remote — control desktop and TV from mobile
 - Watch Next row and tvOS Top Shelf[^shelf]
-- [`plezy://` links](#plezy-links) to open a profile, play a title, or tune a channel from Home Assistant, launchers, or an NFC tag; any movie, show, or episode menu shows its link[^links]
+- [`ttplay://` links](#ttplay-links) to open a profile, play a title, or tune a channel from Home Assistant, launchers, or an NFC tag; any movie, show, or episode menu shows its link[^links]
 
 ### <img src="assets/readme_icons/customization.svg" height="20" alt="" align="center" /> Platform & Customization
 - Desktop, mobile, and TV — full D-pad, keyboard, and gamepad support
@@ -211,24 +211,24 @@ sudo moss pad plezy
 [^shelf]: Android TV / Fire TV and tvOS.
 [^links]: Android, iOS, macOS, and tvOS.
 
-## plezy:// links
+## ttplay:// links
 
-Links start Plezy from outside the app. Any link may add `profile=<profile>`: a profile id, a Plex Home user UUID, or a display name (ignoring case; it must match one profile). Plezy switches to that profile first, and a protected profile still asks for its PIN. A link replaces whatever is playing.
+Links start TTPlay from outside the app. Any link may add `profile=<profile>`: a profile id, a Plex Home user UUID, or a display name (ignoring case; it must match one profile). TTPlay switches to that profile first, and a protected profile still asks for its PIN. A link replaces whatever is playing.
 
 | Link | Does |
 |---|---|
-| `plezy://open` | Opens Plezy |
-| `plezy://play?server=<server>&id=<item>` | Plays one item on one server, any backend |
-| `plezy://play?type=movie\|show&tmdb=<n>` | Plays a title from whichever server has it. Use `tmdb`, `tvdb`, `imdb=tt<n>`, or `plex=<hash>` (the Plex GUID without `plex://movie/`) |
-| `plezy://live?channel=<channel>` | Tunes a Live TV channel by key, number, or call sign. Optional `server=<server>` and `start=beginning\|live` |
+| `ttplay://open` | Opens TTPlay |
+| `ttplay://play?server=<server>&id=<item>` | Plays one item on one server, any backend |
+| `ttplay://play?type=movie\|show&tmdb=<n>` | Plays a title from whichever server has it. Use `tmdb`, `tvdb`, `imdb=tt<n>`, or `plex=<hash>` (the Plex GUID without `plex://movie/`) |
+| `ttplay://live?channel=<channel>` | Tunes a Live TV channel by key, number, or call sign. Optional `server=<server>` and `start=beginning\|live` |
 
 For a show, `mode=next` (the default) plays the next episode to watch, and `mode=shuffle` plays the show shuffled. The menu of any movie, show, or episode has **Show link**, and each profile's menu in **Switch Profile** has **Show profile link**. Both show the link as text and a QR code.
 
 ```sh
-# Android / Android TV, over adb (Home Assistant: remote.turn_on with activity: plezy://...)
-adb shell am start -a android.intent.action.VIEW -d "plezy://play?type=show\&tvdb=81189\&profile=Kids"
+# Android / Android TV, over adb (Home Assistant: remote.turn_on with activity: ttplay://...)
+adb shell am start -a android.intent.action.VIEW -d "ttplay://play?type=show\&tvdb=81189\&profile=Kids"
 # macOS
-open "plezy://play?type=movie&tmdb=603"
+open "ttplay://play?type=movie&tmdb=603"
 ```
 
 On iOS, use the Open URLs action in Shortcuts.
@@ -324,7 +324,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development workflow, formatting, tes
 
 ## License
 
-Plezy is licensed under [GPL-3.0](LICENSE). The license covers the code, not the Plezy name or logo; forks distributed beyond personal use must follow [TRADEMARKS.md](TRADEMARKS.md).
+TTPlay is licensed under [GPL-3.0](LICENSE). The license covers the code, not the upstream Plezy name or logo; forks distributed beyond personal use must follow [TRADEMARKS.md](TRADEMARKS.md).
 
 ## Acknowledgments
 

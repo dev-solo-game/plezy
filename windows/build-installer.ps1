@@ -39,9 +39,9 @@ Source: "staging\arm64\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs
     }
 
     return @"
-#define Name "Plezy"
+#define Name "TTPlay"
 #define Version "$Version"
-#define Publisher "edde746"
+#define Publisher "ttai.net"
 #define ExeName "plezy.exe"
 
 [Setup]

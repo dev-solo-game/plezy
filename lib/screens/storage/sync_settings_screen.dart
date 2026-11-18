@@ -362,7 +362,7 @@ class _SyncSettingsScreenState extends State<SyncSettingsScreen> {
               const SizedBox(height: 12),
               FocusableTextField(
                 controller: _qrInputController,
-                decoration: const InputDecoration(hintText: 'plezy://qr-auth?...'),
+                decoration: const InputDecoration(hintText: 'ttplay://qr-auth?...'),
               ),
               const SizedBox(height: 12),
               OutlinedButton.icon(

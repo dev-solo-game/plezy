@@ -1,5 +1,5 @@
 <script lang="ts">
-  const image = 'https://plezy.app/og/plezy-social.png';
+  const image = 'https://play.ttai.net/og/plezy-social.png';
 
   let {
     title,
@@ -18,7 +18,7 @@
   <link rel="canonical" href={url} />
 
   <meta property="og:type" content="website" />
-  <meta property="og:site_name" content="Plezy" />
+  <meta property="og:site_name" content="TTPlay" />
   <meta property="og:title" content={title} />
   <meta property="og:description" content={description} />
   <meta property="og:url" content={url} />

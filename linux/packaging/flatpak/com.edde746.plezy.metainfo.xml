@@ -3,7 +3,7 @@
   <id>com.edde746.plezy</id>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>GPL-3.0-only</project_license>
-  <name>Plezy</name>
+  <name>TTPlay</name>
   <summary>Watch and listen to your Plex, Jellyfin, and Emby libraries</summary>
   <developer id="com.edde746">
     <name>edde746</name>
@@ -15,7 +15,7 @@
     playback speed controls, and hardware video decoding on supported systems.</p>
   </description>
   <launchable type="desktop-id">com.edde746.plezy.desktop</launchable>
-  <url type="homepage">https://plezy.app</url>
+  <url type="homepage">https://play.ttai.net</url>
   <url type="bugtracker">https://github.com/edde746/plezy/issues</url>
   <url type="vcs-browser">https://github.com/edde746/plezy</url>
   <content_rating type="oars-1.1"/>

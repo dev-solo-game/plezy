@@ -13,7 +13,7 @@
 /// switches the engine to live delivery, after which `onLink` delivers each new link and only a
 /// `true` reply clears it. Compiled into the iOS, tvOS and macOS Runners.
 final class DeepLinkPlugin: NSObject, FlutterPlugin {
-  private static let scheme = "plezy"
+  private static let schemes: Set<String> = ["ttplay", "plezy"]
   // Process-wide so a link received before a (re)created engine registers is not lost.
   private static let delivery = DeepLinkDeliveryCoordinator()
   private static var channel: FlutterMethodChannel?
@@ -36,9 +36,10 @@ final class DeepLinkPlugin: NSObject, FlutterPlugin {
     #endif
   }
 
-  /// The string Dart receives for `url`, or nil when it is not a Plezy link.
+  /// The string Dart receives for `url`, or nil when it is not a TTPlay link.
   static func forwardedLink(for url: URL) -> String? {
-    url.scheme?.lowercased() == scheme ? url.absoluteString : nil
+    guard let scheme = url.scheme?.lowercased(), schemes.contains(scheme) else { return nil }
+    return url.absoluteString
   }
 
   /// Takes `url` when it is a Plezy link, delivering it now or retaining it for Dart.

@@ -1,5 +1,5 @@
 name: plezy
-description: "A beautiful Plex and Jellyfin client for Flutter"
+description: "TTPlay - A modern Plex, Jellyfin, and Emby client for Flutter"
 publish_to: "none"
 version: 2.26.0+160
 

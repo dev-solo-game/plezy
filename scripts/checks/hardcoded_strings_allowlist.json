@@ -4,6 +4,7 @@
     "Jellyfin": "Brand name",
     "Emby": "Brand name",
     "Plezy": "Brand name",
+    "TTPlay": "Brand name",
     "Simkl": "Brand name",
     "BL": "Technical token",
     "EL": "Technical token",
@@ -88,5 +89,8 @@
   },
   "lib/screens/storage/scraper_settings_screen.dart": {
     "127.0.0.1:7890": "Example address, not prose"
+  },
+  "lib/screens/storage/sync_settings_screen.dart": {
+    "ttplay://qr-auth?...": "Intentional URL scheme example"
   }
 }
