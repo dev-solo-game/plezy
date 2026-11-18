@@ -49,9 +49,10 @@ void configureLocalLibraryClientLabels(LocalLibraryClient local) {
 
 /// Initial mode selection & sync onboarding screen.
 ///
-/// Offers mutually exclusive synchronization modes:
-/// 1) Local & Serverless LAN P2P Mode (no login required), or
-/// 2) Sync Server (Go Server) for cross-network sync & 1-second TV QR login.
+/// Offers three explicit synchronization modes:
+/// 1) Local Mode (no sync server),
+/// 2) Official Sync Server (zero-URL configuration), or
+/// 3) Self-Hosted Sync Server (custom Go server URL + LAN QR handoff).
 class AuthScreen extends StatefulWidget {
   const AuthScreen({
     super.key,
@@ -180,7 +181,7 @@ class _AuthScreenState extends State<AuthScreen> {
     if (_busy || !await _prepareDatabaseRecoveryForSignIn() || !mounted) return;
     setState(() => _busy = true);
     try {
-      await _maybeCoordinator()?.selectLanMode();
+      await _maybeCoordinator()?.selectLocalMode();
       if (!mounted) return;
       await _enterProfileSession();
     } finally {
@@ -188,11 +189,11 @@ class _AuthScreenState extends State<AuthScreen> {
     }
   }
 
-  Future<void> _openCloudSyncLogin() async {
+  Future<void> _openCloudSyncLogin(SyncServerKind kind) async {
     if (_busy || !await _prepareDatabaseRecoveryForSignIn() || !mounted) return;
-    final signedIn = await Navigator.of(
-      context,
-    ).push<bool>(MaterialPageRoute<bool>(builder: (_) => const SyncSettingsScreen(onboardingMode: true)));
+    final signedIn = await Navigator.of(context).push<bool>(
+      MaterialPageRoute<bool>(builder: (_) => SyncSettingsScreen(onboardingMode: true, initialServerKind: kind)),
+    );
     if (!mounted) return;
     if (signedIn == true || _maybeCoordinator()?.isSignedIn == true) {
       setState(() => _busy = true);
@@ -223,9 +224,7 @@ class _AuthScreenState extends State<AuthScreen> {
                       Expanded(child: _buildBrandColumn(context)),
                       const SizedBox(width: 48),
                       Expanded(
-                        child: Center(
-                          child: SingleChildScrollView(child: _buildModeChoices(context)),
-                        ),
+                        child: Center(child: SingleChildScrollView(child: _buildModeChoices(context))),
                       ),
                     ],
                   )
@@ -233,11 +232,7 @@ class _AuthScreenState extends State<AuthScreen> {
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        _buildBrandColumn(context),
-                        const SizedBox(height: 36),
-                        _buildModeChoices(context),
-                      ],
+                      children: [_buildBrandColumn(context), const SizedBox(height: 36), _buildModeChoices(context)],
                     ),
                   ),
           ),
@@ -273,30 +268,46 @@ class _AuthScreenState extends State<AuthScreen> {
           onPressed: _busy ? null : () => unawaited(_selectLocalLanMode()),
           child: FilledButton.icon(
             onPressed: _busy ? null : () => unawaited(_selectLocalLanMode()),
-            style: FilledButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 16)),
-            icon: const AppIcon(Symbols.wifi_rounded, size: 20),
+            style: FilledButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16)),
+            icon: const AppIcon(Symbols.devices_rounded, size: 20),
             label: Text(t.sync.modeLanTitle),
           ),
         ),
-        const SizedBox(height: 6),
+        const SizedBox(height: 4),
         Text(
           t.sync.modeLanDesc,
           style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
           textAlign: TextAlign.center,
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: 14),
         FocusableButton(
-          onPressed: _busy ? null : () => unawaited(_openCloudSyncLogin()),
-          child: OutlinedButton.icon(
-            onPressed: _busy ? null : () => unawaited(_openCloudSyncLogin()),
-            style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 16)),
+          onPressed: _busy ? null : () => unawaited(_openCloudSyncLogin(SyncServerKind.official)),
+          child: FilledButton.tonalIcon(
+            onPressed: _busy ? null : () => unawaited(_openCloudSyncLogin(SyncServerKind.official)),
+            style: FilledButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16)),
             icon: const AppIcon(Symbols.cloud_sync_rounded, size: 20),
-            label: Text(t.sync.modeCloudTitle),
+            label: Text(t.sync.modeOfficialTitle),
           ),
         ),
-        const SizedBox(height: 6),
+        const SizedBox(height: 4),
         Text(
-          t.sync.modeCloudDesc,
+          t.sync.modeOfficialDesc,
+          style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+          textAlign: TextAlign.center,
+        ),
+        const SizedBox(height: 14),
+        FocusableButton(
+          onPressed: _busy ? null : () => unawaited(_openCloudSyncLogin(SyncServerKind.selfHosted)),
+          child: OutlinedButton.icon(
+            onPressed: _busy ? null : () => unawaited(_openCloudSyncLogin(SyncServerKind.selfHosted)),
+            style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16)),
+            icon: const AppIcon(Symbols.dns_rounded, size: 20),
+            label: Text(t.sync.modeSelfHostedTitle),
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          t.sync.modeSelfHostedDesc,
           style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
           textAlign: TextAlign.center,
         ),

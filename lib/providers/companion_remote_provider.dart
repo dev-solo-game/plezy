@@ -393,8 +393,12 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
             masterKey: session.masterKey,
           ),
         );
-      } else if (!effectiveSync.isSignedIn &&
-          (effectiveSync.onboardingCompleted || effectiveSync.lanService.isRunning)) {
+      }
+
+      if (effectiveSync.onboardingCompleted ||
+          effectiveSync.isSignedIn ||
+          effectiveSync.lanService.isRunning ||
+          effectiveSync.lanService.trustedPeers.isNotEmpty) {
         if (!effectiveSync.lanService.isRunning && effectiveSync.autoStartLanService) {
           await effectiveSync.lanService.start();
           checkCurrent?.call();
@@ -406,7 +410,11 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
                   ? effectiveSync.deviceId
                   : await effectiveSync.syncStore.getOrCreateDeviceId());
         checkCurrent?.call();
-        for (final trusted in effectiveSync.lanService.trustedPeers) {
+        final lanPeers = effectiveSync.lanService.isRunning
+            ? effectiveSync.lanService.trustedPeers
+            : await effectiveSync.syncStore.loadTrustedLanPeers();
+        checkCurrent?.call();
+        for (final trusted in lanPeers) {
           addUniqueContext(
             await auth.createLanPeerAuthContext(
               myDeviceId: myDeviceId,
@@ -415,7 +423,7 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
             ),
           );
         }
-        nextLanStandby = true;
+        nextLanStandby = effectiveSync.lanService.isRunning || effectiveSync.autoStartLanService;
       }
     }
 
@@ -767,11 +775,7 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
     _isPlayerActive = false;
     _remotePlayerSnapshot = RemotePlayerSnapshot.idle;
     safeNotifyListeners();
-    return _RemoteConnectRequest(
-      generation: _remoteGeneration,
-      current: peers.current,
-      pending: peers.pending,
-    );
+    return _RemoteConnectRequest(generation: _remoteGeneration, current: peers.current, pending: peers.pending);
   }
 
   Future<bool> _prepareRemoteConnect(_RemoteConnectRequest request) async {
@@ -976,10 +980,10 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
     return raw.map((hosts) => hosts.where((h) => !_isSelfHost(h)).toList());
   }
 
-  /// Discovered LAN P2P peers that are already trusted and advertising a remote host port.
+  /// Discovered LAN peers that are already trusted and advertising a remote host port.
   List<DiscoveredHost> get trustedLanRemoteHosts {
     final sync = _boundSync;
-    if (sync == null || sync.isSignedIn) return const [];
+    if (sync == null) return const [];
     final lan = sync.lanService;
     if (!lan.isRunning) return const [];
     final result = <DiscoveredHost>[];
@@ -1025,7 +1029,8 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
     final merged = <String, DiscoveredHost>{};
     for (final host in [...trustedLanRemoteHosts, ..._beaconHosts]) {
       if (_isSelfHost(host)) continue;
-      merged['${host.authContextId}:${host.clientId}'] = host;
+      final dedupKey = host.clientId.isNotEmpty ? host.clientId : '${host.authContextId}:${host.clientId}';
+      merged[dedupKey] = host;
     }
     return merged.values.toList(growable: false);
   }
@@ -1071,7 +1076,7 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
     if (isDisposed) return;
     startPassiveDiscovery();
     final sync = _boundSync;
-    if (sync != null && !sync.isSignedIn && sync.lanService.isRunning) {
+    if (sync != null && sync.lanService.isRunning) {
       await sync.lanService.probeTrustedPeers();
       if (isDisposed) return;
     }
@@ -1151,12 +1156,20 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
   /// Discovered nearby LAN P2P peers running a remote server that have not yet been trusted.
   List<LanDiscoveredPeer> get untrustedLanRemotePeers {
     final sync = _boundSync;
-    if (sync == null || sync.isSignedIn) return const [];
+    if (sync == null) return const [];
     final lan = sync.lanService;
     if (!lan.isRunning) return const [];
+    final knownBeaconClientIds = {
+      for (final host in _beaconHosts)
+        if (host.clientId.isNotEmpty) host.clientId,
+    };
     return [
       for (final peer in lan.discoveredPeers)
-        if (peer.remotePort != null && peer.remotePort! > 0 && !lan.isPeerTrusted(peer.deviceId)) peer,
+        if (peer.remotePort != null &&
+            peer.remotePort! > 0 &&
+            !lan.isPeerTrusted(peer.deviceId) &&
+            !knownBeaconClientIds.contains(peer.deviceId))
+          peer,
     ];
   }
 
@@ -1183,7 +1196,7 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
     Duration trustTimeout = const Duration(seconds: 20),
   }) async {
     final sync = _boundSync;
-    if (sync == null || sync.isSignedIn) {
+    if (sync == null) {
       throw RemotePeerError(type: RemotePeerErrorType.authFailed, message: t.companionRemote.pairing.cryptoInitFailed);
     }
     final initialRemotePort = peer.remotePort;
@@ -2047,11 +2060,7 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
 }
 
 class _RemoteConnectRequest {
-  const _RemoteConnectRequest({
-    required this.generation,
-    required this.current,
-    required this.pending,
-  });
+  const _RemoteConnectRequest({required this.generation, required this.current, required this.pending});
 
   final int generation;
   final CompanionRemotePeerService? current;

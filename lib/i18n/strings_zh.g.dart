@@ -2746,41 +2746,82 @@ class Translations$sync$zh extends Translations$sync$en {
 	final TranslationsZh _root; // ignore: unused_field
 
 	// Translations
-	@override String get title => '多端同步模式';
-	@override String get subtitle => '端到端加密媒体库索引、网盘配置与播放进度同步';
-	@override String get modeLanTitle => '本地与局域网同步（免登录）';
-	@override String get modeLanDesc => '无需部署服务器，离线可用并在同一 Wi-Fi 下自动发现可信设备点对点同步。';
-	@override String get modeCloudTitle => '登录云同步服务器';
-	@override String get modeCloudDesc => '连接自建 Go 同步服务器，支持跨网漫游与电视扫码秒登（同时关闭局域网广播）。';
-	@override String get activeModeLan => '当前模式：本地与局域网 P2P 同步';
-	@override String get activeModeCloud => '当前模式：同步服务器（已关闭局域网 P2P）';
-	@override String get switchToCloudTitle => '随时切换：登录 Go 同步服务器';
-	@override String get switchToLan => '退出并切回本地/局域网模式';
-	@override String get lanDiscoveryEmpty => '正在同一局域网下发现其他 TTPlay 设备…';
-	@override String get lanNearbyTitle => '附近局域网设备';
-	@override String get lanTrustedTitle => '已信任的局域网设备';
-	@override String get lanRequestsTitle => '收到配对信任请求';
-	@override String get lanPairButton => '信任并同步';
-	@override String get lanPairRequested => '已发送配对请求，请在另一台设备上确认信任。';
-	@override String get lanAcceptButton => '允许信任';
+	@override String get title => '同步与连接';
+	@override String get subtitle => '端到端加密媒体库、片单、网盘与播放进度多端同步';
+	@override String get modeLanTitle => '本地模式（不同步）';
+	@override String get modeLanDesc => '不连接同步服务器，媒体库与观看记录仅保存在本机；局域网设备仅用于遥控与投屏。';
+	@override String get modeOfficialTitle => '官方同步';
+	@override String get modeOfficialDesc => '免填服务器地址，使用官方云端端到端加密同步，支持多端自动同步与扫码登录。';
+	@override String get modeSelfHostedTitle => '自建同步';
+	@override String get modeSelfHostedDesc => '连接自己部署的 Go 同步服务器，自主掌控全部云端数据与 Web 管理面板，支持免输地址局域网扫码。';
+	@override String get officialBadge => '官方同步';
+	@override String get selfHostedBadge => '自建同步';
+	@override String get modeCloudTitle => '登录同步服务器';
+	@override String get modeCloudDesc => '连接同步服务器，跨网络同步媒体库、自定义片单、刮削配置与播放进度（默认 http://127.0.0.1:8088）。';
+	@override String get activeModeLan => '当前模式：本地模式（不同步）';
+	@override String get activeModeCloud => '当前模式：同步服务器';
+	@override String get activeModeOfficial => '当前模式：官方同步';
+	@override String get activeModeSelfHosted => '当前模式：自建同步';
+	@override String get switchToCloudTitle => '登录同步服务器';
+	@override String get switchToLan => '退出至本地工作区';
+	@override String get lanDiscoveryEmpty => '正在同一局域网下发现支持遥控的设备…';
+	@override String get lanNearbyTitle => '附近可遥控设备';
+	@override String get lanTrustedTitle => '已配对遥控设备';
+	@override String get lanRequestsTitle => '收到遥控配对请求';
+	@override String get lanPairButton => '配对遥控';
+	@override String get lanPairRequested => '已发送配对请求，请在对方设备上确认。';
+	@override String get lanAcceptButton => '允许配对';
 	@override String get lanRejectButton => '拒绝';
-	@override String get lanRemoveTrust => '取消信任';
-	@override String get lanSyncNow => '立即局域网同步';
+	@override String get lanRemoveTrust => '解除配对';
+	@override String get lanSyncNow => '刷新状态';
 	@override String lanPairingCode({required Object code}) => '核对配对码：${code}';
-	@override String lanSettingsSubtitle({required Object count}) => '局域网 P2P（已信任 ${count} 台设备）';
+	@override String lanSettingsSubtitle({required Object count}) => '本地模式（已配对 ${count} 台遥控设备）';
 	@override String cloudSettingsSubtitle({required Object name}) => '同步服务器：${name}';
-	@override String get serverUrl => '同步服务器地址';
+	@override String officialSettingsSubtitle({required Object name}) => '官方同步：${name}';
+	@override String selfHostedSettingsSubtitle({required Object name}) => '自建同步：${name}';
+	@override String get serverUrl => '自建服务器地址';
+	@override String get selfHostedServerUrlHint => '例如 http://192.168.1.10:8088 或 https://sync.example.com';
+	@override String get testConnection => '检测连接';
+	@override String get testingConnection => '正在检测…';
+	@override String get connectionOkOpenReg => '连接成功（已开放注册）';
+	@override String get connectionOkClosedReg => '连接成功（已关闭新注册，仅支持已有账号登录）';
+	@override String connectionFailed({required Object error}) => '连接失败：${error}';
+	@override String get cleartextHttpWarning => '检测到公网明文 HTTP 地址。尽管网盘密钥与主密钥均端到端加密，仍建议为自建服配置 HTTPS 反向代理。';
 	@override String get username => '用户名';
 	@override String get password => '密码';
 	@override String get register => '注册账号';
 	@override String get login => '密码登录';
-	@override String get qrLoginTitle => '电视 / 大屏快捷登录';
+	@override String get qrLoginTitle => 'PC / 电视扫码快捷登录';
 	@override String get qrGenerate => '生成登录二维码';
+	@override String get qrRefreshButton => '刷新二维码';
 	@override String get qrHint => '使用已登录同账号的手机或电脑确认授权，即可零密码安全移交加密主密钥。';
-	@override String get qrAuthorizeTitle => '授权电视端登录';
-	@override String get qrAuthorizeHint => '粘贴电视端展示的配对链接（ttplay://qr-auth?...）。';
+	@override String get qrModeLanHint => '免输服务器地址：使用已登录「自建同步」或「官方同步」的手机客户端“设置 → 扫码登录 PC / 电视”直接扫码，自动下发服务器地址并加密登录。';
+	@override String get qrModeServerHint => '跨网络扫码：使用已登录同一同步服务器的手机端扫码，或在其他已登录客户端粘贴链接完成授权。';
+	@override String get qrUseLanZeroInput => '免输地址扫码 (同局域网)';
+	@override String get qrUseServerRelay => '当前服务器扫码 (跨网)';
+	@override String get qrAuthorizeTitle => '授权 PC / 电视登录';
+	@override String get qrAuthorizeHint => '粘贴电视或电脑端展示的配对链接（ttplay://qr-auth?...）。';
 	@override String get qrAuthorizeButton => '确认授权给该设备';
 	@override String get qrAuthorized => '已发送授权与加密密钥。';
+	@override String get scanQrTileTitle => '扫码登录 PC / 电视';
+	@override String get scanQrTileSignedInSubtitle => '扫描电脑或电视屏幕上的二维码快捷授权登录';
+	@override String get scanQrTileSignedOutSubtitle => '需先在手机端登录官方同步或自建同步';
+	@override String get scanQrRequireLoginTitle => '请先登录同步账号';
+	@override String get scanQrRequireLoginBody => '手机端必须先登录「官方同步」或「自建同步」账号，才能扫码授权电脑或电视端。';
+	@override String get goToSyncLogin => '前往登录';
+	@override String get qrScannerTitle => '扫码登录';
+	@override String qrScannerAccountBanner({required Object mode, required Object name}) => '正在使用「${mode} · ${name}」授权';
+	@override String get qrScannerInstruction => '对准 PC 或电视上的登录二维码，系统将自动加密移交同步主密钥。';
+	@override String get qrPasteManualButton => '手动粘贴配对链接';
+	@override String get qrRescanButton => '重新扫码';
+	@override String get qrScanSuccess => '授权成功，对方设备即将自动完成同步登录。';
+	@override String get cameraPermissionRequired => '需要授予相机权限以扫描登录二维码。';
+	@override String cameraError({required Object error}) => '相机无法打开：${error}';
+	@override String get qrErrNotSignedIn => '手机端尚未登录同步账号。';
+	@override String get qrErrInvalidUri => '无法识别该二维码，请确认扫描的是 TTPlay 同步登录二维码。';
+	@override String qrErrServerMismatch({required Object target, required Object current}) => '二维码所属服务器 (${target}) 与当前手机端登录服务器 (${current}) 不一致，请切换至对应服务器后重试。';
+	@override String get qrErrExpired => '二维码已过期，请在电脑或电视上刷新后重新扫描。';
+	@override String get qrErrLanUnreachable => '无法通过局域网直连到电视或电脑，请确认两台设备在同一局域网，或改用填写服务器地址扫码。';
 	@override String get syncNow => '立即同步';
 	@override String get syncing => '同步中…';
 	@override String get signOut => '退出同步账号';
@@ -2788,20 +2829,20 @@ class Translations$sync$zh extends Translations$sync$en {
 	@override String pendingChanges({required Object count}) => '待上传离线变更：${count} 条';
 	@override String lastSynced({required Object time}) => '上次同步：${time}';
 	@override String get neverSynced => '尚未同步';
-	@override String get menuModeLanTitle => '本地与局域网模式';
+	@override String get menuModeLanTitle => '本地模式';
 	@override String menuModeLanSubtitle({required Object device}) => '本机：${device}';
 	@override String get menuModeCloudTitle => '云端同步模式';
 	@override String menuModeCloudSubtitle({required Object name}) => '账号：${name}';
-	@override String get lanDevicesTitle => '局域网设备';
+	@override String get lanDevicesTitle => '遥控与投屏设备';
 	@override String lanDiscoveredCount({required Object count}) => '已发现 ${count} 台';
 	@override String lanPairRequestBadge({required Object count}) => '${count} 条配对请求';
-	@override String get lanDiscoveryRunning => '正在同一局域网广播与发现设备';
-	@override String get lanDiscoveryStopped => '局域网广播未开启';
+	@override String get lanDiscoveryRunning => '正在同一局域网广播与发现可遥控设备（仅用于遥控控制，不做 P2P 媒体库同步）';
+	@override String get lanDiscoveryStopped => '局域网遥控发现未开启';
 	@override String get lanPeerOnline => '在线';
 	@override String get switchSyncMode => '切换同步模式';
 	@override String get userMenuTooltip => '同步与设备菜单';
-	@override String get progressLan => '局域网同步';
-	@override String progressLanWithPeer({required Object peer}) => '局域网同步 (${peer})';
+	@override String get progressLan => '本地模式';
+	@override String progressLanWithPeer({required Object peer}) => '本地 (${peer})';
 	@override String get progressCloud => '云端同步';
 	@override String get phaseFetching => '正在接收数据…';
 	@override String get phaseApplying => '正在更新媒体库…';
@@ -2810,13 +2851,22 @@ class Translations$sync$zh extends Translations$sync$en {
 	@override String get phasePushing => '正在上传变更…';
 	@override String phasePushingProgress({required Object done, required Object total}) => '正在上传 ${done}/${total}';
 	@override String get phaseProbingMounts => '正在校验存储源…';
-	@override String get lanPopupDiscoverTitle => '发现附近局域网设备';
-	@override String lanPopupDiscoverBody({required Object device, required Object platform}) => '是否信任「${device}」(${platform})，在同一 Wi-Fi 下自动同步媒体库与观看进度？';
-	@override String get lanPopupRequestTitle => '收到设备信任请求';
-	@override String lanPopupRequestBody({required Object device, required Object platform}) => '「${device}」(${platform}) 请求与本机建立信任并同步数据。';
-	@override String lanPopupWaitingBody({required Object device}) => '已发送请求，正在等待「${device}」确认…';
+	@override String get lanPopupDiscoverTitle => '发现附近可遥控设备';
+	@override String lanPopupDiscoverBody({required Object device, required Object platform}) => '是否与「${device}」(${platform}) 建立局域网遥控配对？';
+	@override String get lanPopupRequestTitle => '收到遥控配对请求';
+	@override String lanPopupRequestBody({required Object device, required Object platform}) => '「${device}」(${platform}) 请求与本机建立局域网遥控配对。';
+	@override String lanPopupWaitingBody({required Object device}) => '已发送配对请求，正在等待「${device}」确认…';
 	@override String lanPopupCancelCountdown({required Object seconds}) => '取消 (${seconds}s)';
-	@override String get lanPopupLaterHint => '关闭后仍可随时在「局域网设备」列表中手动信任。';
+	@override String get lanPopupLaterHint => '关闭后仍可随时在「遥控与投屏设备」中手动配对。';
+	@override String get mergePromptTitle => '检测到本地媒体库数据';
+	@override String get mergePromptBody => '本机已有本地媒体源、合集/片单或观看记录。是否将其合并至该账号，还是仅使用账号云端数据（本地数据将安全归档，退出账号后可恢复）？';
+	@override String get mergeLocalOption => '合并本地数据到账号';
+	@override String get accountOnlyOption => '仅使用账号云端数据（本地归档）';
+	@override String get initialSyncRestoring => '正在从服务器恢复媒体源与媒体库索引…';
+	@override String get signOutPendingTitle => '仍有未上传变更';
+	@override String signOutPendingBody({required Object count}) => '当前仍有 ${count} 条待上传变更。退出后将随本账号安全归档，并在下次登录时继续上传。确定要退出吗？';
+	@override String get remoteControlHint => '局域网遥控配对与是否登录同步服务器相互独立，任何状态下均可直接配对与控制。';
+	@override String get remoteDevicesSubtitle => '管理局域网遥控配对与被控端开关（不传输媒体库）';
 }
 
 // Path: appIcon.names
@@ -6378,41 +6428,82 @@ extension on TranslationsZh {
 			'workSkip.delayDescription' => ({required Object seconds}) => '进入片尾后等待 ${seconds} 秒再跳过；片头直接跳过。',
 			'workSkip.cancelVisit' => '取消本次跳过',
 			'workSkip.legend' => '蓝色：片头 · 金色：片尾',
-			'sync.title' => '多端同步模式',
-			'sync.subtitle' => '端到端加密媒体库索引、网盘配置与播放进度同步',
-			'sync.modeLanTitle' => '本地与局域网同步（免登录）',
-			'sync.modeLanDesc' => '无需部署服务器，离线可用并在同一 Wi-Fi 下自动发现可信设备点对点同步。',
-			'sync.modeCloudTitle' => '登录云同步服务器',
-			'sync.modeCloudDesc' => '连接自建 Go 同步服务器，支持跨网漫游与电视扫码秒登（同时关闭局域网广播）。',
-			'sync.activeModeLan' => '当前模式：本地与局域网 P2P 同步',
-			'sync.activeModeCloud' => '当前模式：同步服务器（已关闭局域网 P2P）',
-			'sync.switchToCloudTitle' => '随时切换：登录 Go 同步服务器',
-			'sync.switchToLan' => '退出并切回本地/局域网模式',
-			'sync.lanDiscoveryEmpty' => '正在同一局域网下发现其他 TTPlay 设备…',
-			'sync.lanNearbyTitle' => '附近局域网设备',
-			'sync.lanTrustedTitle' => '已信任的局域网设备',
-			'sync.lanRequestsTitle' => '收到配对信任请求',
-			'sync.lanPairButton' => '信任并同步',
-			'sync.lanPairRequested' => '已发送配对请求，请在另一台设备上确认信任。',
-			'sync.lanAcceptButton' => '允许信任',
+			'sync.title' => '同步与连接',
+			'sync.subtitle' => '端到端加密媒体库、片单、网盘与播放进度多端同步',
+			'sync.modeLanTitle' => '本地模式（不同步）',
+			'sync.modeLanDesc' => '不连接同步服务器，媒体库与观看记录仅保存在本机；局域网设备仅用于遥控与投屏。',
+			'sync.modeOfficialTitle' => '官方同步',
+			'sync.modeOfficialDesc' => '免填服务器地址，使用官方云端端到端加密同步，支持多端自动同步与扫码登录。',
+			'sync.modeSelfHostedTitle' => '自建同步',
+			'sync.modeSelfHostedDesc' => '连接自己部署的 Go 同步服务器，自主掌控全部云端数据与 Web 管理面板，支持免输地址局域网扫码。',
+			'sync.officialBadge' => '官方同步',
+			'sync.selfHostedBadge' => '自建同步',
+			'sync.modeCloudTitle' => '登录同步服务器',
+			'sync.modeCloudDesc' => '连接同步服务器，跨网络同步媒体库、自定义片单、刮削配置与播放进度（默认 http://127.0.0.1:8088）。',
+			'sync.activeModeLan' => '当前模式：本地模式（不同步）',
+			'sync.activeModeCloud' => '当前模式：同步服务器',
+			'sync.activeModeOfficial' => '当前模式：官方同步',
+			'sync.activeModeSelfHosted' => '当前模式：自建同步',
+			'sync.switchToCloudTitle' => '登录同步服务器',
+			'sync.switchToLan' => '退出至本地工作区',
+			'sync.lanDiscoveryEmpty' => '正在同一局域网下发现支持遥控的设备…',
+			'sync.lanNearbyTitle' => '附近可遥控设备',
+			'sync.lanTrustedTitle' => '已配对遥控设备',
+			'sync.lanRequestsTitle' => '收到遥控配对请求',
+			'sync.lanPairButton' => '配对遥控',
+			'sync.lanPairRequested' => '已发送配对请求，请在对方设备上确认。',
+			'sync.lanAcceptButton' => '允许配对',
 			'sync.lanRejectButton' => '拒绝',
-			'sync.lanRemoveTrust' => '取消信任',
-			'sync.lanSyncNow' => '立即局域网同步',
+			'sync.lanRemoveTrust' => '解除配对',
+			'sync.lanSyncNow' => '刷新状态',
 			'sync.lanPairingCode' => ({required Object code}) => '核对配对码：${code}',
-			'sync.lanSettingsSubtitle' => ({required Object count}) => '局域网 P2P（已信任 ${count} 台设备）',
+			'sync.lanSettingsSubtitle' => ({required Object count}) => '本地模式（已配对 ${count} 台遥控设备）',
 			'sync.cloudSettingsSubtitle' => ({required Object name}) => '同步服务器：${name}',
-			'sync.serverUrl' => '同步服务器地址',
+			'sync.officialSettingsSubtitle' => ({required Object name}) => '官方同步：${name}',
+			'sync.selfHostedSettingsSubtitle' => ({required Object name}) => '自建同步：${name}',
+			'sync.serverUrl' => '自建服务器地址',
+			'sync.selfHostedServerUrlHint' => '例如 http://192.168.1.10:8088 或 https://sync.example.com',
+			'sync.testConnection' => '检测连接',
+			'sync.testingConnection' => '正在检测…',
+			'sync.connectionOkOpenReg' => '连接成功（已开放注册）',
+			'sync.connectionOkClosedReg' => '连接成功（已关闭新注册，仅支持已有账号登录）',
+			'sync.connectionFailed' => ({required Object error}) => '连接失败：${error}',
+			'sync.cleartextHttpWarning' => '检测到公网明文 HTTP 地址。尽管网盘密钥与主密钥均端到端加密，仍建议为自建服配置 HTTPS 反向代理。',
 			'sync.username' => '用户名',
 			'sync.password' => '密码',
 			'sync.register' => '注册账号',
 			'sync.login' => '密码登录',
-			'sync.qrLoginTitle' => '电视 / 大屏快捷登录',
+			'sync.qrLoginTitle' => 'PC / 电视扫码快捷登录',
 			'sync.qrGenerate' => '生成登录二维码',
+			'sync.qrRefreshButton' => '刷新二维码',
 			'sync.qrHint' => '使用已登录同账号的手机或电脑确认授权，即可零密码安全移交加密主密钥。',
-			'sync.qrAuthorizeTitle' => '授权电视端登录',
-			'sync.qrAuthorizeHint' => '粘贴电视端展示的配对链接（ttplay://qr-auth?...）。',
+			'sync.qrModeLanHint' => '免输服务器地址：使用已登录「自建同步」或「官方同步」的手机客户端“设置 → 扫码登录 PC / 电视”直接扫码，自动下发服务器地址并加密登录。',
+			'sync.qrModeServerHint' => '跨网络扫码：使用已登录同一同步服务器的手机端扫码，或在其他已登录客户端粘贴链接完成授权。',
+			'sync.qrUseLanZeroInput' => '免输地址扫码 (同局域网)',
+			'sync.qrUseServerRelay' => '当前服务器扫码 (跨网)',
+			'sync.qrAuthorizeTitle' => '授权 PC / 电视登录',
+			'sync.qrAuthorizeHint' => '粘贴电视或电脑端展示的配对链接（ttplay://qr-auth?...）。',
 			'sync.qrAuthorizeButton' => '确认授权给该设备',
 			'sync.qrAuthorized' => '已发送授权与加密密钥。',
+			'sync.scanQrTileTitle' => '扫码登录 PC / 电视',
+			'sync.scanQrTileSignedInSubtitle' => '扫描电脑或电视屏幕上的二维码快捷授权登录',
+			'sync.scanQrTileSignedOutSubtitle' => '需先在手机端登录官方同步或自建同步',
+			'sync.scanQrRequireLoginTitle' => '请先登录同步账号',
+			'sync.scanQrRequireLoginBody' => '手机端必须先登录「官方同步」或「自建同步」账号，才能扫码授权电脑或电视端。',
+			'sync.goToSyncLogin' => '前往登录',
+			'sync.qrScannerTitle' => '扫码登录',
+			'sync.qrScannerAccountBanner' => ({required Object mode, required Object name}) => '正在使用「${mode} · ${name}」授权',
+			'sync.qrScannerInstruction' => '对准 PC 或电视上的登录二维码，系统将自动加密移交同步主密钥。',
+			'sync.qrPasteManualButton' => '手动粘贴配对链接',
+			'sync.qrRescanButton' => '重新扫码',
+			'sync.qrScanSuccess' => '授权成功，对方设备即将自动完成同步登录。',
+			'sync.cameraPermissionRequired' => '需要授予相机权限以扫描登录二维码。',
+			'sync.cameraError' => ({required Object error}) => '相机无法打开：${error}',
+			'sync.qrErrNotSignedIn' => '手机端尚未登录同步账号。',
+			'sync.qrErrInvalidUri' => '无法识别该二维码，请确认扫描的是 TTPlay 同步登录二维码。',
+			'sync.qrErrServerMismatch' => ({required Object target, required Object current}) => '二维码所属服务器 (${target}) 与当前手机端登录服务器 (${current}) 不一致，请切换至对应服务器后重试。',
+			'sync.qrErrExpired' => '二维码已过期，请在电脑或电视上刷新后重新扫描。',
+			'sync.qrErrLanUnreachable' => '无法通过局域网直连到电视或电脑，请确认两台设备在同一局域网，或改用填写服务器地址扫码。',
 			'sync.syncNow' => '立即同步',
 			'sync.syncing' => '同步中…',
 			'sync.signOut' => '退出同步账号',
@@ -6420,20 +6511,20 @@ extension on TranslationsZh {
 			'sync.pendingChanges' => ({required Object count}) => '待上传离线变更：${count} 条',
 			'sync.lastSynced' => ({required Object time}) => '上次同步：${time}',
 			'sync.neverSynced' => '尚未同步',
-			'sync.menuModeLanTitle' => '本地与局域网模式',
+			'sync.menuModeLanTitle' => '本地模式',
 			'sync.menuModeLanSubtitle' => ({required Object device}) => '本机：${device}',
 			'sync.menuModeCloudTitle' => '云端同步模式',
 			'sync.menuModeCloudSubtitle' => ({required Object name}) => '账号：${name}',
-			'sync.lanDevicesTitle' => '局域网设备',
+			'sync.lanDevicesTitle' => '遥控与投屏设备',
 			'sync.lanDiscoveredCount' => ({required Object count}) => '已发现 ${count} 台',
 			'sync.lanPairRequestBadge' => ({required Object count}) => '${count} 条配对请求',
-			'sync.lanDiscoveryRunning' => '正在同一局域网广播与发现设备',
-			'sync.lanDiscoveryStopped' => '局域网广播未开启',
+			'sync.lanDiscoveryRunning' => '正在同一局域网广播与发现可遥控设备（仅用于遥控控制，不做 P2P 媒体库同步）',
+			'sync.lanDiscoveryStopped' => '局域网遥控发现未开启',
 			'sync.lanPeerOnline' => '在线',
 			'sync.switchSyncMode' => '切换同步模式',
 			'sync.userMenuTooltip' => '同步与设备菜单',
-			'sync.progressLan' => '局域网同步',
-			'sync.progressLanWithPeer' => ({required Object peer}) => '局域网同步 (${peer})',
+			'sync.progressLan' => '本地模式',
+			'sync.progressLanWithPeer' => ({required Object peer}) => '本地 (${peer})',
 			'sync.progressCloud' => '云端同步',
 			'sync.phaseFetching' => '正在接收数据…',
 			'sync.phaseApplying' => '正在更新媒体库…',
@@ -6442,13 +6533,22 @@ extension on TranslationsZh {
 			'sync.phasePushing' => '正在上传变更…',
 			'sync.phasePushingProgress' => ({required Object done, required Object total}) => '正在上传 ${done}/${total}',
 			'sync.phaseProbingMounts' => '正在校验存储源…',
-			'sync.lanPopupDiscoverTitle' => '发现附近局域网设备',
-			'sync.lanPopupDiscoverBody' => ({required Object device, required Object platform}) => '是否信任「${device}」(${platform})，在同一 Wi-Fi 下自动同步媒体库与观看进度？',
-			'sync.lanPopupRequestTitle' => '收到设备信任请求',
-			'sync.lanPopupRequestBody' => ({required Object device, required Object platform}) => '「${device}」(${platform}) 请求与本机建立信任并同步数据。',
-			'sync.lanPopupWaitingBody' => ({required Object device}) => '已发送请求，正在等待「${device}」确认…',
+			'sync.lanPopupDiscoverTitle' => '发现附近可遥控设备',
+			'sync.lanPopupDiscoverBody' => ({required Object device, required Object platform}) => '是否与「${device}」(${platform}) 建立局域网遥控配对？',
+			'sync.lanPopupRequestTitle' => '收到遥控配对请求',
+			'sync.lanPopupRequestBody' => ({required Object device, required Object platform}) => '「${device}」(${platform}) 请求与本机建立局域网遥控配对。',
+			'sync.lanPopupWaitingBody' => ({required Object device}) => '已发送配对请求，正在等待「${device}」确认…',
 			'sync.lanPopupCancelCountdown' => ({required Object seconds}) => '取消 (${seconds}s)',
-			'sync.lanPopupLaterHint' => '关闭后仍可随时在「局域网设备」列表中手动信任。',
+			'sync.lanPopupLaterHint' => '关闭后仍可随时在「遥控与投屏设备」中手动配对。',
+			'sync.mergePromptTitle' => '检测到本地媒体库数据',
+			'sync.mergePromptBody' => '本机已有本地媒体源、合集/片单或观看记录。是否将其合并至该账号，还是仅使用账号云端数据（本地数据将安全归档，退出账号后可恢复）？',
+			'sync.mergeLocalOption' => '合并本地数据到账号',
+			'sync.accountOnlyOption' => '仅使用账号云端数据（本地归档）',
+			'sync.initialSyncRestoring' => '正在从服务器恢复媒体源与媒体库索引…',
+			'sync.signOutPendingTitle' => '仍有未上传变更',
+			'sync.signOutPendingBody' => ({required Object count}) => '当前仍有 ${count} 条待上传变更。退出后将随本账号安全归档，并在下次登录时继续上传。确定要退出吗？',
+			'sync.remoteControlHint' => '局域网遥控配对与是否登录同步服务器相互独立，任何状态下均可直接配对与控制。',
+			'sync.remoteDevicesSubtitle' => '管理局域网遥控配对与被控端开关（不传输媒体库）',
 			_ => null,
 		};
 	}

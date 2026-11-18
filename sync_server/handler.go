@@ -21,7 +21,11 @@ func NewSyncMux(store *SyncStore) http.Handler {
 	mux := http.NewServeMux()
 	h := &syncHandler{store: store}
 
+	mux.HandleFunc("GET /", h.handleWebIndex)
 	mux.HandleFunc("GET /healthz", h.handleHealth)
+	mux.HandleFunc("GET /api/v1/public/info", h.handlePublicInfo)
+
+	// App E2EE client auth & sync routes
 	mux.HandleFunc("GET /api/v1/auth/kdf", h.handleAuthKdf)
 	mux.HandleFunc("POST /api/v1/auth/register", h.handleRegister)
 	mux.HandleFunc("POST /api/v1/auth/login", h.handleLogin)
@@ -32,6 +36,22 @@ func NewSyncMux(store *SyncStore) http.Handler {
 	mux.HandleFunc("POST /api/v1/sync/push", h.handlePush)
 	mux.HandleFunc("POST /api/v1/sync/lease", h.handleLease)
 	mux.HandleFunc("POST /api/v1/user/settings", h.handleSettings)
+
+	// Web user panel routes (KDF-compatible with App E2EE)
+	mux.HandleFunc("POST /api/v1/web/register", h.handleWebRegister)
+	mux.HandleFunc("POST /api/v1/web/login", h.handleWebLogin)
+	mux.HandleFunc("POST /api/v1/web/password", h.handleWebChangePassword)
+	mux.HandleFunc("GET /api/v1/user/me", h.handleUserMe)
+	mux.HandleFunc("GET /api/v1/user/devices", h.handleUserDevices)
+	mux.HandleFunc("DELETE /api/v1/user/devices/{token_id}", h.handleUserRevokeDevice)
+	mux.HandleFunc("POST /api/v1/user/clear-sync-data", h.handleUserClearSyncData)
+
+	// Web admin panel routes
+	mux.HandleFunc("GET /api/v1/admin/overview", h.handleAdminOverview)
+	mux.HandleFunc("POST /api/v1/admin/config", h.handleAdminConfig)
+	mux.HandleFunc("GET /api/v1/admin/users", h.handleAdminUsers)
+	mux.HandleFunc("POST /api/v1/admin/users/{user_id}/status", h.handleAdminUserStatus)
+	mux.HandleFunc("DELETE /api/v1/admin/users/{user_id}", h.handleAdminDeleteUser)
 
 	return mux
 }
@@ -63,6 +83,27 @@ func writeErr(w http.ResponseWriter, r *http.Request, status int, msg string) {
 	writeJSON(w, r, status, errorResponse{Code: status, Message: msg})
 }
 
+func writeMappedErr(w http.ResponseWriter, r *http.Request, err error) {
+	switch {
+	case errors.Is(err, ErrUserExists):
+		writeErr(w, r, http.StatusConflict, err.Error())
+	case errors.Is(err, ErrRegistrationClosed), errors.Is(err, ErrUserDisabled), errors.Is(err, ErrForbidden):
+		writeErr(w, r, http.StatusForbidden, err.Error())
+	case errors.Is(err, ErrQuotaExceeded):
+		writeErr(w, r, http.StatusRequestEntityTooLarge, err.Error())
+	case errors.Is(err, ErrInvalidCreds), errors.Is(err, ErrUnauthorized):
+		writeErr(w, r, http.StatusUnauthorized, err.Error())
+	case errors.Is(err, ErrQrNotFound), errors.Is(err, ErrSourceNotFound), errors.Is(err, ErrUserNotFound):
+		writeErr(w, r, http.StatusNotFound, err.Error())
+	case errors.Is(err, ErrQrExpired):
+		writeErr(w, r, http.StatusGone, err.Error())
+	case errors.Is(err, ErrInvalidInput):
+		writeErr(w, r, http.StatusBadRequest, err.Error())
+	default:
+		writeErr(w, r, http.StatusInternalServerError, err.Error())
+	}
+}
+
 func decodeBody(w http.ResponseWriter, r *http.Request, dst any) error {
 	var reader io.Reader = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
 	if strings.EqualFold(r.Header.Get("Content-Encoding"), "gzip") {
@@ -76,20 +117,35 @@ func decodeBody(w http.ResponseWriter, r *http.Request, dst any) error {
 	return json.NewDecoder(reader).Decode(dst)
 }
 
-func (h *syncHandler) authenticate(r *http.Request) (*UserRecord, error) {
+func (h *syncHandler) authenticate(r *http.Request) (*UserRecord, string, error) {
 	auth := r.Header.Get("Authorization")
 	if !strings.HasPrefix(auth, "Bearer ") {
-		return nil, ErrUnauthorized
+		return nil, "", ErrUnauthorized
 	}
 	token := strings.TrimSpace(strings.TrimPrefix(auth, "Bearer "))
 	if token == "" {
-		return nil, ErrUnauthorized
+		return nil, "", ErrUnauthorized
 	}
-	return h.store.Authenticate(token)
+	return h.store.AuthenticateWithTokenID(token)
+}
+
+func (h *syncHandler) authenticateAdmin(r *http.Request) (*UserRecord, error) {
+	user, _, err := h.authenticate(r)
+	if err != nil {
+		return nil, err
+	}
+	if !user.IsAdmin {
+		return nil, ErrForbidden
+	}
+	return user, nil
 }
 
 func (h *syncHandler) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, r, http.StatusOK, map[string]any{"code": 0, "status": "ok", "server_time_ms": nowMs()})
+}
+
+func (h *syncHandler) handlePublicInfo(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, r, http.StatusOK, h.store.GetPublicInfo())
 }
 
 func (h *syncHandler) handleAuthKdf(w http.ResponseWriter, r *http.Request) {
@@ -118,14 +174,7 @@ func (h *syncHandler) handleRegister(w http.ResponseWriter, r *http.Request) {
 	}
 	resp, err := h.store.Register(req)
 	if err != nil {
-		switch {
-		case errors.Is(err, ErrUserExists):
-			writeErr(w, r, http.StatusConflict, err.Error())
-		case errors.Is(err, ErrInvalidInput):
-			writeErr(w, r, http.StatusBadRequest, err.Error())
-		default:
-			writeErr(w, r, http.StatusInternalServerError, err.Error())
-		}
+		writeMappedErr(w, r, err)
 		return
 	}
 	writeJSON(w, r, http.StatusOK, resp)
@@ -139,14 +188,187 @@ func (h *syncHandler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	resp, err := h.store.Login(req)
 	if err != nil {
-		if errors.Is(err, ErrInvalidCreds) {
-			writeErr(w, r, http.StatusUnauthorized, err.Error())
-		} else {
-			writeErr(w, r, http.StatusInternalServerError, err.Error())
-		}
+		writeMappedErr(w, r, err)
 		return
 	}
 	writeJSON(w, r, http.StatusOK, resp)
+}
+
+func (h *syncHandler) handleWebRegister(w http.ResponseWriter, r *http.Request) {
+	var req WebAuthRequest
+	if err := decodeBody(w, r, &req); err != nil {
+		writeErr(w, r, http.StatusBadRequest, err.Error())
+		return
+	}
+	resp, err := h.store.WebRegister(req)
+	if err != nil {
+		writeMappedErr(w, r, err)
+		return
+	}
+	writeJSON(w, r, http.StatusOK, resp)
+}
+
+func (h *syncHandler) handleWebLogin(w http.ResponseWriter, r *http.Request) {
+	var req WebAuthRequest
+	if err := decodeBody(w, r, &req); err != nil {
+		writeErr(w, r, http.StatusBadRequest, err.Error())
+		return
+	}
+	resp, err := h.store.WebLogin(req)
+	if err != nil {
+		writeMappedErr(w, r, err)
+		return
+	}
+	writeJSON(w, r, http.StatusOK, resp)
+}
+
+func (h *syncHandler) handleWebChangePassword(w http.ResponseWriter, r *http.Request) {
+	user, _, err := h.authenticate(r)
+	if err != nil {
+		writeMappedErr(w, r, err)
+		return
+	}
+	var req WebPasswordChangeRequest
+	if err := decodeBody(w, r, &req); err != nil {
+		writeErr(w, r, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := h.store.WebChangePassword(user.UserID, req); err != nil {
+		writeMappedErr(w, r, err)
+		return
+	}
+	writeJSON(w, r, http.StatusOK, map[string]any{"code": 0, "status": "ok"})
+}
+
+func (h *syncHandler) handleUserMe(w http.ResponseWriter, r *http.Request) {
+	user, _, err := h.authenticate(r)
+	if err != nil {
+		writeMappedErr(w, r, err)
+		return
+	}
+	prof, err := h.store.GetUserProfile(user.UserID)
+	if err != nil {
+		writeMappedErr(w, r, err)
+		return
+	}
+	writeJSON(w, r, http.StatusOK, prof)
+}
+
+func (h *syncHandler) handleUserDevices(w http.ResponseWriter, r *http.Request) {
+	user, tokenID, err := h.authenticate(r)
+	if err != nil {
+		writeMappedErr(w, r, err)
+		return
+	}
+	devices, err := h.store.ListUserDevices(user.UserID, tokenID)
+	if err != nil {
+		writeMappedErr(w, r, err)
+		return
+	}
+	writeJSON(w, r, http.StatusOK, map[string]any{"code": 0, "devices": devices})
+}
+
+func (h *syncHandler) handleUserRevokeDevice(w http.ResponseWriter, r *http.Request) {
+	user, _, err := h.authenticate(r)
+	if err != nil {
+		writeMappedErr(w, r, err)
+		return
+	}
+	tokenID := r.PathValue("token_id")
+	if err := h.store.RevokeUserDevice(user.UserID, tokenID); err != nil {
+		writeMappedErr(w, r, err)
+		return
+	}
+	writeJSON(w, r, http.StatusOK, map[string]any{"code": 0, "status": "revoked"})
+}
+
+func (h *syncHandler) handleUserClearSyncData(w http.ResponseWriter, r *http.Request) {
+	user, _, err := h.authenticate(r)
+	if err != nil {
+		writeMappedErr(w, r, err)
+		return
+	}
+	if err := h.store.ClearUserSyncData(user.UserID); err != nil {
+		writeMappedErr(w, r, err)
+		return
+	}
+	writeJSON(w, r, http.StatusOK, map[string]any{"code": 0, "status": "cleared"})
+}
+
+func (h *syncHandler) handleAdminOverview(w http.ResponseWriter, r *http.Request) {
+	if _, err := h.authenticateAdmin(r); err != nil {
+		writeMappedErr(w, r, err)
+		return
+	}
+	ov, err := h.store.AdminOverview()
+	if err != nil {
+		writeMappedErr(w, r, err)
+		return
+	}
+	writeJSON(w, r, http.StatusOK, ov)
+}
+
+func (h *syncHandler) handleAdminConfig(w http.ResponseWriter, r *http.Request) {
+	if _, err := h.authenticateAdmin(r); err != nil {
+		writeMappedErr(w, r, err)
+		return
+	}
+	var req AdminConfigRequest
+	if err := decodeBody(w, r, &req); err != nil {
+		writeErr(w, r, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := h.store.AdminUpdateConfig(req); err != nil {
+		writeMappedErr(w, r, err)
+		return
+	}
+	writeJSON(w, r, http.StatusOK, map[string]any{"code": 0, "status": "updated"})
+}
+
+func (h *syncHandler) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
+	if _, err := h.authenticateAdmin(r); err != nil {
+		writeMappedErr(w, r, err)
+		return
+	}
+	users, err := h.store.AdminListUsers()
+	if err != nil {
+		writeMappedErr(w, r, err)
+		return
+	}
+	writeJSON(w, r, http.StatusOK, map[string]any{"code": 0, "users": users})
+}
+
+func (h *syncHandler) handleAdminUserStatus(w http.ResponseWriter, r *http.Request) {
+	admin, err := h.authenticateAdmin(r)
+	if err != nil {
+		writeMappedErr(w, r, err)
+		return
+	}
+	targetID := r.PathValue("user_id")
+	var req AdminUserStatusRequest
+	if err := decodeBody(w, r, &req); err != nil {
+		writeErr(w, r, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := h.store.AdminSetUserDisabled(admin.UserID, targetID, req.IsDisabled); err != nil {
+		writeMappedErr(w, r, err)
+		return
+	}
+	writeJSON(w, r, http.StatusOK, map[string]any{"code": 0, "status": "updated"})
+}
+
+func (h *syncHandler) handleAdminDeleteUser(w http.ResponseWriter, r *http.Request) {
+	admin, err := h.authenticateAdmin(r)
+	if err != nil {
+		writeMappedErr(w, r, err)
+		return
+	}
+	targetID := r.PathValue("user_id")
+	if err := h.store.AdminDeleteUser(admin.UserID, targetID); err != nil {
+		writeMappedErr(w, r, err)
+		return
+	}
+	writeJSON(w, r, http.StatusOK, map[string]any{"code": 0, "status": "deleted"})
 }
 
 func (h *syncHandler) handleQrCreate(w http.ResponseWriter, r *http.Request) {
@@ -157,16 +379,16 @@ func (h *syncHandler) handleQrCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	resp, err := h.store.CreateQrSession(req)
 	if err != nil {
-		writeErr(w, r, http.StatusBadRequest, err.Error())
+		writeMappedErr(w, r, err)
 		return
 	}
 	writeJSON(w, r, http.StatusOK, resp)
 }
 
 func (h *syncHandler) handleQrConfirm(w http.ResponseWriter, r *http.Request) {
-	user, err := h.authenticate(r)
+	user, _, err := h.authenticate(r)
 	if err != nil {
-		writeErr(w, r, http.StatusUnauthorized, err.Error())
+		writeMappedErr(w, r, err)
 		return
 	}
 	var req QrConfirmRequest
@@ -175,14 +397,7 @@ func (h *syncHandler) handleQrConfirm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.store.ConfirmQrSession(user, req); err != nil {
-		switch {
-		case errors.Is(err, ErrQrNotFound):
-			writeErr(w, r, http.StatusNotFound, err.Error())
-		case errors.Is(err, ErrQrExpired):
-			writeErr(w, r, http.StatusGone, err.Error())
-		default:
-			writeErr(w, r, http.StatusBadRequest, err.Error())
-		}
+		writeMappedErr(w, r, err)
 		return
 	}
 	writeJSON(w, r, http.StatusOK, map[string]any{"code": 0, "status": "confirmed"})
@@ -196,20 +411,16 @@ func (h *syncHandler) handleQrPoll(w http.ResponseWriter, r *http.Request) {
 	}
 	resp, err := h.store.PollQrSession(sessionID)
 	if err != nil {
-		if errors.Is(err, ErrQrNotFound) {
-			writeErr(w, r, http.StatusNotFound, err.Error())
-		} else {
-			writeErr(w, r, http.StatusInternalServerError, err.Error())
-		}
+		writeMappedErr(w, r, err)
 		return
 	}
 	writeJSON(w, r, http.StatusOK, resp)
 }
 
 func (h *syncHandler) handlePull(w http.ResponseWriter, r *http.Request) {
-	user, err := h.authenticate(r)
+	user, _, err := h.authenticate(r)
 	if err != nil {
-		writeErr(w, r, http.StatusUnauthorized, err.Error())
+		writeMappedErr(w, r, err)
 		return
 	}
 	var sinceSeq int64
@@ -234,9 +445,9 @@ func (h *syncHandler) handlePull(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *syncHandler) handlePush(w http.ResponseWriter, r *http.Request) {
-	user, err := h.authenticate(r)
+	user, _, err := h.authenticate(r)
 	if err != nil {
-		writeErr(w, r, http.StatusUnauthorized, err.Error())
+		writeMappedErr(w, r, err)
 		return
 	}
 	var req PushRequest
@@ -246,16 +457,16 @@ func (h *syncHandler) handlePush(w http.ResponseWriter, r *http.Request) {
 	}
 	resp, err := h.store.Push(user.UserID, req)
 	if err != nil {
-		writeErr(w, r, http.StatusInternalServerError, err.Error())
+		writeMappedErr(w, r, err)
 		return
 	}
 	writeJSON(w, r, http.StatusOK, resp)
 }
 
 func (h *syncHandler) handleLease(w http.ResponseWriter, r *http.Request) {
-	user, err := h.authenticate(r)
+	user, _, err := h.authenticate(r)
 	if err != nil {
-		writeErr(w, r, http.StatusUnauthorized, err.Error())
+		writeMappedErr(w, r, err)
 		return
 	}
 	var req LeaseRequest
@@ -265,20 +476,16 @@ func (h *syncHandler) handleLease(w http.ResponseWriter, r *http.Request) {
 	}
 	resp, err := h.store.AcquireLease(user.UserID, req)
 	if err != nil {
-		if errors.Is(err, ErrSourceNotFound) {
-			writeErr(w, r, http.StatusNotFound, err.Error())
-		} else {
-			writeErr(w, r, http.StatusBadRequest, err.Error())
-		}
+		writeMappedErr(w, r, err)
 		return
 	}
 	writeJSON(w, r, http.StatusOK, resp)
 }
 
 func (h *syncHandler) handleSettings(w http.ResponseWriter, r *http.Request) {
-	user, err := h.authenticate(r)
+	user, _, err := h.authenticate(r)
 	if err != nil {
-		writeErr(w, r, http.StatusUnauthorized, err.Error())
+		writeMappedErr(w, r, err)
 		return
 	}
 	var updates map[string]any
@@ -288,7 +495,7 @@ func (h *syncHandler) handleSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	merged, err := h.store.UpdateUserSettings(user.UserID, updates)
 	if err != nil {
-		writeErr(w, r, http.StatusInternalServerError, err.Error())
+		writeMappedErr(w, r, err)
 		return
 	}
 	writeJSON(w, r, http.StatusOK, map[string]any{"code": 0, "settings": merged, "server_time_ms": nowMs()})

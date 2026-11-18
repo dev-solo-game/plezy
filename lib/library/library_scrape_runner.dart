@@ -31,10 +31,34 @@ class LibraryScrapeRunner {
   final LibraryRepository _repo;
   final LibrarySettingsStore settings;
   final MountManager? mounts;
+  final Map<int, Future<bool>> _inFlightHydrations = {};
 
   /// Returned by [scrapePending] when titles were left waiting because no
   /// TMDB key is set. The UI turns it into a localized prompt.
   static const String noTmdbKey = 'no-tmdb-key';
+
+  /// Lazily fills heavy details (`summary`, `tagline`, `credits`, episode
+  /// overviews) for a synced skeleton item, deduplicating concurrent requests
+  /// for the same show/movie root ID.
+  Future<bool> hydrateItemDetailsIfNeeded(int itemId) async {
+    final initial = (await _repo.getItem(itemId))?.item;
+    if (initial == null) return false;
+    final rootId = (initial.kind == LibraryKinds.season || initial.kind == LibraryKinds.episode)
+        ? (initial.showId ?? initial.parentId ?? initial.id)
+        : initial.id;
+    final existing = _inFlightHydrations[rootId];
+    if (existing != null) return existing;
+
+    final future = withScraper((scraper, _) => scraper.hydrateWorkDetailsById(rootId));
+    _inFlightHydrations[rootId] = future;
+    try {
+      return await future;
+    } finally {
+      if (identical(_inFlightHydrations[rootId], future)) {
+        unawaited(_inFlightHydrations.remove(rootId));
+      }
+    }
+  }
 
   /// Runs [action] with a scraper built from the current settings, closing
   /// its HTTP clients afterwards. Once [isCancelled] turns true the clients

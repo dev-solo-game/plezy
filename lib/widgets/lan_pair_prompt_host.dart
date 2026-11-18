@@ -8,19 +8,14 @@ import 'package:provider/provider.dart';
 import '../i18n/strings.g.dart';
 import '../library/sync/lan_peer_sync_service.dart';
 import '../library/sync/sync_coordinator.dart';
-import '../screens/video_player_screen.dart';
 import 'app_icon.dart';
 import 'dialog_action_button.dart';
 
 /// Listens to [SyncAndScanCoordinator] and presents at most one global top-level
-/// dialog at a time when a new LAN device is discovered (once per device) or an
-/// incoming pairing request arrives.
+/// dialog at a time when an explicit incoming LAN remote-control pairing request
+/// arrives (passive UDP discovery alone never pops a modal).
 class LanPairPromptHost extends StatefulWidget {
-  const LanPairPromptHost({
-    super.key,
-    required this.child,
-    this.countdownDuration = const Duration(seconds: 15),
-  });
+  const LanPairPromptHost({super.key, required this.child, this.countdownDuration = const Duration(seconds: 15)});
 
   final Widget child;
   final Duration countdownDuration;
@@ -79,26 +74,17 @@ class _LanPairPromptHostState extends State<LanPairPromptHost> {
   void _maybePresentNextPrompt() {
     if (!mounted || _isDialogOpen) return;
     final sync = _sync;
-    if (sync == null || sync.isSignedIn) return;
+    if (sync == null) return;
     final lan = sync.lanService;
     if (!lan.isRunning) return;
 
     final incoming = lan.unpromptedIncomingRequests.firstOrNull;
-    // Defer passive discovery prompting while fullscreen video playback is active so
-    // remote/keyboard playback isn't interrupted, while still letting an explicit
-    // incoming trust request (e.g. from companion remote) surface.
-    if (incoming == null && VideoPlayerScreenState.activeGlobalKey != null) return;
+    if (incoming == null) return;
 
     final navigator = Navigator.maybeOf(context, rootNavigator: true);
     if (navigator == null) return;
 
-    final discovered = incoming == null ? lan.unpromptedDiscoveredPeers.firstOrNull : null;
-    final targetDeviceId = incoming?.deviceId ?? discovered?.deviceId;
-    if (targetDeviceId == null) return;
-
-    if (incoming == null && discovered != null) {
-      unawaited(lan.markPeerAutoPrompted(discovered.deviceId));
-    }
+    final targetDeviceId = incoming.deviceId;
 
     _isDialogOpen = true;
     final route = DialogRoute<bool>(
@@ -109,7 +95,6 @@ class _LanPairPromptHostState extends State<LanPairPromptHost> {
       builder: (_) => LanPairPromptDialog(
         lanService: lan,
         deviceId: targetDeviceId,
-        initialPeer: discovered,
         initialRequest: incoming,
         countdownDuration: widget.countdownDuration,
       ),
@@ -319,7 +304,8 @@ class _LanPairPromptDialogState extends State<LanPairPromptDialog> {
     final platform = activeRequest?.platform ?? peer?.platform ?? '';
     final myPub = lan.publicKeyBase64;
     final pairingCode =
-        activeRequest?.pairingCode ?? (peer != null && myPub != null && myPub.isNotEmpty ? peer.pairingCodeFor(myPub) : null);
+        activeRequest?.pairingCode ??
+        (peer != null && myPub != null && myPub.isNotEmpty ? peer.pairingCodeFor(myPub) : null);
 
     final isRequest = activeRequest != null;
     final title = isRequest ? t.sync.lanPopupRequestTitle : t.sync.lanPopupDiscoverTitle;

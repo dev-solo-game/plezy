@@ -8,12 +8,13 @@ import '../../i18n/strings.g.dart';
 import '../../library/sync/lan_peer_sync_service.dart';
 import '../../library/sync/sync_coordinator.dart';
 import '../../library/sync/sync_local_store.dart';
+import '../../services/settings_service.dart';
 import '../../widgets/app_icon.dart';
-import '../../widgets/library_status_indicator.dart';
+import '../../widgets/setting_tile.dart';
 import 'mounts_screen.dart';
 
-/// Clean standalone list view of LAN P2P discovery status, pairing requests,
-/// nearby discovered Plezy devices, and trusted peers.
+/// Standalone view of LAN remote-control discovery status, receiver toggle,
+/// pairing requests, nearby devices, and paired remote peers (no P2P library sync).
 class LanDevicesScreen extends StatelessWidget {
   const LanDevicesScreen({super.key});
 
@@ -25,10 +26,7 @@ class LanDevicesScreen extends StatelessWidget {
         alignment: Alignment.topCenter,
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: storageContentMaxWidth),
-          child: ListView(
-            padding: const EdgeInsets.all(16),
-            children: const [LanDevicesPanel(standalone: true)],
-          ),
+          child: ListView(padding: const EdgeInsets.all(16), children: const [LanDevicesPanel(standalone: true)]),
         ),
       ),
     );
@@ -103,8 +101,23 @@ class _LanDevicesPanelState extends State<LanDevicesPanel> {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          ..._buildBanners(theme, serviceError: lan.lastError),
+          ..._buildBanners(theme),
           _buildStatusCard(lan, theme),
+          if (SettingsService.instanceOrNull != null) ...[
+            const SizedBox(height: 12),
+            Card(
+              child: Column(
+                children: [
+                  SettingSwitchTile(
+                    pref: SettingsService.enableCompanionRemoteServer,
+                    icon: Symbols.phone_android_rounded,
+                    title: t.settings.companionRemoteServer,
+                    subtitle: t.settings.companionRemoteServerDescription,
+                  ),
+                ],
+              ),
+            ),
+          ],
           if (requests.isNotEmpty) ...[
             const SizedBox(height: 12),
             Card(
@@ -146,7 +159,7 @@ class _LanDevicesPanelState extends State<LanDevicesPanel> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        ..._buildBanners(theme, serviceError: lan.lastError),
+        ..._buildBanners(theme),
         Card(
           child: Padding(
             padding: const EdgeInsets.all(16),
@@ -162,13 +175,12 @@ class _LanDevicesPanelState extends State<LanDevicesPanel> {
                     ),
                     const SizedBox(width: 8),
                     Expanded(
-                      child: Text('${t.sync.activeModeLan} (${lan.deviceName})', style: theme.textTheme.titleMedium),
+                      child: Text('${t.sync.lanDevicesTitle} (${lan.deviceName})', style: theme.textTheme.titleMedium),
                     ),
                   ],
                 ),
                 const SizedBox(height: 6),
-                Text(t.sync.modeLanDesc, style: theme.textTheme.bodySmall),
-                _buildProgressSection(lan, theme),
+                Text(t.sync.remoteControlHint, style: theme.textTheme.bodySmall),
                 if (requests.isNotEmpty) ...[
                   const SizedBox(height: 16),
                   ..._buildRequestsSection(lan, requests, theme),
@@ -187,8 +199,8 @@ class _LanDevicesPanelState extends State<LanDevicesPanel> {
     );
   }
 
-  List<Widget> _buildBanners(ThemeData theme, {String? serviceError}) {
-    final effectiveError = _error ?? serviceError;
+  List<Widget> _buildBanners(ThemeData theme) {
+    final effectiveError = _error;
     return [
       if (effectiveError != null && effectiveError.isNotEmpty) ...[
         Material(
@@ -213,33 +225,6 @@ class _LanDevicesPanelState extends State<LanDevicesPanel> {
         const SizedBox(height: 12),
       ],
     ];
-  }
-
-  Widget _buildProgressSection(LanPeerSyncService lan, ThemeData theme) {
-    final prog = lan.progress;
-    if (!prog.isActive) return const SizedBox.shrink();
-    final peerName = prog.peerName;
-    final label = (peerName != null && peerName.isNotEmpty)
-        ? t.sync.progressLanWithPeer(peer: peerName)
-        : t.sync.progressLan;
-    final detail = formatSyncProgressDetail(t, prog);
-    return Padding(
-      padding: const EdgeInsets.only(top: 12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Row(
-            children: [
-              Expanded(child: Text(label, style: theme.textTheme.labelMedium)),
-              if (detail != null)
-                Text(detail, style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
-            ],
-          ),
-          const SizedBox(height: 6),
-          LinearProgressIndicator(value: prog.fraction),
-        ],
-      ),
-    );
   }
 
   Widget _buildStatusCard(LanPeerSyncService lan, ThemeData theme) {
@@ -269,8 +254,7 @@ class _LanDevicesPanelState extends State<LanDevicesPanel> {
                     ),
                   ),
                   const SizedBox(height: 4),
-                  Text(t.sync.modeLanDesc, style: theme.textTheme.bodySmall),
-                  _buildProgressSection(lan, theme),
+                  Text(t.sync.remoteControlHint, style: theme.textTheme.bodySmall),
                 ],
               ),
             ),
@@ -291,14 +275,8 @@ class _LanDevicesPanelState extends State<LanDevicesPanel> {
         trailing: Wrap(
           spacing: 8,
           children: [
-            TextButton(
-              onPressed: () => lan.rejectPairRequest(req.deviceId),
-              child: Text(t.sync.lanRejectButton),
-            ),
-            FilledButton(
-              onPressed: () => unawaited(_acceptLanPair(lan, req)),
-              child: Text(t.sync.lanAcceptButton),
-            ),
+            TextButton(onPressed: () => lan.rejectPairRequest(req.deviceId), child: Text(t.sync.lanRejectButton)),
+            FilledButton(onPressed: () => unawaited(_acceptLanPair(lan, req)), child: Text(t.sync.lanAcceptButton)),
           ],
         ),
       ),
@@ -315,8 +293,8 @@ class _LanDevicesPanelState extends State<LanDevicesPanel> {
       children: [
         Text(t.sync.lanTrustedTitle, style: theme.textTheme.titleSmall),
         TextButton.icon(
-          onPressed: lan.isSyncing ? null : () => unawaited(lan.syncWithAllTrustedPeers()),
-          icon: const AppIcon(Symbols.sync_rounded, size: 18),
+          onPressed: () => unawaited(lan.probeTrustedPeers()),
+          icon: const AppIcon(Symbols.refresh_rounded, size: 18),
           label: Text(t.sync.lanSyncNow),
         ),
       ],
@@ -346,7 +324,7 @@ class _LanDevicesPanelState extends State<LanDevicesPanel> {
         ),
         subtitle: Text(peer.lastHost ?? ''),
         trailing: TextButton(
-          onPressed: () => unawaited(lan.removeTrustedPeer(peer.deviceId)),
+          onPressed: () => unawaited(lan.revokeTrustedPeer(peer.deviceId)),
           child: Text(t.sync.lanRemoveTrust),
         ),
       ),

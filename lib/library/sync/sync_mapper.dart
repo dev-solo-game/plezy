@@ -65,7 +65,8 @@ class SyncMapper {
 
   static String _primaryUrlOf(StorageMount mount) => switch (mount.kind) {
     StorageKind.webdav => mount.configString(MountKeys.baseUrl) ?? '',
-    StorageKind.quark => 'quark://${mount.configString(MountKeys.rootFolderId) ?? QuarkStorageDriver.defaultRootFolderId}',
+    StorageKind.quark =>
+      'quark://${mount.configString(MountKeys.rootFolderId) ?? QuarkStorageDriver.defaultRootFolderId}',
     StorageKind.smb =>
       'smb://${mount.configString(MountKeys.host) ?? ''}/${mount.configString(MountKeys.share) ?? ''}${StoragePath.normalize(mount.configString(MountKeys.rootPath) ?? '')}',
     StorageKind.local => mount.configString(MountKeys.rootPath) ?? '/',
@@ -83,7 +84,9 @@ class SyncMapper {
     String? quarkCp = quarkCheckpointOverride;
     int? finishedAt = scanFinishedAtOverride;
     if (quarkCp == null && finishedAt == null) {
-      final scanRow = await (db.select(db.libraryScanStates)..where((t) => t.mountId.equals(mount.id))).getSingleOrNull();
+      final scanRow = await (db.select(
+        db.libraryScanStates,
+      )..where((t) => t.mountId.equals(mount.id))).getSingleOrNull();
       quarkCp = scanRow?.quarkCheckpoint;
       finishedAt = scanRow?.finishedAt;
     }
@@ -135,16 +138,24 @@ class SyncMapper {
     required int updatedAt,
   }) async {
     final genres = [for (final g in await repo.genresOf(workItem.id)) g.name];
-    final credits = [
-      for (final c in (await repo.creditsOf(workItem.id)).take(25))
-        {
-          'name': c.person.name,
-          'job': c.job,
-          'character': c.character,
-          'tmdb_id': c.person.tmdbId,
-          'photo_url': c.person.photoSource,
-        },
-    ];
+    final hasProviderExternalId =
+        (workItem.tmdbId?.isNotEmpty ?? false) ||
+        (workItem.bangumiId?.isNotEmpty ?? false) ||
+        (workItem.imdbId?.isNotEmpty ?? false);
+    final isLockedOrNfo = workItem.locked || workItem.metadataSource == 'nfo';
+    final includeHeavyDetails = !hasProviderExternalId || isLockedOrNfo;
+    final credits = includeHeavyDetails
+        ? [
+            for (final c in (await repo.creditsOf(workItem.id)).take(25))
+              {
+                'name': c.person.name,
+                'job': c.job,
+                'character': c.character,
+                'tmdb_id': c.person.tmdbId,
+                'photo_url': c.person.photoSource,
+              },
+          ]
+        : null;
     final (provider, extId) = _primaryProviderAndId(workItem);
     return {
       'work_key': workKey,
@@ -160,8 +171,8 @@ class SyncMapper {
         'aliases': workItem.aliases,
         'year': workItem.year,
         'release_date': workItem.releaseDate,
-        'summary': workItem.summary,
-        'tagline': workItem.tagline,
+        if (includeHeavyDetails) 'summary': workItem.summary,
+        if (includeHeavyDetails) 'tagline': workItem.tagline,
         'content_rating': workItem.contentRating,
         'studio': workItem.studio,
         'rating': workItem.rating,
@@ -178,7 +189,7 @@ class SyncMapper {
         'locked': workItem.locked,
         'source_added_at': workItem.sourceAddedAt,
         'genres': genres,
-        'credits': credits,
+        'credits': ?credits,
       },
       'client_updated_at': updatedAt,
       'is_deleted': false,
@@ -198,6 +209,7 @@ class SyncMapper {
     final status = hasMatchedWork
         ? MatchStatusRank.fromFile(file, item: workItem)
         : (file.matchState == LibraryMatchStates.unmatched ? MatchStatusRank.unmatched : MatchStatusRank.pending);
+    final includeHeavyEpisodeFields = !hasMatchedWork || file.matchLocked;
     return {
       'file_id': fileId,
       'source_id': file.mountId,
@@ -215,7 +227,7 @@ class SyncMapper {
       'episode_num': ep?.episodeNumber ?? -1,
       'match_status': status,
       'version_label': file.versionLabel,
-      'parsed_json': file.parsed,
+      'parsed_json': includeHeavyEpisodeFields ? file.parsed : null,
       'media_spec_json': {
         if (file.durationMs != null) 'duration_ms': file.durationMs,
         if (file.container != null) 'container': file.container,
@@ -224,7 +236,7 @@ class SyncMapper {
         if (file.height != null) 'height': file.height,
         if (file.hdrFormat != null) 'hdr_format': file.hdrFormat,
         if (ep != null) 'ep_title': ep.title,
-        if (ep?.summary != null) 'ep_overview': ep!.summary,
+        if (includeHeavyEpisodeFields && ep?.summary != null) 'ep_overview': ep!.summary,
         if (ep?.posterSource != null) 'ep_still_path': ep!.posterSource,
         if (ep?.runtimeMs != null) 'ep_runtime_ms': ep!.runtimeMs,
         if (ep?.metadataSource != null) 'ep_metadata_source': ep!.metadataSource,
@@ -292,11 +304,7 @@ class SyncMapper {
       entityType: SyncLocalStore.typeSource,
       entityKey: mountId,
       updatedAt: ts,
-      payload: {
-        'source_id': mountId,
-        'is_deleted': true,
-        'client_updated_at': ts,
-      },
+      payload: {'source_id': mountId, 'is_deleted': true, 'client_updated_at': ts},
     );
   }
 
@@ -358,9 +366,18 @@ class SyncMapper {
           FROM (SELECT key, value FROM library_settings WHERE key LIKE 'work-skip:%local-library%' ORDER BY key)
         ), '') AS skip_s,
         (
+          (SELECT COUNT(*) || ':' || COALESCE(MAX(updated_at),0) || ':' || COALESCE(SUM(updated_at),0) || ':' ||
+                  COALESCE(SUM(LENGTH(title)),0)
+           FROM library_lists)
+          || ';' ||
+          (SELECT COUNT(*) || ':' || COALESCE(SUM(list_id),0) || ':' || COALESCE(SUM(item_id),0) || ':' ||
+                  COALESCE(SUM(sort_order),0)
+           FROM library_list_items)
+        ) AS list_s,
+        (
           SELECT COUNT(*) || ':' || COALESCE(MAX(local_seq),0)
           FROM sync_journal
-          WHERE entity_type IN ('work_pref','watch_progress') AND is_deleted = 0
+          WHERE entity_type IN ('work_pref','watch_progress','list') AND is_deleted = 0
         ) AS state_journal_s
     ''').getSingle();
 
@@ -374,6 +391,7 @@ class SyncMapper {
     final stateSig =
         '${row.read<String>('state_s')}|'
         '${row.read<String>('skip_s')}|'
+        '${row.read<String>('list_s')}|'
         '${row.read<String>('state_journal_s')}';
     return (catalogSig: catalogSig, stateSig: stateSig);
   }
@@ -397,17 +415,11 @@ class SyncMapper {
 
       var touched = 0;
       if (!bootstrapped || sigs.catalogSig != _lastCatalogSignature) {
-        touched = await _reconcileCatalogInternal(
-          allowTombstones: true,
-          includeWorkStates: true,
-        );
+        touched = await _reconcileCatalogInternal(allowTombstones: true, includeWorkStates: true);
         final refreshed = await _computeDbSignatures();
         _lastCatalogSignature = refreshed.catalogSig;
         _lastStateSignature = refreshed.stateSig;
-        await syncStore.saveReconciledSignatures(
-          catalogSig: refreshed.catalogSig,
-          stateSig: refreshed.stateSig,
-        );
+        await syncStore.saveReconciledSignatures(catalogSig: refreshed.catalogSig, stateSig: refreshed.stateSig);
       } else if (sigs.stateSig != _lastStateSignature) {
         touched = await _reconcileWorkStatesInternal();
         final refreshed = await _computeDbSignatures();
@@ -442,10 +454,7 @@ class SyncMapper {
         _lastCatalogSignature = sigs.catalogSig;
         _lastStateSignature = sigs.stateSig;
         _signaturesHydrated = true;
-        await syncStore.saveReconciledSignatures(
-          catalogSig: sigs.catalogSig,
-          stateSig: sigs.stateSig,
-        );
+        await syncStore.saveReconciledSignatures(catalogSig: sigs.catalogSig, stateSig: sigs.stateSig);
       } else {
         await _invalidateSignatureCache();
       }
@@ -493,11 +502,7 @@ class SyncMapper {
       final srcTs = existingSource != null
           ? SyncLocalStore.computeNextHlc(calibratedNow, existingSource.clientUpdatedAt)
           : calibratedNow;
-      final srcDelPayload = <String, Object?>{
-        'source_id': mountId,
-        'is_deleted': true,
-        'client_updated_at': srcTs,
-      };
+      final srcDelPayload = <String, Object?>{'source_id': mountId, 'is_deleted': true, 'client_updated_at': srcTs};
       pending.add(
         _JournalCandidate(
           entityType: SyncLocalStore.typeSource,
@@ -541,10 +546,10 @@ class SyncMapper {
 
     final normalizedPrefixes = directoryPrefixes == null || directoryPrefixes.isEmpty
         ? null
-        : <String>{
-            for (final dir in directoryPrefixes) DeterministicKeys.normalizeMountPath(dir),
-          };
-    final effectivePrefixes = (normalizedPrefixes != null && normalizedPrefixes.contains('/')) ? null : normalizedPrefixes;
+        : <String>{for (final dir in directoryPrefixes) DeterministicKeys.normalizeMountPath(dir)};
+    final effectivePrefixes = (normalizedPrefixes != null && normalizedPrefixes.contains('/'))
+        ? null
+        : normalizedPrefixes;
 
     bool pathInScope(String rawPath) {
       if (effectivePrefixes == null) return true;
@@ -555,10 +560,7 @@ class SyncMapper {
       return false;
     }
 
-    final existingSources = await syncStore.journal.getEntriesForType(
-      SyncLocalStore.typeSource,
-      sharedIds,
-    );
+    final existingSources = await syncStore.journal.getEntriesForType(SyncLocalStore.typeSource, sharedIds);
 
     final scanRows = sharedIds.isEmpty
         ? const <LibraryScanStateRow>[]
@@ -577,14 +579,12 @@ class SyncMapper {
         quarkCheckpointOverride: scan?.quarkCheckpoint,
         scanFinishedAtOverride: scan?.finishedAt,
       );
-      final hash = SyncJournalStore.computeEntityHash(
-        SyncLocalStore.typeSource,
-        payload,
-        rawSecrets: mount.secrets,
-      );
+      final hash = SyncJournalStore.computeEntityHash(SyncLocalStore.typeSource, payload, rawSecrets: mount.secrets);
       if (existing != null && existing.payloadHash == hash && !existing.isDeleted) continue;
 
-      final effectiveTs = existing != null ? SyncLocalStore.computeNextHlc(calibratedNow, existing.clientUpdatedAt) : initialTs;
+      final effectiveTs = existing != null
+          ? SyncLocalStore.computeNextHlc(calibratedNow, existing.clientUpdatedAt)
+          : initialTs;
       payload['client_updated_at'] = effectiveTs;
       sourceCandidates.add(
         _JournalCandidate(
@@ -610,7 +610,10 @@ class SyncMapper {
       final filesById = <int, LibraryFileRow>{for (final f in allMountFiles) f.id: f};
       final scopedFiles = effectivePrefixes == null
           ? allMountFiles
-          : [for (final f in allMountFiles) if (pathInScope(f.path)) f];
+          : [
+              for (final f in allMountFiles)
+                if (pathInScope(f.path)) f,
+            ];
 
       final itemsCache = <int, LibraryItemRow>{};
       Future<LibraryItemRow?> tryLoadItem(int? id) async {
@@ -622,16 +625,12 @@ class SyncMapper {
       }
 
       final fileKeyByRowId = <int, String>{
-        for (final f in allMountFiles) f.id: DeterministicKeys.generateFileId(sourceId: f.mountId, mountRelativePath: f.path),
+        for (final f in allMountFiles)
+          f.id: DeterministicKeys.generateFileId(sourceId: f.mountId, mountRelativePath: f.path),
       };
 
-      final resolvedVideos = <({
-        LibraryFileRow file,
-        String fileId,
-        LibraryItemRow? item,
-        LibraryItemRow? workItem,
-        String? workKey,
-      })>[];
+      final resolvedVideos =
+          <({LibraryFileRow file, String fileId, LibraryItemRow? item, LibraryItemRow? workItem, String? workKey})>[];
       final workItemsToCheck = <String, ({LibraryItemRow workItem, int rank})>{};
       final survivingFileIdsByMount = <String, Set<String>>{for (final id in sharedIds) id: <String>{}};
 
@@ -665,10 +664,7 @@ class SyncMapper {
         ));
       }
 
-      final existingWorks = await syncStore.journal.getEntriesForType(
-        SyncLocalStore.typeWork,
-        workItemsToCheck.keys,
-      );
+      final existingWorks = await syncStore.journal.getEntriesForType(SyncLocalStore.typeWork, workItemsToCheck.keys);
       for (final entry in workItemsToCheck.entries) {
         final workKey = entry.key;
         final workItem = entry.value.workItem;
@@ -684,7 +680,9 @@ class SyncMapper {
         final hash = SyncJournalStore.computeEntityHash(SyncLocalStore.typeWork, payload);
         if (existing != null && existing.payloadHash == hash && !existing.isDeleted) continue;
 
-        final effectiveTs = existing != null ? SyncLocalStore.computeNextHlc(calibratedNow, existing.clientUpdatedAt) : initialTs;
+        final effectiveTs = existing != null
+            ? SyncLocalStore.computeNextHlc(calibratedNow, existing.clientUpdatedAt)
+            : initialTs;
         payload['client_updated_at'] = effectiveTs;
         workCandidates.add(
           _JournalCandidate(
@@ -699,10 +697,7 @@ class SyncMapper {
       }
 
       final scopedFileIds = [for (final f in scopedFiles) fileKeyByRowId[f.id]!];
-      final existingFiles = await syncStore.journal.getEntriesForType(
-        SyncLocalStore.typeFile,
-        scopedFileIds,
-      );
+      final existingFiles = await syncStore.journal.getEntriesForType(SyncLocalStore.typeFile, scopedFileIds);
 
       for (final rv in resolvedVideos) {
         final existing = existingFiles[rv.fileId];
@@ -720,7 +715,9 @@ class SyncMapper {
         final hash = SyncJournalStore.computeEntityHash(SyncLocalStore.typeFile, payload);
         if (existing != null && existing.payloadHash == hash && !existing.isDeleted) continue;
 
-        final effectiveTs = existing != null ? SyncLocalStore.computeNextHlc(calibratedNow, existing.clientUpdatedAt) : initialTs;
+        final effectiveTs = existing != null
+            ? SyncLocalStore.computeNextHlc(calibratedNow, existing.clientUpdatedAt)
+            : initialTs;
         payload['client_updated_at'] = effectiveTs;
         videoCandidates.add(
           _JournalCandidate(
@@ -754,7 +751,9 @@ class SyncMapper {
         final hash = SyncJournalStore.computeEntityHash(SyncLocalStore.typeFile, payload);
         if (existing != null && existing.payloadHash == hash && !existing.isDeleted) continue;
 
-        final effectiveTs = existing != null ? SyncLocalStore.computeNextHlc(calibratedNow, existing.clientUpdatedAt) : initialTs;
+        final effectiveTs = existing != null
+            ? SyncLocalStore.computeNextHlc(calibratedNow, existing.clientUpdatedAt)
+            : initialTs;
         payload['client_updated_at'] = effectiveTs;
         subtitleCandidates.add(
           _JournalCandidate(
@@ -770,7 +769,16 @@ class SyncMapper {
       }
 
       if (allowTombstones) {
+        final scanStateByMount = <String, LibraryScanStateRow>{
+          for (final s in await db.select(db.libraryScanStates).get()) s.mountId: s,
+        };
         for (final mountId in sharedIds) {
+          final scanState = scanStateByMount[mountId];
+          // Avoid emitting false missing-file tombstones on a full catalog pass
+          // for mounts whose initial local scan hasn't finished yet.
+          if (mountIds == null && (scanState == null || scanState.finishedAt == null)) {
+            continue;
+          }
           final journalFiles = await syncStore.journal.getActiveFilesForMount(
             mountId,
             directoryPrefixes: effectivePrefixes,
@@ -778,6 +786,15 @@ class SyncMapper {
           final surviving = survivingFileIdsByMount[mountId] ?? const <String>{};
           for (final jf in journalFiles) {
             if (surviving.contains(jf.entityKey)) continue;
+            // Protect remote/cloud files synced down after this mount's current
+            // local scan started so stale directory snapshots cannot delete
+            // files added elsewhere mid-scan.
+            if (jf.originDeviceId != null &&
+                jf.originDeviceId != deviceId &&
+                scanState?.startedAt != null &&
+                jf.clientUpdatedAt >= scanState!.startedAt!) {
+              continue;
+            }
             final delTs = SyncLocalStore.computeNextHlc(calibratedNow, jf.clientUpdatedAt);
             final delPayload = <String, Object?>{
               'file_id': jf.entityKey,
@@ -835,11 +852,7 @@ class SyncMapper {
           );
         }
         final srcTs = SyncLocalStore.computeNextHlc(calibratedNow, js.clientUpdatedAt);
-        final srcPayload = <String, Object?>{
-          'source_id': js.entityKey,
-          'is_deleted': true,
-          'client_updated_at': srcTs,
-        };
+        final srcPayload = <String, Object?>{'source_id': js.entityKey, 'is_deleted': true, 'client_updated_at': srcTs};
         deletedSourceTombstones.add(
           _JournalCandidate(
             entityType: SyncLocalStore.typeSource,
@@ -855,7 +868,10 @@ class SyncMapper {
     }
 
     final stateCandidates = includeWorkStates
-        ? await _collectChangedWorkStateCandidates(calibratedNow: calibratedNow)
+        ? [
+            ...await _collectChangedWorkStateCandidates(calibratedNow: calibratedNow),
+            ...await _collectChangedListCandidates(calibratedNow: calibratedNow),
+          ]
         : const <_JournalCandidate>[];
 
     final ordered = <_JournalCandidate>[
@@ -886,10 +902,172 @@ class SyncMapper {
     final calibratedNow = await syncStore.calibratedNowMs();
     final deviceId = await syncStore.getOrCreateDeviceId();
     final epoch = await syncStore.getOrCreateSyncEpoch();
-    final candidates = await _collectChangedWorkStateCandidates(calibratedNow: calibratedNow);
+    final candidates = [
+      ...await _collectChangedWorkStateCandidates(calibratedNow: calibratedNow),
+      ...await _collectChangedListCandidates(calibratedNow: calibratedNow),
+    ];
     if (candidates.isEmpty) return 0;
     await _commitJournalCandidates(candidates, originDeviceId: deviceId, originEpoch: epoch);
     return candidates.length;
+  }
+
+  Future<void> enqueueListById(int listId) async {
+    final row = await (db.select(db.libraryLists)..where((t) => t.id.equals(listId))).getSingleOrNull();
+    if (row == null) return;
+    final listKey = DeterministicKeys.generateListKey(kind: row.kind, title: row.title, tmdbId: row.tmdbId);
+    final payload = await _buildListPayload(row, listKey: listKey, updatedAt: row.updatedAt);
+    await syncStore.enqueue(
+      entityType: SyncLocalStore.typeList,
+      entityKey: listKey,
+      updatedAt: row.updatedAt,
+      payload: payload,
+    );
+    await _invalidateSignatureCache(catalog: false, state: true);
+  }
+
+  Future<void> enqueueDeletedList({required String kind, required String title, String? tmdbId}) async {
+    final listKey = DeterministicKeys.generateListKey(kind: kind, title: title, tmdbId: tmdbId);
+    final ts = await syncStore.calibratedNowMs();
+    await syncStore.enqueue(
+      entityType: SyncLocalStore.typeList,
+      entityKey: listKey,
+      updatedAt: ts,
+      payload: {
+        'list_key': listKey,
+        'kind': kind,
+        'title': title,
+        'tmdb_id': tmdbId,
+        'item_work_keys': const <String>[],
+        'is_deleted': true,
+        'client_updated_at': ts,
+      },
+    );
+    await _invalidateSignatureCache(catalog: false, state: true);
+  }
+
+  Future<Map<String, Object?>> _buildListPayload(
+    LibraryListRow row, {
+    required String listKey,
+    required int updatedAt,
+  }) async {
+    final itemRows =
+        await (db.select(db.libraryListItems).join([
+                innerJoin(db.libraryItems, db.libraryItems.id.equalsExp(db.libraryListItems.itemId)),
+              ])
+              ..where(db.libraryListItems.listId.equals(row.id))
+              ..orderBy([OrderingTerm.asc(db.libraryListItems.sortOrder)]))
+            .get();
+    final workKeys = <String>[];
+    for (final joined in itemRows) {
+      final item = joined.readTable(db.libraryItems);
+      final wk = _resolveSyncWorkKey(workItem: item);
+      if (wk != null && wk.isNotEmpty) {
+        workKeys.add(wk);
+      }
+    }
+    return {
+      'list_key': listKey,
+      'kind': row.kind,
+      'title': row.title,
+      'summary': row.summary,
+      'poster_path': row.posterSource,
+      'tmdb_id': row.tmdbId,
+      'item_work_keys': workKeys,
+      'client_updated_at': updatedAt,
+      'is_deleted': false,
+    };
+  }
+
+  Future<List<_JournalCandidate>> _collectChangedListCandidates({required int calibratedNow}) async {
+    final lists = await db.select(db.libraryLists).get();
+    final activeJournal = await syncStore.journal.getEntriesByType(SyncLocalStore.typeList, onlyActive: true);
+    final journalByKey = <String, SyncJournalEntry>{for (final j in activeJournal) j.entityKey: j};
+
+    final existingKeys = <String>[
+      for (final row in lists) DeterministicKeys.generateListKey(kind: row.kind, title: row.title, tmdbId: row.tmdbId),
+    ];
+    final allJournal = await syncStore.journal.getEntriesForType(SyncLocalStore.typeList, existingKeys);
+
+    final out = <_JournalCandidate>[];
+    final liveKeys = <String>{};
+    for (var i = 0; i < lists.length; i++) {
+      final row = lists[i];
+      final listKey = existingKeys[i];
+      if (!liveKeys.add(listKey)) continue;
+      final existing = allJournal[listKey];
+      // Do not overwrite an untouched cloud-synced list if some member works
+      // haven't landed locally yet.
+      if (existing != null &&
+          existing.originDeviceId == 'cloud' &&
+          !existing.isDeleted &&
+          row.updatedAt <= existing.clientUpdatedAt) {
+        continue;
+      }
+      final initialTs = row.updatedAt > 0 ? row.updatedAt : calibratedNow;
+      final payload = await _buildListPayload(row, listKey: listKey, updatedAt: existing?.clientUpdatedAt ?? initialTs);
+      final hash = SyncJournalStore.computeEntityHash(SyncLocalStore.typeList, payload);
+      if (existing != null && existing.payloadHash == hash && !existing.isDeleted) continue;
+
+      final effectiveTs = existing != null
+          ? SyncLocalStore.computeNextHlc(calibratedNow, existing.clientUpdatedAt)
+          : initialTs;
+      payload['client_updated_at'] = effectiveTs;
+      out.add(
+        _JournalCandidate(
+          entityType: SyncLocalStore.typeList,
+          entityKey: listKey,
+          payload: payload,
+          hash: hash,
+          updatedAt: effectiveTs,
+        ),
+      );
+    }
+
+    for (final entry in journalByKey.entries) {
+      if (liveKeys.contains(entry.key)) continue;
+      final old = entry.value;
+      final oldPayload = old.decodePayload();
+      final delTs = SyncLocalStore.computeNextHlc(calibratedNow, old.clientUpdatedAt);
+      final delPayload = <String, Object?>{
+        'list_key': old.entityKey,
+        'kind': oldPayload['kind'] ?? LibraryListKinds.playlist,
+        'title': oldPayload['title'] ?? '',
+        'tmdb_id': oldPayload['tmdb_id'],
+        'item_work_keys': const <String>[],
+        'is_deleted': true,
+        'client_updated_at': delTs,
+      };
+      out.add(
+        _JournalCandidate(
+          entityType: SyncLocalStore.typeList,
+          entityKey: old.entityKey,
+          payload: delPayload,
+          hash: SyncJournalStore.computeEntityHash(SyncLocalStore.typeList, delPayload),
+          updatedAt: delTs,
+          isDeleted: true,
+        ),
+      );
+    }
+
+    return out;
+  }
+
+  /// Builds the cloud `user_settings` payload from local scraper configuration,
+  /// encrypting any non-empty TMDB API key with [masterKey] while omitting
+  /// device-local HTTP proxy settings.
+  Future<Map<String, Object?>> buildCloudUserSettingsPayload(Uint8List masterKey) async {
+    final s = await LibrarySettingsStore(db).loadScraper();
+    final apiKey = s.tmdbApiKey.trim();
+    final encryptedKey = apiKey.isEmpty
+        ? ''
+        : await SyncCrypto.encryptPayload(jsonEncode({'api_key': apiKey}), masterKey);
+    return {
+      'encrypted_tmdb_api_key': encryptedKey,
+      'tmdb_api_base_url': s.tmdbApiBase.trim(),
+      'tmdb_image_base_url': s.tmdbImageBase.trim(),
+      'preferred_scrape_lang': s.language.trim(),
+      'bangumi_enabled': s.bangumiEnabled,
+    };
   }
 
   Future<List<_JournalCandidate>> _collectChangedWorkStateCandidates({required int calibratedNow}) async {
@@ -957,10 +1135,7 @@ class SyncMapper {
       prefUpdatedHints.putIfAbsent(workKey, () => calibratedNow);
     }
 
-    final existingPrefs = await syncStore.journal.getEntriesForType(
-      SyncLocalStore.typeWorkPref,
-      seenWorkPrefs.keys,
-    );
+    final existingPrefs = await syncStore.journal.getEntriesForType(SyncLocalStore.typeWorkPref, seenWorkPrefs.keys);
     final existingProgress = await syncStore.journal.getEntriesForType(
       SyncLocalStore.typeWatchProgress,
       progressPayloads.keys,
@@ -1001,7 +1176,9 @@ class SyncMapper {
       final hash = SyncJournalStore.computeEntityHash(SyncLocalStore.typeWorkPref, payload);
       if (existing != null && existing.payloadHash == hash && !existing.isDeleted) continue;
 
-      final effectiveTs = existing != null ? SyncLocalStore.computeNextHlc(calibratedNow, existing.clientUpdatedAt) : initialTs;
+      final effectiveTs = existing != null
+          ? SyncLocalStore.computeNextHlc(calibratedNow, existing.clientUpdatedAt)
+          : initialTs;
       payload['client_updated_at'] = effectiveTs;
       out.add(
         _JournalCandidate(
@@ -1023,7 +1200,9 @@ class SyncMapper {
       final hash = SyncJournalStore.computeEntityHash(SyncLocalStore.typeWatchProgress, payload);
       if (existing != null && existing.payloadHash == hash && !existing.isDeleted) continue;
 
-      final effectiveTs = existing != null ? SyncLocalStore.computeNextHlc(calibratedNow, existing.clientUpdatedAt) : item.updatedAt;
+      final effectiveTs = existing != null
+          ? SyncLocalStore.computeNextHlc(calibratedNow, existing.clientUpdatedAt)
+          : item.updatedAt;
       payload['client_updated_at'] = effectiveTs;
       out.add(
         _JournalCandidate(
@@ -1110,17 +1289,21 @@ class SyncMapper {
 
   /// Builds a paginated delta bundle from `sync_journal` ordered strictly by `local_seq`,
   /// re-encrypting shared mount secrets on the fly with [encryptionKey].
-  Future<({
-    int currentMaxSeq,
-    int nextSeq,
-    bool hasMore,
-    Map<String, Object?> userSettings,
-    List<Map<String, Object?>> sources,
-    List<Map<String, Object?>> works,
-    List<Map<String, Object?>> files,
-    List<Map<String, Object?>> workPrefs,
-    List<Map<String, Object?>> watchProgress,
-  })> buildDeltaBundle({
+  Future<
+    ({
+      int currentMaxSeq,
+      int nextSeq,
+      bool hasMore,
+      Map<String, Object?> userSettings,
+      List<Map<String, Object?>> sources,
+      List<Map<String, Object?>> works,
+      List<Map<String, Object?>> files,
+      List<Map<String, Object?>> workPrefs,
+      List<Map<String, Object?>> watchProgress,
+      List<Map<String, Object?>> lists,
+    })
+  >
+  buildDeltaBundle({
     required Uint8List encryptionKey,
     required int sinceSeq,
     int limit = 500,
@@ -1141,6 +1324,7 @@ class SyncMapper {
     final files = <Map<String, Object?>>[];
     final workPrefs = <Map<String, Object?>>[];
     final watchProgress = <Map<String, Object?>>[];
+    final lists = <Map<String, Object?>>[];
 
     final mountsById = {for (final m in await mountManager.registry.list()) m.id: m};
 
@@ -1151,10 +1335,7 @@ class SyncMapper {
           if (!entry.isDeleted) {
             final mount = mountsById[entry.entityKey];
             if (mount != null && mount.secrets.isNotEmpty) {
-              payload['encrypted_auth'] = await SyncCrypto.encryptPayload(
-                jsonEncode(mount.secrets),
-                encryptionKey,
-              );
+              payload['encrypted_auth'] = await SyncCrypto.encryptPayload(jsonEncode(mount.secrets), encryptionKey);
               payload['auth_updated_at'] = await syncStore.getAuthUpdatedAt(mount.id);
             }
           }
@@ -1167,13 +1348,12 @@ class SyncMapper {
           workPrefs.add(payload);
         case SyncLocalStore.typeWatchProgress:
           watchProgress.add(payload);
+        case SyncLocalStore.typeList:
+          lists.add(payload);
       }
     }
 
-    final scraperSettings = await LibrarySettingsStore(db).loadScraper();
-    final userSettings = <String, Object?>{
-      if (scraperSettings.tmdbImageBase.isNotEmpty) 'tmdb_image_base_url': scraperSettings.tmdbImageBase,
-    };
+    final userSettings = await buildCloudUserSettingsPayload(encryptionKey);
 
     return (
       currentMaxSeq: page.maxSeq,
@@ -1185,6 +1365,7 @@ class SyncMapper {
       files: files,
       workPrefs: workPrefs,
       watchProgress: watchProgress,
+      lists: lists,
     );
   }
 
@@ -1324,8 +1505,7 @@ class SyncMapper {
     await enqueuePendingJournalForCloud(masterKey: masterKey);
   }
 
-  /// Builds an E2EE full snapshot bundle for legacy `/lan/v1/sync/snapshot`
-  /// compatibility without mutating `SyncOutbox`.
+  /// Builds an E2EE full snapshot bundle without mutating `SyncOutbox`.
   Future<Map<String, Object?>> buildSnapshotBundle({required Uint8List encryptionKey}) async {
     await ensureJournalUpToDate();
     final delta = await buildDeltaBundle(encryptionKey: encryptionKey, sinceSeq: 0, limit: 1 << 30);
@@ -1337,6 +1517,7 @@ class SyncMapper {
       'files': delta.files,
       'work_prefs': delta.workPrefs,
       'watch_progress': delta.watchProgress,
+      'lists': delta.lists,
     };
   }
 
@@ -1446,8 +1627,9 @@ class SyncMapper {
 
     for (final w in works) {
       final wk = w['work_key'] as String?;
-      final wVideos =
-          wk != null ? (videosByWorkKey.remove(wk) ?? const <Map<String, dynamic>>[]) : const <Map<String, dynamic>>[];
+      final wVideos = wk != null
+          ? (videosByWorkKey.remove(wk) ?? const <Map<String, dynamic>>[])
+          : const <Map<String, dynamic>>[];
 
       if (curWorks.isNotEmpty &&
           (curWorks.length >= workChunkSize ||
@@ -1503,6 +1685,60 @@ class SyncMapper {
   /// Applies one pull batch progressively across bounded micro-transactions so
   /// synced titles and progress render incrementally without blocking the UI.
   /// Returns the count of processed entities.
+  /// Applies cloud-synced scraper settings while preserving device-local proxy.
+  Future<void> applyUserSettings(Map<String, Object?> userSettings, {required Uint8List masterKey}) async {
+    if (userSettings.isEmpty) return;
+    final settingsStore = LibrarySettingsStore(db);
+    final current = await settingsStore.loadScraper();
+
+    var nextApiKey = current.tmdbApiKey;
+    final rawEncKey = userSettings['encrypted_tmdb_api_key'];
+    if (rawEncKey is String && rawEncKey.isNotEmpty) {
+      try {
+        final decrypted = await SyncCrypto.decryptPayload(rawEncKey, masterKey);
+        final decoded = jsonDecode(decrypted);
+        if (decoded is Map && decoded['api_key'] is String) {
+          nextApiKey = (decoded['api_key'] as String).trim();
+        }
+      } catch (_) {
+        // Ignore undecryptable key payloads from mismatched keys.
+      }
+    }
+
+    final rawApiBase = userSettings['tmdb_api_base_url'];
+    final nextApiBase = (rawApiBase is String && rawApiBase.trim().isNotEmpty)
+        ? rawApiBase.trim()
+        : current.tmdbApiBase;
+
+    final rawImageBase = userSettings['tmdb_image_base_url'];
+    final nextImageBase = (rawImageBase is String && rawImageBase.trim().isNotEmpty)
+        ? rawImageBase.trim()
+        : current.tmdbImageBase;
+
+    final rawLang = userSettings['preferred_scrape_lang'];
+    final nextLang = (rawLang is String && rawLang.trim().isNotEmpty) ? rawLang.trim() : current.language;
+
+    final rawBangumi = userSettings['bangumi_enabled'];
+    final nextBangumi = rawBangumi is bool ? rawBangumi : current.bangumiEnabled;
+
+    if (nextApiKey != current.tmdbApiKey ||
+        nextApiBase != current.tmdbApiBase ||
+        nextImageBase != current.tmdbImageBase ||
+        nextLang != current.language ||
+        nextBangumi != current.bangumiEnabled) {
+      await settingsStore.saveScraper(
+        ScraperSettings(
+          tmdbApiKey: nextApiKey,
+          tmdbApiBase: nextApiBase,
+          tmdbImageBase: nextImageBase,
+          language: nextLang,
+          proxy: current.proxy,
+          bangumiEnabled: nextBangumi,
+        ),
+      );
+    }
+  }
+
   Future<int> applyPullBatch({
     required Uint8List masterKey,
     required List<Map<String, dynamic>> sources,
@@ -1510,6 +1746,7 @@ class SyncMapper {
     required List<Map<String, dynamic>> files,
     required List<Map<String, dynamic>> workPrefs,
     required List<Map<String, dynamic>> watchProgress,
+    List<Map<String, dynamic>> lists = const [],
     required Map<String, Object?> userSettings,
     required int nextSeq,
     bool isFinalPage = true,
@@ -1525,7 +1762,8 @@ class SyncMapper {
     var dbMutations = 0;
     var catalogMutations = 0;
     var stateMutations = 0;
-    final totalEntities = sources.length + works.length + files.length + workPrefs.length + watchProgress.length;
+    final totalEntities =
+        sources.length + works.length + files.length + workPrefs.length + watchProgress.length + lists.length;
     var processedEntities = 0;
     if (totalEntities > 0) {
       onProgress?.call(0, totalEntities);
@@ -1536,23 +1774,7 @@ class SyncMapper {
     final remoteOriginId = (originDeviceId != null && originDeviceId.isNotEmpty) ? originDeviceId : 'remote';
     final remoteOriginEpoch = (originEpoch != null && originEpoch.isNotEmpty) ? originEpoch : remoteOriginId;
 
-    final imageBase = userSettings['tmdb_image_base_url'];
-    if (imageBase is String && imageBase.trim().isNotEmpty) {
-      final settingsStore = LibrarySettingsStore(db);
-      final current = await settingsStore.loadScraper();
-      if (current.tmdbImageBase != imageBase.trim()) {
-        await settingsStore.saveScraper(
-          ScraperSettings(
-            tmdbApiKey: current.tmdbApiKey,
-            tmdbApiBase: current.tmdbApiBase,
-            tmdbImageBase: imageBase.trim(),
-            language: current.language,
-            proxy: current.proxy,
-            bangumiEnabled: current.bangumiEnabled,
-          ),
-        );
-      }
-    }
+    await applyUserSettings(userSettings, masterKey: masterKey);
 
     if (onPreemptMountScan != null && sources.isNotEmpty) {
       await _preemptConflictingScans(sources, deterministicP2pSourceTieBreak: deterministicP2pSourceTieBreak);
@@ -1738,6 +1960,30 @@ class SyncMapper {
       }
     }
 
+    // Stage 4: Apply synced collections and custom playlists after works/items exist.
+    if (lists.isNotEmpty) {
+      var listProcessed = 0;
+      var listMutations = 0;
+      await db.transaction(() async {
+        final res = await _applyIncomingLists(
+          lists,
+          workItemByKey: workItemByKey,
+          remoteOriginId: remoteOriginId,
+          remoteOriginEpoch: remoteOriginEpoch,
+        );
+        listProcessed = res.processed;
+        listMutations = res.mutations;
+      });
+      changes += listProcessed;
+      dbMutations += listMutations;
+      stateMutations += listMutations;
+      processedEntities += lists.length;
+      onProgress?.call(processedEntities, totalEntities);
+      if (listMutations > 0) {
+        await onChunkApplied?.call();
+      }
+    }
+
     // Finalization: self-heal any unlinked files/works before pruning empty titles,
     // refresh sourceAddedAt, and advance cloud cursor after all chunks commit.
     final needsHeal = isFinalPage && await _hasUnboundVideoFiles();
@@ -1746,10 +1992,7 @@ class SyncMapper {
       await db.transaction(() async {
         if (isFinalPage && (dbMutations > 0 || needsHeal)) {
           final healedIds = <int>{};
-          healedCount = await _healCatalogFromJournalTx(
-            workItemByKey: workItemByKey,
-            touchedItemIds: healedIds,
-          );
+          healedCount = await _healCatalogFromJournalTx(workItemByKey: workItemByKey, touchedItemIds: healedIds);
           allTouchedItemIds.addAll(healedIds);
           if (healedIds.isNotEmpty) {
             await _restoreTouchedRootItems(healedIds);
@@ -1783,10 +2026,7 @@ class SyncMapper {
     }
 
     if (catalogMutations > 0 || stateMutations > 0) {
-      await _invalidateSignatureCache(
-        catalog: catalogMutations > 0,
-        state: stateMutations > 0,
-      );
+      await _invalidateSignatureCache(catalog: catalogMutations > 0, state: stateMutations > 0);
     }
 
     return changes;
@@ -1913,9 +2153,7 @@ class SyncMapper {
     final existingTargetRow = await (db.select(db.mounts)..where((t) => t.id.equals(newMountId))).getSingleOrNull();
 
     final effectiveMount =
-        targetMount ??
-        await mountManager.registry.get(oldMountId) ??
-        await mountManager.registry.get(newMountId);
+        targetMount ?? await mountManager.registry.get(oldMountId) ?? await mountManager.registry.get(newMountId);
     if (effectiveMount != null) {
       final merged = effectiveMount.id == newMountId
           ? effectiveMount
@@ -1978,14 +2216,14 @@ class SyncMapper {
     // Migrate mount:<oldId>: artwork references.
     final oldPrefix = 'mount:$oldMountId:';
     final newPrefix = 'mount:$newMountId:';
-    final items = await (db.select(db.libraryItems)
-          ..where(
-            (t) =>
-                t.posterSource.like('$oldPrefix%') |
-                t.backdropSource.like('$oldPrefix%') |
-                t.logoSource.like('$oldPrefix%'),
-          ))
-        .get();
+    final items =
+        await (db.select(db.libraryItems)..where(
+              (t) =>
+                  t.posterSource.like('$oldPrefix%') |
+                  t.backdropSource.like('$oldPrefix%') |
+                  t.logoSource.like('$oldPrefix%'),
+            ))
+            .get();
     for (final item in items) {
       await (db.update(db.libraryItems)..where((t) => t.id.equals(item.id))).write(
         LibraryItemsCompanion(
@@ -2003,8 +2241,12 @@ class SyncMapper {
     }
 
     // Merge Quark checkpoints & scan completion baseline cleanly.
-    final oldScan = await (db.select(db.libraryScanStates)..where((t) => t.mountId.equals(oldMountId))).getSingleOrNull();
-    final newScan = await (db.select(db.libraryScanStates)..where((t) => t.mountId.equals(newMountId))).getSingleOrNull();
+    final oldScan = await (db.select(
+      db.libraryScanStates,
+    )..where((t) => t.mountId.equals(oldMountId))).getSingleOrNull();
+    final newScan = await (db.select(
+      db.libraryScanStates,
+    )..where((t) => t.mountId.equals(newMountId))).getSingleOrNull();
     var mergedCp = mergeQuarkCheckpoint(oldScan?.quarkCheckpoint, newScan?.quarkCheckpoint);
     mergedCp = mergeQuarkCheckpoint(mergedCp, remoteCheckpoint);
     await _persistSyncedScanState(
@@ -2109,13 +2351,10 @@ class SyncMapper {
       for (final m in currentMounts)
         DeterministicKeys.normalizeCanonicalSourceKey(DeterministicKeys.canonicalSourceKey(m)): m,
     };
-    final existingJournalById = await syncStore.journal.getEntriesForType(
-      SyncLocalStore.typeSource,
-      [
-        for (final src in rawSources)
-          if (src['source_id'] is String) src['source_id'] as String,
-      ],
-    );
+    final existingJournalById = await syncStore.journal.getEntriesForType(SyncLocalStore.typeSource, [
+      for (final src in rawSources)
+        if (src['source_id'] is String) src['source_id'] as String,
+    ]);
 
     for (final src in rawSources) {
       final sourceId = src['source_id'] as String?;
@@ -2208,12 +2447,11 @@ class SyncMapper {
       }
 
       final remoteCreatedAt = (src['created_at'] as num?)?.toInt();
-      final incomingCreatedAt =
-          (existingByCanonical != null && existingByCanonical.id == sourceId)
-              ? existingByCanonical.createdAt
-              : (remoteCreatedAt != null && remoteCreatedAt > 0
-                  ? DateTime.fromMillisecondsSinceEpoch(remoteCreatedAt)
-                  : existingByCanonical?.createdAt ?? DateTime.fromMillisecondsSinceEpoch(_nowMs()));
+      final incomingCreatedAt = (existingByCanonical != null && existingByCanonical.id == sourceId)
+          ? existingByCanonical.createdAt
+          : (remoteCreatedAt != null && remoteCreatedAt > 0
+                ? DateTime.fromMillisecondsSinceEpoch(remoteCreatedAt)
+                : existingByCanonical?.createdAt ?? DateTime.fromMillisecondsSinceEpoch(_nowMs()));
 
       final incomingMount = StorageMount(
         id: sourceId,
@@ -2248,12 +2486,9 @@ class SyncMapper {
       var finalFinishedAt = remoteFinishedAt;
 
       if (existingByCanonical != null && existingByCanonical.id != sourceId) {
-        final remoteWins = !deterministicP2pSourceTieBreak ||
-            _remoteSourceWinsTieBreak(
-              remoteId: sourceId,
-              remoteCreatedAt: remoteCreatedAt,
-              local: existingByCanonical,
-            );
+        final remoteWins =
+            !deterministicP2pSourceTieBreak ||
+            _remoteSourceWinsTieBreak(remoteId: sourceId, remoteCreatedAt: remoteCreatedAt, local: existingByCanonical);
         if (remoteWins) {
           final oldScan = await (db.select(
             db.libraryScanStates,
@@ -2391,7 +2626,9 @@ class SyncMapper {
           resolvedPayload,
           rawSecrets: activeMount.secrets,
         );
-        final prevResolvedJ = existingJournalById[resolvedMountId] ?? await syncStore.journal.getEntry(SyncLocalStore.typeSource, resolvedMountId);
+        final prevResolvedJ =
+            existingJournalById[resolvedMountId] ??
+            await syncStore.journal.getEntry(SyncLocalStore.typeSource, resolvedMountId);
         if (prevResolvedJ == null || prevResolvedJ.payloadHash != finalHash || prevResolvedJ.isDeleted) {
           final seq = await syncStore.allocNextLocalSeq();
           final updatedAt = localMergedOrWon && prevResolvedJ != null
@@ -2418,11 +2655,7 @@ class SyncMapper {
     return (processed: processed, mutations: mutations);
   }
 
-  static bool _remoteSourceWinsTieBreak({
-    required String remoteId,
-    int? remoteCreatedAt,
-    required StorageMount local,
-  }) {
+  static bool _remoteSourceWinsTieBreak({required String remoteId, int? remoteCreatedAt, required StorageMount local}) {
     final rCreated = (remoteCreatedAt != null && remoteCreatedAt > 0) ? remoteCreatedAt : (1 << 62);
     final lCreated = (local.createdAt != null && local.createdAt!.millisecondsSinceEpoch > 0)
         ? local.createdAt!.millisecondsSinceEpoch
@@ -2468,10 +2701,7 @@ class SyncMapper {
     return db.transaction(() async {
       final workItemByKey = <String, int>{};
       final touchedItemIds = <int>{};
-      final healed = await _healCatalogFromJournalTx(
-        workItemByKey: workItemByKey,
-        touchedItemIds: touchedItemIds,
-      );
+      final healed = await _healCatalogFromJournalTx(workItemByKey: workItemByKey, touchedItemIds: touchedItemIds);
       if (healed > 0) {
         await repo.pruneEmptyTitles();
         if (touchedItemIds.isNotEmpty) {
@@ -2485,11 +2715,13 @@ class SyncMapper {
   }
 
   Future<bool> _hasUnboundVideoFiles() async {
-    final rows = await db.customSelect(
-      "SELECT 1 FROM library_files WHERE role = 'video' AND match_state != 'ignored' "
-      'AND ((work_key IS NOT NULL AND item_id IS NULL) '
-      'OR (work_key IS NULL AND item_id IS NULL)) LIMIT 1',
-    ).get();
+    final rows = await db
+        .customSelect(
+          "SELECT 1 FROM library_files WHERE role = 'video' AND match_state != 'ignored' "
+          'AND ((work_key IS NOT NULL AND item_id IS NULL) '
+          'OR (work_key IS NULL AND item_id IS NULL)) LIMIT 1',
+        )
+        .get();
     return rows.isNotEmpty;
   }
 
@@ -2519,11 +2751,7 @@ class SyncMapper {
     return created;
   }
 
-  Future<int> _bindWaitingFilesToWork(
-    LibraryItemRow workRow,
-    String workKey,
-    Set<int> touchedItemIds,
-  ) async {
+  Future<int> _bindWaitingFilesToWork(LibraryItemRow workRow, String workKey, Set<int> touchedItemIds) async {
     final waiting = await (db.select(
       db.libraryFiles,
     )..where((t) => t.role.equals(LibraryFileRoles.video) & t.workKey.equals(workKey))).get();
@@ -2551,7 +2779,8 @@ class SyncMapper {
         var epNum = file.syncEpisodeNumber ?? -1;
         Map<String, Object?> spec = const {};
         if (seasonNum < 0 || epNum < 0) {
-          final fileKey = file.fileKey ?? DeterministicKeys.generateFileId(sourceId: file.mountId, mountRelativePath: file.path);
+          final fileKey =
+              file.fileKey ?? DeterministicKeys.generateFileId(sourceId: file.mountId, mountRelativePath: file.path);
           final jf = await syncStore.journal.getEntry(SyncLocalStore.typeFile, fileKey);
           if (jf != null) {
             final payload = jf.decodePayload();
@@ -2572,7 +2801,8 @@ class SyncMapper {
           continue;
         }
         if (spec.isEmpty) {
-          final fileKey = file.fileKey ?? DeterministicKeys.generateFileId(sourceId: file.mountId, mountRelativePath: file.path);
+          final fileKey =
+              file.fileKey ?? DeterministicKeys.generateFileId(sourceId: file.mountId, mountRelativePath: file.path);
           final jf = await syncStore.journal.getEntry(SyncLocalStore.typeFile, fileKey);
           if (jf != null) {
             spec = _mapOf(jf.decodePayload()['media_spec_json']);
@@ -2610,9 +2840,7 @@ class SyncMapper {
   }) async {
     var healed = 0;
     // Clear any leftover legacy raw:* keys on files before local pending resolution.
-    await db.customStatement(
-      "UPDATE library_files SET work_key = NULL WHERE work_key LIKE 'raw:%'",
-    );
+    await db.customStatement("UPDATE library_files SET work_key = NULL WHERE work_key LIKE 'raw:%'");
 
     final matchedFiles = await (db.select(
       db.libraryFiles,
@@ -2626,10 +2854,7 @@ class SyncMapper {
       final canonicalWk = DeterministicKeys.canonicalizeWorkKey(rawWk);
       if (canonicalWk.isEmpty || canonicalWk.startsWith('raw:')) continue;
       if (canonicalWk != rawWk) {
-        await db.customStatement(
-          'UPDATE library_files SET work_key = ? WHERE work_key = ?',
-          [canonicalWk, rawWk],
-        );
+        await db.customStatement('UPDATE library_files SET work_key = ? WHERE work_key = ?', [canonicalWk, rawWk]);
       }
       final workRow = await _materializeWorkFromJournalIfPresent(canonicalWk, workItemByKey, touchedItemIds);
       if (workRow != null) {
@@ -2637,15 +2862,15 @@ class SyncMapper {
       }
     }
 
-    final unmatchedLoose = await (db.select(db.libraryFiles)
-          ..where(
-            (t) =>
-                t.role.equals(LibraryFileRoles.video) &
-                t.workKey.isNull() &
-                t.itemId.isNull() &
-                t.matchState.isNotValue(LibraryMatchStates.ignored),
-          ))
-        .get();
+    final unmatchedLoose =
+        await (db.select(db.libraryFiles)..where(
+              (t) =>
+                  t.role.equals(LibraryFileRoles.video) &
+                  t.workKey.isNull() &
+                  t.itemId.isNull() &
+                  t.matchState.isNotValue(LibraryMatchStates.ignored),
+            ))
+            .get();
     if (unmatchedLoose.isNotEmpty) {
       final scanner = LibraryScanner(db, repo);
       for (final f in unmatchedLoose) {
@@ -2656,7 +2881,100 @@ class SyncMapper {
         }
       }
     }
+    healed += await _healListsFromJournalTx(workItemByKey: workItemByKey);
     return healed;
+  }
+
+  Future<int> _healListsFromJournalTx({required Map<String, int> workItemByKey}) async {
+    final activeLists = await syncStore.journal.getEntriesByType(SyncLocalStore.typeList, onlyActive: true);
+    if (activeLists.isEmpty) return 0;
+
+    final existingLists = await db.select(db.libraryLists).get();
+    final localByKey = <String, LibraryListRow>{};
+    for (final row in existingLists) {
+      localByKey.putIfAbsent(
+        DeterministicKeys.generateListKey(kind: row.kind, title: row.title, tmdbId: row.tmdbId),
+        () => row,
+      );
+    }
+
+    var healed = 0;
+    for (final entry in activeLists) {
+      final raw = entry.decodePayload();
+      final listKey = (raw['list_key'] as String?) ?? entry.entityKey;
+      final kind = (raw['kind'] as String?) ?? LibraryListKinds.playlist;
+      final title = (raw['title'] as String?)?.trim() ?? '';
+      if (listKey.isEmpty || title.isEmpty) continue;
+
+      final desiredItemIds = await _resolveListItemIds(
+        raw['item_work_keys'] as List<dynamic>? ?? const [],
+        workItemByKey,
+      );
+      final localRow = localByKey[listKey];
+      if (localRow == null) {
+        final effectiveUpdated = entry.clientUpdatedAt > 0 ? entry.clientUpdatedAt : _nowMs();
+        final newId = await db
+            .into(db.libraryLists)
+            .insert(
+              LibraryListsCompanion.insert(
+                kind: kind,
+                title: title,
+                summary: Value(raw['summary'] as String?),
+                posterSource: Value(raw['poster_path'] as String?),
+                tmdbId: Value(raw['tmdb_id'] as String?),
+                createdAt: effectiveUpdated,
+                updatedAt: effectiveUpdated,
+              ),
+            );
+        await _replaceListItemsTx(newId, desiredItemIds);
+        healed++;
+        continue;
+      }
+
+      final currentRows =
+          await (db.select(db.libraryListItems)
+                ..where((t) => t.listId.equals(localRow.id))
+                ..orderBy([(t) => OrderingTerm.asc(t.sortOrder), (t) => OrderingTerm.asc(t.itemId)]))
+              .get();
+      final currentItemIds = [for (final r in currentRows) r.itemId];
+      if (!_intListEquals(currentItemIds, desiredItemIds)) {
+        await _replaceListItemsTx(localRow.id, desiredItemIds);
+        healed++;
+      }
+    }
+    return healed;
+  }
+
+  Future<List<int>> _resolveListItemIds(List<dynamic> rawWorkKeys, Map<String, int> workItemByKey) async {
+    final out = <int>[];
+    final seen = <int>{};
+    for (final rawWk in rawWorkKeys) {
+      if (rawWk is! String || rawWk.isEmpty) continue;
+      final wk = DeterministicKeys.canonicalizeWorkKey(rawWk);
+      final cachedId = workItemByKey[wk];
+      final resolvedId = cachedId ?? (await repo.findByWorkKey(wk))?.id;
+      if (resolvedId == null || !seen.add(resolvedId)) continue;
+      workItemByKey[wk] = resolvedId;
+      out.add(resolvedId);
+    }
+    return out;
+  }
+
+  Future<void> _replaceListItemsTx(int listId, List<int> itemIds) async {
+    await (db.delete(db.libraryListItems)..where((t) => t.listId.equals(listId))).go();
+    for (var i = 0; i < itemIds.length; i++) {
+      await db
+          .into(db.libraryListItems)
+          .insert(LibraryListItemsCompanion.insert(listId: listId, itemId: itemIds[i], sortOrder: Value(i)));
+    }
+  }
+
+  static bool _intListEquals(List<int> a, List<int> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
   }
 
   Future<({int processed, int mutations})> _applyIncomingWorks(
@@ -2676,16 +2994,19 @@ class SyncMapper {
           DeterministicKeys.canonicalizeWorkKey(w['work_key'] as String),
     ];
     final existingJournalByKey = await syncStore.journal.getEntriesForType(SyncLocalStore.typeWork, workKeys);
-    final toJournal = <({
-      SyncJournalEntry? prev,
-      String workKey,
-      Map<String, Object?> payload,
-      String hash,
-      int updatedAt,
-      bool isDeleted,
-      String originDeviceId,
-      String originEpoch,
-    })>[];
+    final toJournal =
+        <
+          ({
+            SyncJournalEntry? prev,
+            String workKey,
+            Map<String, Object?> payload,
+            String hash,
+            int updatedAt,
+            bool isDeleted,
+            String originDeviceId,
+            String originEpoch,
+          })
+        >[];
 
     for (final w in rawWorks) {
       final workKey = DeterministicKeys.canonicalizeWorkKey(w['work_key'] as String?);
@@ -2708,15 +3029,13 @@ class SyncMapper {
 
       var existing =
           await repo.findByWorkKey(workKey) ??
-          await _findExistingWorkItem(
-            kind: kind,
-            tmdbId: tmdbId,
-            bangumiId: bangumiId,
-            imdbId: imdbId,
-          );
+          await _findExistingWorkItem(kind: kind, tmdbId: tmdbId, bangumiId: bangumiId, imdbId: imdbId);
 
       final isHealthyInDb = remoteDeleted ? existing == null : existing != null;
-      if (isHealthyInDb && existingJ != null && existingJ.payloadHash == incomingHash && existingJ.isDeleted == remoteDeleted) {
+      if (isHealthyInDb &&
+          existingJ != null &&
+          existingJ.payloadHash == incomingHash &&
+          existingJ.isDeleted == remoteDeleted) {
         if (existing != null) {
           workItemByKey[workKey] = existing.id;
           mutations += await _bindWaitingFilesToWork(existing, workKey, touchedItemIds);
@@ -2740,9 +3059,7 @@ class SyncMapper {
           remoteApplied = true;
           mutations++;
           if (remoteDeleted) {
-            final remainingFiles = await (db.select(
-              db.libraryFiles,
-            )..where((t) => t.workKey.equals(workKey))).get();
+            final remainingFiles = await (db.select(db.libraryFiles)..where((t) => t.workKey.equals(workKey))).get();
             if (remainingFiles.isEmpty) {
               await repo.deleteItem(existing.id);
               existing = null;
@@ -2753,7 +3070,7 @@ class SyncMapper {
           } else {
             await repo.updateItem(
               existing.id,
-              _buildWorkCompanionUpdate(w, meta, workKey: workKey),
+              _buildWorkCompanionUpdate(w, meta, workKey: workKey, existing: existing),
               preserveUpdatedAt: true,
             );
             existing = await repo.findByWorkKey(workKey) ?? (await repo.getItem(existing.id))?.item;
@@ -2907,6 +3224,7 @@ class SyncMapper {
     Map<String, dynamic> w,
     Map<String, Object?> meta, {
     String? workKey,
+    LibraryItemRow? existing,
   }) {
     final resolvedWorkKey = workKey ?? DeterministicKeys.canonicalizeWorkKey(w['work_key'] as String?);
     final title = (meta['title'] as String?) ?? resolvedWorkKey;
@@ -2915,6 +3233,8 @@ class SyncMapper {
     final metaSource = (meta['metadata_source'] as String?) ?? (w['provider'] as String?);
     final locked = (meta['locked'] as bool?) ?? (matchStatus >= MatchStatusRank.matchLocked);
     final updatedAt = (w['client_updated_at'] as num?)?.toInt() ?? _nowMs();
+    final preserveSummary = !locked && metaSource != 'nfo' && meta['summary'] == null && existing?.summary != null;
+    final preserveTagline = !locked && metaSource != 'nfo' && meta['tagline'] == null && existing?.tagline != null;
     return LibraryItemsCompanion(
       workKey: resolvedWorkKey.isEmpty ? const Value.absent() : Value(resolvedWorkKey),
       libraryType: Value((w['library_type'] as String?) ?? LibraryTypes.movie),
@@ -2924,8 +3244,8 @@ class SyncMapper {
       aliases: Value(meta['aliases'] as String?),
       year: Value((meta['year'] as num?)?.toInt()),
       releaseDate: Value(meta['release_date'] as String?),
-      summary: Value(meta['summary'] as String?),
-      tagline: Value(meta['tagline'] as String?),
+      summary: preserveSummary ? const Value.absent() : Value(meta['summary'] as String?),
+      tagline: preserveTagline ? const Value.absent() : Value(meta['tagline'] as String?),
       contentRating: Value(meta['content_rating'] as String?),
       studio: Value(meta['studio'] as String?),
       rating: Value((meta['rating'] as num?)?.toDouble()),
@@ -2951,8 +3271,9 @@ class SyncMapper {
     if (genres is List) {
       await repo.setGenres(itemId, [for (final g in genres) '$g']);
     }
+    final isLockedOrNfo = meta['locked'] == true || meta['metadata_source'] == 'nfo';
     final credits = meta['credits'];
-    if (credits is List) {
+    if (credits is List && (credits.isNotEmpty || isLockedOrNfo)) {
       await repo.setCredits(itemId, [
         for (final raw in credits)
           if (raw is Map)
@@ -3029,18 +3350,21 @@ class SyncMapper {
       }
     }
     final existingJournalById = await syncStore.journal.getEntriesForType(SyncLocalStore.typeFile, canonicalIds);
-    final toJournal = <({
-      String fileId,
-      String mountId,
-      String? normPath,
-      String? workKey,
-      Map<String, Object?> payload,
-      String hash,
-      int updatedAt,
-      bool isDeleted,
-      String originDeviceId,
-      String originEpoch,
-    })>[];
+    final toJournal =
+        <
+          ({
+            String fileId,
+            String mountId,
+            String? normPath,
+            String? workKey,
+            Map<String, Object?> payload,
+            String hash,
+            int updatedAt,
+            bool isDeleted,
+            String originDeviceId,
+            String originEpoch,
+          })
+        >[];
 
     Future<int> activeScanIdFor(String mountId) async {
       final cached = runningScanIdByMount[mountId];
@@ -3080,7 +3404,8 @@ class SyncMapper {
       final normalizedPath = (rawPath != null && rawPath.isNotEmpty)
           ? DeterministicKeys.normalizeMountPath(rawPath)
           : null;
-      final existing = await repo.findFileByKey(canonicalFileId) ??
+      final existing =
+          await repo.findFileByKey(canonicalFileId) ??
           (normalizedPath != null
               ? await (db.select(
                   db.libraryFiles,
@@ -3144,7 +3469,12 @@ class SyncMapper {
             }
             final wk = _resolveSyncWorkKey(workItem: workItem);
             final localPayload = existing.role == LibraryFileRoles.subtitle
-                ? _buildSubtitleFilePayload(existing, fileId: canonicalFileId, ownerFileId: null, updatedAt: localUpdatedAt)
+                ? _buildSubtitleFilePayload(
+                    existing,
+                    fileId: canonicalFileId,
+                    ownerFileId: null,
+                    updatedAt: localUpdatedAt,
+                  )
                 : _buildVideoFilePayload(
                     existing,
                     fileId: canonicalFileId,
@@ -3273,7 +3603,9 @@ class SyncMapper {
                 syncSeasonNumber: Value(seasonNum >= 0 ? seasonNum : null),
                 syncEpisodeNumber: Value(episodeNum >= 0 ? episodeNum : null),
                 matchState: Value(
-                  remoteMatchStatus >= MatchStatusRank.matched ? LibraryMatchStates.matched : LibraryMatchStates.unmatched,
+                  remoteMatchStatus >= MatchStatusRank.matched
+                      ? LibraryMatchStates.matched
+                      : LibraryMatchStates.unmatched,
                 ),
                 matchLocked: Value(remoteMatchStatus >= MatchStatusRank.matchLocked),
               ),
@@ -3292,7 +3624,9 @@ class SyncMapper {
                 syncSeasonNumber: Value(seasonNum >= 0 ? seasonNum : null),
                 syncEpisodeNumber: Value(episodeNum >= 0 ? episodeNum : null),
                 matchState: Value(
-                  remoteMatchStatus >= MatchStatusRank.matched ? LibraryMatchStates.matched : LibraryMatchStates.unmatched,
+                  remoteMatchStatus >= MatchStatusRank.matched
+                      ? LibraryMatchStates.matched
+                      : LibraryMatchStates.unmatched,
                 ),
                 matchLocked: Value(remoteMatchStatus >= MatchStatusRank.matchLocked),
               ),
@@ -3533,12 +3867,7 @@ class SyncMapper {
           DeterministicKeys.canonicalizeWorkKey(p['work_key'] as String?),
     ];
     final existingJournalByKey = await syncStore.journal.getEntriesForType(SyncLocalStore.typeWorkPref, keys);
-    final toJournal = <({
-      String workKey,
-      Map<String, Object?> payload,
-      String hash,
-      int updatedAt,
-    })>[];
+    final toJournal = <({String workKey, Map<String, Object?> payload, String hash, int updatedAt})>[];
 
     for (final p in rawPrefs) {
       final workKey = DeterministicKeys.canonicalizeWorkKey(p['work_key'] as String?);
@@ -3567,8 +3896,10 @@ class SyncMapper {
       final remoteUpdatedAt = (p['client_updated_at'] as num?)?.toInt() ?? 0;
 
       final stampKey = 'sync-pref-ts:${work.stateKey()}';
-      final localStamp = int.tryParse(
-            (await (db.select(db.librarySettings)..where((t) => t.key.equals(stampKey))).getSingleOrNull())?.value ?? '',
+      final localStamp =
+          int.tryParse(
+            (await (db.select(db.librarySettings)..where((t) => t.key.equals(stampKey))).getSingleOrNull())?.value ??
+                '',
           ) ??
           0;
       if (remoteUpdatedAt < math.max(localStamp, existingJ?.clientUpdatedAt ?? 0)) continue;
@@ -3621,12 +3952,7 @@ class SyncMapper {
           .into(db.librarySettings)
           .insertOnConflictUpdate(LibrarySettingsCompanion.insert(key: stampKey, value: '$remoteUpdatedAt'));
 
-      toJournal.add((
-        workKey: workKey,
-        payload: pMap,
-        hash: incomingHash,
-        updatedAt: remoteUpdatedAt,
-      ));
+      toJournal.add((workKey: workKey, payload: pMap, hash: incomingHash, updatedAt: remoteUpdatedAt));
 
       final item =
           await repo.findByWorkKey(workKey) ??
@@ -3694,13 +4020,8 @@ class SyncMapper {
       SyncLocalStore.typeWatchProgress,
       progressKeys,
     );
-    final toJournal = <({
-      String progressKey,
-      String workKey,
-      Map<String, Object?> payload,
-      String hash,
-      int updatedAt,
-    })>[];
+    final toJournal =
+        <({String progressKey, String workKey, Map<String, Object?> payload, String hash, int updatedAt})>[];
 
     for (final g in rawProgress) {
       final workKey = DeterministicKeys.canonicalizeWorkKey(g['work_key'] as String?);
@@ -3743,6 +4064,9 @@ class SyncMapper {
 
       final localProgTimestamp = existingJ?.clientUpdatedAt ?? existing?.updatedAt ?? 0;
       if (remoteUpdatedAt < localProgTimestamp) continue;
+      if (remoteUpdatedAt == localProgTimestamp && existing != null && !_incomingProgressWinsTie(gMap, existing)) {
+        continue;
+      }
 
       mutations++;
       final durMs = (g['duration_ms'] as num?)?.toInt();
@@ -3803,6 +4127,148 @@ class SyncMapper {
             payloadJson: SyncJournalStore.sanitizePayloadJsonForStorage(SyncLocalStore.typeWatchProgress, j.payload),
             clientUpdatedAt: j.updatedAt,
             isDeleted: false,
+            originDeviceId: remoteOriginId,
+            originEpoch: remoteOriginEpoch,
+          ),
+        );
+      }
+    }
+
+    return (processed: processed, mutations: mutations);
+  }
+
+  static bool _incomingProgressWinsTie(Map<String, Object?> incoming, WorkWatchStateRow existing) {
+    final inWatched = incoming['watched'] == true;
+    if (inWatched != existing.watched) return inWatched;
+    final inPos = (incoming['position_ms'] as num?)?.toInt() ?? 0;
+    if (inPos != existing.positionMs) return inPos > existing.positionMs;
+    final inPlayCount = (incoming['play_count'] as num?)?.toInt() ?? 0;
+    if (inPlayCount != existing.playCount) return inPlayCount > existing.playCount;
+    final inDur = (incoming['duration_ms'] as num?)?.toInt() ?? 0;
+    final curDur = existing.durationMs ?? 0;
+    if (inDur != curDur) return inDur > curDur;
+    return true;
+  }
+
+  Future<({int processed, int mutations})> _applyIncomingLists(
+    List<Map<String, dynamic>> rawLists, {
+    required Map<String, int> workItemByKey,
+    required String remoteOriginId,
+    required String remoteOriginEpoch,
+  }) async {
+    var processed = 0;
+    var mutations = 0;
+    final listKeys = [
+      for (final l in rawLists)
+        if (l['list_key'] is String && (l['list_key'] as String).isNotEmpty) l['list_key'] as String,
+    ];
+    final existingJournalByKey = await syncStore.journal.getEntriesForType(SyncLocalStore.typeList, listKeys);
+    final localLists = await db.select(db.libraryLists).get();
+    final localByKey = <String, LibraryListRow>{};
+    for (final row in localLists) {
+      final k = DeterministicKeys.generateListKey(kind: row.kind, title: row.title, tmdbId: row.tmdbId);
+      localByKey.putIfAbsent(k, () => row);
+    }
+
+    final toJournal = <({String listKey, Map<String, Object?> payload, String hash, int updatedAt, bool isDeleted})>[];
+
+    for (final raw in rawLists) {
+      processed++;
+      final lMap = raw.cast<String, Object?>();
+      final listKey = raw['list_key'] as String? ?? '';
+      if (listKey.isEmpty) continue;
+
+      final remoteDeleted = raw['is_deleted'] == true;
+      final remoteUpdatedAt = (raw['client_updated_at'] as num?)?.toInt() ?? 0;
+      final incomingHash = SyncJournalStore.computeEntityHash(SyncLocalStore.typeList, lMap);
+      final existingJ = existingJournalByKey[listKey];
+      final localRow = localByKey[listKey];
+
+      if (existingJ != null &&
+          existingJ.payloadHash == incomingHash &&
+          existingJ.isDeleted == remoteDeleted &&
+          (remoteDeleted ? localRow == null : localRow != null)) {
+        continue;
+      }
+
+      final localTs = existingJ?.clientUpdatedAt ?? localRow?.updatedAt ?? 0;
+      if (remoteUpdatedAt < localTs) continue;
+
+      if (remoteDeleted) {
+        if (localRow != null) {
+          await (db.delete(db.libraryLists)..where((t) => t.id.equals(localRow.id))).go();
+          localByKey.remove(listKey);
+          mutations++;
+        }
+      } else {
+        final kind = (raw['kind'] as String?) ?? LibraryListKinds.playlist;
+        final title = (raw['title'] as String?)?.trim() ?? '';
+        if (title.isEmpty) continue;
+        final summary = raw['summary'] as String?;
+        final posterSource = raw['poster_path'] as String?;
+        final tmdbId = raw['tmdb_id'] as String?;
+        final effectiveUpdated = remoteUpdatedAt > 0 ? remoteUpdatedAt : _nowMs();
+
+        int targetListId;
+        if (localRow == null) {
+          targetListId = await db
+              .into(db.libraryLists)
+              .insert(
+                LibraryListsCompanion.insert(
+                  kind: kind,
+                  title: title,
+                  summary: Value(summary),
+                  posterSource: Value(posterSource),
+                  tmdbId: Value(tmdbId),
+                  createdAt: effectiveUpdated,
+                  updatedAt: effectiveUpdated,
+                ),
+              );
+        } else {
+          targetListId = localRow.id;
+          await (db.update(db.libraryLists)..where((t) => t.id.equals(localRow.id))).write(
+            LibraryListsCompanion(
+              title: Value(title),
+              summary: Value(summary),
+              posterSource: Value(posterSource),
+              tmdbId: Value(tmdbId),
+              updatedAt: Value(effectiveUpdated),
+            ),
+          );
+        }
+
+        final desiredItemIds = await _resolveListItemIds(
+          raw['item_work_keys'] as List<dynamic>? ?? const [],
+          workItemByKey,
+        );
+        await _replaceListItemsTx(targetListId, desiredItemIds);
+        mutations++;
+      }
+
+      if (existingJ == null || existingJ.payloadHash != incomingHash || existingJ.isDeleted != remoteDeleted) {
+        toJournal.add((
+          listKey: listKey,
+          payload: lMap,
+          hash: incomingHash,
+          updatedAt: remoteUpdatedAt,
+          isDeleted: remoteDeleted,
+        ));
+      }
+    }
+
+    if (toJournal.isNotEmpty) {
+      final firstSeq = await syncStore.allocLocalSeqRange(toJournal.length);
+      for (var i = 0; i < toJournal.length; i++) {
+        final j = toJournal[i];
+        await syncStore.journal.upsertEntry(
+          SyncJournalEntry(
+            entityType: SyncLocalStore.typeList,
+            entityKey: j.listKey,
+            localSeq: firstSeq + i,
+            payloadHash: j.hash,
+            payloadJson: SyncJournalStore.sanitizePayloadJsonForStorage(SyncLocalStore.typeList, j.payload),
+            clientUpdatedAt: j.updatedAt,
+            isDeleted: j.isDeleted,
             originDeviceId: remoteOriginId,
             originEpoch: remoteOriginEpoch,
           ),

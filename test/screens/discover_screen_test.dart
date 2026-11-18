@@ -993,7 +993,11 @@ class _LibraryUpdates extends LibraryScanService {
   }
 
   @override
-  Future<Duration> checkIncrementalUpdates({required bool Function() canRun, bool force = false}) async {
+  Future<Duration> checkIncrementalUpdates({
+    required bool Function() canRun,
+    bool force = false,
+    Set<String>? allowedMountIds,
+  }) async {
     if (force && canRun()) {
       forcedChecks++;
       showUpdate(LibraryUpdate(LibraryUpdateMode.incremental, {'mount'}));

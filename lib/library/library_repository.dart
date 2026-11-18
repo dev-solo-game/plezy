@@ -299,9 +299,9 @@ class LibraryRepository {
     final targetRow = await (_db.select(_db.libraryItems)..where((t) => t.id.equals(targetId))).getSingleOrNull();
     if (targetRow == null) return targetId;
     if (targetRow.workKey != newRootKey) {
-      await (_db.update(_db.libraryItems)..where((t) => t.id.equals(targetId))).write(
-        LibraryItemsCompanion(workKey: Value(newRootKey)),
-      );
+      await (_db.update(
+        _db.libraryItems,
+      )..where((t) => t.id.equals(targetId))).write(LibraryItemsCompanion(workKey: Value(newRootKey)));
     }
 
     if (targetRow.kind == LibraryKinds.movie) {
@@ -318,10 +318,11 @@ class LibraryRepository {
     }
 
     // Show: sync season keys, episode keys, and child video file bindings.
-    final seasons = await (_db.select(
-      _db.libraryItems,
-    )..where((t) => (t.parentId.equals(targetId) | t.showId.equals(targetId)) & t.kind.equals(LibraryKinds.season)))
-        .get();
+    final seasons =
+        await (_db.select(_db.libraryItems)..where(
+              (t) => (t.parentId.equals(targetId) | t.showId.equals(targetId)) & t.kind.equals(LibraryKinds.season),
+            ))
+            .get();
     for (final s in seasons) {
       final sKey = (newRootKey != null && s.seasonNumber != null) ? '$newRootKey:s${s.seasonNumber}' : null;
       if (sKey != null) {
@@ -337,9 +338,9 @@ class LibraryRepository {
         }
       }
       if (s.workKey != sKey) {
-        await (_db.update(_db.libraryItems)..where((t) => t.id.equals(s.id))).write(
-          LibraryItemsCompanion(workKey: Value(sKey)),
-        );
+        await (_db.update(
+          _db.libraryItems,
+        )..where((t) => t.id.equals(s.id))).write(LibraryItemsCompanion(workKey: Value(sKey)));
       }
     }
 
@@ -364,9 +365,9 @@ class LibraryRepository {
         }
       }
       if (effectiveEpId == ep.id && ep.workKey != epKey) {
-        await (_db.update(_db.libraryItems)..where((t) => t.id.equals(ep.id))).write(
-          LibraryItemsCompanion(workKey: Value(epKey)),
-        );
+        await (_db.update(
+          _db.libraryItems,
+        )..where((t) => t.id.equals(ep.id))).write(LibraryItemsCompanion(workKey: Value(epKey)));
       }
       await (_db.update(
         _db.libraryFiles,
@@ -852,7 +853,9 @@ class LibraryRepository {
     final items = _db.libraryItems;
     final rows =
         await (_viewSelect()
-              ..where(items.kind.isIn([LibraryKinds.movie, LibraryKinds.show]) & _matchesText(text) & _visibilityFilter())
+              ..where(
+                items.kind.isIn([LibraryKinds.movie, LibraryKinds.show]) & _matchesText(text) & _visibilityFilter(),
+              )
               ..orderBy([OrderingTerm.asc(items.sortTitle)])
               ..limit(limit))
             .get();
@@ -868,7 +871,8 @@ class LibraryRepository {
 
   Future<List<LibraryItemView>> recentlyAdded({String? libraryType, int limit = 20}) async {
     final items = _db.libraryItems;
-    Expression<bool> filter = items.kind.isIn([LibraryKinds.movie, LibraryKinds.show]) & _onAShelf & _visibilityFilter();
+    Expression<bool> filter =
+        items.kind.isIn([LibraryKinds.movie, LibraryKinds.show]) & _onAShelf & _visibilityFilter();
     if (libraryType != null) filter = filter & items.libraryType.equals(libraryType);
     final rows =
         await (_viewSelect()
@@ -918,11 +922,7 @@ class LibraryRepository {
 
   /// Updates each movie or show's `source_added_at` to the latest file
   /// modification time (falling back to creation time) across all of its videos.
-  Future<void> initializeSourceAddedTimes(
-    String mountId, {
-    int? scanId,
-    bool recomputeFromFilesOnly = false,
-  }) async {
+  Future<void> initializeSourceAddedTimes(String mountId, {int? scanId, bool recomputeFromFilesOnly = false}) async {
     await _updateSourceAddedTimes(
       '''
       SELECT DISTINCT COALESCE(leaf.show_id, leaf.id) AS id
@@ -1313,7 +1313,10 @@ class LibraryRepository {
   }
 
   Future<LibraryFileRow?> findFileByKey(String fileKey) {
-    return (_db.select(_db.libraryFiles)..where((t) => t.fileKey.equals(fileKey))..limit(1)).getSingleOrNull();
+    return (_db.select(_db.libraryFiles)
+          ..where((t) => t.fileKey.equals(fileKey))
+          ..limit(1))
+        .getSingleOrNull();
   }
 
   Future<void> updateFile(int id, LibraryFilesCompanion changes) async {
@@ -1529,10 +1532,16 @@ class LibraryRepository {
           LibraryListItemsCompanion.insert(listId: listId, itemId: itemId, sortOrder: Value((last ?? -1) + 1)),
           mode: InsertMode.insertOrIgnore,
         );
+    await (_db.update(
+      _db.libraryLists,
+    )..where((t) => t.id.equals(listId))).write(LibraryListsCompanion(updatedAt: Value(_now())));
   }
 
   Future<void> removeFromList(int listId, int itemId) async {
     await (_db.delete(_db.libraryListItems)..where((t) => t.listId.equals(listId) & t.itemId.equals(itemId))).go();
+    await (_db.update(
+      _db.libraryLists,
+    )..where((t) => t.id.equals(listId))).write(LibraryListsCompanion(updatedAt: Value(_now())));
   }
 
   Future<List<LibraryItemView>> listItems(int listId) async {

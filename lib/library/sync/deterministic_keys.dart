@@ -224,4 +224,17 @@ abstract final class DeterministicKeys {
     }
     return workKey;
   }
+
+  /// Generates a deterministic list identifier shared across devices for
+  /// synced collections and user playlists.
+  static String generateListKey({required String kind, required String title, String? tmdbId}) {
+    final cleanTmdb = tmdbId?.trim();
+    if (kind == 'collection' && cleanTmdb != null && cleanTmdb.isNotEmpty) {
+      return 'col:tmdb:$cleanTmdb';
+    }
+    final normKind = kind.trim().toLowerCase();
+    final normTitle = unorm.nfc(title.trim()).toLowerCase();
+    final hash = sha256.convert(utf8.encode('$normKind:$normTitle')).toString().substring(0, 24);
+    return 'list:$normKind:$hash';
+  }
 }

@@ -124,6 +124,12 @@ extension _VideoPlayerLifecycleMethods on VideoPlayerScreenState {
       }
     }
 
+    if (mounted) {
+      try {
+        unawaited(Provider.of<LocalLibraryClient>(context, listen: false).flushActivePlaybackToOutbox());
+      } catch (_) {}
+    }
+
     if (!mounted || _shuttingDown || currentPlayer != player) return;
 
     _suspendLiveTimelineForBackground();

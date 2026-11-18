@@ -387,7 +387,7 @@ class AppDatabase extends _$AppDatabase {
   static const FormatException _invalidRecoveryImage = FormatException('Invalid tvOS database recovery image');
 
   @override
-  int get schemaVersion => 37;
+  int get schemaVersion => 38;
 
   @override
   MigrationStrategy get migration {
@@ -405,6 +405,7 @@ class AppDatabase extends _$AppDatabase {
       onCreate: (Migrator m) async {
         await m.createAll();
         await _ensureSyncJournalSchema();
+        await _ensureWorkspaceArchiveSchema();
       },
       onUpgrade: (Migrator m, int from, int to) async {
         if (from < 7) {
@@ -935,6 +936,10 @@ class AppDatabase extends _$AppDatabase {
             await _ignoreAlreadyExists('${index.entityName} index', () => m.create(index));
           }
         }
+        if (from < 38) {
+          appLogger.i('Adding sync_workspace_archives table (v38 migration)');
+          await _ensureWorkspaceArchiveSchema();
+        }
       },
     );
   }
@@ -1095,6 +1100,16 @@ class AppDatabase extends _$AppDatabase {
       'CREATE INDEX IF NOT EXISTS idx_sync_journal_source_path ON sync_journal (source_id, relative_path)',
     );
     await customStatement('CREATE INDEX IF NOT EXISTS idx_sync_journal_work ON sync_journal (work_key)');
+  }
+
+  Future<void> _ensureWorkspaceArchiveSchema() async {
+    await customStatement('''
+      CREATE TABLE IF NOT EXISTS sync_workspace_archives (
+        workspace_key TEXT PRIMARY KEY,
+        snapshot_json TEXT NOT NULL,
+        updated_at    INTEGER NOT NULL
+      )
+    ''');
   }
 
   Future<void> _ignoreAlreadyExists(String label, Future<void> Function() operation) async {

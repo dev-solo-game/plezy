@@ -58,8 +58,10 @@ import 'keyboard_shortcuts_screen.dart';
 import '../../connection/connection_registry.dart';
 import '../../connection/connection.dart';
 import '../../library/sync/sync_coordinator.dart';
+import '../storage/lan_devices_screen.dart';
 import '../storage/mounts_screen.dart';
 import '../storage/scraper_settings_screen.dart';
+import '../storage/sync_qr_scanner_screen.dart';
 import '../storage/sync_settings_screen.dart';
 import 'logs_screen.dart';
 import 'playback_settings_screen.dart';
@@ -118,6 +120,7 @@ class _SettingsScreenState extends State<SettingsScreen> with FocusableTab, Moun
   static const _kAutoHidePerformanceOverlay = 'auto_hide_performance_overlay';
   static const _kViewLogs = 'view_logs';
   static const _kStorageMounts = 'storage_mounts';
+  static const _kScanQrLogin = 'scan_qr_login';
   static const _kScraperSettings = 'scraper_settings';
 
   /// Whether any Plex/Jellyfin/Emby connection is stored. Their settings
@@ -386,11 +389,14 @@ class _SettingsScreenState extends State<SettingsScreen> with FocusableTab, Moun
     try {
       sync = context.watch<SyncAndScanCoordinator>();
     } on ProviderNotFoundException catch (_) {}
-    final syncSubtitle = sync == null
-        ? t.sync.subtitle
-        : sync.isSignedIn
-        ? t.sync.cloudSettingsSubtitle(name: sync.session!.username)
-        : t.sync.lanSettingsSubtitle(count: sync.lanService.trustedPeers.length);
+    final sess = sync?.session;
+    final syncSubtitle = sync == null || sess == null
+        ? (sync == null ? t.sync.subtitle : t.sync.lanSettingsSubtitle(count: sync.lanService.trustedPeers.length))
+        : (sess.serverKind == SyncServerKind.official
+              ? t.sync.officialSettingsSubtitle(name: sess.username)
+              : t.sync.selfHostedSettingsSubtitle(name: sess.username));
+
+    final showMobileScanTile = PlatformDetector.isMobile(context);
 
     return SettingsGroup(
       title: t.storage.mediaSources,
@@ -408,6 +414,20 @@ class _SettingsScreenState extends State<SettingsScreen> with FocusableTab, Moun
           subtitle: syncSubtitle,
           destinationBuilder: (_) => const SyncSettingsScreen(),
         ),
+        if (showMobileScanTile)
+          SettingNavigationTile(
+            focusNode: _focusTracker.get(_kScanQrLogin),
+            icon: Symbols.qr_code_scanner_rounded,
+            title: t.sync.scanQrTileTitle,
+            subtitle: sync?.isSignedIn == true ? t.sync.scanQrTileSignedInSubtitle : t.sync.scanQrTileSignedOutSubtitle,
+            onTap: () => unawaited(_handleMobileQrScanTap(sync)),
+          ),
+        SettingNavigationTile(
+          icon: Symbols.devices_rounded,
+          title: t.sync.lanDevicesTitle,
+          subtitle: t.sync.remoteDevicesSubtitle,
+          destinationBuilder: (_) => const LanDevicesScreen(),
+        ),
         SettingNavigationTile(
           icon: Symbols.dns_rounded,
           title: 'Emby / Jellyfin',
@@ -420,13 +440,31 @@ class _SettingsScreenState extends State<SettingsScreen> with FocusableTab, Moun
     );
   }
 
+  Future<void> _handleMobileQrScanTap(SyncAndScanCoordinator? sync) async {
+    if (sync == null || !sync.isSignedIn) {
+      final goLogin = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: Text(t.sync.scanQrRequireLoginTitle),
+          content: Text(t.sync.scanQrRequireLoginBody),
+          actions: [
+            TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: Text(t.common.cancel)),
+            FilledButton(onPressed: () => Navigator.of(ctx).pop(true), child: Text(t.sync.goToSyncLogin)),
+          ],
+        ),
+      );
+      if (goLogin == true && mounted) {
+        await Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const SyncSettingsScreen()));
+      }
+      return;
+    }
+    await Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const SyncQrScannerScreen()));
+  }
+
   Widget _buildConnectionsSection(BuildContext context) {
     final hasAccounts = context.select<AccountPreferencesController, bool>((c) => c.accounts.isNotEmpty);
     if (!hasAccounts) return const SizedBox.shrink();
-    return SettingsGroup(
-      title: t.connections.sectionTitle,
-      children: [_buildAccountPreferencesTile(context)],
-    );
+    return SettingsGroup(title: t.connections.sectionTitle, children: [_buildAccountPreferencesTile(context)]);
   }
 
   /// Server-stored preferences for the accounts the active profile signed in

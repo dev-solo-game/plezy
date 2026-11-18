@@ -16,6 +16,7 @@ import '../../i18n/strings.g.dart';
 import '../../library/library_scan_service.dart';
 import '../../library/library_settings.dart';
 import '../../library/scrapers/tmdb_provider.dart';
+import '../../library/sync/sync_coordinator.dart';
 import 'mounts_screen.dart';
 
 /// Where metadata comes from: the TMDB key, language, mirrors and proxy.
@@ -112,6 +113,10 @@ class _ScraperSettingsScreenState extends State<ScraperSettingsScreen> {
     if (_saving) return;
     final store = context.read<LibrarySettingsStore>();
     final scans = context.read<LibraryScanService>();
+    SyncAndScanCoordinator? sync;
+    try {
+      sync = context.read<SyncAndScanCoordinator>();
+    } catch (_) {}
     final navigator = Navigator.of(context);
     setState(() => _saving = true);
     await store.saveScraper(
@@ -127,6 +132,9 @@ class _ScraperSettingsScreenState extends State<ScraperSettingsScreen> {
     // New settings may reach titles the old ones could not: try them again,
     // and stop a run still going with the old ones.
     unawaited(scans.scrapeLibrary(retryUnmatched: true, restart: true));
+    if (sync != null) {
+      unawaited(sync.syncScraperSettingsToCloud());
+    }
     if (mounted) navigator.pop();
   }
 

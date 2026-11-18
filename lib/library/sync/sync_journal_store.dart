@@ -96,11 +96,7 @@ class SyncJournalStore {
   /// Computes a canonical SHA-256 fingerprint for [payload], ignoring volatile
   /// sync envelope fields and random encryption nonces while incorporating
   /// plaintext [rawSecrets] when hashing a `source`.
-  static String computeEntityHash(
-    String entityType,
-    Map<String, Object?> payload, {
-    Map<String, String>? rawSecrets,
-  }) {
+  static String computeEntityHash(String entityType, Map<String, Object?> payload, {Map<String, String>? rawSecrets}) {
     if (payload['is_deleted'] == true) {
       final deletedCanonical = jsonEncode({'entity_type': entityType, 'is_deleted': true});
       return sha256.convert(utf8.encode(deletedCanonical)).toString();
@@ -119,10 +115,19 @@ class SyncJournalStore {
       if (entityType == 'work' && key == 'metadata_json' && canonicalValue is Map<String, Object?>) {
         canonicalValue = _normalizeWorkMetadataForHash(canonicalValue);
       } else if (entityType == 'file' && key == 'media_spec_json' && canonicalValue is Map<String, Object?>) {
+        final hasMatchedWork = payload['work_key'] is String && (payload['work_key'] as String).isNotEmpty;
+        final isLockedFile = (payload['match_status'] as num?)?.toInt() == 3; // MatchStatusRank.matchLocked
         canonicalValue = {
           for (final entry in canonicalValue.entries)
-            if (entry.key != 'ep_scraped_at') entry.key: entry.value,
+            if (entry.key != 'ep_scraped_at' && (!hasMatchedWork || isLockedFile || entry.key != 'ep_overview'))
+              entry.key: entry.value,
         };
+      } else if (entityType == 'file' &&
+          key == 'parsed_json' &&
+          payload['work_key'] is String &&
+          (payload['work_key'] as String).isNotEmpty &&
+          (payload['match_status'] as num?)?.toInt() != 3) {
+        continue;
       }
       if (canonicalValue == null) continue;
       if (canonicalValue is Map && canonicalValue.isEmpty) continue;
@@ -151,12 +156,20 @@ class SyncJournalStore {
   }
 
   static Map<String, Object?> _normalizeWorkMetadataForHash(Map<String, Object?> meta) {
+    final hasExternalId =
+        ((meta['tmdb_id'] as String?)?.isNotEmpty ?? false) ||
+        ((meta['bangumi_id'] as String?)?.isNotEmpty ?? false) ||
+        ((meta['imdb_id'] as String?)?.isNotEmpty ?? false);
+    final isLockedOrNfo = meta['locked'] == true || meta['metadata_source'] == 'nfo';
+    final omitHeavyDetails = hasExternalId && !isLockedOrNfo;
+
     final out = <String, Object?>{};
     for (final entry in meta.entries) {
       final key = entry.key;
       final val = entry.value;
       if (key == 'source_added_at') continue;
       if (key == 'locked' && val == false) continue;
+      if (omitHeavyDetails && (key == 'summary' || key == 'tagline' || key == 'credits')) continue;
       if ((key == 'genres' || key == 'credits') && val is List && val.isEmpty) continue;
       out[key] = val;
     }
@@ -271,10 +284,7 @@ class SyncJournalStore {
     return [for (final row in rows) _rowToEntry(row)];
   }
 
-  Future<List<SyncJournalEntry>> getActiveFilesForMount(
-    String sourceId, {
-    Set<String>? directoryPrefixes,
-  }) async {
+  Future<List<SyncJournalEntry>> getActiveFilesForMount(String sourceId, {Set<String>? directoryPrefixes}) async {
     if (directoryPrefixes == null || directoryPrefixes.isEmpty) {
       final rows = await db
           .customSelect(
@@ -287,9 +297,7 @@ class SyncJournalStore {
       return [for (final row in rows) _rowToEntry(row)];
     }
 
-    final normalizedDirs = <String>{
-      for (final raw in directoryPrefixes) StoragePath.normalize(raw),
-    };
+    final normalizedDirs = <String>{for (final raw in directoryPrefixes) StoragePath.normalize(raw)};
     if (normalizedDirs.contains('/')) {
       return getActiveFilesForMount(sourceId);
     }
@@ -323,11 +331,7 @@ class SyncJournalStore {
           'SELECT entity_type, entity_key, source_id, relative_path, work_key, local_seq, '
           'payload_hash, payload_json, client_updated_at, is_deleted, origin_device_id, origin_epoch '
           'FROM sync_journal WHERE source_id = ? OR (entity_type = ? AND entity_key = ?)',
-          variables: [
-            Variable.withString(sourceId),
-            Variable.withString('source'),
-            Variable.withString(sourceId),
-          ],
+          variables: [Variable.withString(sourceId), Variable.withString('source'), Variable.withString(sourceId)],
         )
         .get();
     return [for (final row in rows) _rowToEntry(row)];
@@ -398,10 +402,10 @@ class SyncJournalStore {
   }
 
   Future<void> deleteEntry(String entityType, String entityKey) async {
-    await db.customStatement(
-      'DELETE FROM sync_journal WHERE entity_type = ? AND entity_key = ?',
-      [entityType, entityKey],
-    );
+    await db.customStatement('DELETE FROM sync_journal WHERE entity_type = ? AND entity_key = ?', [
+      entityType,
+      entityKey,
+    ]);
   }
 
   Future<List<SyncJournalEntry>> getPendingCloudEntries({required int afterSeq, int limit = 500}) async {
@@ -509,10 +513,7 @@ class SyncJournalStore {
     final cnt = row.read<int>('cnt');
     final maxPurgedSeq = row.read<int>('max_seq');
     if (cnt > 0) {
-      await db.customStatement(
-        'DELETE FROM sync_journal WHERE is_deleted = 1 AND client_updated_at <= ?',
-        [cutoff],
-      );
+      await db.customStatement('DELETE FROM sync_journal WHERE is_deleted = 1 AND client_updated_at <= ?', [cutoff]);
     }
     return (deletedCount: cnt, maxPurgedSeq: maxPurgedSeq);
   }

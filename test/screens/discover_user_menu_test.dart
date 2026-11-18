@@ -56,80 +56,81 @@ void main() {
     TvDetectionService.debugSetAppleTVOverride(null);
   });
 
-  testWidgets('Local/LAN mode menu shows non-clickable mode header, device count, Switch Sync Mode, and opens LanDevicesScreen', (
-    tester,
-  ) async {
-    final harness = await _pumpDiscoverWithSync(tester);
-    addTearDown(() => harness.dispose(tester));
+  testWidgets(
+    'Local/LAN mode menu shows non-clickable mode header, device count, Switch Sync Mode, and opens LanDevicesScreen',
+    (tester) async {
+      final harness = await _pumpDiscoverWithSync(tester);
+      addTearDown(() => harness.dispose(tester));
 
-    final kp1 = await SyncCrypto.generateLanIdentityKeyPair();
-    final kp2 = await SyncCrypto.generateLanIdentityKeyPair();
-    final now = DateTime(2026, 11, 16, 17, 0);
+      final kp1 = await SyncCrypto.generateLanIdentityKeyPair();
+      final kp2 = await SyncCrypto.generateLanIdentityKeyPair();
+      final now = DateTime(2026, 11, 16, 17, 0);
 
-    harness.sync.lanService.debugSeedStateForTesting(
-      deviceName: 'LivingRoom-PC',
-      publicKeyBase64: kp1.publicKeyBase64,
-      discovered: [
-        LanDiscoveredPeer(
-          deviceId: 'peer-1',
-          deviceName: 'MacBook-Pro',
-          platform: 'macos',
-          host: '192.168.1.20',
-          httpPort: 48635,
-          pubKeyBase64: kp2.publicKeyBase64,
-          revision: 3,
-          lastSeen: now,
-        ),
-        LanDiscoveredPeer(
-          deviceId: 'peer-2',
-          deviceName: 'iPhone-15',
-          platform: 'ios',
-          host: '192.168.1.21',
-          httpPort: 48636,
-          pubKeyBase64: kp1.publicKeyBase64,
-          revision: 1,
-          lastSeen: now,
-        ),
-      ],
-    );
-    await tester.pump();
+      harness.sync.lanService.debugSeedStateForTesting(
+        deviceName: 'LivingRoom-PC',
+        publicKeyBase64: kp1.publicKeyBase64,
+        discovered: [
+          LanDiscoveredPeer(
+            deviceId: 'peer-1',
+            deviceName: 'MacBook-Pro',
+            platform: 'macos',
+            host: '192.168.1.20',
+            httpPort: 48635,
+            pubKeyBase64: kp2.publicKeyBase64,
+            revision: 3,
+            lastSeen: now,
+          ),
+          LanDiscoveredPeer(
+            deviceId: 'peer-2',
+            deviceName: 'iPhone-15',
+            platform: 'ios',
+            host: '192.168.1.21',
+            httpPort: 48636,
+            pubKeyBase64: kp1.publicKeyBase64,
+            revision: 1,
+            lastSeen: now,
+          ),
+        ],
+      );
+      await tester.pump();
 
-    final menuButton = find.byTooltip(t.sync.userMenuTooltip);
-    expect(menuButton, findsOneWidget);
+      final menuButton = find.byTooltip(t.sync.userMenuTooltip);
+      expect(menuButton, findsOneWidget);
 
-    await tester.tap(menuButton);
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 200));
+      await tester.tap(menuButton);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 200));
 
-    // Mode header (non-clickable)
-    final headerFinder = find.text(t.sync.menuModeLanTitle);
-    expect(headerFinder, findsOneWidget);
-    expect(find.text(t.sync.menuModeLanSubtitle(device: 'LivingRoom-PC')), findsOneWidget);
+      // Mode header (non-clickable)
+      final headerFinder = find.text(t.sync.menuModeLanTitle);
+      expect(headerFinder, findsOneWidget);
+      expect(find.text(t.sync.menuModeLanSubtitle(device: 'LivingRoom-PC')), findsOneWidget);
 
-    // Legacy profile UI and logout must not appear in Local/LAN mode
-    expect(find.text(t.profiles.sectionTitle), findsNothing);
-    expect(find.text(t.common.logout), findsNothing);
+      // Legacy profile UI and logout must not appear in Local/LAN mode
+      expect(find.text(t.profiles.sectionTitle), findsNothing);
+      expect(find.text(t.common.logout), findsNothing);
 
-    // Tapping the mode header keeps the menu open
-    await tester.tap(headerFinder);
-    await tester.pump(const Duration(milliseconds: 150));
-    expect(headerFinder, findsOneWidget);
+      // Tapping the mode header keeps the menu open
+      await tester.tap(headerFinder);
+      await tester.pump(const Duration(milliseconds: 150));
+      expect(headerFinder, findsOneWidget);
 
-    // Switch Sync Mode + LAN devices with discovered count
-    expect(find.text(t.sync.switchSyncMode), findsOneWidget);
-    expect(find.text(t.sync.lanDevicesTitle), findsOneWidget);
-    expect(find.text(t.sync.lanDiscoveredCount(count: 2)), findsOneWidget);
+      // Switch Sync Mode + LAN devices with discovered count
+      expect(find.text(t.sync.switchSyncMode), findsOneWidget);
+      expect(find.text(t.sync.lanDevicesTitle), findsOneWidget);
+      expect(find.text(t.sync.lanDiscoveredCount(count: 2)), findsOneWidget);
 
-    // Tap LAN Devices -> opens standalone LanDevicesScreen without cloud login fields
-    await tester.tap(find.text(t.sync.lanDevicesTitle));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 350));
+      // Tap LAN Devices -> opens standalone LanDevicesScreen without cloud login fields
+      await tester.tap(find.text(t.sync.lanDevicesTitle));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 350));
 
-    expect(find.byType(LanDevicesScreen), findsOneWidget);
-    expect(find.text('MacBook-Pro (macos)'), findsOneWidget);
-    expect(find.text('iPhone-15 (ios)'), findsOneWidget);
-    expect(find.text(t.sync.password), findsNothing);
-  });
+      expect(find.byType(LanDevicesScreen), findsOneWidget);
+      expect(find.text('MacBook-Pro (macos)'), findsOneWidget);
+      expect(find.text('iPhone-15 (ios)'), findsOneWidget);
+      expect(find.text(t.sync.password), findsNothing);
+    },
+  );
 
   testWidgets('Cloud Sync mode shows account avatar initial, cloud mode header, Sync Settings, and Logout', (
     tester,
@@ -164,7 +165,7 @@ void main() {
     expect(find.text(t.common.settings), findsOneWidget);
     expect(find.text(t.common.logout), findsOneWidget);
 
-    expect(find.text(t.sync.lanDevicesTitle), findsNothing);
+    expect(find.text(t.sync.lanDevicesTitle), findsOneWidget);
     expect(find.text(t.sync.switchSyncMode), findsNothing);
   });
 
@@ -210,57 +211,19 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 200));
 
-    expect(find.text('本地与局域网模式'), findsOneWidget);
+    expect(find.text('本地模式'), findsOneWidget);
     expect(find.text('本机：客厅电脑'), findsOneWidget);
-    expect(find.text('局域网设备'), findsOneWidget);
+    expect(find.text('遥控与投屏设备'), findsOneWidget);
     expect(find.text('已发现 1 台'), findsOneWidget);
     expect(find.text('1 条配对请求'), findsOneWidget);
     expect(find.text('切换同步模式'), findsOneWidget);
     expect(find.text('退出登录'), findsNothing);
   });
 
-  testWidgets('DiscoverScreen top bar and user menu display active LAN and Cloud sync progress', (tester) async {
+  testWidgets('DiscoverScreen top bar and user menu display Cloud sync progress', (tester) async {
     final harness = await _pumpDiscoverWithSync(tester);
     addTearDown(() => harness.dispose(tester));
 
-    harness.sync.lanService.debugSeedStateForTesting(
-      deviceName: 'Phone-A',
-      progress: const SyncProgress(
-        phase: SyncPhase.applying,
-        processed: 42,
-        total: 120,
-        peerName: 'LivingRoom-TV',
-      ),
-    );
-    await tester.pump();
-
-    expect(find.text('LAN Sync (LivingRoom-TV) · Updating 42/120'), findsOneWidget);
-
-    await tester.tap(find.byTooltip(t.sync.userMenuTooltip));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 200));
-    expect(find.text('Updating 42/120'), findsOneWidget);
-
-    // Dismiss menu before switching locale and verifying Chinese copy.
-    await tester.tapAt(const Offset(10, 10));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 200));
-
-    await tester.runAsync(() => LocaleSettings.setLocale(AppLocale.zh));
-    addTearDown(() => LocaleSettings.setLocaleSync(AppLocale.en));
-    harness.sync.lanService.debugSeedStateForTesting(
-      progress: const SyncProgress(
-        phase: SyncPhase.applying,
-        processed: 42,
-        total: 120,
-        peerName: '客厅电视',
-      ),
-    );
-    await tester.pump();
-    expect(find.text('局域网同步 (客厅电视) · 正在更新 42/120'), findsOneWidget);
-
-    await tester.runAsync(() => LocaleSettings.setLocale(AppLocale.en));
-    harness.sync.lanService.debugSeedStateForTesting(progress: SyncProgress.idle);
     harness.sync.debugSetSessionForTesting(
       SyncSessionCredentials(
         serverUrl: 'https://sync.example.com',
@@ -281,6 +244,27 @@ void main() {
     await tester.pump(const Duration(milliseconds: 200));
     expect(find.text('Uploading 8/20'), findsOneWidget);
 
+    await tester.tapAt(const Offset(10, 10));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+
+    await tester.runAsync(() => LocaleSettings.setLocale(AppLocale.zh));
+    addTearDown(() => LocaleSettings.setLocaleSync(AppLocale.en));
+    harness.sync.debugSetSessionForTesting(
+      SyncSessionCredentials(
+        serverUrl: 'https://sync.example.com',
+        userId: 'u-1',
+        username: 'alice',
+        accessToken: 'tok-1',
+        masterKey: Uint8List.fromList(List<int>.filled(32, 7)),
+      ),
+      pendingOutboxCount: 20,
+      progress: const SyncProgress(phase: SyncPhase.pushing, processed: 9, total: 20),
+    );
+    await tester.pump();
+    expect(find.text('云端同步 · 正在上传 9/20'), findsOneWidget);
+
+    await tester.runAsync(() => LocaleSettings.setLocale(AppLocale.en));
     harness.sync.debugSetSessionForTesting(null, progress: SyncProgress.idle);
     await tester.pump();
   });

@@ -18,14 +18,16 @@ String? formatSyncProgressDetail(Translations translations, SyncProgress progres
     SyncPhase.idle => null,
     SyncPhase.connecting || SyncPhase.pulling =>
       progress.processed > 0 ? syncStrings.phaseApplyingCount(count: progress.processed) : syncStrings.phaseFetching,
-    SyncPhase.applying => progress.total > 0
-        ? syncStrings.phaseApplyingProgress(done: progress.processed, total: progress.total)
-        : (progress.processed > 0
-            ? syncStrings.phaseApplyingCount(count: progress.processed)
-            : syncStrings.phaseApplying),
-    SyncPhase.pushing => progress.total > 0
-        ? syncStrings.phasePushingProgress(done: progress.processed, total: progress.total)
-        : syncStrings.phasePushing,
+    SyncPhase.applying =>
+      progress.total > 0
+          ? syncStrings.phaseApplyingProgress(done: progress.processed, total: progress.total)
+          : (progress.processed > 0
+                ? syncStrings.phaseApplyingCount(count: progress.processed)
+                : syncStrings.phaseApplying),
+    SyncPhase.pushing =>
+      progress.total > 0
+          ? syncStrings.phasePushingProgress(done: progress.processed, total: progress.total)
+          : syncStrings.phasePushing,
     SyncPhase.probingMounts => syncStrings.phaseProbingMounts,
   };
 }
@@ -45,8 +47,7 @@ class LibraryStatusIndicator extends StatelessWidget {
 
     final theme = Theme.of(context);
     final color = status.failed ? theme.colorScheme.error : theme.colorScheme.onSurface;
-    final canOpenSettings =
-        status.isNoTmdbKey && Provider.of<LibrarySettingsStore?>(context, listen: false) != null;
+    final canOpenSettings = status.isNoTmdbKey && Provider.of<LibrarySettingsStore?>(context, listen: false) != null;
 
     Widget content = Padding(
       padding: const EdgeInsetsDirectional.only(end: 8),
@@ -75,18 +76,14 @@ class LibraryStatusIndicator extends StatelessWidget {
         cursor: SystemMouseCursors.click,
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
-          onTap: () => Navigator.of(context).push(
-            MaterialPageRoute<void>(builder: (_) => const ScraperSettingsScreen()),
-          ),
+          onTap: () =>
+              Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const ScraperSettingsScreen())),
           child: content,
         ),
       );
     }
 
-    return Tooltip(
-      message: status.tooltip,
-      child: content,
-    );
+    return Tooltip(message: status.tooltip, child: content);
   }
 
   static ({String inlineText, String tooltip, bool failed, bool isNoTmdbKey})? _resolveStatus(
@@ -95,12 +92,10 @@ class LibraryStatusIndicator extends StatelessWidget {
   ) {
     final syncProgress = sync?.progress;
     if (sync != null && syncProgress != null && syncProgress.isActive) {
-      final label = sync.isSignedIn
-          ? t.sync.progressCloud
-          : (syncProgress.peerName != null && syncProgress.peerName!.isNotEmpty
-                ? t.sync.progressLanWithPeer(peer: syncProgress.peerName!)
-                : t.sync.progressLan);
-      final detail = formatSyncProgressDetail(t, syncProgress) ?? '';
+      final label = sync.isSignedIn ? t.sync.progressCloud : t.sync.progressLan;
+      final detail = sync.isRestoringMounts
+          ? t.sync.initialSyncRestoring
+          : (formatSyncProgressDetail(t, syncProgress) ?? '');
       return (
         inlineText: detail.isEmpty ? label : '$label · $detail',
         tooltip: detail.isEmpty ? label : '$label\n$detail',
@@ -177,12 +172,7 @@ class LibraryStatusIndicator extends StatelessWidget {
       final detail = scrapeStatus.total > 0
           ? t.storage.scrapingProgress(done: scrapeStatus.done, total: scrapeStatus.total)
           : t.storage.scraping;
-      return (
-        inlineText: detail,
-        tooltip: '${t.storage.scrapeTitle} · $detail',
-        failed: false,
-        isNoTmdbKey: false,
-      );
+      return (inlineText: detail, tooltip: '${t.storage.scrapeTitle} · $detail', failed: false, isNoTmdbKey: false);
     }
 
     final syncError = sync?.lastError;

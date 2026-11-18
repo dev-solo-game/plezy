@@ -34,7 +34,9 @@ import '../test_helpers/prefs.dart';
 import '../test_helpers/theme.dart';
 
 class _SilentLanDiscoveryService extends LanDiscoveryService {
-  final StreamController<List<DiscoveredHost>> _controller = StreamController<List<DiscoveredHost>>.broadcast(sync: true);
+  final StreamController<List<DiscoveredHost>> _controller = StreamController<List<DiscoveredHost>>.broadcast(
+    sync: true,
+  );
   bool _broadcasting = false;
   bool _listening = false;
 
@@ -723,41 +725,44 @@ void main() {
     expect(viewer.remote.connectedDevice?.name, 'Xiaomi 23127PN0CC');
   });
 
-  test('overlapping connectAndPlayMedia and connectToDiscoveredHost deduplicates connect and delivers playMedia', () async {
-    final host = await _DeviceHarness.create(customDeviceName: 'Office PC', selectLanMode: true);
-    final phone = await _DeviceHarness.create(customDeviceName: 'Emulator A', selectLanMode: true);
-    addTearDown(() async {
-      await phone.dispose();
-      await host.dispose();
-    });
+  test(
+    'overlapping connectAndPlayMedia and connectToDiscoveredHost deduplicates connect and delivers playMedia',
+    () async {
+      final host = await _DeviceHarness.create(customDeviceName: 'Office PC', selectLanMode: true);
+      final phone = await _DeviceHarness.create(customDeviceName: 'Emulator A', selectLanMode: true);
+      addTearDown(() async {
+        await phone.dispose();
+        await host.dispose();
+      });
 
-    await pairLanDevices(host, phone);
-    expect(await host.remote.ensureSyncCryptoReady(host.sync), isTrue);
-    expect(await phone.remote.ensureSyncCryptoReady(phone.sync), isTrue);
+      await pairLanDevices(host, phone);
+      expect(await host.remote.ensureSyncCryptoReady(host.sync), isTrue);
+      expect(await phone.remote.ensureSyncCryptoReady(phone.sync), isTrue);
 
-    final receivedTargets = <RemoteMediaTarget>[];
-    host.remote.onPlayMediaRequested = (target) async {
-      receivedTargets.add(target);
-      return true;
-    };
-    await host.remote.startHostServer();
+      final receivedTargets = <RemoteMediaTarget>[];
+      host.remote.onPlayMediaRequested = (target) async {
+        receivedTargets.add(target);
+        return true;
+      };
+      await host.remote.startHostServer();
 
-    await phone.remote.refreshOnlineDeviceStatuses();
-    final hostTarget = phone.remote.onlineTrustedHosts.single;
+      await phone.remote.refreshOnlineDeviceStatuses();
+      final hostTarget = phone.remote.onlineTrustedHosts.single;
 
-    const mediaTarget = RemoteMediaTarget(kind: 'movie', title: 'Spirited Away', workKey: 'tmdb:movie:129');
-    final f1 = phone.remote.connectAndPlayMedia(hostTarget, mediaTarget);
-    final f2 = phone.remote.connectToDiscoveredHost(hostTarget);
-    await Future.wait([f1, f2]);
+      const mediaTarget = RemoteMediaTarget(kind: 'movie', title: 'Spirited Away', workKey: 'tmdb:movie:129');
+      final f1 = phone.remote.connectAndPlayMedia(hostTarget, mediaTarget);
+      final f2 = phone.remote.connectToDiscoveredHost(hostTarget);
+      await Future.wait([f1, f2]);
 
-    final deadline = DateTime.now().add(const Duration(seconds: 5));
-    while (receivedTargets.isEmpty && DateTime.now().isBefore(deadline)) {
-      await Future<void>.delayed(const Duration(milliseconds: 20));
-    }
-    expect(phone.remote.isConnectedToHost(hostTarget), isTrue);
-    expect(receivedTargets, hasLength(1));
-    expect(receivedTargets.single.title, 'Spirited Away');
-  });
+      final deadline = DateTime.now().add(const Duration(seconds: 5));
+      while (receivedTargets.isEmpty && DateTime.now().isBefore(deadline)) {
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+      }
+      expect(phone.remote.isConnectedToHost(hostTarget), isTrue);
+      expect(receivedTargets, hasLength(1));
+      expect(receivedTargets.single.title, 'Spirited Away');
+    },
+  );
 
   test('bidirectional handoff keeps host server running, streams progress/commands, and hands back', () async {
     final deviceA = await _DeviceHarness.create(customDeviceName: 'Emulator A', selectLanMode: true);
@@ -882,5 +887,76 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 20));
     }
     expect(targetsB.map((t) => t.title), ['Movie Two']);
+  });
+
+  test('Cloud Sync sign-in coexists with LAN peer pairing for remote control', () async {
+    final host = await _DeviceHarness.create(
+      customDeviceName: 'SignedIn TV',
+      cloudSession: SyncSessionCredentials(
+        serverUrl: 'http://127.0.0.1:8088',
+        userId: 'tv-user',
+        username: 'alice',
+        accessToken: 'tok-tv',
+        masterKey: Uint8List.fromList(List<int>.generate(32, (i) => i + 10)),
+      ),
+    );
+    final phone = await _DeviceHarness.create(
+      customDeviceName: 'Guest Phone',
+      cloudSession: SyncSessionCredentials(
+        serverUrl: 'http://127.0.0.1:8088',
+        userId: 'other-user',
+        username: 'bob',
+        accessToken: 'tok-phone',
+        masterKey: Uint8List.fromList(List<int>.generate(32, (i) => i + 50)),
+      ),
+    );
+    addTearDown(host.dispose);
+    addTearDown(phone.dispose);
+
+    await host.sync.lanService.start(bindHttpPort: 0);
+    await phone.sync.lanService.start(bindHttpPort: 0);
+
+    await host.remote.ensureSyncCryptoReady(host.sync);
+    await host.remote.startHostServer();
+    await phone.remote.ensureSyncCryptoReady(phone.sync);
+
+    expect(host.sync.isSignedIn, isTrue);
+    expect(host.sync.lanService.isRunning, isTrue);
+    expect(phone.sync.isSignedIn, isTrue);
+    expect(phone.sync.lanService.isRunning, isTrue);
+
+    phone.sync.lanService.registerDiscoveredPeer(
+      LanDiscoveredPeer(
+        deviceId: host.sync.lanService.deviceId!,
+        deviceName: 'SignedIn TV',
+        platform: 'android',
+        host: '127.0.0.1',
+        httpPort: host.sync.lanService.listeningPort!,
+        pubKeyBase64: host.sync.lanService.publicKeyBase64!,
+        revision: 0,
+        lastSeen: DateTime.now(),
+        remotePort: host.sync.lanService.advertisedRemotePort,
+      ),
+    );
+
+    expect(phone.remote.untrustedLanRemotePeers.map((p) => p.deviceId), [host.sync.lanService.deviceId]);
+
+    final connectFuture = phone.remote.trustAndConnectLanPeer(phone.remote.untrustedLanRemotePeers.single);
+    for (var i = 0; i < 60 && host.sync.lanService.incomingPairRequests.isEmpty; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+    }
+    final pairReq = host.sync.lanService.incomingPairRequests.single;
+    await host.sync.lanService.acceptPairRequest(pairReq);
+    await connectFuture;
+
+    expect(phone.remote.isConnected, isTrue);
+    final received = <RemoteCommand>[];
+    host.remote.onCommandReceived = received.add;
+    phone.remote.sendCommand(RemoteCommandType.playPause);
+    final cmdDeadline = DateTime.now().add(const Duration(seconds: 5));
+    while (received.isEmpty && DateTime.now().isBefore(cmdDeadline)) {
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+    }
+    expect(received.map((c) => c.type), contains(RemoteCommandType.playPause));
   });
 }

@@ -1025,7 +1025,7 @@ Future<StartupSessionBootstrap> resolveStartupSessionBootstrap({
       (initialMounts.isNotEmpty || initialConnections.isNotEmpty || hasSyncSession)) {
     await syncStore.setOnboardingCompleted(true);
     if (!hasSyncSession) {
-      await syncStore.setSyncMode(SyncMode.lanP2p);
+      await syncStore.setSyncMode(SyncMode.localOnly);
     }
     onboardingDone = true;
   }
@@ -1568,6 +1568,7 @@ class _MainAppState extends State<MainApp> with WidgetsBindingObserver {
   late final LibraryScrapeRunner _libraryScrapeRunner;
   late final LocalLibraryClient _localLibraryClient;
   late final LibraryScanService _libraryScanService;
+  SyncAndScanCoordinator? _syncCoordinator;
   late final DownloadManagerService _downloadManager;
   late final OfflineWatchSyncService _offlineWatchSyncService;
   late final ConnectionRegistry _connections;
@@ -1623,11 +1624,7 @@ class _MainAppState extends State<MainApp> with WidgetsBindingObserver {
     // before the database closes.
     _plexHomeService =
         bootstrap?.plexHomeService ??
-        PlexHomeService(
-          connections: _connections,
-          profileConnections: _profileConnections,
-          storage: widget.storage,
-        );
+        PlexHomeService(connections: _connections, profileConnections: _profileConnections, storage: widget.storage);
     if (bootstrap?.plexHomeService == null) {
       unawaited(_plexHomeService.hydrate());
     }
@@ -1645,7 +1642,11 @@ class _MainAppState extends State<MainApp> with WidgetsBindingObserver {
       settings: _librarySettingsStore,
       mounts: _mountManager,
     );
-    _localLibraryClient = LocalLibraryClient(repository: _libraryRepository, mounts: _mountManager);
+    _localLibraryClient = LocalLibraryClient(
+      repository: _libraryRepository,
+      mounts: _mountManager,
+      scrapeRunner: _libraryScrapeRunner,
+    );
     _libraryScanService = LibraryScanService(
       repository: _libraryRepository,
       scanner: LibraryScanner(_appDatabase, _libraryRepository),
@@ -1983,6 +1984,7 @@ class _MainAppState extends State<MainApp> with WidgetsBindingObserver {
         // App came back to foreground - trigger sync check
         _offlineWatchSyncService.onAppResumed();
         unawaited(TrackerCoordinator.instance.flushWriteQueue());
+        unawaited(_syncCoordinator?.onAppResumed() ?? Future<void>.value());
         // Re-arm the per-server library push channels torn down on pause
         // (and any that exhausted their reconnect attempts).
         _libraryEventService.resume();
@@ -2064,9 +2066,11 @@ class _MainAppState extends State<MainApp> with WidgetsBindingObserver {
               isTvDevice: TvDetectionService.isTVSync(),
               enableLanUdp: widget.enableBackgroundSyncServices,
               autoStartLanService: widget.enableBackgroundSyncServices,
+              onMountsChanged: _localLibraryClient.refreshMounts,
             );
-            _libraryScanService.onScopedCatalogChanged =
-                (mountIds, {directoryPrefixes, allowTombstones = true}) => unawaited(
+            _syncCoordinator = coordinator;
+            _libraryScanService.onScopedCatalogChanged = (mountIds, {directoryPrefixes, allowTombstones = true}) =>
+                unawaited(
                   coordinator.onCatalogChanged(
                     mountIds: mountIds,
                     directoryPrefixes: directoryPrefixes,
@@ -2323,9 +2327,7 @@ class _AppShell extends StatelessWidget {
         databaseRecoveryRequired: true,
       ),
       StartupSessionMode.onboardingRequired => const AuthScreen(),
-      StartupSessionMode.readyForHome => ProfileSessionScreen(
-        initialPromptHandled: !bootstrap.requiresProfilePrompt,
-      ),
+      StartupSessionMode.readyForHome => ProfileSessionScreen(initialPromptHandled: !bootstrap.requiresProfilePrompt),
     };
   }
 
@@ -2714,7 +2716,7 @@ class _SetupScreenState extends State<SetupScreen> with MountedSetStateMixin {
       if (!hasExplicitOnboarding && (hasInitialMounts || allConnections.isNotEmpty || syncCoordinator.isSignedIn)) {
         await syncCoordinator.syncStore.setOnboardingCompleted(true);
         if (!syncCoordinator.isSignedIn) {
-          await syncCoordinator.selectLanMode();
+          await syncCoordinator.selectLocalMode();
         }
       } else {
         unawaited(Navigator.pushReplacement(context, fadeRoute(const AuthScreen())));

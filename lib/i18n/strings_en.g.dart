@@ -6904,53 +6904,77 @@ class Translations$sync$en {
 	/// en: 'Sync & Connection'
 	String get title => 'Sync & Connection';
 
-	/// en: 'E2EE multi-device library & progress sync'
-	String get subtitle => 'E2EE multi-device library & progress sync';
+	/// en: 'E2EE multi-device library, list & progress sync'
+	String get subtitle => 'E2EE multi-device library, list & progress sync';
 
-	/// en: 'Local & LAN P2P Mode'
-	String get modeLanTitle => 'Local & LAN P2P Mode';
+	/// en: 'Local Mode (No Sync)'
+	String get modeLanTitle => 'Local Mode (No Sync)';
 
-	/// en: 'Offline-ready without a server; auto-discovers trusted devices on the same Wi-Fi.'
-	String get modeLanDesc => 'Offline-ready without a server; auto-discovers trusted devices on the same Wi-Fi.';
+	/// en: 'Offline-ready without a sync server. Library & watch history stay on this device only.'
+	String get modeLanDesc => 'Offline-ready without a sync server. Library & watch history stay on this device only.';
+
+	/// en: 'Official Sync'
+	String get modeOfficialTitle => 'Official Sync';
+
+	/// en: 'Zero-config E2EE sync via the official server with multi-device sync and QR login.'
+	String get modeOfficialDesc => 'Zero-config E2EE sync via the official server with multi-device sync and QR login.';
+
+	/// en: 'Self-Hosted Sync'
+	String get modeSelfHostedTitle => 'Self-Hosted Sync';
+
+	/// en: 'Connect to your own Go Sync Server with full data ownership, Web console & LAN QR handoff.'
+	String get modeSelfHostedDesc => 'Connect to your own Go Sync Server with full data ownership, Web console & LAN QR handoff.';
+
+	/// en: 'Official'
+	String get officialBadge => 'Official';
+
+	/// en: 'Self-Hosted'
+	String get selfHostedBadge => 'Self-Hosted';
 
 	/// en: 'Sign In to Sync Server'
 	String get modeCloudTitle => 'Sign In to Sync Server';
 
-	/// en: 'Connect to your Go Sync Server for remote 5G sync & TV QR login (disables LAN discovery).'
-	String get modeCloudDesc => 'Connect to your Go Sync Server for remote 5G sync & TV QR login (disables LAN discovery).';
+	/// en: 'Connect to your Sync Server for multi-device library, list & progress sync and TV QR login (default: http://127.0.0.1:8088).'
+	String get modeCloudDesc => 'Connect to your Sync Server for multi-device library, list & progress sync and TV QR login (default: http://127.0.0.1:8088).';
 
-	/// en: 'Current mode: Local & LAN P2P Sync'
-	String get activeModeLan => 'Current mode: Local & LAN P2P Sync';
+	/// en: 'Current mode: Local Mode (No Sync)'
+	String get activeModeLan => 'Current mode: Local Mode (No Sync)';
 
-	/// en: 'Current mode: Sync Server (LAN P2P disabled)'
-	String get activeModeCloud => 'Current mode: Sync Server (LAN P2P disabled)';
+	/// en: 'Current mode: Sync Server'
+	String get activeModeCloud => 'Current mode: Sync Server';
 
-	/// en: 'Switch to Sync Server (Go Server)'
-	String get switchToCloudTitle => 'Switch to Sync Server (Go Server)';
+	/// en: 'Current mode: Official Sync'
+	String get activeModeOfficial => 'Current mode: Official Sync';
 
-	/// en: 'Sign Out & Switch to Local/LAN'
-	String get switchToLan => 'Sign Out & Switch to Local/LAN';
+	/// en: 'Current mode: Self-Hosted Sync'
+	String get activeModeSelfHosted => 'Current mode: Self-Hosted Sync';
 
-	/// en: 'Searching for devices on the same Wi-Fi…'
-	String get lanDiscoveryEmpty => 'Searching for devices on the same Wi-Fi…';
+	/// en: 'Sign In to Sync Server'
+	String get switchToCloudTitle => 'Sign In to Sync Server';
 
-	/// en: 'Nearby LAN Devices'
-	String get lanNearbyTitle => 'Nearby LAN Devices';
+	/// en: 'Sign Out to Local'
+	String get switchToLan => 'Sign Out to Local';
 
-	/// en: 'Trusted LAN Devices'
-	String get lanTrustedTitle => 'Trusted LAN Devices';
+	/// en: 'Searching for remote-capable devices on the same Wi-Fi…'
+	String get lanDiscoveryEmpty => 'Searching for remote-capable devices on the same Wi-Fi…';
+
+	/// en: 'Nearby Devices'
+	String get lanNearbyTitle => 'Nearby Devices';
+
+	/// en: 'Paired Remote Devices'
+	String get lanTrustedTitle => 'Paired Remote Devices';
 
 	/// en: 'Pairing Requests'
 	String get lanRequestsTitle => 'Pairing Requests';
 
-	/// en: 'Trust & Sync'
-	String get lanPairButton => 'Trust & Sync';
+	/// en: 'Pair Remote'
+	String get lanPairButton => 'Pair Remote';
 
 	/// en: 'Pairing request sent. Confirm on the other device.'
 	String get lanPairRequested => 'Pairing request sent. Confirm on the other device.';
 
-	/// en: 'Allow Trust'
-	String get lanAcceptButton => 'Allow Trust';
+	/// en: 'Allow Pairing'
+	String get lanAcceptButton => 'Allow Pairing';
 
 	/// en: 'Reject'
 	String get lanRejectButton => 'Reject';
@@ -6958,20 +6982,47 @@ class Translations$sync$en {
 	/// en: 'Remove'
 	String get lanRemoveTrust => 'Remove';
 
-	/// en: 'Sync LAN Now'
-	String get lanSyncNow => 'Sync LAN Now';
+	/// en: 'Refresh'
+	String get lanSyncNow => 'Refresh';
 
 	/// en: 'Pairing code: ${code}'
 	String lanPairingCode({required Object code}) => 'Pairing code: ${code}';
 
-	/// en: 'LAN P2P (${count} trusted device(s))'
-	String lanSettingsSubtitle({required Object count}) => 'LAN P2P (${count} trusted device(s))';
+	/// en: 'Local mode (${count} paired remote(s))'
+	String lanSettingsSubtitle({required Object count}) => 'Local mode (${count} paired remote(s))';
 
 	/// en: 'Sync Server: ${name}'
 	String cloudSettingsSubtitle({required Object name}) => 'Sync Server: ${name}';
 
+	/// en: 'Official Sync: ${name}'
+	String officialSettingsSubtitle({required Object name}) => 'Official Sync: ${name}';
+
+	/// en: 'Self-Hosted Sync: ${name}'
+	String selfHostedSettingsSubtitle({required Object name}) => 'Self-Hosted Sync: ${name}';
+
 	/// en: 'Sync Server URL'
 	String get serverUrl => 'Sync Server URL';
+
+	/// en: 'e.g. http://192.168.1.10:8088 or https://sync.example.com'
+	String get selfHostedServerUrlHint => 'e.g. http://192.168.1.10:8088 or https://sync.example.com';
+
+	/// en: 'Test Connection'
+	String get testConnection => 'Test Connection';
+
+	/// en: 'Testing…'
+	String get testingConnection => 'Testing…';
+
+	/// en: 'Connected (registration open)'
+	String get connectionOkOpenReg => 'Connected (registration open)';
+
+	/// en: 'Connected (registration closed; existing accounts only)'
+	String get connectionOkClosedReg => 'Connected (registration closed; existing accounts only)';
+
+	/// en: 'Connection failed: ${error}'
+	String connectionFailed({required Object error}) => 'Connection failed: ${error}';
+
+	/// en: 'Public cleartext HTTP detected. While secrets are E2EE, an HTTPS reverse proxy is strongly recommended.'
+	String get cleartextHttpWarning => 'Public cleartext HTTP detected. While secrets are E2EE, an HTTPS reverse proxy is strongly recommended.';
 
 	/// en: 'Username'
 	String get username => 'Username';
@@ -6991,8 +7042,23 @@ class Translations$sync$en {
 	/// en: 'Show QR Code'
 	String get qrGenerate => 'Show QR Code';
 
+	/// en: 'Refresh QR'
+	String get qrRefreshButton => 'Refresh QR';
+
 	/// en: 'Scan or paste the code on an already signed-in phone or PC to hand over your encryption key securely.'
 	String get qrHint => 'Scan or paste the code on an already signed-in phone or PC to hand over your encryption key securely.';
+
+	/// en: 'Zero-typing LAN QR: Scan with an already signed-in Phone app (Settings -> Scan QR for PC / TV) to receive your server URL & E2EE key automatically.'
+	String get qrModeLanHint => 'Zero-typing LAN QR: Scan with an already signed-in Phone app (Settings -> Scan QR for PC / TV) to receive your server URL & E2EE key automatically.';
+
+	/// en: 'Cross-network QR: Scan with a Phone or PC signed in to the same sync server.'
+	String get qrModeServerHint => 'Cross-network QR: Scan with a Phone or PC signed in to the same sync server.';
+
+	/// en: 'LAN Zero-Config QR'
+	String get qrUseLanZeroInput => 'LAN Zero-Config QR';
+
+	/// en: 'Server QR'
+	String get qrUseServerRelay => 'Server QR';
 
 	/// en: 'Authorize TV Device'
 	String get qrAuthorizeTitle => 'Authorize TV Device';
@@ -7005,6 +7071,63 @@ class Translations$sync$en {
 
 	/// en: 'TV authorization sent.'
 	String get qrAuthorized => 'TV authorization sent.';
+
+	/// en: 'Scan QR for PC / TV'
+	String get scanQrTileTitle => 'Scan QR for PC / TV';
+
+	/// en: 'Scan QR code on PC or TV to authorize sign-in'
+	String get scanQrTileSignedInSubtitle => 'Scan QR code on PC or TV to authorize sign-in';
+
+	/// en: 'Sign in to Official or Self-Hosted Sync first'
+	String get scanQrTileSignedOutSubtitle => 'Sign in to Official or Self-Hosted Sync first';
+
+	/// en: 'Sign In Required'
+	String get scanQrRequireLoginTitle => 'Sign In Required';
+
+	/// en: 'Sign in to Official Sync or Self-Hosted Sync on your phone before scanning to authorize PC or TV.'
+	String get scanQrRequireLoginBody => 'Sign in to Official Sync or Self-Hosted Sync on your phone before scanning to authorize PC or TV.';
+
+	/// en: 'Go to Sign In'
+	String get goToSyncLogin => 'Go to Sign In';
+
+	/// en: 'Scan QR Login'
+	String get qrScannerTitle => 'Scan QR Login';
+
+	/// en: 'Authorizing with ${mode} · ${name}'
+	String qrScannerAccountBanner({required Object mode, required Object name}) => 'Authorizing with ${mode} · ${name}';
+
+	/// en: 'Point the camera at the QR code shown on your PC or TV to hand over your encryption key.'
+	String get qrScannerInstruction => 'Point the camera at the QR code shown on your PC or TV to hand over your encryption key.';
+
+	/// en: 'Paste Link Manually'
+	String get qrPasteManualButton => 'Paste Link Manually';
+
+	/// en: 'Scan Again'
+	String get qrRescanButton => 'Scan Again';
+
+	/// en: 'Authorization sent! The other device will sign in shortly.'
+	String get qrScanSuccess => 'Authorization sent! The other device will sign in shortly.';
+
+	/// en: 'Camera permission is required to scan QR codes.'
+	String get cameraPermissionRequired => 'Camera permission is required to scan QR codes.';
+
+	/// en: 'Camera error: ${error}'
+	String cameraError({required Object error}) => 'Camera error: ${error}';
+
+	/// en: 'Not signed in to a Sync account.'
+	String get qrErrNotSignedIn => 'Not signed in to a Sync account.';
+
+	/// en: 'Invalid QR code. Scan a TTPlay Sync sign-in QR code.'
+	String get qrErrInvalidUri => 'Invalid QR code. Scan a TTPlay Sync sign-in QR code.';
+
+	/// en: 'QR code belongs to ${target}, which does not match your current server (${current}).'
+	String qrErrServerMismatch({required Object target, required Object current}) => 'QR code belongs to ${target}, which does not match your current server (${current}).';
+
+	/// en: 'QR code expired. Refresh it on PC/TV and scan again.'
+	String get qrErrExpired => 'QR code expired. Refresh it on PC/TV and scan again.';
+
+	/// en: 'Cannot reach PC/TV over LAN. Ensure both devices are on the same network.'
+	String get qrErrLanUnreachable => 'Cannot reach PC/TV over LAN. Ensure both devices are on the same network.';
 
 	/// en: 'Sync Now'
 	String get syncNow => 'Sync Now';
@@ -7027,8 +7150,8 @@ class Translations$sync$en {
 	/// en: 'Not synced yet'
 	String get neverSynced => 'Not synced yet';
 
-	/// en: 'Local & LAN Mode'
-	String get menuModeLanTitle => 'Local & LAN Mode';
+	/// en: 'Local Mode'
+	String get menuModeLanTitle => 'Local Mode';
 
 	/// en: 'This device: ${device}'
 	String menuModeLanSubtitle({required Object device}) => 'This device: ${device}';
@@ -7039,8 +7162,8 @@ class Translations$sync$en {
 	/// en: 'Account: ${name}'
 	String menuModeCloudSubtitle({required Object name}) => 'Account: ${name}';
 
-	/// en: 'LAN Devices'
-	String get lanDevicesTitle => 'LAN Devices';
+	/// en: 'Remote Control Devices'
+	String get lanDevicesTitle => 'Remote Control Devices';
 
 	/// en: '${count} found'
 	String lanDiscoveredCount({required Object count}) => '${count} found';
@@ -7048,11 +7171,11 @@ class Translations$sync$en {
 	/// en: '${count} pairing request(s)'
 	String lanPairRequestBadge({required Object count}) => '${count} pairing request(s)';
 
-	/// en: 'Broadcasting and discovering devices on LAN'
-	String get lanDiscoveryRunning => 'Broadcasting and discovering devices on LAN';
+	/// en: 'Discovering LAN remote devices (remote control only; library sync uses Sync Server)'
+	String get lanDiscoveryRunning => 'Discovering LAN remote devices (remote control only; library sync uses Sync Server)';
 
-	/// en: 'LAN discovery stopped'
-	String get lanDiscoveryStopped => 'LAN discovery stopped';
+	/// en: 'LAN remote discovery stopped'
+	String get lanDiscoveryStopped => 'LAN remote discovery stopped';
 
 	/// en: 'Online'
 	String get lanPeerOnline => 'Online';
@@ -7063,11 +7186,11 @@ class Translations$sync$en {
 	/// en: 'Sync & Devices'
 	String get userMenuTooltip => 'Sync & Devices';
 
-	/// en: 'LAN Sync'
-	String get progressLan => 'LAN Sync';
+	/// en: 'Local'
+	String get progressLan => 'Local';
 
-	/// en: 'LAN Sync (${peer})'
-	String progressLanWithPeer({required Object peer}) => 'LAN Sync (${peer})';
+	/// en: 'Local (${peer})'
+	String progressLanWithPeer({required Object peer}) => 'Local (${peer})';
 
 	/// en: 'Cloud Sync'
 	String get progressCloud => 'Cloud Sync';
@@ -7093,26 +7216,53 @@ class Translations$sync$en {
 	/// en: 'Checking sources…'
 	String get phaseProbingMounts => 'Checking sources…';
 
-	/// en: 'Nearby TTPlay Device Found'
-	String get lanPopupDiscoverTitle => 'Nearby TTPlay Device Found';
+	/// en: 'Nearby Remote Control Device'
+	String get lanPopupDiscoverTitle => 'Nearby Remote Control Device';
 
-	/// en: 'Trust "${device}" (${platform}) to sync your media library and watch progress automatically over Wi-Fi?'
-	String lanPopupDiscoverBody({required Object device, required Object platform}) => 'Trust "${device}" (${platform}) to sync your media library and watch progress automatically over Wi-Fi?';
+	/// en: 'Pair with "${device}" (${platform}) for LAN remote control?'
+	String lanPopupDiscoverBody({required Object device, required Object platform}) => 'Pair with "${device}" (${platform}) for LAN remote control?';
 
-	/// en: 'Device Trust Request'
-	String get lanPopupRequestTitle => 'Device Trust Request';
+	/// en: 'Remote Pairing Request'
+	String get lanPopupRequestTitle => 'Remote Pairing Request';
 
-	/// en: '"${device}" (${platform}) wants to trust and sync with this device.'
-	String lanPopupRequestBody({required Object device, required Object platform}) => '"${device}" (${platform}) wants to trust and sync with this device.';
+	/// en: '"${device}" (${platform}) wants to pair for LAN remote control.'
+	String lanPopupRequestBody({required Object device, required Object platform}) => '"${device}" (${platform}) wants to pair for LAN remote control.';
 
-	/// en: 'Waiting for "${device}" to confirm trust…'
-	String lanPopupWaitingBody({required Object device}) => 'Waiting for "${device}" to confirm trust…';
+	/// en: 'Waiting for "${device}" to confirm pairing…'
+	String lanPopupWaitingBody({required Object device}) => 'Waiting for "${device}" to confirm pairing…';
 
 	/// en: 'Cancel (${seconds}s)'
 	String lanPopupCancelCountdown({required Object seconds}) => 'Cancel (${seconds}s)';
 
-	/// en: 'You can still trust this device anytime in LAN Devices.'
-	String get lanPopupLaterHint => 'You can still trust this device anytime in LAN Devices.';
+	/// en: 'You can pair anytime in Remote Control Devices.'
+	String get lanPopupLaterHint => 'You can pair anytime in Remote Control Devices.';
+
+	/// en: 'Local Library Detected'
+	String get mergePromptTitle => 'Local Library Detected';
+
+	/// en: 'You have local media sources, collections, or watch history on this device. Merge them into this account, or start from account data only (your local data stays archived)?'
+	String get mergePromptBody => 'You have local media sources, collections, or watch history on this device. Merge them into this account, or start from account data only (your local data stays archived)?';
+
+	/// en: 'Merge Local Library'
+	String get mergeLocalOption => 'Merge Local Library';
+
+	/// en: 'Account Only (Archive Local)'
+	String get accountOnlyOption => 'Account Only (Archive Local)';
+
+	/// en: 'Restoring media sources & library from server…'
+	String get initialSyncRestoring => 'Restoring media sources & library from server…';
+
+	/// en: 'Unsynced Offline Changes'
+	String get signOutPendingTitle => 'Unsynced Offline Changes';
+
+	/// en: 'You still have ${count} pending change(s). They will remain archived for this account and upload on your next sign-in. Sign out now?'
+	String signOutPendingBody({required Object count}) => 'You still have ${count} pending change(s). They will remain archived for this account and upload on your next sign-in. Sign out now?';
+
+	/// en: 'LAN remote pairing works independently whether or not you are signed in to a Sync Server.'
+	String get remoteControlHint => 'LAN remote pairing works independently whether or not you are signed in to a Sync Server.';
+
+	/// en: 'LAN remote pairing & receiver settings (no P2P library sync)'
+	String get remoteDevicesSubtitle => 'LAN remote pairing & receiver settings (no P2P library sync)';
 }
 
 // Path: appIcon.names
@@ -11728,40 +11878,81 @@ extension on Translations {
 			'workSkip.cancelVisit' => 'Cancel this skip',
 			'workSkip.legend' => 'Blue: intro · Amber: credits',
 			'sync.title' => 'Sync & Connection',
-			'sync.subtitle' => 'E2EE multi-device library & progress sync',
-			'sync.modeLanTitle' => 'Local & LAN P2P Mode',
-			'sync.modeLanDesc' => 'Offline-ready without a server; auto-discovers trusted devices on the same Wi-Fi.',
+			'sync.subtitle' => 'E2EE multi-device library, list & progress sync',
+			'sync.modeLanTitle' => 'Local Mode (No Sync)',
+			'sync.modeLanDesc' => 'Offline-ready without a sync server. Library & watch history stay on this device only.',
+			'sync.modeOfficialTitle' => 'Official Sync',
+			'sync.modeOfficialDesc' => 'Zero-config E2EE sync via the official server with multi-device sync and QR login.',
+			'sync.modeSelfHostedTitle' => 'Self-Hosted Sync',
+			'sync.modeSelfHostedDesc' => 'Connect to your own Go Sync Server with full data ownership, Web console & LAN QR handoff.',
+			'sync.officialBadge' => 'Official',
+			'sync.selfHostedBadge' => 'Self-Hosted',
 			'sync.modeCloudTitle' => 'Sign In to Sync Server',
-			'sync.modeCloudDesc' => 'Connect to your Go Sync Server for remote 5G sync & TV QR login (disables LAN discovery).',
-			'sync.activeModeLan' => 'Current mode: Local & LAN P2P Sync',
-			'sync.activeModeCloud' => 'Current mode: Sync Server (LAN P2P disabled)',
-			'sync.switchToCloudTitle' => 'Switch to Sync Server (Go Server)',
-			'sync.switchToLan' => 'Sign Out & Switch to Local/LAN',
-			'sync.lanDiscoveryEmpty' => 'Searching for devices on the same Wi-Fi…',
-			'sync.lanNearbyTitle' => 'Nearby LAN Devices',
-			'sync.lanTrustedTitle' => 'Trusted LAN Devices',
+			'sync.modeCloudDesc' => 'Connect to your Sync Server for multi-device library, list & progress sync and TV QR login (default: http://127.0.0.1:8088).',
+			'sync.activeModeLan' => 'Current mode: Local Mode (No Sync)',
+			'sync.activeModeCloud' => 'Current mode: Sync Server',
+			'sync.activeModeOfficial' => 'Current mode: Official Sync',
+			'sync.activeModeSelfHosted' => 'Current mode: Self-Hosted Sync',
+			'sync.switchToCloudTitle' => 'Sign In to Sync Server',
+			'sync.switchToLan' => 'Sign Out to Local',
+			'sync.lanDiscoveryEmpty' => 'Searching for remote-capable devices on the same Wi-Fi…',
+			'sync.lanNearbyTitle' => 'Nearby Devices',
+			'sync.lanTrustedTitle' => 'Paired Remote Devices',
 			'sync.lanRequestsTitle' => 'Pairing Requests',
-			'sync.lanPairButton' => 'Trust & Sync',
+			'sync.lanPairButton' => 'Pair Remote',
 			'sync.lanPairRequested' => 'Pairing request sent. Confirm on the other device.',
-			'sync.lanAcceptButton' => 'Allow Trust',
+			'sync.lanAcceptButton' => 'Allow Pairing',
 			'sync.lanRejectButton' => 'Reject',
 			'sync.lanRemoveTrust' => 'Remove',
-			'sync.lanSyncNow' => 'Sync LAN Now',
+			'sync.lanSyncNow' => 'Refresh',
 			'sync.lanPairingCode' => ({required Object code}) => 'Pairing code: ${code}',
-			'sync.lanSettingsSubtitle' => ({required Object count}) => 'LAN P2P (${count} trusted device(s))',
+			'sync.lanSettingsSubtitle' => ({required Object count}) => 'Local mode (${count} paired remote(s))',
 			'sync.cloudSettingsSubtitle' => ({required Object name}) => 'Sync Server: ${name}',
+			'sync.officialSettingsSubtitle' => ({required Object name}) => 'Official Sync: ${name}',
+			'sync.selfHostedSettingsSubtitle' => ({required Object name}) => 'Self-Hosted Sync: ${name}',
 			'sync.serverUrl' => 'Sync Server URL',
+			'sync.selfHostedServerUrlHint' => 'e.g. http://192.168.1.10:8088 or https://sync.example.com',
+			'sync.testConnection' => 'Test Connection',
+			'sync.testingConnection' => 'Testing…',
+			'sync.connectionOkOpenReg' => 'Connected (registration open)',
+			'sync.connectionOkClosedReg' => 'Connected (registration closed; existing accounts only)',
+			'sync.connectionFailed' => ({required Object error}) => 'Connection failed: ${error}',
+			'sync.cleartextHttpWarning' => 'Public cleartext HTTP detected. While secrets are E2EE, an HTTPS reverse proxy is strongly recommended.',
 			'sync.username' => 'Username',
 			'sync.password' => 'Password',
 			'sync.register' => 'Create Account',
 			'sync.login' => 'Sign In',
 			'sync.qrLoginTitle' => 'TV / Big-Screen Quick Login',
 			'sync.qrGenerate' => 'Show QR Code',
+			'sync.qrRefreshButton' => 'Refresh QR',
 			'sync.qrHint' => 'Scan or paste the code on an already signed-in phone or PC to hand over your encryption key securely.',
+			'sync.qrModeLanHint' => 'Zero-typing LAN QR: Scan with an already signed-in Phone app (Settings -> Scan QR for PC / TV) to receive your server URL & E2EE key automatically.',
+			'sync.qrModeServerHint' => 'Cross-network QR: Scan with a Phone or PC signed in to the same sync server.',
+			'sync.qrUseLanZeroInput' => 'LAN Zero-Config QR',
+			'sync.qrUseServerRelay' => 'Server QR',
 			'sync.qrAuthorizeTitle' => 'Authorize TV Device',
 			'sync.qrAuthorizeHint' => 'Paste the pairing URI from your TV screen.',
 			'sync.qrAuthorizeButton' => 'Confirm Authorization',
 			'sync.qrAuthorized' => 'TV authorization sent.',
+			'sync.scanQrTileTitle' => 'Scan QR for PC / TV',
+			'sync.scanQrTileSignedInSubtitle' => 'Scan QR code on PC or TV to authorize sign-in',
+			'sync.scanQrTileSignedOutSubtitle' => 'Sign in to Official or Self-Hosted Sync first',
+			'sync.scanQrRequireLoginTitle' => 'Sign In Required',
+			'sync.scanQrRequireLoginBody' => 'Sign in to Official Sync or Self-Hosted Sync on your phone before scanning to authorize PC or TV.',
+			'sync.goToSyncLogin' => 'Go to Sign In',
+			'sync.qrScannerTitle' => 'Scan QR Login',
+			'sync.qrScannerAccountBanner' => ({required Object mode, required Object name}) => 'Authorizing with ${mode} · ${name}',
+			'sync.qrScannerInstruction' => 'Point the camera at the QR code shown on your PC or TV to hand over your encryption key.',
+			'sync.qrPasteManualButton' => 'Paste Link Manually',
+			'sync.qrRescanButton' => 'Scan Again',
+			'sync.qrScanSuccess' => 'Authorization sent! The other device will sign in shortly.',
+			'sync.cameraPermissionRequired' => 'Camera permission is required to scan QR codes.',
+			'sync.cameraError' => ({required Object error}) => 'Camera error: ${error}',
+			'sync.qrErrNotSignedIn' => 'Not signed in to a Sync account.',
+			'sync.qrErrInvalidUri' => 'Invalid QR code. Scan a TTPlay Sync sign-in QR code.',
+			'sync.qrErrServerMismatch' => ({required Object target, required Object current}) => 'QR code belongs to ${target}, which does not match your current server (${current}).',
+			'sync.qrErrExpired' => 'QR code expired. Refresh it on PC/TV and scan again.',
+			'sync.qrErrLanUnreachable' => 'Cannot reach PC/TV over LAN. Ensure both devices are on the same network.',
 			'sync.syncNow' => 'Sync Now',
 			'sync.syncing' => 'Syncing…',
 			'sync.signOut' => 'Sign Out',
@@ -11769,20 +11960,20 @@ extension on Translations {
 			'sync.pendingChanges' => ({required Object count}) => '${count} pending offline change(s)',
 			'sync.lastSynced' => ({required Object time}) => 'Last synced: ${time}',
 			'sync.neverSynced' => 'Not synced yet',
-			'sync.menuModeLanTitle' => 'Local & LAN Mode',
+			'sync.menuModeLanTitle' => 'Local Mode',
 			'sync.menuModeLanSubtitle' => ({required Object device}) => 'This device: ${device}',
 			'sync.menuModeCloudTitle' => 'Cloud Sync Mode',
 			'sync.menuModeCloudSubtitle' => ({required Object name}) => 'Account: ${name}',
-			'sync.lanDevicesTitle' => 'LAN Devices',
+			'sync.lanDevicesTitle' => 'Remote Control Devices',
 			'sync.lanDiscoveredCount' => ({required Object count}) => '${count} found',
 			'sync.lanPairRequestBadge' => ({required Object count}) => '${count} pairing request(s)',
-			'sync.lanDiscoveryRunning' => 'Broadcasting and discovering devices on LAN',
-			'sync.lanDiscoveryStopped' => 'LAN discovery stopped',
+			'sync.lanDiscoveryRunning' => 'Discovering LAN remote devices (remote control only; library sync uses Sync Server)',
+			'sync.lanDiscoveryStopped' => 'LAN remote discovery stopped',
 			'sync.lanPeerOnline' => 'Online',
 			'sync.switchSyncMode' => 'Switch Sync Mode',
 			'sync.userMenuTooltip' => 'Sync & Devices',
-			'sync.progressLan' => 'LAN Sync',
-			'sync.progressLanWithPeer' => ({required Object peer}) => 'LAN Sync (${peer})',
+			'sync.progressLan' => 'Local',
+			'sync.progressLanWithPeer' => ({required Object peer}) => 'Local (${peer})',
 			'sync.progressCloud' => 'Cloud Sync',
 			'sync.phaseFetching' => 'Fetching updates…',
 			'sync.phaseApplying' => 'Updating library…',
@@ -11791,13 +11982,22 @@ extension on Translations {
 			'sync.phasePushing' => 'Uploading changes…',
 			'sync.phasePushingProgress' => ({required Object done, required Object total}) => 'Uploading ${done}/${total}',
 			'sync.phaseProbingMounts' => 'Checking sources…',
-			'sync.lanPopupDiscoverTitle' => 'Nearby TTPlay Device Found',
-			'sync.lanPopupDiscoverBody' => ({required Object device, required Object platform}) => 'Trust "${device}" (${platform}) to sync your media library and watch progress automatically over Wi-Fi?',
-			'sync.lanPopupRequestTitle' => 'Device Trust Request',
-			'sync.lanPopupRequestBody' => ({required Object device, required Object platform}) => '"${device}" (${platform}) wants to trust and sync with this device.',
-			'sync.lanPopupWaitingBody' => ({required Object device}) => 'Waiting for "${device}" to confirm trust…',
+			'sync.lanPopupDiscoverTitle' => 'Nearby Remote Control Device',
+			'sync.lanPopupDiscoverBody' => ({required Object device, required Object platform}) => 'Pair with "${device}" (${platform}) for LAN remote control?',
+			'sync.lanPopupRequestTitle' => 'Remote Pairing Request',
+			'sync.lanPopupRequestBody' => ({required Object device, required Object platform}) => '"${device}" (${platform}) wants to pair for LAN remote control.',
+			'sync.lanPopupWaitingBody' => ({required Object device}) => 'Waiting for "${device}" to confirm pairing…',
 			'sync.lanPopupCancelCountdown' => ({required Object seconds}) => 'Cancel (${seconds}s)',
-			'sync.lanPopupLaterHint' => 'You can still trust this device anytime in LAN Devices.',
+			'sync.lanPopupLaterHint' => 'You can pair anytime in Remote Control Devices.',
+			'sync.mergePromptTitle' => 'Local Library Detected',
+			'sync.mergePromptBody' => 'You have local media sources, collections, or watch history on this device. Merge them into this account, or start from account data only (your local data stays archived)?',
+			'sync.mergeLocalOption' => 'Merge Local Library',
+			'sync.accountOnlyOption' => 'Account Only (Archive Local)',
+			'sync.initialSyncRestoring' => 'Restoring media sources & library from server…',
+			'sync.signOutPendingTitle' => 'Unsynced Offline Changes',
+			'sync.signOutPendingBody' => ({required Object count}) => 'You still have ${count} pending change(s). They will remain archived for this account and upload on your next sign-in. Sign out now?',
+			'sync.remoteControlHint' => 'LAN remote pairing works independently whether or not you are signed in to a Sync Server.',
+			'sync.remoteDevicesSubtitle' => 'LAN remote pairing & receiver settings (no P2P library sync)',
 			_ => null,
 		};
 	}

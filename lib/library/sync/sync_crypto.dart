@@ -28,20 +28,36 @@ class SyncQrKeyPair {
   final String publicKeyBase64;
 }
 
+enum SyncServerKind { official, selfHosted }
+
+const String defaultOfficialSyncUrl = String.fromEnvironment(
+  'OFFICIAL_SYNC_URL',
+  defaultValue: 'http://127.0.0.1:8088',
+);
+
+String normalizeSyncServerUrl(String raw) => raw.trim().replaceAll(RegExp(r'/+$'), '');
+
+SyncServerKind inferSyncServerKind(String serverUrl) =>
+    normalizeSyncServerUrl(serverUrl).toLowerCase() == normalizeSyncServerUrl(defaultOfficialSyncUrl).toLowerCase()
+    ? SyncServerKind.official
+    : SyncServerKind.selfHosted;
+
 class SyncSessionCredentials {
-  const SyncSessionCredentials({
+  SyncSessionCredentials({
     required this.serverUrl,
     required this.userId,
     required this.username,
     required this.accessToken,
     required this.masterKey,
-  });
+    SyncServerKind? serverKind,
+  }) : serverKind = serverKind ?? inferSyncServerKind(serverUrl);
 
   final String serverUrl;
   final String userId;
   final String username;
   final String accessToken;
   final Uint8List masterKey;
+  final SyncServerKind serverKind;
 }
 
 /// End-to-end encryption primitives for multi-device synchronization:
@@ -125,11 +141,7 @@ abstract final class SyncCrypto {
     );
     final peerPub = SimplePublicKey(base64Decode(peerPublicKeyBase64), type: KeyPairType.x25519);
     final shared = await _x25519.sharedSecretKey(keyPair: myPriv, remotePublicKey: peerPub);
-    final derived = await _hkdf.deriveKey(
-      secretKey: shared,
-      nonce: const [],
-      info: utf8.encode('plezy-lan-p2p-v1'),
-    );
+    final derived = await _hkdf.deriveKey(secretKey: shared, nonce: const [], info: utf8.encode('plezy-lan-p2p-v1'));
     return Uint8List.fromList(await derived.extractBytes());
   }
 
@@ -156,10 +168,7 @@ abstract final class SyncCrypto {
     return diff == 0;
   }
 
-  static Future<String> sealMasterKeyForTv({
-    required Uint8List masterKey,
-    required String tvPubKeyBase64,
-  }) async {
+  static Future<String> sealMasterKeyForTv({required Uint8List masterKey, required String tvPubKeyBase64}) async {
     final ephemeral = await _x25519.newKeyPair();
     final ephemPub = await ephemeral.extractPublicKey();
     final tvPub = SimplePublicKey(base64Decode(tvPubKeyBase64), type: KeyPairType.x25519);
@@ -170,12 +179,7 @@ abstract final class SyncCrypto {
       info: utf8.encode('plezy-sync-qr-wrap-v1'),
     );
     final box = await _aesGcm.encrypt(masterKey, secretKey: wrapKey);
-    return '$_qrPrefix${jsonEncode({
-      'epk': base64Encode(ephemPub.bytes),
-      'n': base64Encode(box.nonce),
-      'c': base64Encode(box.cipherText),
-      'm': base64Encode(box.mac.bytes),
-    })}';
+    return '$_qrPrefix${jsonEncode({'epk': base64Encode(ephemPub.bytes), 'n': base64Encode(box.nonce), 'c': base64Encode(box.cipherText), 'm': base64Encode(box.mac.bytes)})}';
   }
 
   static Future<Uint8List> unsealMasterKeyOnTv({
@@ -203,11 +207,7 @@ abstract final class SyncCrypto {
 
   static Future<String> _sealWithPrefix(String prefix, List<int> plaintext, Uint8List keyBytes) async {
     final box = await _aesGcm.encrypt(plaintext, secretKey: SecretKey(keyBytes));
-    return '$prefix${jsonEncode({
-      'n': base64Encode(box.nonce),
-      'c': base64Encode(box.cipherText),
-      'm': base64Encode(box.mac.bytes),
-    })}';
+    return '$prefix${jsonEncode({'n': base64Encode(box.nonce), 'c': base64Encode(box.cipherText), 'm': base64Encode(box.mac.bytes)})}';
   }
 
   static Future<Uint8List> _unsealWithPrefix(String prefix, String envelope, Uint8List keyBytes) async {

@@ -18,6 +18,8 @@ type UserRecord struct {
 	KdfParams                KdfParams      `json:"kdf_params"`
 	EncryptedMasterKeyBackup string         `json:"encrypted_master_key_backup"`
 	Settings                 map[string]any `json:"settings"`
+	IsAdmin                  bool           `json:"is_admin"`
+	IsDisabled               bool           `json:"is_disabled"`
 	CreatedAt                int64          `json:"created_at"`
 	UpdatedAt                int64          `json:"updated_at"`
 }
@@ -119,6 +121,19 @@ type SyncWatchProgress struct {
 	ServerSeq       int64          `json:"server_seq"`
 }
 
+type SyncList struct {
+	ListKey         string   `json:"list_key"`
+	Kind            string   `json:"kind"`
+	Title           string   `json:"title"`
+	Summary         *string  `json:"summary,omitempty"`
+	PosterPath      *string  `json:"poster_path,omitempty"`
+	TmdbID          *string  `json:"tmdb_id,omitempty"`
+	ItemWorkKeys    []string `json:"item_work_keys"`
+	ClientUpdatedAt int64    `json:"client_updated_at"`
+	IsDeleted       bool     `json:"is_deleted"`
+	ServerSeq       int64    `json:"server_seq"`
+}
+
 type AppliedOp struct {
 	OpID      string `json:"op_id"`
 	ServerSeq int64  `json:"server_seq"`
@@ -145,18 +160,23 @@ type RegisterRequest struct {
 	EncryptedMasterKeyBackup string         `json:"encrypted_master_key_backup"`
 	Settings                 map[string]any `json:"settings"`
 	DeviceID                 string         `json:"device_id"`
+	DeviceName               string         `json:"device_name,omitempty"`
+	Platform                 string         `json:"platform,omitempty"`
 }
 
 type LoginRequest struct {
 	Username     string `json:"username"`
 	AuthVerifier string `json:"auth_verifier"`
 	DeviceID     string `json:"device_id"`
+	DeviceName   string `json:"device_name,omitempty"`
+	Platform     string `json:"platform,omitempty"`
 }
 
 type AuthResponse struct {
 	Code                     int            `json:"code"`
 	UserID                   string         `json:"user_id"`
 	Username                 string         `json:"username"`
+	IsAdmin                  bool           `json:"is_admin"`
 	AccessToken              string         `json:"access_token"`
 	KdfSalt                  string         `json:"kdf_salt,omitempty"`
 	KdfParams                KdfParams      `json:"kdf_params"`
@@ -180,6 +200,8 @@ type QrConfirmRequest struct {
 	SessionID       string `json:"session_id"`
 	SealedMasterKey string `json:"sealed_master_key"`
 	DeviceID        string `json:"device_id"`
+	DeviceName      string `json:"device_name,omitempty"`
+	Platform        string `json:"platform,omitempty"`
 }
 
 type QrPollResponse struct {
@@ -207,9 +229,9 @@ type PushRequest struct {
 }
 
 type PushResponse struct {
-	Code           int               `json:"code"`
-	ServerTimeMs   int64             `json:"server_time_ms"`
-	AcceptedOpIDs  []string          `json:"accepted_op_ids"`
+	Code            int               `json:"code"`
+	ServerTimeMs    int64             `json:"server_time_ms"`
+	AcceptedOpIDs   []string          `json:"accepted_op_ids"`
 	RemappedSources map[string]string `json:"remapped_sources,omitempty"`
 }
 
@@ -219,6 +241,7 @@ type PullData struct {
 	Files         []SyncFile          `json:"files"`
 	WorkPrefs     []SyncWorkPref      `json:"work_prefs"`
 	WatchProgress []SyncWatchProgress `json:"watch_progress"`
+	Lists         []SyncList          `json:"lists"`
 }
 
 type PullResponse struct {
@@ -243,4 +266,90 @@ type LeaseResponse struct {
 	Acquired       bool   `json:"acquired"`
 	HolderDeviceID string `json:"holder_device_id,omitempty"`
 	ExpiresAtMs    int64  `json:"expires_at_ms"`
+}
+
+type WebAuthRequest struct {
+	Username   string `json:"username"`
+	Password   string `json:"password"`
+	DeviceID   string `json:"device_id,omitempty"`
+	DeviceName string `json:"device_name,omitempty"`
+	Platform   string `json:"platform,omitempty"`
+}
+
+type WebPasswordChangeRequest struct {
+	OldPassword string `json:"old_password"`
+	NewPassword string `json:"new_password"`
+}
+
+type PublicServerInfo struct {
+	Code               int   `json:"code"`
+	AllowRegistration  bool  `json:"allow_registration"`
+	MaxEntitiesPerUser int64 `json:"max_entities_per_user"`
+	UserCount          int64 `json:"user_count"`
+}
+
+type UserStats struct {
+	Sources       int64 `json:"sources"`
+	Works         int64 `json:"works"`
+	Files         int64 `json:"files"`
+	WorkPrefs     int64 `json:"work_prefs"`
+	WatchProgress int64 `json:"watch_progress"`
+	Lists         int64 `json:"lists"`
+	TotalEntities int64 `json:"total_entities"`
+}
+
+type DeviceTokenInfo struct {
+	TokenID    string `json:"token_id"`
+	DeviceID   string `json:"device_id"`
+	DeviceName string `json:"device_name"`
+	Platform   string `json:"platform"`
+	CreatedAt  int64  `json:"created_at"`
+	LastSeenAt int64  `json:"last_seen_at"`
+	IsCurrent  bool   `json:"is_current"`
+}
+
+type UserProfileResponse struct {
+	Code               int            `json:"code"`
+	UserID             string         `json:"user_id"`
+	Username           string         `json:"username"`
+	IsAdmin            bool           `json:"is_admin"`
+	CreatedAt          int64          `json:"created_at"`
+	UpdatedAt          int64          `json:"updated_at"`
+	Settings           map[string]any `json:"settings"`
+	Stats              UserStats      `json:"stats"`
+	MaxEntitiesPerUser int64          `json:"max_entities_per_user"`
+}
+
+type AdminConfigRequest struct {
+	AllowRegistration  *bool  `json:"allow_registration,omitempty"`
+	MaxEntitiesPerUser *int64 `json:"max_entities_per_user,omitempty"`
+}
+
+type AdminUserStatusRequest struct {
+	IsDisabled bool `json:"is_disabled"`
+}
+
+type AdminUserSummary struct {
+	UserID       string `json:"user_id"`
+	Username     string `json:"username"`
+	IsAdmin      bool   `json:"is_admin"`
+	IsDisabled   bool   `json:"is_disabled"`
+	DeviceCount  int64  `json:"device_count"`
+	EntityCount  int64  `json:"entity_count"`
+	ProgressRows int64  `json:"progress_rows"`
+	CreatedAt    int64  `json:"created_at"`
+	UpdatedAt    int64  `json:"updated_at"`
+}
+
+type AdminOverviewResponse struct {
+	Code               int   `json:"code"`
+	TotalUsers         int64 `json:"total_users"`
+	ActiveTokens       int64 `json:"active_tokens"`
+	TotalWorks         int64 `json:"total_works"`
+	TotalFiles         int64 `json:"total_files"`
+	TotalLists         int64 `json:"total_lists"`
+	TotalProgress      int64 `json:"total_progress"`
+	AllowRegistration  bool  `json:"allow_registration"`
+	MaxEntitiesPerUser int64 `json:"max_entities_per_user"`
+	DbSizeBytes        int64 `json:"db_size_bytes"`
 }

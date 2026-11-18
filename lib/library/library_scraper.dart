@@ -193,8 +193,7 @@ class LibraryScraper {
                   return isTitle & t.id.isInQuery(allMountedTitles!) & t.locked.equals(false);
                 }
                 return isTitle &
-                    (((t.locked.equals(false) | t.metadataSource.isNotNull()) &
-                            t.id.isInQuery(pendingMountedTitles)) |
+                    (((t.locked.equals(false) | t.metadataSource.isNotNull()) & t.id.isInQuery(pendingMountedTitles)) |
                         (t.locked.equals(false) &
                             t.id.isInQuery(allMountedTitles!) &
                             (t.scrapedAt.isNull() | t.scrapedAt.isSmallerThanValue(refreshBeforeMs))));
@@ -287,8 +286,9 @@ class LibraryScraper {
       if (isShow) {
         filledEpisodes = await _fillSeasons(item, provider, id, title, pendingOnly: !refreshMatched);
         if (filledEpisodes > 0) {
-          final latestType =
-              (await (_db.select(_db.libraryItems)..where((t) => t.id.equals(item.id))).getSingleOrNull())?.libraryType;
+          final latestType = (await (_db.select(
+            _db.libraryItems,
+          )..where((t) => t.id.equals(item.id))).getSingleOrNull())?.libraryType;
           if (latestType != null) await _repo.setLibraryType(item.id, latestType);
         }
       }
@@ -802,6 +802,8 @@ class LibraryScraper {
     String showId,
     String showTitle, {
     bool pendingOnly = false,
+    bool missingSummaryOnly = false,
+    bool preserveUpdatedAt = false,
   }) async {
     var applied = 0;
     for (final seasonView in await _repo.children(show.id)) {
@@ -810,6 +812,10 @@ class LibraryScraper {
       if (number == null) continue;
       final episodes = await _repo.children(seasonRow.id);
       if (pendingOnly && episodes.every((episode) => episode.item.scrapedAt != null)) continue;
+      if (missingSummaryOnly &&
+          episodes.every((episode) => episode.item.summary != null && episode.item.summary!.isNotEmpty)) {
+        continue;
+      }
 
       var season = await provider.season(showId, number);
       if (season == null && provider.source == 'bangumi' && number > 1) {
@@ -823,18 +829,33 @@ class LibraryScraper {
         seasonRow.id,
         LibraryItemsCompanion(
           title: season.title == null ? const Value.absent() : Value(season.title!),
-          summary: Value(season.summary),
-          posterSource: Value(season.posterSource),
-          metadataSource: Value(provider.source),
-          scrapedAt: Value(_now()),
+          summary: (seasonRow.summary != null && seasonRow.summary!.isNotEmpty && missingSummaryOnly)
+              ? const Value.absent()
+              : Value(season.summary),
+          posterSource: (seasonRow.posterSource != null && missingSummaryOnly)
+              ? const Value.absent()
+              : Value(season.posterSource),
+          metadataSource: missingSummaryOnly ? const Value.absent() : Value(provider.source),
+          scrapedAt: missingSummaryOnly ? const Value.absent() : Value(_now()),
+          updatedAt: preserveUpdatedAt ? Value(seasonRow.updatedAt) : const Value.absent(),
         ),
+        preserveUpdatedAt: preserveUpdatedAt,
       );
       final byNumber = {for (final episode in season.episodes) episode.number: episode};
       for (final episodeView in episodes) {
         if (pendingOnly && episodeView.item.scrapedAt != null) continue;
+        if (missingSummaryOnly && episodeView.item.summary != null && episodeView.item.summary!.isNotEmpty) {
+          continue;
+        }
         final scraped = byNumber[episodeView.item.episodeNumber];
         if (scraped != null) {
-          await _applyEpisode(episodeView.item, scraped, provider.source);
+          await _applyEpisode(
+            episodeView.item,
+            scraped,
+            provider.source,
+            missingSummaryOnly: missingSummaryOnly,
+            preserveUpdatedAt: preserveUpdatedAt,
+          );
           applied++;
         }
       }
@@ -842,21 +863,121 @@ class LibraryScraper {
     return applied;
   }
 
-  Future<void> _applyEpisode(LibraryItemRow episode, ScrapedEpisode scraped, String source) async {
+  Future<void> _applyEpisode(
+    LibraryItemRow episode,
+    ScrapedEpisode scraped,
+    String source, {
+    bool missingSummaryOnly = false,
+    bool preserveUpdatedAt = false,
+  }) async {
     await _repo.updateItem(
       episode.id,
       LibraryItemsCompanion(
-        title: scraped.title == null ? const Value.absent() : Value(scraped.title!),
-        sortTitle: scraped.title == null ? const Value.absent() : Value(LibraryRepository.sortTitleFor(scraped.title!)),
-        summary: Value(scraped.summary),
-        releaseDate: Value(scraped.airDate),
-        runtimeMs: Value(scraped.runtimeMs),
-        rating: Value(scraped.rating),
-        posterSource: Value(scraped.stillSource),
-        metadataSource: Value(source),
-        scrapedAt: Value(_now()),
+        title: (scraped.title == null || (missingSummaryOnly && episode.title.isNotEmpty))
+            ? const Value.absent()
+            : Value(scraped.title!),
+        sortTitle: (scraped.title == null || (missingSummaryOnly && episode.title.isNotEmpty))
+            ? const Value.absent()
+            : Value(LibraryRepository.sortTitleFor(scraped.title!)),
+        summary:
+            (scraped.summary == null || (missingSummaryOnly && episode.summary != null && episode.summary!.isNotEmpty))
+            ? const Value.absent()
+            : Value(scraped.summary),
+        releaseDate: (missingSummaryOnly && episode.releaseDate != null)
+            ? const Value.absent()
+            : Value(scraped.airDate),
+        runtimeMs: (missingSummaryOnly && episode.runtimeMs != null) ? const Value.absent() : Value(scraped.runtimeMs),
+        rating: (missingSummaryOnly && episode.rating != null) ? const Value.absent() : Value(scraped.rating),
+        posterSource: (missingSummaryOnly && episode.posterSource != null)
+            ? const Value.absent()
+            : Value(scraped.stillSource),
+        metadataSource: missingSummaryOnly ? const Value.absent() : Value(source),
+        scrapedAt: missingSummaryOnly ? const Value.absent() : Value(_now()),
+        updatedAt: preserveUpdatedAt ? Value(episode.updatedAt) : const Value.absent(),
       ),
+      preserveUpdatedAt: preserveUpdatedAt,
     );
+  }
+
+  /// Lazily fills heavy detail fields (`summary`, `tagline`, `credits`, and
+  /// episode overviews) by external ID (`tmdbId` / `bangumiId`) without
+  /// searching, modifying `locked`/`workKey`, or bumping `updatedAt` so local
+  /// hydration never causes dirty sync outbox churn.
+  Future<bool> hydrateWorkDetailsById(int itemId) async {
+    final initial = (await _repo.getItem(itemId))?.item;
+    if (initial == null) return false;
+    final rootId = (initial.kind == LibraryKinds.season || initial.kind == LibraryKinds.episode)
+        ? (initial.showId ?? initial.parentId ?? initial.id)
+        : initial.id;
+    final root = rootId == initial.id ? initial : (await _repo.getItem(rootId))?.item;
+    if (root == null || root.locked || root.metadataSource == 'nfo') return false;
+
+    final needsSummary = root.summary == null || root.summary!.isEmpty;
+    final needsCredits = (await _repo.creditsOf(root.id)).isEmpty;
+    final needsEpisodes =
+        root.kind == LibraryKinds.show &&
+        (await _repo.episodesOfShow(root.id)).any((e) => e.item.summary == null || e.item.summary!.isEmpty);
+    if (!needsSummary && !needsCredits && !needsEpisodes) return false;
+
+    MetadataProvider? provider;
+    String? extId;
+    if (root.tmdbId != null && root.tmdbId!.isNotEmpty) {
+      provider = _metadataProviders.where((p) => p.source == 'tmdb').firstOrNull;
+      extId = root.tmdbId;
+    }
+    if (provider == null && root.bangumiId != null && root.bangumiId!.isNotEmpty) {
+      provider = _metadataProviders.where((p) => p.source == 'bangumi').firstOrNull;
+      extId = root.bangumiId;
+    }
+    if (provider == null || extId == null || extId.isEmpty) return false;
+
+    var hydrated = false;
+    try {
+      if (needsSummary || needsCredits) {
+        final details = root.kind == LibraryKinds.movie ? await provider.movie(extId) : await provider.show(extId);
+        final nextSummary = (root.summary == null || root.summary!.isEmpty) ? details.summary : null;
+        final nextTagline = (root.tagline == null || root.tagline!.isEmpty) ? details.tagline : null;
+        if (nextSummary != null || nextTagline != null) {
+          await _repo.updateItem(
+            root.id,
+            LibraryItemsCompanion(
+              summary: nextSummary != null ? Value(nextSummary) : const Value.absent(),
+              tagline: nextTagline != null ? Value(nextTagline) : const Value.absent(),
+              updatedAt: Value(root.updatedAt),
+            ),
+            preserveUpdatedAt: true,
+          );
+          hydrated = true;
+        }
+        if (needsCredits && details.credits.isNotEmpty) {
+          await _repo.setCredits(root.id, [
+            for (final credit in details.credits)
+              (
+                name: credit.name,
+                job: credit.job,
+                character: credit.character,
+                tmdbId: credit.tmdbId,
+                photoSource: credit.photoUrl,
+              ),
+          ]);
+          hydrated = true;
+        }
+      }
+      if (needsEpisodes) {
+        final epApplied = await _fillSeasons(
+          root,
+          provider,
+          extId,
+          root.title,
+          missingSummaryOnly: true,
+          preserveUpdatedAt: true,
+        );
+        if (epApplied > 0) hydrated = true;
+      }
+    } catch (e) {
+      appLogger.d('Lazy detail hydration skipped for "${root.title}": $e');
+    }
+    return hydrated;
   }
 
   // ─── Files beside the media ────────────────────────────────────────────
@@ -1074,7 +1195,9 @@ class LibraryScraper {
     if (merged.kind == LibraryKinds.show) {
       final provider = _metadataProviders.where((p) => p.source == merged.metadataSource).firstOrNull;
       final id = provider?.source == 'tmdb' ? merged.tmdbId : merged.bangumiId;
-      if (provider != null && id != null && !(provider.source == 'bangumi' && _bangumiUnreachable && _hasNonBangumiProvider)) {
+      if (provider != null &&
+          id != null &&
+          !(provider.source == 'bangumi' && _bangumiUnreachable && _hasNonBangumiProvider)) {
         try {
           await _fillSeasons(merged, provider, id, merged.title, pendingOnly: true);
           checkedShowSeasons = true;

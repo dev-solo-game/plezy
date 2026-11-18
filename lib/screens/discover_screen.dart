@@ -758,7 +758,7 @@ class _DiscoverScreenState extends State<DiscoverScreen>
           final sync = menuBtnContext.watch<SyncAndScanCoordinator?>();
           final session = sync?.session;
           final isCloud = session != null;
-          final requestCount = isCloud ? 0 : (sync?.lanService.incomingPairRequests.length ?? 0);
+          final requestCount = sync?.lanService.incomingPairRequests.length ?? 0;
           final theme = Theme.of(menuBtnContext);
           final colorScheme = theme.colorScheme;
 
@@ -847,6 +847,7 @@ class _DiscoverScreenState extends State<DiscoverScreen>
 
     if (session != null) {
       final pending = sync?.pendingOutboxCount ?? 0;
+      final requestCount = sync?.lanService.incomingPairRequests.length ?? 0;
       return [
         AppMenuHeader<String>(
           icon: Symbols.cloud_done_rounded,
@@ -859,6 +860,12 @@ class _DiscoverScreenState extends State<DiscoverScreen>
           icon: Symbols.cloud_sync_rounded,
           label: t.sync.title,
           subtitle: progressDetail ?? (pending > 0 ? t.sync.pendingChanges(count: pending) : null),
+        ),
+        AppMenuItem<String>(
+          value: 'lan_devices',
+          icon: Symbols.devices_rounded,
+          label: t.sync.lanDevicesTitle,
+          subtitle: requestCount > 0 ? t.sync.lanPairRequestBadge(count: requestCount) : null,
         ),
         AppMenuItem<String>(value: 'settings', icon: Symbols.settings_rounded, label: t.common.settings),
         AppMenuItem<String>(value: 'logout', icon: Symbols.logout_rounded, label: t.common.logout),

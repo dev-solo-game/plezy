@@ -46,8 +46,9 @@ Future<RemoteMediaTarget> buildRemoteMediaTarget({
 }) async {
   final kind = metadata.kind == MediaKind.episode ? 'episode' : 'movie';
   final rawThumb = metadata.thumbPath;
-  final posterUrl =
-      rawThumb != null && (rawThumb.startsWith('http://') || rawThumb.startsWith('https://')) ? rawThumb : null;
+  final posterUrl = rawThumb != null && (rawThumb.startsWith('http://') || rawThumb.startsWith('https://'))
+      ? rawThumb
+      : null;
 
   if (metadata.serverId == LocalLibraryClient.localServerId && db != null) {
     final itemId = int.tryParse(metadata.id);
@@ -56,10 +57,11 @@ Future<RemoteMediaTarget> buildRemoteMediaTarget({
       final showRow = (itemRow?.showId != null)
           ? await (db.select(db.libraryItems)..where((t) => t.id.equals(itemRow!.showId!))).getSingleOrNull()
           : null;
-      final videoFiles = await (db.select(db.libraryFiles)
-            ..where((t) => t.itemId.equals(itemId) & t.role.equals(LibraryFileRoles.video))
-            ..orderBy([(t) => OrderingTerm.asc(t.id)]))
-          .get();
+      final videoFiles =
+          await (db.select(db.libraryFiles)
+                ..where((t) => t.itemId.equals(itemId) & t.role.equals(LibraryFileRoles.video))
+                ..orderBy([(t) => OrderingTerm.asc(t.id)]))
+              .get();
 
       LibraryFileRow? chosenFile;
       if (videoFiles.isNotEmpty) {
@@ -165,10 +167,7 @@ Future<ResolvedRemoteTarget?> resolveRemoteMediaTargetLocally({
       )..where((t) => t.role.equals(LibraryFileRoles.video) & t.itemId.isNotNull())).get();
 
       for (final file in videoFiles) {
-        final candidateId = DeterministicKeys.generateFileId(
-          sourceId: file.mountId,
-          mountRelativePath: file.path,
-        );
+        final candidateId = DeterministicKeys.generateFileId(sourceId: file.mountId, mountRelativePath: file.path);
         if (candidateId == target.syncFileId) {
           final item = await localClient.fetchItem('${file.itemId}');
           if (item != null) {
@@ -262,17 +261,17 @@ Future<int?> _resolveItemIdByWorkKey(AppDatabase db, String workKey, RemoteMedia
   final externalId = parts.sublist(2).join(':');
   final expectedDbKind = workKind == 'movie' ? LibraryKinds.movie : LibraryKinds.show;
 
-  final rows = await (db.select(db.libraryItems)
-        ..where((t) {
-          final kindMatch = t.kind.equals(expectedDbKind);
-          return switch (provider) {
-            'tmdb' => kindMatch & t.tmdbId.equals(externalId),
-            'imdb' => kindMatch & t.imdbId.equals(externalId),
-            'bangumi' => kindMatch & t.bangumiId.equals(externalId),
-            _ => const Constant(false),
-          };
-        }))
-      .get();
+  final rows =
+      await (db.select(db.libraryItems)..where((t) {
+            final kindMatch = t.kind.equals(expectedDbKind);
+            return switch (provider) {
+              'tmdb' => kindMatch & t.tmdbId.equals(externalId),
+              'imdb' => kindMatch & t.imdbId.equals(externalId),
+              'bangumi' => kindMatch & t.bangumiId.equals(externalId),
+              _ => const Constant(false),
+            };
+          }))
+          .get();
 
   if (rows.isEmpty) return null;
   final workRow = rows.first;
@@ -280,10 +279,11 @@ Future<int?> _resolveItemIdByWorkKey(AppDatabase db, String workKey, RemoteMedia
     return workRow.id;
   }
 
-  final episodes = await (db.select(db.libraryItems)
-        ..where((t) => t.showId.equals(workRow.id) & t.kind.equals(LibraryKinds.episode))
-        ..orderBy([(t) => OrderingTerm.asc(t.seasonNumber), (t) => OrderingTerm.asc(t.episodeNumber)]))
-      .get();
+  final episodes =
+      await (db.select(db.libraryItems)
+            ..where((t) => t.showId.equals(workRow.id) & t.kind.equals(LibraryKinds.episode))
+            ..orderBy([(t) => OrderingTerm.asc(t.seasonNumber), (t) => OrderingTerm.asc(t.episodeNumber)]))
+          .get();
   if (episodes.isEmpty) return null;
 
   if (target.seasonNumber != null && target.episodeNumber != null) {
@@ -320,8 +320,6 @@ Future<bool> launchRemoteMediaTarget({required BuildContext context, required Re
       try {
         if (sync.isSignedIn) {
           await sync.syncNow(allowBackgroundScan: false);
-        } else if (sync.lanService.isRunning) {
-          await sync.lanService.syncWithAllTrustedPeers();
         }
         await localClient?.refreshMounts();
       } catch (e) {

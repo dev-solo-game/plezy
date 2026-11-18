@@ -12,17 +12,17 @@ import 'package:plezy/database/app_database.dart';
 import 'package:plezy/library/library_repository.dart';
 import 'package:plezy/library/library_scan_service.dart';
 import 'package:plezy/library/library_scanner.dart';
+import 'package:plezy/library/library_scrape_runner.dart';
+import 'package:plezy/library/library_settings.dart';
 import 'package:plezy/library/local_library_client.dart';
 import 'package:plezy/library/sync/lan_peer_sync_service.dart';
+import 'package:plezy/library/sync/library_workspace_store.dart';
 import 'package:plezy/library/sync/sync_coordinator.dart';
 import 'package:plezy/library/sync/sync_crypto.dart';
-import 'package:plezy/library/sync/sync_local_store.dart';
 import 'package:plezy/media/media_item.dart';
 import 'package:plezy/media/media_kind.dart';
-import 'package:plezy/media/work_identity.dart';
-import 'package:plezy/media/work_skip_settings.dart';
 import 'package:plezy/services/credential_vault.dart';
-import 'package:plezy/services/work_skip_settings_store.dart';
+import 'package:plezy/services/playback_initialization_types.dart';
 import 'package:plezy/storage/mount_manager.dart';
 import 'package:plezy/storage/mount_registry.dart';
 import 'package:plezy/storage/storage_driver.dart';
@@ -59,7 +59,13 @@ class _NoScanMockDriver implements StorageDriver {
 }
 
 class _GatedStorageDriver implements StorageDriver {
-  _GatedStorageDriver(this.kind, {required this.entriesByDir, this.blockedDir, this.onEnterBlockedDir, this.blockedGate});
+  _GatedStorageDriver(
+    this.kind, {
+    required this.entriesByDir,
+    this.blockedDir,
+    this.onEnterBlockedDir,
+    this.blockedGate,
+  });
 
   @override
   final StorageKind kind;
@@ -161,7 +167,7 @@ void main() {
       'go',
       ['build', '-o', serverExePath, '.'],
       workingDirectory: p.join(Directory.current.path, 'sync_server'),
-      environment: {'GOTOOLCHAIN': 'local'},
+      environment: {'GOTOOLCHAIN': 'auto'},
     );
     if (build.exitCode != 0) {
       fail('Failed to build sync_server:\n${build.stdout}\n${build.stderr}');
@@ -204,7 +210,7 @@ void main() {
     CredentialVault.resetKeyForTesting();
   });
 
-  test('serverless LAN P2P blocks untrusted strangers and syncs Quark + library after 1-tap trust', () async {
+  test('retired LAN P2P sync endpoints return 410 Gone while remote pairing and revoke stay active', () async {
     final phoneA = _PeerDevice(name: 'Phone A');
     final tvB = _PeerDevice(name: 'LivingRoomTV', failOnRemoteList: true);
     addTearDown(phoneA.dispose);
@@ -213,130 +219,30 @@ void main() {
     await phoneA.initLan();
     await tvB.initLan();
 
-    const quarkMount = StorageMount(
-      id: 'm_lan_quark',
-      kind: StorageKind.quark,
-      displayName: '家里夸克',
-      config: {MountKeys.quarkMode: 'pc', MountKeys.rootFolderId: '0'},
-      secrets: {MountKeys.secretCookie: 'uid=888999; __pus=lan_secret'},
-    );
-    await phoneA.registry.upsert(quarkMount);
-    await phoneA.db
-        .into(phoneA.db.libraryScanStates)
-        .insertOnConflictUpdate(
-          LibraryScanStatesCompanion.insert(mountId: quarkMount.id, quarkCheckpoint: const Value('0:5000')),
-        );
-
-    final showId = await phoneA.repo.insertItem(
-      LibraryItemsCompanion.insert(
-        kind: LibraryKinds.show,
-        libraryType: LibraryTypes.anime,
-        title: '仙逆',
-        sortTitle: 'xian ni',
-        tmdbId: const Value('235412'),
-        metadataSource: const Value('tmdb'),
-        scrapedAt: const Value(1000),
-        addedAt: 1000,
-        updatedAt: 1000,
-      ),
-    );
-    final seasonId = await phoneA.repo.insertItem(
-      LibraryItemsCompanion.insert(
-        kind: LibraryKinds.season,
-        libraryType: LibraryTypes.anime,
-        title: 'Season 1',
-        sortTitle: 'season 1',
-        parentId: Value(showId),
-        showId: Value(showId),
-        seasonNumber: const Value(1),
-        addedAt: 1000,
-        updatedAt: 1000,
-        scrapedAt: const Value(1000),
-      ),
-    );
-    final ep1Id = await phoneA.repo.insertItem(
-      LibraryItemsCompanion.insert(
-        kind: LibraryKinds.episode,
-        libraryType: LibraryTypes.anime,
-        title: '第1集：离乡',
-        sortTitle: 's0001e0001',
-        parentId: Value(seasonId),
-        showId: Value(showId),
-        seasonNumber: const Value(1),
-        episodeNumber: const Value(1),
-        addedAt: 1000,
-        updatedAt: 1000,
-        scrapedAt: const Value(1000),
-      ),
-    );
-    final ep1File = await phoneA.repo.upsertFile(
-      mountId: quarkMount.id,
-      path: '/Anime/XianNi/S01E01.mp4',
-      role: LibraryFileRoles.video,
-      scanId: 1,
-      remoteId: 'fid_lan_ep1',
-      size: 4000,
-    );
-    await phoneA.repo.linkFile(ep1File, ep1Id);
-    await phoneA.repo.updateFile(ep1File, const LibraryFilesCompanion(matchState: Value(LibraryMatchStates.matched)));
-    await phoneA.repo.upsertFile(
-      mountId: quarkMount.id,
-      path: '/Anime/XianNi/S01E01.chi.ass',
-      role: LibraryFileRoles.subtitle,
-      scanId: 1,
-      remoteId: 'fid_lan_sub1',
-      language: 'chi',
-      ownerFileId: ep1File,
-    );
-
-    final movieId = await phoneA.repo.insertItem(
-      LibraryItemsCompanion.insert(
-        kind: LibraryKinds.movie,
-        libraryType: LibraryTypes.movie,
-        title: '沙丘2',
-        sortTitle: 'dune 2',
-        tmdbId: const Value('693134'),
-        metadataSource: const Value('nfo'),
-        locked: const Value(true),
-        scrapedAt: const Value(1000),
-        addedAt: 1000,
-        updatedAt: 1000,
-      ),
-    );
-    final movieFile = await phoneA.repo.upsertFile(
-      mountId: quarkMount.id,
-      path: '/Movies/Dune2.mkv',
-      role: LibraryFileRoles.video,
-      scanId: 1,
-      remoteId: 'fid_lan_m1',
-      size: 9000,
-    );
-    await phoneA.repo.linkFile(movieFile, movieId);
-    await phoneA.repo.updateFile(
-      movieFile,
-      const LibraryFilesCompanion(matchState: Value(LibraryMatchStates.matched), matchLocked: Value(true)),
-    );
-
-    final showIdentity = WorkIdentity.resolve(source: WorkIdentity.localSource, kind: 'show', tmdbId: '235412')!;
-    await WorkSkipSettingsStore(
-      phoneA.db,
-    ).save(showIdentity, const WorkSkipSettings(introEnabled: true, introStartMs: 5000, introEndMs: 90000));
-    await phoneA.client.reportPlaybackStopped(
-      itemId: '$ep1Id',
-      position: const Duration(minutes: 12),
-      duration: const Duration(minutes: 24),
-    );
-
-    // 1. Untrusted stranger on public Wi-Fi attempting to read snapshot MUST get 403 Forbidden.
     final client = http.Client();
     addTearDown(client.close);
-    final strangerResp = await client.get(
-      Uri.parse('http://127.0.0.1:${phoneA.sync.lanService.listeningPort}/lan/v1/sync/snapshot'),
-      headers: {'X-Plezy-Device': 'stranger', 'X-Plezy-Timestamp': '1', 'X-Plezy-Signature': 'forged'},
-    );
-    expect(strangerResp.statusCode, HttpStatus.forbidden);
+    final baseUri = 'http://127.0.0.1:${phoneA.sync.lanService.listeningPort}';
 
-    // 2. Discover & pair TV B with Phone A via TOFU + 4-digit visual pairing code.
+    // /lan/v1/hello stays up for remote control discovery without library revision metadata.
+    final helloResp = await client.get(Uri.parse('$baseUri/lan/v1/hello'));
+    expect(helloResp.statusCode, HttpStatus.ok);
+    final helloJson = jsonDecode(helloResp.body) as Map<String, dynamic>;
+    expect(helloJson.containsKey('revision'), isFalse);
+    expect(helloJson.containsKey('sync_epoch'), isFalse);
+
+    // Every legacy /lan/v1/sync/* endpoint must return 410 Gone.
+    for (final req in [
+      client.get(Uri.parse('$baseUri/lan/v1/sync/pull')),
+      client.post(Uri.parse('$baseUri/lan/v1/sync/push'), body: '{}'),
+      client.get(Uri.parse('$baseUri/lan/v1/sync/snapshot')),
+      client.post(Uri.parse('$baseUri/lan/v1/sync/notify'), body: '{}'),
+    ]) {
+      final resp = await req;
+      expect(resp.statusCode, HttpStatus.gone);
+      expect((jsonDecode(resp.body) as Map<String, dynamic>)['error'], 'lan_library_sync_retired');
+    }
+
+    // 4-digit pairing still works for remote control, and revoke clears both peers cleanly.
     final discoveredTv = LanDiscoveredPeer(
       deviceId: tvB.sync.lanService.deviceId!,
       deviceName: 'LivingRoomTV',
@@ -351,45 +257,19 @@ void main() {
     final codeOnPhone = discoveredTv.pairingCodeFor(phoneA.sync.lanService.publicKeyBase64!);
 
     await phoneA.sync.lanService.requestPairWithPeer(discoveredTv);
-    expect(tvB.sync.lanService.incomingPairRequests, hasLength(1));
     final pairReq = tvB.sync.lanService.incomingPairRequests.single;
     expect(pairReq.pairingCode, codeOnPhone);
-
     await tvB.sync.lanService.acceptPairRequest(pairReq);
-    // Sync explicitly to guarantee background notify/pull has completed in deterministic test timing.
-    await tvB.sync.lanService.syncWithAllTrustedPeers();
+    expect(phoneA.sync.lanService.isPeerTrusted(tvB.sync.lanService.deviceId!), isTrue);
+    expect(tvB.sync.lanService.isPeerTrusted(phoneA.sync.lanService.deviceId!), isTrue);
 
-    // 3. Verify TV B has Phone A's decrypted Quark mount, checkpoint, full library, skip rules & watch progress.
-    final tvMounts = await tvB.registry.list();
-    expect(tvMounts, hasLength(1));
-    expect(tvMounts.single.id, 'm_lan_quark');
-    expect(tvMounts.single.secret(MountKeys.secretCookie), contains('uid=888999'));
-    final tvScan = await (tvB.db.select(tvB.db.libraryScanStates)..where((t) => t.mountId.equals('m_lan_quark'))).getSingle();
-    expect(tvScan.quarkCheckpoint, '0:5000');
-
-    final tvAnime = await tvB.repo.queryTitles(const LibraryQuery(libraryType: LibraryTypes.anime));
-    expect(tvAnime.items.map((v) => v.item.title), ['仙逆']);
-    final tvEpisodes = await tvB.repo.episodesOfShow(tvAnime.items.single.item.id);
-    expect(tvEpisodes.single.state?.positionMs, 720000);
-    final tvEpFiles = await tvB.repo.versionsOf(tvEpisodes.single.item.id);
-    expect((await tvB.repo.subtitlesOf(tvEpFiles.single.id)).single.language, 'chi');
-
-    final tvMovies = await tvB.repo.queryTitles(const LibraryQuery(libraryType: LibraryTypes.movie));
-    expect(tvMovies.items.single.item.title, '沙丘2');
-    expect(tvMovies.items.single.item.locked, isTrue);
-
-    final tvSkip = await WorkSkipSettingsStore(tvB.db).read(showIdentity);
-    expect((tvSkip.introEnabled, tvSkip.introStartMs, tvSkip.introEndMs), (true, 5000, 90000));
-
-    // 4. TV B marks Dune 2 watched and pushes back over LAN P2P without re-pairing!
-    await Future<void>.delayed(const Duration(milliseconds: 5));
-    await tvB.client.markWatched(MediaItem.jellyfin(id: '${tvMovies.items.single.item.id}', kind: MediaKind.movie, title: '沙丘2'));
-    await tvB.sync.onPlaybackOutboxQueued();
-    await phoneA.sync.lanService.syncWithAllTrustedPeers();
-    expect((await phoneA.repo.getItem(movieId))!.isWatched, isTrue);
+    await phoneA.sync.lanService.revokeTrustedPeer(tvB.sync.lanService.deviceId!);
+    expect(phoneA.sync.lanService.isPeerTrusted(tvB.sync.lanService.deviceId!), isFalse);
+    expect(tvB.sync.lanService.isPeerTrusted(phoneA.sync.lanService.deviceId!), isFalse);
   });
 
-  test('serverless LAN P2P deterministically merges dual-offline same Quark mount regardless of sync order', () async {
+  test('Cloud Sync deterministically merges dual-offline same Quark mount regardless of push order', () async {
+    final serverUrl = await startSyncServer();
     final devA = _PeerDevice(name: 'Phone A');
     final devB = _PeerDevice(name: 'TV B');
     addTearDown(devA.dispose);
@@ -398,7 +278,6 @@ void main() {
     await devA.initLan();
     await devB.initLan();
 
-    // Device A created mount earlier (08:00), Device B created same Quark mount later (09:00) with newer checkpoint.
     final mountA = StorageMount(
       id: 'uuid-A',
       kind: StorageKind.quark,
@@ -419,10 +298,22 @@ void main() {
     await devB.registry.upsert(mountB);
     await devA.db
         .into(devA.db.libraryScanStates)
-        .insertOnConflictUpdate(LibraryScanStatesCompanion.insert(mountId: 'uuid-A', quarkCheckpoint: const Value('0:3000')));
+        .insertOnConflictUpdate(
+          LibraryScanStatesCompanion.insert(
+            mountId: 'uuid-A',
+            finishedAt: const Value(3000),
+            quarkCheckpoint: const Value('0:3000'),
+          ),
+        );
     await devB.db
         .into(devB.db.libraryScanStates)
-        .insertOnConflictUpdate(LibraryScanStatesCompanion.insert(mountId: 'uuid-B', quarkCheckpoint: const Value('0:9000')));
+        .insertOnConflictUpdate(
+          LibraryScanStatesCompanion.insert(
+            mountId: 'uuid-B',
+            finishedAt: const Value(9000),
+            quarkCheckpoint: const Value('0:9000'),
+          ),
+        );
 
     final movieA = await devA.repo.insertItem(
       LibraryItemsCompanion.insert(
@@ -438,9 +329,17 @@ void main() {
         updatedAt: 1000,
       ),
     );
-    final fA = await devA.repo.upsertFile(mountId: 'uuid-A', path: '/Inception.mkv', role: LibraryFileRoles.video, scanId: 1);
+    final fA = await devA.repo.upsertFile(
+      mountId: 'uuid-A',
+      path: '/Inception.mkv',
+      role: LibraryFileRoles.video,
+      scanId: 1,
+    );
     await devA.repo.linkFile(fA, movieA);
-    await devA.repo.updateFile(fA, const LibraryFilesCompanion(matchState: Value(LibraryMatchStates.matched), matchLocked: Value(true)));
+    await devA.repo.updateFile(
+      fA,
+      const LibraryFilesCompanion(matchState: Value(LibraryMatchStates.matched), matchLocked: Value(true)),
+    );
 
     final unmatchedB = await devB.repo.insertItem(
       LibraryItemsCompanion.insert(
@@ -453,7 +352,12 @@ void main() {
         updatedAt: 9999999,
       ),
     );
-    final fB = await devB.repo.upsertFile(mountId: 'uuid-B', path: '/Inception.mkv', role: LibraryFileRoles.video, scanId: 1);
+    final fB = await devB.repo.upsertFile(
+      mountId: 'uuid-B',
+      path: '/Inception.mkv',
+      role: LibraryFileRoles.video,
+      scanId: 1,
+    );
     await devB.repo.linkFile(fB, unmatchedB);
     await devB.repo.updateFile(fB, const LibraryFilesCompanion(matchState: Value(LibraryMatchStates.unmatched)));
 
@@ -470,24 +374,19 @@ void main() {
         updatedAt: 2000,
       ),
     );
-    final fInterB = await devB.repo.upsertFile(mountId: 'uuid-B', path: '/Interstellar.mkv', role: LibraryFileRoles.video, scanId: 1);
+    final fInterB = await devB.repo.upsertFile(
+      mountId: 'uuid-B',
+      path: '/Interstellar.mkv',
+      role: LibraryFileRoles.video,
+      scanId: 1,
+    );
     await devB.repo.linkFile(fInterB, interB);
     await devB.repo.updateFile(fInterB, const LibraryFilesCompanion(matchState: Value(LibraryMatchStates.matched)));
 
-    final peerB = LanDiscoveredPeer(
-      deviceId: devB.sync.lanService.deviceId!,
-      deviceName: 'TV B',
-      platform: 'android',
-      host: '127.0.0.1',
-      httpPort: devB.sync.lanService.listeningPort!,
-      pubKeyBase64: devB.sync.lanService.publicKeyBase64!,
-      revision: 1,
-      lastSeen: clock.now(),
-    );
-    await devA.sync.lanService.requestPairWithPeer(peerB);
-    await devB.sync.lanService.acceptPairRequest(devB.sync.lanService.incomingPairRequests.single);
-    await devA.sync.lanService.syncWithAllTrustedPeers();
-    await devB.sync.lanService.syncWithAllTrustedPeers();
+    await devA.sync.register(serverUrl: serverUrl, username: 'mergeuser', password: 'pw', kdfParams: fastKdf);
+    await devB.sync.loginWithPassword(serverUrl: serverUrl, username: 'mergeuser', password: 'pw');
+    await devA.sync.syncNow(allowBackgroundScan: false);
+    await devB.sync.syncNow(allowBackgroundScan: false);
 
     final mountsA = await devA.registry.list();
     final mountsB = await devB.registry.list();
@@ -496,39 +395,75 @@ void main() {
     expect(mountsA.single.id, 'uuid-A');
     expect(mountsB.single.id, 'uuid-A');
 
-    final cpA = (await (devA.db.select(devA.db.libraryScanStates)..where((t) => t.mountId.equals('uuid-A'))).getSingle()).quarkCheckpoint;
-    final cpB = (await (devB.db.select(devB.db.libraryScanStates)..where((t) => t.mountId.equals('uuid-A'))).getSingle()).quarkCheckpoint;
+    final cpA = (await (devA.db.select(
+      devA.db.libraryScanStates,
+    )..where((t) => t.mountId.equals('uuid-A'))).getSingle()).quarkCheckpoint;
+    final cpB = (await (devB.db.select(
+      devB.db.libraryScanStates,
+    )..where((t) => t.mountId.equals('uuid-A'))).getSingle()).quarkCheckpoint;
     expect(cpA, '0:9000');
     expect(cpB, '0:9000');
 
-    final titlesA = (await devA.repo.queryTitles(const LibraryQuery(libraryType: LibraryTypes.movie))).items.map((v) => v.item.title).toSet();
-    final titlesB = (await devB.repo.queryTitles(const LibraryQuery(libraryType: LibraryTypes.movie))).items.map((v) => v.item.title).toSet();
+    final titlesA = (await devA.repo.queryTitles(
+      const LibraryQuery(libraryType: LibraryTypes.movie),
+    )).items.map((v) => v.item.title).toSet();
+    final titlesB = (await devB.repo.queryTitles(
+      const LibraryQuery(libraryType: LibraryTypes.movie),
+    )).items.map((v) => v.item.title).toSet();
     expect(titlesA, {'盗梦空间', '星际穿越'});
     expect(titlesB, {'盗梦空间', '星际穿越'});
     expect((await devB.repo.queryTitles(const LibraryQuery(libraryType: LibraryTypes.pending))).items, isEmpty);
   });
 
-  test('switching between Local/LAN P2P and Go Sync Server is mutually exclusive and preserves all data', () async {
+  test('workspace isolation separates local vs accountOnly vs mergeLocal while keeping LAN service active', () async {
     final serverUrl = await startSyncServer();
     final phoneA = _PeerDevice(name: 'Phone A');
-    final tvB = _PeerDevice(name: 'TV B', failOnRemoteList: true);
+    final seedB = _PeerDevice(name: 'Seed B', failOnRemoteList: true);
     addTearDown(phoneA.dispose);
-    addTearDown(tvB.dispose);
+    addTearDown(seedB.dispose);
 
-    // 1. Phone A starts in Local/LAN P2P mode and builds library offline.
+    // Seed cloud account X with "云端电影" on Seed B, then clear Seed B usage.
+    const cloudMount = StorageMount(
+      id: 'm_cloud_only',
+      kind: StorageKind.webdav,
+      displayName: 'Cloud WebDAV',
+      config: {MountKeys.baseUrl: 'https://cloud.example.com/dav'},
+      secrets: {MountKeys.secretPassword: 'pw'},
+    );
+    await seedB.registry.upsert(cloudMount);
+    final cloudMovieId = await seedB.repo.insertItem(
+      LibraryItemsCompanion.insert(
+        kind: LibraryKinds.movie,
+        libraryType: LibraryTypes.movie,
+        title: '云端电影',
+        sortTitle: 'cloud movie',
+        tmdbId: const Value('999001'),
+        metadataSource: const Value('tmdb'),
+        scrapedAt: const Value(1000),
+        addedAt: 1000,
+        updatedAt: 1000,
+      ),
+    );
+    await seedB.repo.linkFile(
+      await seedB.repo.upsertFile(mountId: 'm_cloud_only', path: '/Cloud.mkv', role: LibraryFileRoles.video, scanId: 1),
+      cloudMovieId,
+    );
+    await seedB.sync.register(serverUrl: serverUrl, username: 'acct_x', password: 'pw', kdfParams: fastKdf);
+
+    // Phone A starts in Local mode with local-only movie "流浪地球2".
     await phoneA.initLan();
-    expect(phoneA.sync.syncMode, SyncMode.lanP2p);
+    expect(phoneA.sync.syncMode, SyncMode.localOnly);
     expect(phoneA.sync.lanService.isRunning, isTrue);
 
-    const mount = StorageMount(
-      id: 'm_switch',
+    const localMount = StorageMount(
+      id: 'm_local_only',
       kind: StorageKind.webdav,
-      displayName: 'Home NAS',
+      displayName: 'Local NAS',
       config: {MountKeys.baseUrl: 'http://192.168.1.2/dav'},
       secrets: {MountKeys.secretPassword: 'pw'},
     );
-    await phoneA.registry.upsert(mount);
-    final movieId = await phoneA.repo.insertItem(
+    await phoneA.registry.upsert(localMount);
+    final localMovieId = await phoneA.repo.insertItem(
       LibraryItemsCompanion.insert(
         kind: LibraryKinds.movie,
         libraryType: LibraryTypes.movie,
@@ -542,33 +477,333 @@ void main() {
       ),
     );
     await phoneA.repo.linkFile(
-      await phoneA.repo.upsertFile(mountId: 'm_switch', path: '/WE2.mkv', role: LibraryFileRoles.video, scanId: 1),
-      movieId,
+      await phoneA.repo.upsertFile(mountId: 'm_local_only', path: '/WE2.mkv', role: LibraryFileRoles.video, scanId: 1),
+      localMovieId,
     );
 
-    // 2. Phone A logs into Go Sync Server -> automatically stops LAN P2P server & uploads library.
-    await phoneA.sync.register(serverUrl: serverUrl, username: 'switcher', password: 'pw', kdfParams: fastKdf);
+    // Sign into Account X with accountOnly -> local library is archived safely, not merged into Account X!
+    await phoneA.sync.loginWithPassword(
+      serverUrl: serverUrl,
+      username: 'acct_x',
+      password: 'pw',
+      mergePolicy: LocalMergePolicy.accountOnly,
+    );
     expect(phoneA.sync.syncMode, SyncMode.cloudServer);
-    expect(phoneA.sync.lanService.isRunning, isFalse);
+    // Remote control LAN discovery must remain running across cloud sign-in!
+    expect(phoneA.sync.lanService.isRunning, isTrue);
+    expect((await phoneA.registry.list()).map((m) => m.id), ['m_cloud_only']);
+    final cloudTitlesOnA = (await phoneA.repo.queryTitles(
+      const LibraryQuery(libraryType: LibraryTypes.movie),
+    )).items.map((v) => v.item.title).toList();
+    expect(cloudTitlesOnA, ['云端电影']);
 
-    // Empty TV B logs into the same Go Sync Server -> receives Phone A's pre-existing library automatically.
-    await tvB.sync.loginWithPassword(serverUrl: serverUrl, username: 'switcher', password: 'pw');
-    expect(tvB.sync.syncMode, SyncMode.cloudServer);
-    expect(tvB.sync.lanService.isRunning, isFalse);
-    final tvMovies = await tvB.repo.queryTitles(const LibraryQuery(libraryType: LibraryTypes.movie));
-    expect(tvMovies.items.map((v) => v.item.title), ['流浪地球2']);
-
-    // 3. Signing out on Phone A returns seamlessly to Local/LAN P2P mode without losing data.
+    // Sign out -> switches workspace back to 'local', restoring "流浪地球2" & "m_local_only".
     await phoneA.sync.signOut();
-    expect(phoneA.sync.syncMode, SyncMode.lanP2p);
+    expect(phoneA.sync.syncMode, SyncMode.localOnly);
     expect(phoneA.sync.isSignedIn, isFalse);
     expect(phoneA.sync.lanService.isRunning, isTrue);
-    expect((await phoneA.registry.list()).single.id, 'm_switch');
-    final phoneMovies = await phoneA.repo.queryTitles(const LibraryQuery(libraryType: LibraryTypes.movie));
-    expect(phoneMovies.items.map((v) => v.item.title), ['流浪地球2']);
+    expect((await phoneA.registry.list()).map((m) => m.id), ['m_local_only']);
+    final restoredLocalTitles = (await phoneA.repo.queryTitles(
+      const LibraryQuery(libraryType: LibraryTypes.movie),
+    )).items.map((v) => v.item.title).toList();
+    expect(restoredLocalTitles, ['流浪地球2']);
+
+    // Sign into a new Account Y with mergeLocal -> merges local library up to cloud Account Y.
+    await phoneA.sync.register(
+      serverUrl: serverUrl,
+      username: 'acct_y',
+      password: 'pw',
+      kdfParams: fastKdf,
+      mergePolicy: LocalMergePolicy.mergeLocal,
+    );
+    expect((await phoneA.registry.list()).map((m) => m.id), ['m_local_only']);
+    await phoneA.sync.signOut();
+
+    // Verify Account X on server never received Account Y / local data.
+    await seedB.sync.syncNow(allowBackgroundScan: false);
+    final seedTitles = (await seedB.repo.queryTitles(
+      const LibraryQuery(libraryType: LibraryTypes.movie),
+    )).items.map((v) => v.item.title).toList();
+    expect(seedTitles, ['云端电影']);
   });
 
-  test('mid-scan loser mount is preempted cleanly without FK error when earlier peer pairs and syncs', () async {
+  test('Plan B skeleton omits heavy details over sync and lazy ID hydration never dirties SyncOutbox', () async {
+    final mockTmdb = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(() => mockTmdb.close(force: true));
+    unawaited(() async {
+      await for (final req in mockTmdb) {
+        if (req.uri.path.endsWith('/3/movie/693134')) {
+          req.response
+            ..statusCode = HttpStatus.ok
+            ..headers.contentType = ContentType.json
+            ..write(
+              jsonEncode({
+                'id': 693134,
+                'title': 'Dune: Part Two',
+                'overview': 'Paul Atreides unites with the Fremen on Arrakis.',
+                'tagline': 'Long live the fighters.',
+                'credits': {
+                  'cast': [
+                    {'id': 1190668, 'name': 'Timothée Chalamet', 'character': 'Paul Atreides'},
+                  ],
+                  'crew': [
+                    {'id': 137427, 'name': 'Denis Villeneuve', 'job': 'Director'},
+                  ],
+                },
+              }),
+            );
+        } else {
+          req.response.statusCode = HttpStatus.notFound;
+        }
+        await req.response.close();
+      }
+    }());
+
+    final serverUrl = await startSyncServer();
+    final pc = _PeerDevice(name: 'PC');
+    final tv = _PeerDevice(name: 'TV', failOnRemoteList: true);
+    addTearDown(pc.dispose);
+    addTearDown(tv.dispose);
+
+    const mount = StorageMount(
+      id: 'm_planb',
+      kind: StorageKind.webdav,
+      displayName: 'WebDAV',
+      config: {MountKeys.baseUrl: 'https://dav.example.com'},
+    );
+    await pc.registry.upsert(mount);
+    final movieId = await pc.repo.insertItem(
+      LibraryItemsCompanion.insert(
+        kind: LibraryKinds.movie,
+        libraryType: LibraryTypes.movie,
+        title: 'Dune: Part Two',
+        sortTitle: 'dune part two',
+        summary: const Value('Heavy summary that should stay out of unlocked skeleton.'),
+        tagline: const Value('Heavy tagline'),
+        tmdbId: const Value('693134'),
+        metadataSource: const Value('tmdb'),
+        scrapedAt: const Value(1000),
+        addedAt: 1000,
+        updatedAt: 1000,
+      ),
+    );
+    await pc.repo.setGenres(movieId, const ['Sci-Fi', 'Adventure']);
+    await pc.repo.setCredits(movieId, const [
+      (name: 'Timothée Chalamet', job: 'actor', character: 'Paul Atreides', tmdbId: '1190668', photoSource: null),
+    ]);
+    final fid = await pc.repo.upsertFile(
+      mountId: mount.id,
+      path: '/Dune2.mkv',
+      role: LibraryFileRoles.video,
+      scanId: 1,
+    );
+    await pc.repo.linkFile(fid, movieId);
+    await pc.repo.updateFile(fid, const LibraryFilesCompanion(matchState: Value(LibraryMatchStates.matched)));
+
+    await pc.sync.initialize();
+    await pc.sync.mapper.ensureJournalUpToDate();
+    final skeletonBundle = await pc.sync.mapper.buildDeltaBundle(
+      encryptionKey: SyncCrypto.generateMasterKey(),
+      sinceSeq: 0,
+    );
+    final workMeta = (skeletonBundle.works.single['metadata_json'] as Map).cast<String, Object?>();
+    expect(workMeta['genres'], unorderedEquals(['Sci-Fi', 'Adventure']));
+    expect(workMeta.containsKey('summary'), isFalse);
+    expect(workMeta.containsKey('tagline'), isFalse);
+    expect(workMeta.containsKey('credits'), isFalse);
+
+    await pc.sync.register(serverUrl: serverUrl, username: 'planb', password: 'pw', kdfParams: fastKdf);
+    await tv.sync.loginWithPassword(serverUrl: serverUrl, username: 'planb', password: 'pw');
+
+    // Configure TV scraper runner to point to mock local TMDB server.
+    await LibrarySettingsStore(
+      tv.db,
+    ).saveScraper(ScraperSettings(tmdbApiKey: 'test-key', tmdbApiBase: 'http://127.0.0.1:${mockTmdb.port}/3'));
+    final tvScrapeRunner = LibraryScrapeRunner(
+      database: tv.db,
+      repository: tv.repo,
+      settings: LibrarySettingsStore(tv.db),
+      mounts: tv.mountManager,
+    );
+    tv.client.scrapeRunner = tvScrapeRunner;
+
+    final tvMovies = await tv.repo.queryTitles(const LibraryQuery(libraryType: LibraryTypes.movie));
+    expect(tvMovies.items.single.item.summary, isNull);
+
+    final hydratedItem = await tv.client.fetchItem('${tvMovies.items.single.item.id}');
+    expect(hydratedItem?.summary, 'Paul Atreides unites with the Fremen on Arrakis.');
+    expect(hydratedItem?.tagline, 'Long live the fighters.');
+    expect(hydratedItem?.roles?.map((r) => r.tag), contains('Timothée Chalamet'));
+    expect(hydratedItem?.directors, contains('Denis Villeneuve'));
+
+    // Lazy hydration must NOT produce dirty journal or SyncOutbox entries!
+    final dirtyCount = await tv.sync.mapper.ensureJournalUpToDate();
+    expect(dirtyCount, 0);
+    expect(await tv.sync.syncStore.readPendingOutbox(), isEmpty);
+  });
+
+  test('sync_lists and encrypted scraper settings sync across devices while proxy stays local', () async {
+    final serverUrl = await startSyncServer();
+    final pc = _PeerDevice(name: 'PC');
+    final phone = _PeerDevice(name: 'Phone', failOnRemoteList: true);
+    addTearDown(pc.dispose);
+    addTearDown(phone.dispose);
+
+    await LibrarySettingsStore(pc.db).saveScraper(
+      const ScraperSettings(
+        tmdbApiKey: 'tmdb-secret-key-xyz',
+        tmdbApiBase: 'https://mirror.tmdb.example/3',
+        tmdbImageBase: 'https://img.mirror.example/t/p',
+        language: 'ja-JP',
+        proxy: '127.0.0.1:7890',
+        bangumiEnabled: false,
+      ),
+    );
+    await LibrarySettingsStore(phone.db).saveScraper(const ScraperSettings(proxy: '192.168.1.99:8888'));
+
+    const mount = StorageMount(
+      id: 'm_list',
+      kind: StorageKind.webdav,
+      displayName: 'Share',
+      config: {MountKeys.baseUrl: 'https://dav.example.com'},
+    );
+    await pc.registry.upsert(mount);
+    final movieId = await pc.repo.insertItem(
+      LibraryItemsCompanion.insert(
+        kind: LibraryKinds.movie,
+        libraryType: LibraryTypes.movie,
+        title: 'Your Name',
+        sortTitle: 'your name',
+        tmdbId: const Value('372058'),
+        metadataSource: const Value('tmdb'),
+        scrapedAt: const Value(1000),
+        addedAt: 1000,
+        updatedAt: 1000,
+      ),
+    );
+    final fid = await pc.repo.upsertFile(
+      mountId: mount.id,
+      path: '/YourName.mkv',
+      role: LibraryFileRoles.video,
+      scanId: 1,
+    );
+    await pc.repo.linkFile(fid, movieId);
+    await pc.repo.updateFile(fid, const LibraryFilesCompanion(matchState: Value(LibraryMatchStates.matched)));
+
+    await pc.client.createPlaylist(
+      title: 'Weekend Favorites',
+      items: [MediaItem.jellyfin(id: '$movieId', kind: MediaKind.movie, title: 'Your Name')],
+    );
+
+    await pc.sync.register(serverUrl: serverUrl, username: 'listuser', password: 'pw', kdfParams: fastKdf);
+    await phone.sync.loginWithPassword(serverUrl: serverUrl, username: 'listuser', password: 'pw');
+
+    final phoneSettings = await LibrarySettingsStore(phone.db).loadScraper();
+    expect(phoneSettings.tmdbApiKey, 'tmdb-secret-key-xyz');
+    expect(phoneSettings.tmdbApiBase, 'https://mirror.tmdb.example/3');
+    expect(phoneSettings.tmdbImageBase, 'https://img.mirror.example/t/p');
+    expect(phoneSettings.language, 'ja-JP');
+    expect(phoneSettings.bangumiEnabled, isFalse);
+    expect(phoneSettings.proxy, '192.168.1.99:8888');
+
+    final phonePlaylists = await phone.client.fetchPlaylistsPage();
+    expect(phonePlaylists.items.map((p) => p.title), ['Weekend Favorites']);
+    final playlistPage = await phone.client.fetchPlaylistPage(phonePlaylists.items.single.id);
+    expect(playlistPage.items.map((m) => m.title), ['Your Name']);
+
+    // Delete playlist on PC and verify tombstone removes it on Phone.
+    final pcPlaylists = await pc.client.fetchPlaylistsPage();
+    await pc.client.deletePlaylist(pcPlaylists.items.single);
+    await pc.sync.syncNow(allowBackgroundScan: false);
+    await phone.sync.syncNow(allowBackgroundScan: false);
+
+    final afterDelete = await phone.client.fetchPlaylistsPage();
+    expect(afterDelete.items, isEmpty);
+  });
+
+  test('LocalLibraryClient.getPlaybackInitialization probes unknown mount and falls back to reachable mount', () async {
+    final db = AppDatabase.forTesting(NativeDatabase.memory());
+    final repo = LibraryRepository(db);
+    final registry = MountRegistry(db);
+    final mountManager = MountManager(
+      registry,
+      driverFactory: (mount, {bool useFallback = false}) {
+        if (mount.id == 'm_dead_lan') {
+          return _FailingCheckDriver(mount.kind);
+        }
+        return _LiveUrlDriver(mount);
+      },
+    );
+    final client = LocalLibraryClient(repository: repo, mounts: mountManager);
+    addTearDown(() async {
+      client.close();
+      await mountManager.dispose();
+      await db.close();
+    });
+
+    const deadLanMount = StorageMount(
+      id: 'm_dead_lan',
+      kind: StorageKind.webdav,
+      displayName: 'Home SMB/WebDAV',
+      config: {MountKeys.baseUrl: 'http://192.168.1.10/dav'},
+    );
+    const liveCloudMount = StorageMount(
+      id: 'm_live_cloud',
+      kind: StorageKind.quark,
+      displayName: 'Remote Quark',
+      config: {MountKeys.rootFolderId: '0'},
+    );
+    await registry.upsert(deadLanMount);
+    await registry.upsert(liveCloudMount);
+    await client.refreshMounts();
+
+    final movieId = await repo.insertItem(
+      LibraryItemsCompanion.insert(
+        kind: LibraryKinds.movie,
+        libraryType: LibraryTypes.movie,
+        title: 'Fallback Movie',
+        sortTitle: 'fallback movie',
+        tmdbId: const Value('111222'),
+        metadataSource: const Value('tmdb'),
+        scrapedAt: const Value(1000),
+        addedAt: 1000,
+        updatedAt: 1000,
+      ),
+    );
+    final fDead = await repo.upsertFile(
+      mountId: 'm_dead_lan',
+      path: '/Film.mkv',
+      role: LibraryFileRoles.video,
+      scanId: 1,
+    );
+    final fLive = await repo.upsertFile(
+      mountId: 'm_live_cloud',
+      path: '/Film.mkv',
+      role: LibraryFileRoles.video,
+      scanId: 1,
+    );
+    await repo.linkFile(fDead, movieId);
+    await repo.linkFile(fLive, movieId);
+
+    // Dead mount starts in unknown status and is selected as stale mediaSourceId.
+    expect(mountManager.statusOf('m_dead_lan'), MountOnlineStatus.unknown);
+
+    final init = await client.getPlaybackInitialization(
+      PlaybackInitializationOptions(
+        metadata: MediaItem.jellyfin(id: '$movieId', kind: MediaKind.movie, title: 'Fallback Movie'),
+        selectedMediaIndex: 0,
+        selectedMediaSourceId: '$fDead',
+      ),
+    );
+
+    expect(mountManager.statusOf('m_dead_lan'), MountOnlineStatus.offline);
+    expect(mountManager.statusOf('m_live_cloud'), MountOnlineStatus.onlinePrimary);
+    expect(init.selectedMediaSourceId, '$fLive');
+    expect(init.videoUrl, contains('/Film.mkv'));
+  });
+
+  test('mid-scan loser mount is preempted cleanly without FK error during cloud sync', () async {
+    final serverUrl = await startSyncServer();
     final enteredDir2 = Completer<void>();
     final dir2Gate = Completer<List<StorageEntry>>();
 
@@ -593,9 +828,6 @@ void main() {
     addTearDown(devA.dispose);
     addTearDown(devB.dispose);
 
-    await devA.initLan();
-    await devB.initLan();
-
     final mountA = StorageMount(
       id: 'uuid-early-A',
       kind: StorageKind.quark,
@@ -616,7 +848,6 @@ void main() {
     await devB.registry.upsert(mountB);
     devB.mountManager.setStatus('uuid-late-B', MountOnlineStatus.onlinePrimary);
 
-    // PC-A has already finished full scan + scrape with checkpoint 0:8000.
     for (final (path, tmdbId, title) in [
       ('/Dir1/Movie1.mkv', '27205', '盗梦空间'),
       ('/Dir2/Movie2.mkv', '157336', '星际穿越'),
@@ -635,51 +866,50 @@ void main() {
           updatedAt: 5000,
         ),
       );
-      final fileId = await devA.repo.upsertFile(mountId: 'uuid-early-A', path: path, role: LibraryFileRoles.video, scanId: 1);
+      final fileId = await devA.repo.upsertFile(
+        mountId: 'uuid-early-A',
+        path: path,
+        role: LibraryFileRoles.video,
+        scanId: 1,
+      );
       await devA.repo.linkFile(fileId, itemId);
       await devA.repo.updateFile(fileId, const LibraryFilesCompanion(matchState: Value(LibraryMatchStates.matched)));
     }
-    await devA.db.into(devA.db.libraryScanStates).insertOnConflictUpdate(
-      LibraryScanStatesCompanion.insert(
-        mountId: 'uuid-early-A',
-        scanId: const Value(1),
-        finishedAt: const Value(5000),
-        quarkCheckpoint: const Value('0:8000'),
-      ),
-    );
+    await devA.db
+        .into(devA.db.libraryScanStates)
+        .insertOnConflictUpdate(
+          LibraryScanStatesCompanion.insert(
+            mountId: 'uuid-early-A',
+            scanId: const Value(1),
+            finishedAt: const Value(5000),
+            quarkCheckpoint: const Value('0:8000'),
+          ),
+        );
+
+    await devA.sync.register(serverUrl: serverUrl, username: 'preempt_user', password: 'pw', kdfParams: fastKdf);
 
     // PC-B starts scanning locally and pauses while listing /Dir2 after /Dir1 is written.
     final scanFuture = devB.scans.scan(mountB);
     await enteredDir2.future;
     expect(devB.scans.isScanning('uuid-late-B'), isTrue);
 
-    final peerB = LanDiscoveredPeer(
-      deviceId: devB.sync.lanService.deviceId!,
-      deviceName: 'PC-B',
-      platform: 'windows',
-      host: '127.0.0.1',
-      httpPort: devB.sync.lanService.listeningPort!,
-      pubKeyBase64: devB.sync.lanService.publicKeyBase64!,
-      revision: 0,
-      lastSeen: clock.now(),
-    );
-    await devA.sync.lanService.requestPairWithPeer(peerB);
-    final acceptFuture = devB.sync.lanService.acceptPairRequest(devB.sync.lanService.incomingPairRequests.single);
+    final loginFuture = devB.sync.loginWithPassword(serverUrl: serverUrl, username: 'preempt_user', password: 'pw');
     await Future<void>.delayed(const Duration(milliseconds: 25));
-    // Unblock in-flight /Dir2 request after preemption cancelled the local scan.
-    dir2Gate.complete(const [StorageEntry(path: '/Dir2/Movie2.mkv', name: 'Movie2.mkv', isDirectory: false, size: 1000)]);
+    dir2Gate.complete(const [
+      StorageEntry(path: '/Dir2/Movie2.mkv', name: 'Movie2.mkv', isDirectory: false, size: 1000),
+    ]);
 
     await scanFuture;
-    await acceptFuture;
-    await devB.sync.lanService.syncWithAllTrustedPeers();
+    await loginFuture;
 
-    // Zero scan errors (no FOREIGN KEY constraint failure!), source unified to uuid-early-A, full library intact.
     expect(devB.scans.statusOf('uuid-late-B').error, isNull);
     expect(devB.scans.statusOf('uuid-early-A').error, isNull);
     final mountsB = await devB.registry.list();
     expect(mountsB.map((m) => m.id), ['uuid-early-A']);
     expect(await devB.scans.hasIncrementalBaseline(mountsB.single), isTrue);
-    final moviesB = (await devB.repo.queryTitles(const LibraryQuery(libraryType: LibraryTypes.movie))).items.map((e) => e.item.title).toSet();
+    final moviesB = (await devB.repo.queryTitles(
+      const LibraryQuery(libraryType: LibraryTypes.movie),
+    )).items.map((e) => e.item.title).toSet();
     expect(moviesB, {'盗梦空间', '星际穿越', '黑客帝国'});
   });
 
@@ -751,11 +981,7 @@ void main() {
           'provider': 'tmdb',
           'external_id': '27205',
           'match_status': 3,
-          'metadata_json': const {
-            'title': '盗梦空间',
-            'sort_title': 'dao meng kong jian',
-            'tmdb_id': '27205',
-          },
+          'metadata_json': const {'title': '盗梦空间', 'sort_title': 'dao meng kong jian', 'tmdb_id': '27205'},
           'client_updated_at': 3000,
           'is_deleted': false,
         },
@@ -785,7 +1011,9 @@ void main() {
     );
 
     // Resume /Dir2 so scan finishes and invokes removeFilesNotSeen('uuid-winner-B', scanId=1).
-    dir2Gate.complete(const [StorageEntry(path: '/Dir2/Movie2.mkv', name: 'Movie2.mkv', isDirectory: false, size: 2000)]);
+    dir2Gate.complete(const [
+      StorageEntry(path: '/Dir2/Movie2.mkv', name: 'Movie2.mkv', isDirectory: false, size: 2000),
+    ]);
     await scanFuture;
 
     final filesB = await (devB.db.select(devB.db.libraryFiles)..where((t) => t.mountId.equals('uuid-winner-B'))).get();
@@ -794,4 +1022,50 @@ void main() {
     expect(movie1.matchState, LibraryMatchStates.matched);
     expect(movie1.seenInScan, 1);
   });
+}
+
+class _FailingCheckDriver implements StorageDriver {
+  _FailingCheckDriver(this.kind);
+
+  @override
+  final StorageKind kind;
+
+  @override
+  Future<void> check() async => throw const StorageException(StorageErrorKind.network, 'LAN unreachable');
+
+  @override
+  Future<List<StorageEntry>> list(String path, {StorageEntry? parent}) async => const [];
+
+  @override
+  Future<StorageEntry> stat(String path) async => StorageEntry(path: path, name: path, isDirectory: false, size: 0);
+
+  @override
+  Stream<List<int>> openRead(StorageEntry entry, {int start = 0, int? end}) => const Stream.empty();
+
+  @override
+  Future<void> close() async {}
+}
+
+class _LiveUrlDriver implements StorageDriver {
+  _LiveUrlDriver(this.mount);
+
+  final StorageMount mount;
+
+  @override
+  StorageKind get kind => mount.kind;
+
+  @override
+  Future<void> check() async {}
+
+  @override
+  Future<List<StorageEntry>> list(String path, {StorageEntry? parent}) async => const [];
+
+  @override
+  Future<StorageEntry> stat(String path) async => StorageEntry(path: path, name: path, isDirectory: false, size: 0);
+
+  @override
+  Stream<List<int>> openRead(StorageEntry entry, {int start = 0, int? end}) => const Stream.empty();
+
+  @override
+  Future<void> close() async {}
 }

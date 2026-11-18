@@ -80,6 +80,7 @@ class SyncPullResult {
     required this.files,
     required this.workPrefs,
     required this.watchProgress,
+    this.lists = const [],
   });
 
   final int serverTimeMs;
@@ -93,6 +94,7 @@ class SyncPullResult {
   final List<Map<String, dynamic>> files;
   final List<Map<String, dynamic>> workPrefs;
   final List<Map<String, dynamic>> watchProgress;
+  final List<Map<String, dynamic>> lists;
 }
 
 class SyncPushResult {
@@ -129,6 +131,18 @@ class SyncApiClient {
   Future<int> checkHealth(String serverUrl) async {
     final json = await _requestJson('GET', '${_base(serverUrl)}/healthz');
     return (json['server_time_ms'] as num?)?.toInt() ?? 0;
+  }
+
+  Future<({bool allowRegistration, int maxEntitiesPerUser})> probeServer(String serverUrl) async {
+    final json = await _requestJson(
+      'GET',
+      '${_base(serverUrl)}/api/v1/public/info',
+      timeout: const Duration(seconds: 5),
+    );
+    return (
+      allowRegistration: json['allow_registration'] != false,
+      maxEntitiesPerUser: (json['max_entities_per_user'] as num?)?.toInt() ?? 0,
+    );
   }
 
   Future<({String kdfSalt, SyncKdfParams kdfParams})> lookupKdf(String serverUrl, String username) async {
@@ -212,7 +226,9 @@ class SyncApiClient {
   }
 
   Future<SyncQrPollResult> pollQrSession(String serverUrl, String sessionId) async {
-    final uri = Uri.parse('${_base(serverUrl)}/api/v1/auth/qr/poll').replace(queryParameters: {'session_id': sessionId});
+    final uri = Uri.parse(
+      '${_base(serverUrl)}/api/v1/auth/qr/poll',
+    ).replace(queryParameters: {'session_id': sessionId});
     final json = await _requestJson('GET', uri.toString());
     return SyncQrPollResult(
       status: json['status'] as String,
@@ -249,6 +265,7 @@ class SyncApiClient {
       files: _listOfMaps(data['files']),
       workPrefs: _listOfMaps(data['work_prefs']),
       watchProgress: _listOfMaps(data['watch_progress']),
+      lists: _listOfMaps(data['lists']),
     );
   }
 
@@ -307,12 +324,7 @@ class SyncApiClient {
   }
 
   Future<void> updateUserSettings(String serverUrl, String accessToken, Map<String, Object?> updates) async {
-    await _requestJson(
-      'POST',
-      '${_base(serverUrl)}/api/v1/user/settings',
-      accessToken: accessToken,
-      body: updates,
-    );
+    await _requestJson('POST', '${_base(serverUrl)}/api/v1/user/settings', accessToken: accessToken, body: updates);
   }
 
   SyncAuthResult _parseAuth(Map<String, dynamic> json) => SyncAuthResult(
@@ -329,8 +341,12 @@ class SyncApiClient {
   static Map<String, Object?> _mapOf(Object? raw) =>
       raw is Map ? {for (final entry in raw.entries) '${entry.key}': entry.value} : const {};
 
-  static List<Map<String, dynamic>> _listOfMaps(Object? raw) =>
-      raw is List ? [for (final entry in raw) if (entry is Map<String, dynamic>) entry] : const [];
+  static List<Map<String, dynamic>> _listOfMaps(Object? raw) => raw is List
+      ? [
+          for (final entry in raw)
+            if (entry is Map<String, dynamic>) entry,
+        ]
+      : const [];
 
   Future<Map<String, dynamic>> _requestJson(
     String method,
@@ -338,7 +354,9 @@ class SyncApiClient {
     String? accessToken,
     Object? body,
     bool compressRequest = false,
+    Duration? timeout,
   }) async {
+    final effectiveTimeout = timeout ?? requestTimeout;
     final req = http.Request(method, Uri.parse(url));
     req.headers['Accept'] = 'application/json';
     req.headers['Accept-Encoding'] = 'gzip';
@@ -356,8 +374,8 @@ class SyncApiClient {
       }
     }
 
-    final streamed = await _http.send(req).timeout(requestTimeout);
-    final resp = await http.Response.fromStream(streamed).timeout(requestTimeout);
+    final streamed = await _http.send(req).timeout(effectiveTimeout);
+    final resp = await http.Response.fromStream(streamed).timeout(effectiveTimeout);
     final rawText = utf8.decode(resp.bodyBytes);
     final decoded = rawText.isEmpty ? <String, dynamic>{} : jsonDecode(rawText) as Map<String, dynamic>;
     if (resp.statusCode < 200 || resp.statusCode >= 300) {

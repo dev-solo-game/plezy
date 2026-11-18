@@ -16,7 +16,6 @@ import 'package:plezy/library/library_scraper.dart';
 import 'package:plezy/library/local_library_client.dart';
 import 'package:plezy/library/scrapers/scraped_metadata.dart';
 import 'package:plezy/library/sync/deterministic_keys.dart';
-import 'package:plezy/library/sync/lan_peer_sync_service.dart';
 import 'package:plezy/library/sync/sync_coordinator.dart';
 import 'package:plezy/library/sync/sync_crypto.dart';
 import 'package:plezy/media/media_item.dart';
@@ -32,11 +31,7 @@ import 'package:plezy/storage/storage_path.dart';
 import '../test_helpers/prefs.dart';
 
 class _TrackingVirtualDriver implements StorageDriver {
-  _TrackingVirtualDriver({
-    required this.mount,
-    required this.entries,
-    this.onClose,
-  });
+  _TrackingVirtualDriver({required this.mount, required this.entries, this.onClose});
 
   final StorageMount mount;
   final Map<String, ({int size, int modifiedAt})> entries;
@@ -138,12 +133,9 @@ class _FakeMetadataProvider implements MetadataProvider {
 }
 
 class _ScenarioNode {
-  _ScenarioNode(
-    this.name, {
-    bool isTvDevice = false,
-    Map<String, ({int size, int modifiedAt})>? sharedFiles,
-  }) : sharedFiles = sharedFiles ?? {},
-       db = AppDatabase.forTesting(NativeDatabase.memory()) {
+  _ScenarioNode(this.name, {bool isTvDevice = false, Map<String, ({int size, int modifiedAt})>? sharedFiles})
+    : sharedFiles = sharedFiles ?? {},
+      db = AppDatabase.forTesting(NativeDatabase.memory()) {
     repo = LibraryRepository(db);
     registry = MountRegistry(db);
     mountManager = MountManager(
@@ -151,11 +143,7 @@ class _ScenarioNode {
       driverFactory: (mount, {bool useFallback = false}) {
         driverCreates++;
         createdMountUrls.add(mount.configString(MountKeys.baseUrl) ?? mount.kind.id);
-        final driver = _TrackingVirtualDriver(
-          mount: mount,
-          entries: this.sharedFiles,
-          onClose: () => driverCloses++,
-        );
+        final driver = _TrackingVirtualDriver(mount: mount, entries: this.sharedFiles, onClose: () => driverCloses++);
         return driver;
       },
     );
@@ -171,11 +159,7 @@ class _ScenarioNode {
       enableLanUdp: false,
     );
     scans.onScopedCatalogChanged = (mountIds, {directoryPrefixes, allowTombstones = true}) => unawaited(
-      sync.onCatalogChanged(
-        mountIds: mountIds,
-        directoryPrefixes: directoryPrefixes,
-        allowTombstones: allowTombstones,
-      ),
+      sync.onCatalogChanged(mountIds: mountIds, directoryPrefixes: directoryPrefixes, allowTombstones: allowTombstones),
     );
   }
 
@@ -195,35 +179,27 @@ class _ScenarioNode {
   final List<String> createdMountUrls = [];
   bool _disposed = false;
 
-  Future<void> initLan() async {
+  Future<void> initLocal() async {
     await sync.initialize();
-    await sync.selectLanMode(startService: false);
-    await sync.lanService.start();
+    await sync.selectLocalMode();
   }
 
-  Future<void> pairWith(_ScenarioNode target) async {
-    final targetRev = await target.sync.syncStore.getLocalLanRevision();
-    final targetEpoch = await target.sync.syncStore.getOrCreateSyncEpoch();
-    final discovered = LanDiscoveredPeer(
-      deviceId: target.sync.lanService.deviceId!,
-      deviceName: target.name,
-      platform: 'android',
-      host: '127.0.0.1',
-      httpPort: target.sync.lanService.listeningPort!,
-      pubKeyBase64: target.sync.lanService.publicKeyBase64!,
-      revision: targetRev,
-      lastSeen: clock.now(),
-      syncEpoch: targetEpoch,
-    );
-    await sync.lanService.requestPairWithPeer(discovered);
-    final req = target.sync.lanService.incomingPairRequests.singleWhere((r) => r.deviceId == sync.lanService.deviceId);
-    await target.sync.lanService.acceptPairRequest(req);
-    await Future<void>.delayed(const Duration(milliseconds: 25));
+  Future<void> waitIdle() async {
+    while (sync.isSyncing) {
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+    }
+  }
+
+  Future<void> drainAndSyncNow() async {
+    await waitIdle();
+    await sync.syncNow(allowBackgroundScan: false);
+    await waitIdle();
   }
 
   Future<void> dispose() async {
     if (_disposed) return;
     _disposed = true;
+    await waitIdle();
     client.close();
     scans.dispose();
     sync.dispose();
@@ -252,7 +228,7 @@ void main() {
       'go',
       ['build', '-o', serverExePath, '.'],
       workingDirectory: p.join(Directory.current.path, 'sync_server'),
-      environment: {'GOTOOLCHAIN': 'local'},
+      environment: {'GOTOOLCHAIN': 'auto'},
     );
     if (buildResult.exitCode != 0) {
       fail('Failed to build sync_server:\n${buildResult.stdout}\n${buildResult.stderr}');
@@ -301,17 +277,16 @@ void main() {
 
   group('Fixed-ID Multi-Device Sync Scenarios', () {
     test(
-      'Scenario 1: 600+ files multi-page LAN Push/Pull + out-of-order file-before-work + 26-ep pending show',
+      'Scenario 1: 600+ files multi-page Cloud Push/Pull + out-of-order file-before-work + 26-ep pending show',
       () async {
+        final serverUrl = await startSyncServer();
         final pc = _ScenarioNode('PC');
         final android = _ScenarioNode('Android');
         addTearDown(pc.dispose);
         addTearDown(android.dispose);
 
-        await pc.initLan();
-        await android.initLan();
-        pc.sync.lanService.syncPageLimit = 180;
-        android.sync.lanService.syncPageLimit = 180;
+        await pc.initLocal();
+        await android.initLocal();
 
         const mount = StorageMount(
           id: 'quark_600100',
@@ -361,48 +336,57 @@ void main() {
         await pc.sync.mapper.ensureJournalUpToDate();
 
         // No raw:* fake works may exist in sync_journal!
-        final rawWorks = await pc.db.customSelect("SELECT 1 FROM sync_journal WHERE entity_type = 'work' AND entity_key LIKE 'raw:%'").get();
+        final rawWorks = await pc.db
+            .customSelect("SELECT 1 FROM sync_journal WHERE entity_type = 'work' AND entity_key LIKE 'raw:%'")
+            .get();
         expect(rawWorks, isEmpty);
 
-        // LAN Pull across multiple pages, PLUS LAN Push across multiple pages (has_more handling on push!).
-        await pc.pairWith(android);
-        await android.sync.lanService.syncWithAllTrustedPeers();
+        // Cloud Pull across multiple pages (500/page) & multi-page Push (200/page).
+        await pc.sync.register(serverUrl: serverUrl, username: 'scen1', password: 'pw', kdfParams: fastKdf);
+        await android.sync.loginWithPassword(serverUrl: serverUrl, username: 'scen1', password: 'pw');
 
         final pushReceiver = _ScenarioNode('PushReceiver');
         addTearDown(pushReceiver.dispose);
-        await pushReceiver.initLan();
-        pushReceiver.sync.lanService.syncPageLimit = 180;
-        await pc.pairWith(pushReceiver);
-        await pc.sync.lanService.syncWithAllTrustedPeers();
+        await pushReceiver.initLocal();
+        await pushReceiver.sync.loginWithPassword(serverUrl: serverUrl, username: 'scen1', password: 'pw');
 
-        final pcMovies = (await pc.repo.queryTitles(const LibraryQuery(libraryType: LibraryTypes.movie, limit: 500))).items;
-        final androidMovies = (await android.repo.queryTitles(const LibraryQuery(libraryType: LibraryTypes.movie, limit: 500))).items;
-        final pushMovies = (await pushReceiver.repo.queryTitles(const LibraryQuery(libraryType: LibraryTypes.movie, limit: 500))).items;
+        final pcMovies = (await pc.repo.queryTitles(
+          const LibraryQuery(libraryType: LibraryTypes.movie, limit: 500),
+        )).items;
+        final androidMovies = (await android.repo.queryTitles(
+          const LibraryQuery(libraryType: LibraryTypes.movie, limit: 500),
+        )).items;
+        final pushMovies = (await pushReceiver.repo.queryTitles(
+          const LibraryQuery(libraryType: LibraryTypes.movie, limit: 500),
+        )).items;
         expect(pcMovies, hasLength(310));
         expect(androidMovies, hasLength(310));
         expect(pushMovies, hasLength(310));
-        expect(
-          androidMovies.map((e) => e.item.workKey).toSet(),
-          pcMovies.map((e) => e.item.workKey).toSet(),
-        );
+        expect(androidMovies.map((e) => e.item.workKey).toSet(), pcMovies.map((e) => e.item.workKey).toSet());
 
-        final androidPending = (await android.repo.queryTitles(const LibraryQuery(libraryType: LibraryTypes.pending))).items;
+        final androidPending = (await android.repo.queryTitles(
+          const LibraryQuery(libraryType: LibraryTypes.pending),
+        )).items;
         expect(androidPending, hasLength(1));
         expect(await android.repo.episodesOfShow(androidPending.single.item.id), hasLength(26));
-        final pushPending = (await pushReceiver.repo.queryTitles(const LibraryQuery(libraryType: LibraryTypes.pending))).items;
+        final pushPending = (await pushReceiver.repo.queryTitles(
+          const LibraryQuery(libraryType: LibraryTypes.pending),
+        )).items;
         expect(pushPending, hasLength(1));
         expect(await pushReceiver.repo.episodesOfShow(pushPending.single.item.id), hasLength(26));
 
-        final unbound = await android.db.customSelect(
-          "SELECT 1 FROM library_files WHERE role = 'video' AND match_state != 'ignored' AND item_id IS NULL",
-        ).get();
+        final unbound = await android.db
+            .customSelect(
+              "SELECT 1 FROM library_files WHERE role = 'video' AND match_state != 'ignored' AND item_id IS NULL",
+            )
+            .get();
         expect(unbound, isEmpty);
 
         // Out-of-order chunk test: Page 1 sends file BEFORE work (isFinalPage: false); Page 2 sends work (isFinalPage: true).
         final outOfOrderNode = _ScenarioNode('OutOfOrder');
         addTearDown(outOfOrderNode.dispose);
-        await outOfOrderNode.initLan();
-        final masterKey = pc.sync.lanService.trustedPeers.first.sharedKey;
+        await outOfOrderNode.initLocal();
+        final masterKey = (await pc.sync.syncStore.loadSession())!.masterKey;
         final bundle = await pc.sync.mapper.buildDeltaBundle(encryptionKey: masterKey, sinceSeq: 0, limit: 1000);
         final targetWork = bundle.works.firstWhere((w) => w['work_key'] == 'tmdb:movie:500001');
         final targetFile = bundle.files.firstWhere((f) => f['work_key'] == 'tmdb:movie:500001');
@@ -448,13 +432,14 @@ void main() {
     test(
       'Scenario 2: Self-healing corrupted Android SQLite (deleted items & item_id = NULL) even when journal hashes match',
       () async {
+        final serverUrl = await startSyncServer();
         final pc = _ScenarioNode('PC');
         final android = _ScenarioNode('Android');
         addTearDown(pc.dispose);
         addTearDown(android.dispose);
 
-        await pc.initLan();
-        await android.initLan();
+        await pc.initLocal();
+        await android.initLocal();
 
         const mount = StorageMount(
           id: 'webdav_heal_1',
@@ -507,11 +492,14 @@ void main() {
         );
         await pc.repo.linkFile(f2Id, p1Id);
 
-        await pc.pairWith(android);
-        await android.sync.lanService.syncWithAllTrustedPeers();
+        await pc.sync.register(serverUrl: serverUrl, username: 'scen2', password: 'pw', kdfParams: fastKdf);
+        await android.sync.loginWithPassword(serverUrl: serverUrl, username: 'scen2', password: 'pw');
 
         expect(await android.repo.findByWorkKey('tmdb:movie:601'), isNotNull);
-        expect((await android.repo.queryTitles(const LibraryQuery(libraryType: LibraryTypes.pending))).items, hasLength(1));
+        expect(
+          (await android.repo.queryTitles(const LibraryQuery(libraryType: LibraryTypes.pending))).items,
+          hasLength(1),
+        );
 
         // Corrupt Android SQLite while keeping sync_journal untouched (same hashes!).
         await android.db.customStatement('UPDATE library_files SET item_id = NULL, parsed = NULL');
@@ -522,17 +510,20 @@ void main() {
         final healed = await android.sync.mapper.healCatalogFromJournal();
         expect(healed, greaterThan(0));
         expect(await android.repo.findByWorkKey('tmdb:movie:601'), isNotNull);
-        expect((await android.repo.queryTitles(const LibraryQuery(libraryType: LibraryTypes.pending))).items, hasLength(1));
-        final unboundAfterHeal = await android.db.customSelect(
-          "SELECT 1 FROM library_files WHERE role = 'video' AND item_id IS NULL",
-        ).get();
+        expect(
+          (await android.repo.queryTitles(const LibraryQuery(libraryType: LibraryTypes.pending))).items,
+          hasLength(1),
+        );
+        final unboundAfterHeal = await android.db
+            .customSelect("SELECT 1 FROM library_files WHERE role = 'video' AND item_id IS NULL")
+            .get();
         expect(unboundAfterHeal, isEmpty);
 
         // Part B: Corrupt SQLite again and verify applyPullBatch with identical hashes also self-heals!
         await android.db.customStatement('UPDATE library_files SET item_id = NULL, work_key = NULL');
         await android.db.customStatement('DELETE FROM library_items');
-        final masterKey = pc.sync.lanService.trustedPeers.first.sharedKey;
-        final delta = await pc.sync.mapper.buildDeltaBundle(encryptionKey: masterKey, sinceSeq: 1, limit: 100);
+        final masterKey = (await pc.sync.syncStore.loadSession())!.masterKey;
+        final delta = await pc.sync.mapper.buildDeltaBundle(encryptionKey: masterKey, sinceSeq: 0, limit: 100);
         await android.sync.mapper.applyPullBatch(
           masterKey: masterKey,
           sources: delta.sources,
@@ -546,7 +537,10 @@ void main() {
           isFinalPage: true,
         );
         expect(await android.repo.findByWorkKey('tmdb:movie:601'), isNotNull);
-        expect((await android.repo.queryTitles(const LibraryQuery(libraryType: LibraryTypes.pending))).items, hasLength(1));
+        expect(
+          (await android.repo.queryTitles(const LibraryQuery(libraryType: LibraryTypes.pending))).items,
+          hasLength(1),
+        );
       },
     );
 
@@ -583,7 +577,11 @@ void main() {
         );
         expect(DeterministicKeys.deterministicSourceId(initialMount), 'quark_333444');
         await pc.registry.upsert(initialMount);
-        await pc.scanner.scan(initialMount, _TrackingVirtualDriver(mount: initialMount, entries: allFiles), restart: true);
+        await pc.scanner.scan(
+          initialMount,
+          _TrackingVirtualDriver(mount: initialMount, entries: allFiles),
+          restart: true,
+        );
 
         // Assign shelves cleanly so both films are matched works.
         final pending = (await pc.repo.queryTitles(const LibraryQuery(libraryType: LibraryTypes.pending))).items;
@@ -666,13 +664,14 @@ void main() {
     test(
       'Scenario 4: Duplicate mount guard + 2 machines independently adding same WebDAV mount offline converge cleanly',
       () async {
+        final serverUrl = await startSyncServer();
         final a = _ScenarioNode('Machine-A');
         final b = _ScenarioNode('Machine-B');
         addTearDown(a.dispose);
         addTearDown(b.dispose);
 
-        await a.initLan();
-        await b.initLan();
+        await a.initLocal();
+        await b.initLocal();
 
         const sharedDav = StorageMount(
           id: 'webdav_dummy',
@@ -831,9 +830,10 @@ void main() {
         await a.sync.mapper.ensureJournalUpToDate();
         await b.sync.mapper.ensureJournalUpToDate();
 
-        await a.pairWith(b);
-        await b.sync.lanService.syncWithAllTrustedPeers();
-        await a.sync.lanService.syncWithAllTrustedPeers();
+        await a.sync.register(serverUrl: serverUrl, username: 'scen4', password: 'pw', kdfParams: fastKdf);
+        await b.sync.loginWithPassword(serverUrl: serverUrl, username: 'scen4', password: 'pw');
+        await b.drainAndSyncNow();
+        await a.drainAndSyncNow();
 
         final aDune = (await a.repo.findByWorkKey('tmdb:movie:438631'))!;
         final bDune = (await b.repo.findByWorkKey('tmdb:movie:438631'))!;
@@ -841,7 +841,12 @@ void main() {
         expect(bDune.title, 'Dune (Locked)');
         expect(await a.repo.findByWorkKey('tmdb:movie:329865'), isNotNull);
         expect(await b.repo.findByWorkKey('tmdb:movie:329865'), isNotNull);
-        expect((await b.repo.queryTitles(const LibraryQuery(libraryType: LibraryTypes.pending))).items.map((v) => v.item.title), ['UniqueA']);
+        expect(
+          (await b.repo.queryTitles(
+            const LibraryQuery(libraryType: LibraryTypes.pending),
+          )).items.map((v) => v.item.title),
+          ['UniqueA'],
+        );
       },
     );
 
@@ -972,13 +977,14 @@ void main() {
     test(
       'Scenario 6: Deletion tombstones apply cleanly when peer scanned old files with newer addedAt wall-clock',
       () async {
+        final serverUrl = await startSyncServer();
         final pc = _ScenarioNode('PC');
         final android = _ScenarioNode('Android');
         addTearDown(pc.dispose);
         addTearDown(android.dispose);
 
-        await pc.initLan();
-        await android.initLan();
+        await pc.initLocal();
+        await android.initLocal();
 
         const mount = StorageMount(
           id: 'smb_del_1',
@@ -1044,26 +1050,31 @@ void main() {
         await withClock(Clock.fixed(DateTime.fromMillisecondsSinceEpoch(200000)), () async {
           await pc.sync.mapper.ensureJournalUpToDate();
         });
-        await pc.pairWith(android);
-        await android.sync.lanService.syncWithAllTrustedPeers();
+        await pc.sync.register(serverUrl: serverUrl, username: 'scen6', password: 'pw', kdfParams: fastKdf);
+        await android.sync.loginWithPassword(serverUrl: serverUrl, username: 'scen6', password: 'pw');
 
         // Delete on PC at deletionTs=500000 (older than Android's addedAt wall-clock ~1.79e12, newer than mtime=100000).
         await withClock(Clock.fixed(DateTime.fromMillisecondsSinceEpoch(deletionTs)), () async {
           await (pc.db.delete(pc.db.libraryFiles)..where((t) => t.id.equals(pcF))).go();
           await pc.repo.pruneEmptyTitles();
-          await pc.sync.mapper.reconcileCatalogToJournal(mountIds: {mount.id}, allowTombstones: true);
+          await pc.sync.syncStore.saveServerTimeOffsetMs(0);
+          await pc.sync.onCatalogChanged(mountIds: {mount.id}, allowTombstones: true);
         });
 
-        await android.sync.lanService.syncWithAllTrustedPeers();
+        await pc.drainAndSyncNow();
+        await android.drainAndSyncNow();
 
-        final deletedKey = DeterministicKeys.generateFileId(sourceId: mount.id, mountRelativePath: '/Movies/ToDelete.mkv');
+        final deletedKey = DeterministicKeys.generateFileId(
+          sourceId: mount.id,
+          mountRelativePath: '/Movies/ToDelete.mkv',
+        );
         expect(await android.repo.findFileByKey(deletedKey), isNull);
         expect(await android.repo.findByWorkKey('tmdb:movie:7701'), isNull);
 
         // Also verify direct applyPullBatch deletes an offline-scanned file when existingJ == null and existing.addedAt > deletionTs!
         final offlinePeer = _ScenarioNode('OfflinePeer');
         addTearDown(offlinePeer.dispose);
-        await offlinePeer.initLan();
+        await offlinePeer.initLocal();
         await offlinePeer.registry.upsert(mount);
         final offM = await offlinePeer.repo.insertItem(
           LibraryItemsCompanion.insert(
@@ -1087,9 +1098,12 @@ void main() {
           modifiedAt: oldMtime,
         );
         await offlinePeer.repo.linkFile(offF, offM);
-        final offKey = DeterministicKeys.generateFileId(sourceId: mount.id, mountRelativePath: '/Movies/OfflineDel.mkv');
+        final offKey = DeterministicKeys.generateFileId(
+          sourceId: mount.id,
+          mountRelativePath: '/Movies/OfflineDel.mkv',
+        );
         await offlinePeer.sync.mapper.applyPullBatch(
-          masterKey: pc.sync.lanService.trustedPeers.single.sharedKey,
+          masterKey: (await pc.sync.syncStore.loadSession())!.masterKey,
           sources: const [],
           works: const [],
           files: [
@@ -1258,7 +1272,10 @@ void main() {
         await pc.sync.onMountSaved(mount);
         await Future<void>.delayed(const Duration(milliseconds: 80));
         await android.sync.syncNow();
-        expect((await android.repo.queryTitles(const LibraryQuery(libraryType: LibraryTypes.pending))).items, hasLength(1));
+        expect(
+          (await android.repo.queryTitles(const LibraryQuery(libraryType: LibraryTypes.pending))).items,
+          hasLength(1),
+        );
 
         // User performs manual match on PC -> calls scans.notifyCatalogMutated()!
         final fakeTmdb = _FakeMetadataProvider('tmdb')
@@ -1294,14 +1311,16 @@ void main() {
         expect(hubs.first.id, 'local.recent');
         expect(hubs.first.title, '最近添加');
         expect(hubs.first.type, 'mixed');
-        expect(
-          hubs.first.items.map((i) => i.title).toList(),
-          ['Matched Newest Movie', 'Anime Latest', 'Drama Earlier'],
-        );
-        expect(
-          hubs.skip(1).map((h) => h.id).toList(),
-          ['local.recent.movie', 'local.recent.show', 'local.recent.anime'],
-        );
+        expect(hubs.first.items.map((i) => i.title).toList(), [
+          'Matched Newest Movie',
+          'Anime Latest',
+          'Drama Earlier',
+        ]);
+        expect(hubs.skip(1).map((h) => h.id).toList(), [
+          'local.recent.movie',
+          'local.recent.show',
+          'local.recent.anime',
+        ]);
         final moreItems = await android.client.fetchMoreHubItems('local.recent');
         expect(moreItems.map((i) => i.title).toList(), ['Matched Newest Movie', 'Anime Latest', 'Drama Earlier']);
       },

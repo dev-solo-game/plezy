@@ -116,7 +116,7 @@ void main() {
       'go',
       ['build', '-o', serverExePath, '.'],
       workingDirectory: p.join(Directory.current.path, 'sync_server'),
-      environment: {'GOTOOLCHAIN': 'local'},
+      environment: {'GOTOOLCHAIN': 'auto'},
     );
     if (buildResult.exitCode != 0) {
       fail('Failed to build sync_server:\n${buildResult.stdout}\n${buildResult.stderr}');
@@ -175,13 +175,21 @@ void main() {
       id: 'm_quark_a',
       kind: StorageKind.quark,
       displayName: '我的夸克网盘',
-      config: {MountKeys.quarkMode: 'pc', MountKeys.rootFolderId: '0', MountKeys.includePaths: ['/Anime', '/Movies']},
-      secrets: {MountKeys.secretCookie: '{"uid":"888999","ticket":"t_abc","nickname":"user","utdid":"u1","machine":"m1"}'},
+      config: {
+        MountKeys.quarkMode: 'pc',
+        MountKeys.rootFolderId: '0',
+        MountKeys.includePaths: ['/Anime', '/Movies'],
+      },
+      secrets: {
+        MountKeys.secretCookie: '{"uid":"888999","ticket":"t_abc","nickname":"user","utdid":"u1","machine":"m1"}',
+      },
     );
     await phoneA.registry.upsert(quarkMount);
     await phoneA.db
         .into(phoneA.db.libraryScanStates)
-        .insertOnConflictUpdate(LibraryScanStatesCompanion.insert(mountId: quarkMount.id, quarkCheckpoint: const Value('0:5000')));
+        .insertOnConflictUpdate(
+          LibraryScanStatesCompanion.insert(mountId: quarkMount.id, quarkCheckpoint: const Value('0:5000')),
+        );
 
     // Seed scraped show + 2 episodes + subtitle + 4K movie on Phone A.
     final showId = await phoneA.repo.insertItem(
@@ -239,7 +247,12 @@ void main() {
     await phoneA.repo.linkFile(ep1FileId, ep1Id);
     await phoneA.repo.updateFile(
       ep1FileId,
-      const LibraryFilesCompanion(matchState: Value(LibraryMatchStates.matched), width: Value(1920), height: Value(1080), videoCodec: Value('hevc')),
+      const LibraryFilesCompanion(
+        matchState: Value(LibraryMatchStates.matched),
+        width: Value(1920),
+        height: Value(1080),
+        videoCodec: Value('hevc'),
+      ),
     );
     await phoneA.repo.upsertFile(
       mountId: quarkMount.id,
@@ -298,7 +311,12 @@ void main() {
     );
 
     // Phone A creates account & uploads encrypted credentials + catalog + progress.
-    await phoneA.sync.register(serverUrl: serverUrl, username: 'alice', password: 'secret-password', kdfParams: fastKdf);
+    await phoneA.sync.register(
+      serverUrl: serverUrl,
+      username: 'alice',
+      password: 'secret-password',
+      kdfParams: fastKdf,
+    );
 
     // Empty TV B pairs via X25519 QR without typing any password or scanning Quark.
     final qr = await tvB.sync.startQrSession(serverUrl: serverUrl, deviceName: 'LivingRoomTV');
@@ -311,7 +329,9 @@ void main() {
     expect(tvMounts, hasLength(1));
     expect(tvMounts.single.id, 'm_quark_a');
     expect(tvMounts.single.secret(MountKeys.secretCookie), contains('"utdid":"u1"'));
-    final tvScan = await (tvB.db.select(tvB.db.libraryScanStates)..where((t) => t.mountId.equals('m_quark_a'))).getSingle();
+    final tvScan = await (tvB.db.select(
+      tvB.db.libraryScanStates,
+    )..where((t) => t.mountId.equals('m_quark_a'))).getSingle();
     expect(tvScan.quarkCheckpoint, '0:5000');
 
     expect((await LibrarySettingsStore(tvB.db).loadScraper()).tmdbImageBase, 'https://image-mirror.example/t/p');
@@ -335,134 +355,154 @@ void main() {
     expect((tvSkip.introEnabled, tvSkip.introStartMs, tvSkip.introEndMs), (true, 5000, 90000));
   });
 
-  test('canonicalSourceKey merges same Quark added offline on A and B to identical Mount ID and protects Level 4', () async {
-    final serverUrl = await startSyncServer();
-    final devA = _DeviceHarness();
-    final devB = _DeviceHarness();
-    addTearDown(devA.dispose);
-    addTearDown(devB.dispose);
+  test(
+    'canonicalSourceKey merges same Quark added offline on A and B to identical Mount ID and protects Level 4',
+    () async {
+      final serverUrl = await startSyncServer();
+      final devA = _DeviceHarness();
+      final devB = _DeviceHarness();
+      addTearDown(devA.dispose);
+      addTearDown(devB.dispose);
 
-    // Device A offline adds Quark as uuid-A with checkpoint 0:3000 + Level 4 Inception.
-    const mountA = StorageMount(
-      id: 'uuid-A',
-      kind: StorageKind.quark,
-      displayName: 'Phone Quark',
-      config: {MountKeys.rootFolderId: '0'},
-      secrets: {MountKeys.secretCookie: 'uid=777888; __pus=old'},
-    );
-    await devA.registry.upsert(mountA);
-    await devA.db
-        .into(devA.db.libraryScanStates)
-        .insertOnConflictUpdate(LibraryScanStatesCompanion.insert(mountId: 'uuid-A', quarkCheckpoint: const Value('0:3000')));
-    final movieA = await devA.repo.insertItem(
-      LibraryItemsCompanion.insert(
-        kind: LibraryKinds.movie,
-        libraryType: LibraryTypes.movie,
-        title: '盗梦空间',
-        sortTitle: 'inception',
-        tmdbId: const Value('27205'),
-        metadataSource: const Value('nfo'),
-        locked: const Value(true),
-        scrapedAt: const Value(1000),
-        addedAt: 1000,
-        updatedAt: 1000,
-      ),
-    );
-    final fileA = await devA.repo.upsertFile(
-      mountId: 'uuid-A',
-      path: '/Movies/Inception.mkv',
-      role: LibraryFileRoles.video,
-      scanId: 1,
-      size: 20000,
-    );
-    await devA.repo.linkFile(fileA, movieA);
-    await devA.repo.updateFile(fileA, const LibraryFilesCompanion(matchState: Value(LibraryMatchStates.matched), matchLocked: Value(true)));
+      // Device A offline adds Quark as uuid-A with checkpoint 0:3000 + Level 4 Inception.
+      const mountA = StorageMount(
+        id: 'uuid-A',
+        kind: StorageKind.quark,
+        displayName: 'Phone Quark',
+        config: {MountKeys.rootFolderId: '0'},
+        secrets: {MountKeys.secretCookie: 'uid=777888; __pus=old'},
+      );
+      await devA.registry.upsert(mountA);
+      await devA.db
+          .into(devA.db.libraryScanStates)
+          .insertOnConflictUpdate(
+            LibraryScanStatesCompanion.insert(mountId: 'uuid-A', quarkCheckpoint: const Value('0:3000')),
+          );
+      final movieA = await devA.repo.insertItem(
+        LibraryItemsCompanion.insert(
+          kind: LibraryKinds.movie,
+          libraryType: LibraryTypes.movie,
+          title: '盗梦空间',
+          sortTitle: 'inception',
+          tmdbId: const Value('27205'),
+          metadataSource: const Value('nfo'),
+          locked: const Value(true),
+          scrapedAt: const Value(1000),
+          addedAt: 1000,
+          updatedAt: 1000,
+        ),
+      );
+      final fileA = await devA.repo.upsertFile(
+        mountId: 'uuid-A',
+        path: '/Movies/Inception.mkv',
+        role: LibraryFileRoles.video,
+        scanId: 1,
+        size: 20000,
+      );
+      await devA.repo.linkFile(fileA, movieA);
+      await devA.repo.updateFile(
+        fileA,
+        const LibraryFilesCompanion(matchState: Value(LibraryMatchStates.matched), matchLocked: Value(true)),
+      );
 
-    // Device B offline independently adds the SAME Quark under uuid-B with newer checkpoint 0:8500
-    // + unmatched (Level 2) Inception + another matched film Interstellar.
-    const mountB = StorageMount(
-      id: 'uuid-B',
-      kind: StorageKind.quark,
-      displayName: 'TV Quark',
-      config: {MountKeys.rootFolderId: '0'},
-      secrets: {MountKeys.secretCookie: 'uid=777888; __pus=new'},
-    );
-    await devB.registry.upsert(mountB);
-    await devB.db
-        .into(devB.db.libraryScanStates)
-        .insertOnConflictUpdate(LibraryScanStatesCompanion.insert(mountId: 'uuid-B', quarkCheckpoint: const Value('0:8500')));
-    final unmatchedOnB = await devB.repo.insertItem(
-      LibraryItemsCompanion.insert(
-        kind: LibraryKinds.movie,
-        libraryType: LibraryTypes.pending,
-        title: 'Inception Pending',
-        sortTitle: 'inception pending',
-        scrapedAt: const Value(99999999),
-        addedAt: 2000,
-        updatedAt: 99999999,
-      ),
-    );
-    final fileIncB = await devB.repo.upsertFile(
-      mountId: 'uuid-B',
-      path: '/Movies/Inception.mkv',
-      role: LibraryFileRoles.video,
-      scanId: 1,
-      size: 20000,
-    );
-    await devB.repo.linkFile(fileIncB, unmatchedOnB);
-    await devB.repo.updateFile(fileIncB, const LibraryFilesCompanion(matchState: Value(LibraryMatchStates.unmatched)));
+      // Device B offline independently adds the SAME Quark under uuid-B with newer checkpoint 0:8500
+      // + unmatched (Level 2) Inception + another matched film Interstellar.
+      const mountB = StorageMount(
+        id: 'uuid-B',
+        kind: StorageKind.quark,
+        displayName: 'TV Quark',
+        config: {MountKeys.rootFolderId: '0'},
+        secrets: {MountKeys.secretCookie: 'uid=777888; __pus=new'},
+      );
+      await devB.registry.upsert(mountB);
+      await devB.db
+          .into(devB.db.libraryScanStates)
+          .insertOnConflictUpdate(
+            LibraryScanStatesCompanion.insert(mountId: 'uuid-B', quarkCheckpoint: const Value('0:8500')),
+          );
+      final unmatchedOnB = await devB.repo.insertItem(
+        LibraryItemsCompanion.insert(
+          kind: LibraryKinds.movie,
+          libraryType: LibraryTypes.pending,
+          title: 'Inception Pending',
+          sortTitle: 'inception pending',
+          scrapedAt: const Value(99999999),
+          addedAt: 2000,
+          updatedAt: 99999999,
+        ),
+      );
+      final fileIncB = await devB.repo.upsertFile(
+        mountId: 'uuid-B',
+        path: '/Movies/Inception.mkv',
+        role: LibraryFileRoles.video,
+        scanId: 1,
+        size: 20000,
+      );
+      await devB.repo.linkFile(fileIncB, unmatchedOnB);
+      await devB.repo.updateFile(
+        fileIncB,
+        const LibraryFilesCompanion(matchState: Value(LibraryMatchStates.unmatched)),
+      );
 
-    final interB = await devB.repo.insertItem(
-      LibraryItemsCompanion.insert(
-        kind: LibraryKinds.movie,
-        libraryType: LibraryTypes.movie,
-        title: '星际穿越',
-        sortTitle: 'interstellar',
-        tmdbId: const Value('157336'),
-        metadataSource: const Value('tmdb'),
-        scrapedAt: const Value(2000),
-        addedAt: 2000,
-        updatedAt: 2000,
-      ),
-    );
-    final fileInterB = await devB.repo.upsertFile(
-      mountId: 'uuid-B',
-      path: '/Movies/Interstellar.mkv',
-      role: LibraryFileRoles.video,
-      scanId: 1,
-      size: 30000,
-    );
-    await devB.repo.linkFile(fileInterB, interB);
-    await devB.repo.updateFile(fileInterB, const LibraryFilesCompanion(matchState: Value(LibraryMatchStates.matched)));
+      final interB = await devB.repo.insertItem(
+        LibraryItemsCompanion.insert(
+          kind: LibraryKinds.movie,
+          libraryType: LibraryTypes.movie,
+          title: '星际穿越',
+          sortTitle: 'interstellar',
+          tmdbId: const Value('157336'),
+          metadataSource: const Value('tmdb'),
+          scrapedAt: const Value(2000),
+          addedAt: 2000,
+          updatedAt: 2000,
+        ),
+      );
+      final fileInterB = await devB.repo.upsertFile(
+        mountId: 'uuid-B',
+        path: '/Movies/Interstellar.mkv',
+        role: LibraryFileRoles.video,
+        scanId: 1,
+        size: 30000,
+      );
+      await devB.repo.linkFile(fileInterB, interB);
+      await devB.repo.updateFile(
+        fileInterB,
+        const LibraryFilesCompanion(matchState: Value(LibraryMatchStates.matched)),
+      );
 
-    // Device A registers & syncs first; Device B logs in & syncs; then A pulls updates back.
-    await devA.sync.register(serverUrl: serverUrl, username: 'mergeuser', password: 'pw1', kdfParams: fastKdf);
-    await devB.sync.loginWithPassword(serverUrl: serverUrl, username: 'mergeuser', password: 'pw1');
-    await devA.sync.syncNow();
+      // Device A registers & syncs first; Device B logs in & syncs; then A pulls updates back.
+      await devA.sync.register(serverUrl: serverUrl, username: 'mergeuser', password: 'pw1', kdfParams: fastKdf);
+      await devB.sync.loginWithPassword(serverUrl: serverUrl, username: 'mergeuser', password: 'pw1');
+      await devA.sync.syncNow();
 
-    final mountsOnA = await devA.registry.list();
-    final mountsOnB = await devB.registry.list();
-    expect(mountsOnA, hasLength(1));
-    expect(mountsOnB, hasLength(1));
-    expect(mountsOnA.single.id, 'uuid-A');
-    expect(mountsOnB.single.id, 'uuid-A');
-    expect(DeterministicKeys.canonicalSourceKey(mountsOnB.single), 'quark:777888');
+      final mountsOnA = await devA.registry.list();
+      final mountsOnB = await devB.registry.list();
+      expect(mountsOnA, hasLength(1));
+      expect(mountsOnB, hasLength(1));
+      expect(mountsOnA.single.id, 'uuid-A');
+      expect(mountsOnB.single.id, 'uuid-A');
+      expect(DeterministicKeys.canonicalSourceKey(mountsOnB.single), 'quark:777888');
 
-    final scanA = await (devA.db.select(devA.db.libraryScanStates)..where((t) => t.mountId.equals('uuid-A'))).getSingle();
-    final scanB = await (devB.db.select(devB.db.libraryScanStates)..where((t) => t.mountId.equals('uuid-A'))).getSingle();
-    expect(scanA.quarkCheckpoint, '0:8500');
-    expect(scanB.quarkCheckpoint, '0:8500');
+      final scanA = await (devA.db.select(
+        devA.db.libraryScanStates,
+      )..where((t) => t.mountId.equals('uuid-A'))).getSingle();
+      final scanB = await (devB.db.select(
+        devB.db.libraryScanStates,
+      )..where((t) => t.mountId.equals('uuid-A'))).getSingle();
+      expect(scanA.quarkCheckpoint, '0:8500');
+      expect(scanB.quarkCheckpoint, '0:8500');
 
-    final moviesA = await devA.repo.queryTitles(const LibraryQuery(libraryType: LibraryTypes.movie));
-    final moviesB = await devB.repo.queryTitles(const LibraryQuery(libraryType: LibraryTypes.movie));
-    expect(moviesA.items.map((v) => v.item.title).toSet(), {'盗梦空间', '星际穿越'});
-    expect(moviesB.items.map((v) => v.item.title).toSet(), {'盗梦空间', '星际穿越'});
+      final moviesA = await devA.repo.queryTitles(const LibraryQuery(libraryType: LibraryTypes.movie));
+      final moviesB = await devB.repo.queryTitles(const LibraryQuery(libraryType: LibraryTypes.movie));
+      expect(moviesA.items.map((v) => v.item.title).toSet(), {'盗梦空间', '星际穿越'});
+      expect(moviesB.items.map((v) => v.item.title).toSet(), {'盗梦空间', '星际穿越'});
 
-    // B's unmatched item was pruned rather than leaving duplicate rows, and Inception stayed Level 4 locked.
-    final pendingB = await devB.repo.queryTitles(const LibraryQuery(libraryType: LibraryTypes.pending));
-    expect(pendingB.items, isEmpty);
-    expect(moviesB.items.firstWhere((v) => v.item.title == '盗梦空间').item.locked, isTrue);
-  });
+      // B's unmatched item was pruned rather than leaving duplicate rows, and Inception stayed Level 4 locked.
+      final pendingB = await devB.repo.queryTitles(const LibraryQuery(libraryType: LibraryTypes.pending));
+      expect(pendingB.items, isEmpty);
+      expect(moviesB.items.firstWhere((v) => v.item.title == '盗梦空间').item.locked, isTrue);
+    },
+  );
 
   test('password envelope recovers MasterKey, isolates local disk mounts, and syncs unwatched via LWW', () async {
     final serverUrl = await startSyncServer();
@@ -523,14 +563,15 @@ void main() {
       await devA.repo.upsertFile(mountId: 'm_local_pc', path: '/Matrix.mkv', role: LibraryFileRoles.video, scanId: 1),
       localOnlyId,
     );
-    await devA.client.markWatched(
-      MediaItem.jellyfin(id: '$sharedFilmId', kind: MediaKind.movie, title: '流浪地球2'),
-    );
-    await devA.client.markWatched(
-      MediaItem.jellyfin(id: '$localOnlyId', kind: MediaKind.movie, title: '黑客帝国'),
-    );
+    await devA.client.markWatched(MediaItem.jellyfin(id: '$sharedFilmId', kind: MediaKind.movie, title: '流浪地球2'));
+    await devA.client.markWatched(MediaItem.jellyfin(id: '$localOnlyId', kind: MediaKind.movie, title: '黑客帝国'));
 
-    await devA.sync.register(serverUrl: serverUrl, username: 'carol', password: 'recovery-password', kdfParams: fastKdf);
+    await devA.sync.register(
+      serverUrl: serverUrl,
+      username: 'carol',
+      password: 'recovery-password',
+      kdfParams: fastKdf,
+    );
 
     // Device C recovers MasterKey using only username & password.
     await devC.sync.loginWithPassword(serverUrl: serverUrl, username: 'carol', password: 'recovery-password');
@@ -545,7 +586,9 @@ void main() {
     expect(cMovies.items.map((v) => v.item.title), ['流浪地球2']);
     expect(cMovies.items.single.isWatched, isTrue);
     final matrixKey = WorkIdentity.resolve(source: WorkIdentity.localSource, kind: 'movie', tmdbId: '603')!.stateKey();
-    final matrixStateOnC = await (devC.db.select(devC.db.workWatchStates)..where((t) => t.stateKey.equals(matrixKey))).getSingleOrNull();
+    final matrixStateOnC = await (devC.db.select(
+      devC.db.workWatchStates,
+    )..where((t) => t.stateKey.equals(matrixKey))).getSingleOrNull();
     expect(matrixStateOnC?.watched, isTrue);
 
     // Device C marks Wandering Earth 2 UNWATCHED -> LWW overwrites Device A back to unwatched.

@@ -65,7 +65,8 @@ void main() {
     expect(find.text(t.auth.localDataRecoveryRequired), findsOneWidget);
     expect(find.text(t.auth.signInWithPlex), findsNothing);
     expect(find.text(t.sync.modeLanTitle), findsOneWidget);
-    expect(find.text(t.sync.modeCloudTitle), findsOneWidget);
+    expect(find.text(t.sync.modeOfficialTitle), findsOneWidget);
+    expect(find.text(t.sync.modeSelfHostedTitle), findsOneWidget);
     expect(find.text(t.auth.connectToMediaBrowser(product: 'Jellyfin')), findsNothing);
     expect(find.text(t.auth.connectToMediaBrowser(product: 'Emby')), findsNothing);
     expect(find.text(t.storage.title), findsNothing);
@@ -78,7 +79,8 @@ void main() {
     expect(find.text(t.auth.localDataRecoveryRequired), findsNothing);
     expect(find.text(t.auth.signInWithPlex), findsNothing);
     expect(find.text(t.sync.modeLanTitle), findsOneWidget);
-    expect(find.text(t.sync.modeCloudTitle), findsOneWidget);
+    expect(find.text(t.sync.modeOfficialTitle), findsOneWidget);
+    expect(find.text(t.sync.modeSelfHostedTitle), findsOneWidget);
     expect(find.text(t.auth.connectToMediaBrowser(product: 'Jellyfin')), findsNothing);
     expect(find.text(t.auth.connectToMediaBrowser(product: 'Emby')), findsNothing);
     expect(find.text(t.storage.title), findsNothing);

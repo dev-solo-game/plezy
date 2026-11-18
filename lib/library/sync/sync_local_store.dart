@@ -16,7 +16,9 @@ import 'deterministic_keys.dart';
 import 'sync_crypto.dart';
 import 'sync_journal_store.dart';
 
-enum SyncMode { lanP2p, cloudServer }
+export 'sync_crypto.dart' show SyncServerKind, defaultOfficialSyncUrl, normalizeSyncServerUrl;
+
+enum SyncMode { localOnly, cloudServer }
 
 class LanTrustedPeer {
   const LanTrustedPeer({
@@ -112,6 +114,8 @@ class SyncLocalStore {
   static const String _kServerTimeOffsetMs = 'server_time_offset_ms';
   static const String _kDeviceId = 'device_id';
   static const String _kServerUrl = 'sync_server_url';
+  static const String _kSyncServerKind = 'sync_server_kind';
+  static const String _kLastSelfHostedUrl = 'sync_last_self_hosted_url';
   static const String _kUserId = 'sync_user_id';
   static const String _kUsername = 'sync_username';
   static const String _kAccessToken = 'sync_access_token';
@@ -132,15 +136,17 @@ class SyncLocalStore {
   static const String _kJournalBootstrapped = 'sync_journal_bootstrapped_v1';
   static const String _kLastCatalogSignature = 'sync_journal_catalog_sig_v1';
   static const String _kLastStateSignature = 'sync_journal_state_sig_v1';
+  static const String _kInitialSyncCompleted = 'sync_initial_completed';
+  static const String _kActiveWorkspaceKey = 'sync_active_workspace_key';
 
   static const String typeSource = 'source';
   static const String typeWork = 'work';
   static const String typeFile = 'file';
   static const String typeWorkPref = 'work_pref';
   static const String typeWatchProgress = 'watch_progress';
+  static const String typeList = 'list';
 
-  static int computeNextHlc(int proposedMs, int existingMs) =>
-      proposedMs > existingMs ? proposedMs : existingMs + 1;
+  static int computeNextHlc(int proposedMs, int existingMs) => proposedMs > existingMs ? proposedMs : existingMs + 1;
 
   Future<String?> _getMeta(String key) async {
     final row = await (db.select(db.syncMetadata)..where((t) => t.key.equals(key))).getSingleOrNull();
@@ -217,10 +223,7 @@ class SyncLocalStore {
 
   /// Clears persisted reconciled DB signatures for [catalog] and/or [state].
   Future<void> clearReconciledSignatures({bool catalog = true, bool state = true}) async {
-    final keys = <String>[
-      if (catalog) _kLastCatalogSignature,
-      if (state) _kLastStateSignature,
-    ];
+    final keys = <String>[if (catalog) _kLastCatalogSignature, if (state) _kLastStateSignature];
     if (keys.isEmpty) return;
     await (db.delete(db.syncMetadata)..where((t) => t.key.isIn(keys))).go();
   }
@@ -338,13 +341,13 @@ class SyncLocalStore {
 
     if (item.kind == 'show' || item.kind == 'season') {
       final items = db.libraryItems;
-      final episodes = await (db.select(items)
-            ..where(
-              (t) =>
-                  t.kind.equals('episode') &
-                  (item.kind == 'show' ? t.showId.equals(itemId) : t.parentId.equals(itemId)),
-            ))
-          .get();
+      final episodes =
+          await (db.select(items)..where(
+                (t) =>
+                    t.kind.equals('episode') &
+                    (item.kind == 'show' ? t.showId.equals(itemId) : t.parentId.equals(itemId)),
+              ))
+              .get();
       for (final episode in episodes) {
         await _enqueueLeafProgress(episode.id, updatedAt: updatedAt);
       }
@@ -422,7 +425,8 @@ class SyncLocalStore {
     final wholeState = await LibraryWatchStateStore(db).read(work.stateKey());
     final existingJournal = await journal.getEntry(typeWorkPref, workKey);
     final stampKey = 'sync-pref-ts:${work.stateKey()}';
-    final localStamp = int.tryParse(
+    final localStamp =
+        int.tryParse(
           (await (db.select(db.librarySettings)..where((t) => t.key.equals(stampKey))).getSingleOrNull())?.value ?? '',
         ) ??
         0;
@@ -432,10 +436,7 @@ class SyncLocalStore {
       effectiveUpdatedAt = updatedAt;
     } else {
       final calibratedNow = await calibratedNowMs();
-      final floor = math.max(
-        math.max(localStamp, wholeState?.updatedAt ?? 0),
-        existingJournal?.clientUpdatedAt ?? 0,
-      );
+      final floor = math.max(math.max(localStamp, wholeState?.updatedAt ?? 0), existingJournal?.clientUpdatedAt ?? 0);
       effectiveUpdatedAt = computeNextHlc(calibratedNow, floor);
       await db
           .into(db.librarySettings)
@@ -465,9 +466,96 @@ class SyncLocalStore {
     );
   }
 
+  /// Queues a local collection or playlist mutation (create/update/item change)
+  /// into `sync_journal` and `SyncOutbox`.
+  Future<void> enqueueListById(int listId, {int? updatedAt}) async {
+    final row = await (db.select(db.libraryLists)..where((t) => t.id.equals(listId))).getSingleOrNull();
+    if (row == null) return;
+    final listKey = DeterministicKeys.generateListKey(kind: row.kind, title: row.title, tmdbId: row.tmdbId);
+    final joined =
+        await (db.select(db.libraryListItems).join([
+                innerJoin(db.libraryItems, db.libraryItems.id.equalsExp(db.libraryListItems.itemId)),
+              ])
+              ..where(db.libraryListItems.listId.equals(listId))
+              ..orderBy([OrderingTerm.asc(db.libraryListItems.sortOrder)]))
+            .get();
+    final workKeys = <String>[];
+    for (final entry in joined) {
+      final item = entry.readTable(db.libraryItems);
+      var wk = DeterministicKeys.canonicalizeWorkKey(item.workKey);
+      if (wk.isEmpty || wk.startsWith('raw:')) {
+        wk =
+            DeterministicKeys.workKeyForMatchedItem(
+              kind: item.kind,
+              tmdbId: item.tmdbId,
+              bangumiId: item.bangumiId,
+              imdbId: item.imdbId,
+              tvdbId: item.tvdbId,
+              metadataSource: item.metadataSource,
+              libraryType: item.libraryType,
+              sortTitle: item.sortTitle,
+              year: item.year,
+            ) ??
+            '';
+      }
+      if (wk.isNotEmpty && !wk.startsWith('raw:')) {
+        workKeys.add(wk);
+      }
+    }
+    final ts = updatedAt ?? (row.updatedAt > 0 ? row.updatedAt : await calibratedNowMs());
+    await enqueue(
+      entityType: typeList,
+      entityKey: listKey,
+      updatedAt: ts,
+      payload: {
+        'list_key': listKey,
+        'kind': row.kind,
+        'title': row.title,
+        'summary': row.summary,
+        'poster_path': row.posterSource,
+        'tmdb_id': row.tmdbId,
+        'item_work_keys': workKeys,
+        'client_updated_at': ts,
+        'is_deleted': false,
+      },
+    );
+  }
+
+  /// Queues a deletion tombstone for a deleted collection or playlist.
+  Future<void> enqueueDeletedList({required String kind, required String title, String? tmdbId, int? updatedAt}) async {
+    final listKey = DeterministicKeys.generateListKey(kind: kind, title: title, tmdbId: tmdbId);
+    final ts = updatedAt ?? await calibratedNowMs();
+    await enqueue(
+      entityType: typeList,
+      entityKey: listKey,
+      updatedAt: ts,
+      payload: {
+        'list_key': listKey,
+        'kind': kind,
+        'title': title,
+        'tmdb_id': tmdbId,
+        'item_work_keys': const <String>[],
+        'client_updated_at': ts,
+        'is_deleted': true,
+      },
+    );
+  }
+
   Future<List<SyncOutboxRow>> readPendingOutbox({int limit = 200}) {
+    // Emit parent entities before dependent entities across 200-item push batches
+    // so files/list items never arrive on a pull page ahead of their source/work.
+    const tierOrder = CustomExpression<int>(
+      'CASE entity_type '
+      "WHEN 'source' THEN 0 "
+      "WHEN 'work' THEN 1 "
+      "WHEN 'file' THEN 2 "
+      "WHEN 'work_pref' THEN 3 "
+      "WHEN 'watch_progress' THEN 4 "
+      "WHEN 'list' THEN 5 "
+      'ELSE 6 END',
+    );
     return (db.select(db.syncOutbox)
-          ..orderBy([(t) => OrderingTerm.asc(t.clientUpdatedAt)])
+          ..orderBy([(_) => OrderingTerm.asc(tierOrder), (t) => OrderingTerm.asc(t.clientUpdatedAt)])
           ..limit(limit))
         .get();
   }
@@ -478,21 +566,42 @@ class SyncLocalStore {
     await (db.delete(db.syncOutbox)..where((t) => t.opId.isIn(ids))).go();
   }
 
+  static String get effectiveDefaultOfficialSyncUrl => normalizeSyncServerUrl(defaultOfficialSyncUrl);
+
+  static String normalizeServerUrl(String raw) => normalizeSyncServerUrl(raw);
+
+  Future<String?> getLastSelfHostedUrl() async {
+    final saved = await _getMeta(_kLastSelfHostedUrl);
+    if (saved == null || saved.trim().isEmpty) return null;
+    return normalizeSyncServerUrl(saved);
+  }
+
+  Future<void> saveLastSelfHostedUrl(String url) async {
+    final normalized = normalizeSyncServerUrl(url);
+    if (normalized.isEmpty) return;
+    await _putMeta(_kLastSelfHostedUrl, normalized);
+  }
+
   Future<void> saveSession(SyncSessionCredentials credentials) async {
-    final normalizedUrl = credentials.serverUrl.trim().replaceAll(RegExp(r'/+$'), '');
+    final normalizedUrl = normalizeSyncServerUrl(credentials.serverUrl);
     final protectedToken = await CredentialVault.protect(credentials.accessToken);
     final protectedKey = await CredentialVault.protect(base64Encode(credentials.masterKey));
     await db.transaction(() async {
       await _putMeta(_kServerUrl, normalizedUrl);
+      await _putMeta(_kSyncServerKind, credentials.serverKind.name);
       await _putMeta(_kUserId, credentials.userId);
       await _putMeta(_kUsername, credentials.username);
       await _putMeta(_kAccessToken, protectedToken);
       await _putMeta(_kMasterKey, protectedKey);
+      if (credentials.serverKind == SyncServerKind.selfHosted && normalizedUrl.isNotEmpty) {
+        await _putMeta(_kLastSelfHostedUrl, normalizedUrl);
+      }
     });
   }
 
   Future<SyncSessionCredentials?> loadSession() async {
     final serverUrl = await _getMeta(_kServerUrl);
+    final kindRaw = await _getMeta(_kSyncServerKind);
     final userId = await _getMeta(_kUserId);
     final username = await _getMeta(_kUsername);
     final protectedToken = await _getMeta(_kAccessToken);
@@ -508,6 +617,11 @@ class SyncLocalStore {
     final token = await CredentialVault.reveal(protectedToken);
     final keyB64 = await CredentialVault.reveal(protectedKey);
     if (token == null || token.isEmpty || keyB64 == null || keyB64.isEmpty) return null;
+    final explicitKind = switch (kindRaw) {
+      'official' => SyncServerKind.official,
+      'selfHosted' => SyncServerKind.selfHosted,
+      _ => null,
+    };
     try {
       return SyncSessionCredentials(
         serverUrl: serverUrl,
@@ -515,6 +629,7 @@ class SyncLocalStore {
         username: username ?? '',
         accessToken: token,
         masterKey: Uint8List.fromList(base64Decode(keyB64)),
+        serverKind: explicitKind,
       );
     } on FormatException {
       return null;
@@ -523,22 +638,31 @@ class SyncLocalStore {
 
   Future<void> clearSession() async {
     await db.transaction(() async {
-      await (db.delete(db.syncMetadata)
-            ..where(
-              (t) => t.key.isIn([
-                _kServerUrl,
-                _kUserId,
-                _kUsername,
-                _kAccessToken,
-                _kMasterKey,
-                _kLastPullSeq,
-                _kServerTimeOffsetMs,
-                _kCloudPushedSeq,
-              ]),
-            ))
+      await (db.delete(db.syncMetadata)..where(
+            (t) => t.key.isIn([
+              _kServerUrl,
+              _kSyncServerKind,
+              _kUserId,
+              _kUsername,
+              _kAccessToken,
+              _kMasterKey,
+              _kLastPullSeq,
+              _kServerTimeOffsetMs,
+              _kCloudPushedSeq,
+              _kInitialSyncCompleted,
+            ]),
+          ))
           .go();
     });
   }
+
+  Future<bool> isInitialSyncCompleted() async => await _getMeta(_kInitialSyncCompleted) == 'true';
+
+  Future<void> setInitialSyncCompleted(bool completed) => _putMeta(_kInitialSyncCompleted, '$completed');
+
+  Future<String> getActiveWorkspaceKey() async => (await _getMeta(_kActiveWorkspaceKey)) ?? 'local';
+
+  Future<void> setActiveWorkspaceKey(String key) => _putMeta(_kActiveWorkspaceKey, key);
 
   Future<void> resetSyncCursorsForFullRebuild() async {
     await _putMeta(_kLastPullSeq, '0');
@@ -610,9 +734,9 @@ class SyncLocalStore {
   Future<SyncMode> getSyncMode() async {
     final raw = await _getMeta(_kSyncMode);
     if (raw == SyncMode.cloudServer.name) return SyncMode.cloudServer;
-    if (raw == SyncMode.lanP2p.name) return SyncMode.lanP2p;
+    if (raw == SyncMode.localOnly.name || raw == 'lanP2p') return SyncMode.localOnly;
     final hasSession = (await _getMeta(_kAccessToken))?.isNotEmpty == true;
-    return hasSession ? SyncMode.cloudServer : SyncMode.lanP2p;
+    return hasSession ? SyncMode.cloudServer : SyncMode.localOnly;
   }
 
   Future<void> setSyncMode(SyncMode mode) => _putMeta(_kSyncMode, mode.name);

@@ -87,174 +87,177 @@ void main() {
     SystemShelfService().debugReset();
   });
 
-  test('SyncMapper persisted DB signatures skip cold-start reconciliation and isolate state vs catalog deltas', () async {
-    final db = AppDatabase.forTesting(NativeDatabase.memory());
-    final repo = LibraryRepository(db);
-    final mountManager = MountManager(MountRegistry(db));
-    final syncStore = SyncLocalStore(db);
-    final workSkipStore = WorkSkipSettingsStore(db);
+  test(
+    'SyncMapper persisted DB signatures skip cold-start reconciliation and isolate state vs catalog deltas',
+    () async {
+      final db = AppDatabase.forTesting(NativeDatabase.memory());
+      final repo = LibraryRepository(db);
+      final mountManager = MountManager(MountRegistry(db));
+      final syncStore = SyncLocalStore(db);
+      final workSkipStore = WorkSkipSettingsStore(db);
 
-    addTearDown(() async {
-      await mountManager.dispose();
-      await db.close();
-    });
+      addTearDown(() async {
+        await mountManager.dispose();
+        await db.close();
+      });
 
-    await mountManager.registry.upsert(
-      const StorageMount(
-        id: 'mount-dav-1',
-        kind: StorageKind.webdav,
-        displayName: 'Media NAS',
-        config: {MountKeys.baseUrl: 'http://192.168.1.20/dav'},
-      ),
-    );
-    final movieId = await repo.insertItem(
-      LibraryItemsCompanion.insert(
-        kind: LibraryKinds.movie,
-        libraryType: LibraryTypes.movie,
-        title: 'Inception',
-        sortTitle: 'inception',
-        tmdbId: const Value('27205'),
-        metadataSource: const Value('tmdb'),
-        scrapedAt: const Value(1000),
-        addedAt: 1000,
-        updatedAt: 1000,
-      ),
-    );
-    final movieFileId = await repo.upsertFile(
-      mountId: 'mount-dav-1',
-      path: '/Movies/Inception.mkv',
-      role: LibraryFileRoles.video,
-      scanId: 1,
-      size: 2048000,
-      modifiedAt: 1000,
-    );
-    await repo.linkFile(movieFileId, movieId);
-    await repo.updateFile(movieFileId, const LibraryFilesCompanion(matchState: Value(LibraryMatchStates.matched)));
+      await mountManager.registry.upsert(
+        const StorageMount(
+          id: 'mount-dav-1',
+          kind: StorageKind.webdav,
+          displayName: 'Media NAS',
+          config: {MountKeys.baseUrl: 'http://192.168.1.20/dav'},
+        ),
+      );
+      final movieId = await repo.insertItem(
+        LibraryItemsCompanion.insert(
+          kind: LibraryKinds.movie,
+          libraryType: LibraryTypes.movie,
+          title: 'Inception',
+          sortTitle: 'inception',
+          tmdbId: const Value('27205'),
+          metadataSource: const Value('tmdb'),
+          scrapedAt: const Value(1000),
+          addedAt: 1000,
+          updatedAt: 1000,
+        ),
+      );
+      final movieFileId = await repo.upsertFile(
+        mountId: 'mount-dav-1',
+        path: '/Movies/Inception.mkv',
+        role: LibraryFileRoles.video,
+        scanId: 1,
+        size: 2048000,
+        modifiedAt: 1000,
+      );
+      await repo.linkFile(movieFileId, movieId);
+      await repo.updateFile(movieFileId, const LibraryFilesCompanion(matchState: Value(LibraryMatchStates.matched)));
 
-    final showId = await repo.insertItem(
-      LibraryItemsCompanion.insert(
-        kind: LibraryKinds.show,
-        libraryType: LibraryTypes.show,
-        title: 'Severance',
-        sortTitle: 'severance',
-        tmdbId: const Value('95396'),
-        metadataSource: const Value('tmdb'),
-        scrapedAt: const Value(1000),
-        addedAt: 1000,
-        updatedAt: 1000,
-      ),
-    );
-    final seasonId = await repo.insertItem(
-      LibraryItemsCompanion.insert(
-        kind: LibraryKinds.season,
-        libraryType: LibraryTypes.show,
-        parentId: Value(showId),
-        showId: Value(showId),
-        seasonNumber: const Value(1),
-        title: 'Season 1',
-        sortTitle: 'season 1',
-        addedAt: 1000,
-        updatedAt: 1000,
-      ),
-    );
-    final epId = await repo.insertItem(
-      LibraryItemsCompanion.insert(
-        kind: LibraryKinds.episode,
-        libraryType: LibraryTypes.show,
-        parentId: Value(seasonId),
-        showId: Value(showId),
-        seasonNumber: const Value(1),
-        episodeNumber: const Value(1),
-        title: 'Good News About Hell',
-        sortTitle: 'good news about hell',
-        scrapedAt: const Value(1000),
-        addedAt: 1000,
-        updatedAt: 1000,
-      ),
-    );
-    final epFileId = await repo.upsertFile(
-      mountId: 'mount-dav-1',
-      path: '/Shows/Severance/S01E01.mkv',
-      role: LibraryFileRoles.video,
-      scanId: 1,
-      size: 1024000,
-      modifiedAt: 1000,
-    );
-    await repo.linkFile(epFileId, epId);
-    await repo.updateFile(epFileId, const LibraryFilesCompanion(matchState: Value(LibraryMatchStates.matched)));
+      final showId = await repo.insertItem(
+        LibraryItemsCompanion.insert(
+          kind: LibraryKinds.show,
+          libraryType: LibraryTypes.show,
+          title: 'Severance',
+          sortTitle: 'severance',
+          tmdbId: const Value('95396'),
+          metadataSource: const Value('tmdb'),
+          scrapedAt: const Value(1000),
+          addedAt: 1000,
+          updatedAt: 1000,
+        ),
+      );
+      final seasonId = await repo.insertItem(
+        LibraryItemsCompanion.insert(
+          kind: LibraryKinds.season,
+          libraryType: LibraryTypes.show,
+          parentId: Value(showId),
+          showId: Value(showId),
+          seasonNumber: const Value(1),
+          title: 'Season 1',
+          sortTitle: 'season 1',
+          addedAt: 1000,
+          updatedAt: 1000,
+        ),
+      );
+      final epId = await repo.insertItem(
+        LibraryItemsCompanion.insert(
+          kind: LibraryKinds.episode,
+          libraryType: LibraryTypes.show,
+          parentId: Value(seasonId),
+          showId: Value(showId),
+          seasonNumber: const Value(1),
+          episodeNumber: const Value(1),
+          title: 'Good News About Hell',
+          sortTitle: 'good news about hell',
+          scrapedAt: const Value(1000),
+          addedAt: 1000,
+          updatedAt: 1000,
+        ),
+      );
+      final epFileId = await repo.upsertFile(
+        mountId: 'mount-dav-1',
+        path: '/Shows/Severance/S01E01.mkv',
+        role: LibraryFileRoles.video,
+        scanId: 1,
+        size: 1024000,
+        modifiedAt: 1000,
+      );
+      await repo.linkFile(epFileId, epId);
+      await repo.updateFile(epFileId, const LibraryFilesCompanion(matchState: Value(LibraryMatchStates.matched)));
 
-    await repo.setProgress(movieId, positionMs: 120000, durationMs: 7200000);
-    await workSkipStore.save(
-      const WorkIdentity(
-        source: WorkIdentity.localSource,
-        kind: LibraryKinds.show,
-        provider: 'tmdb',
-        externalId: '95396',
-      ),
-      const WorkSkipSettings(introEnabled: true, introStartMs: 0, introEndMs: 90000),
-      syncToOutbox: false,
-    );
+      await repo.setProgress(movieId, positionMs: 120000, durationMs: 7200000);
+      await workSkipStore.save(
+        const WorkIdentity(
+          source: WorkIdentity.localSource,
+          kind: LibraryKinds.show,
+          provider: 'tmdb',
+          externalId: '95396',
+        ),
+        const WorkSkipSettings(introEnabled: true, introStartMs: 0, introEndMs: 90000),
+        syncToOutbox: false,
+      );
 
-    final mapper1 = SyncMapper(db: db, repo: repo, syncStore: syncStore, mountManager: mountManager);
-    final initialTouched = await mapper1.ensureJournalUpToDate();
-    expect(initialTouched, greaterThan(0));
-    final revAfterBootstrap = await syncStore.getLocalLanRevision();
-    final savedSigs1 = await syncStore.getReconciledSignatures();
-    expect(savedSigs1.catalogSig, isNotNull);
-    expect(savedSigs1.stateSig, isNotNull);
+      final mapper1 = SyncMapper(db: db, repo: repo, syncStore: syncStore, mountManager: mountManager);
+      final initialTouched = await mapper1.ensureJournalUpToDate();
+      expect(initialTouched, greaterThan(0));
+      final revAfterBootstrap = await syncStore.getLocalLanRevision();
+      final savedSigs1 = await syncStore.getReconciledSignatures();
+      expect(savedSigs1.catalogSig, isNotNull);
+      expect(savedSigs1.stateSig, isNotNull);
 
-    // Cold restart simulation: fresh SyncMapper instance with empty in-memory signature cache.
-    final mapper2 = SyncMapper(db: db, repo: repo, syncStore: SyncLocalStore(db), mountManager: mountManager);
-    final coldRestartTouched = await mapper2.ensureJournalUpToDate();
-    expect(coldRestartTouched, 0);
-    expect(await syncStore.getLocalLanRevision(), revAfterBootstrap);
+      // Cold restart simulation: fresh SyncMapper instance with empty in-memory signature cache.
+      final mapper2 = SyncMapper(db: db, repo: repo, syncStore: SyncLocalStore(db), mountManager: mountManager);
+      final coldRestartTouched = await mapper2.ensureJournalUpToDate();
+      expect(coldRestartTouched, 0);
+      expect(await syncStore.getLocalLanRevision(), revAfterBootstrap);
 
-    // Mutate only watch progress -> only stateSig changes, catalogSig remains identical.
-    await Future<void>.delayed(const Duration(milliseconds: 5));
-    await repo.setProgress(movieId, positionMs: 240000, durationMs: 7200000);
-    final mapper3 = SyncMapper(db: db, repo: repo, syncStore: SyncLocalStore(db), mountManager: mountManager);
-    final stateOnlyTouched = await mapper3.ensureJournalUpToDate();
-    expect(stateOnlyTouched, 1);
-    expect(await syncStore.getLocalLanRevision(), revAfterBootstrap + 1);
-    final savedSigsAfterState = await syncStore.getReconciledSignatures();
-    expect(savedSigsAfterState.catalogSig, savedSigs1.catalogSig);
-    expect(savedSigsAfterState.stateSig, isNot(savedSigs1.stateSig));
+      // Mutate only watch progress -> only stateSig changes, catalogSig remains identical.
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+      await repo.setProgress(movieId, positionMs: 240000, durationMs: 7200000);
+      final mapper3 = SyncMapper(db: db, repo: repo, syncStore: SyncLocalStore(db), mountManager: mountManager);
+      final stateOnlyTouched = await mapper3.ensureJournalUpToDate();
+      expect(stateOnlyTouched, 1);
+      expect(await syncStore.getLocalLanRevision(), revAfterBootstrap + 1);
+      final savedSigsAfterState = await syncStore.getReconciledSignatures();
+      expect(savedSigsAfterState.catalogSig, savedSigs1.catalogSig);
+      expect(savedSigsAfterState.stateSig, isNot(savedSigs1.stateSig));
 
-    // Another cold restart after state update -> immediate 0-work skip.
-    final mapper4 = SyncMapper(db: db, repo: repo, syncStore: SyncLocalStore(db), mountManager: mountManager);
-    expect(await mapper4.ensureJournalUpToDate(), 0);
+      // Another cold restart after state update -> immediate 0-work skip.
+      final mapper4 = SyncMapper(db: db, repo: repo, syncStore: SyncLocalStore(db), mountManager: mountManager);
+      expect(await mapper4.ensureJournalUpToDate(), 0);
 
-    // Add a new catalog movie + file -> catalogSig changes and reconciles the new items.
-    await Future<void>.delayed(const Duration(milliseconds: 5));
-    final movie2Id = await repo.insertItem(
-      LibraryItemsCompanion.insert(
-        kind: LibraryKinds.movie,
-        libraryType: LibraryTypes.movie,
-        title: 'Interstellar',
-        sortTitle: 'interstellar',
-        tmdbId: const Value('157336'),
-        metadataSource: const Value('tmdb'),
-        scrapedAt: const Value(2000),
-        addedAt: 2000,
-        updatedAt: 2000,
-      ),
-    );
-    final movie2FileId = await repo.upsertFile(
-      mountId: 'mount-dav-1',
-      path: '/Movies/Interstellar.mkv',
-      role: LibraryFileRoles.video,
-      scanId: 2,
-      size: 4096000,
-      modifiedAt: 2000,
-    );
-    await repo.linkFile(movie2FileId, movie2Id);
-    await repo.updateFile(movie2FileId, const LibraryFilesCompanion(matchState: Value(LibraryMatchStates.matched)));
+      // Add a new catalog movie + file -> catalogSig changes and reconciles the new items.
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+      final movie2Id = await repo.insertItem(
+        LibraryItemsCompanion.insert(
+          kind: LibraryKinds.movie,
+          libraryType: LibraryTypes.movie,
+          title: 'Interstellar',
+          sortTitle: 'interstellar',
+          tmdbId: const Value('157336'),
+          metadataSource: const Value('tmdb'),
+          scrapedAt: const Value(2000),
+          addedAt: 2000,
+          updatedAt: 2000,
+        ),
+      );
+      final movie2FileId = await repo.upsertFile(
+        mountId: 'mount-dav-1',
+        path: '/Movies/Interstellar.mkv',
+        role: LibraryFileRoles.video,
+        scanId: 2,
+        size: 4096000,
+        modifiedAt: 2000,
+      );
+      await repo.linkFile(movie2FileId, movie2Id);
+      await repo.updateFile(movie2FileId, const LibraryFilesCompanion(matchState: Value(LibraryMatchStates.matched)));
 
-    final mapper5 = SyncMapper(db: db, repo: repo, syncStore: SyncLocalStore(db), mountManager: mountManager);
-    expect(await mapper5.ensureJournalUpToDate(), greaterThanOrEqualTo(2));
-    final savedSigsAfterCatalog = await syncStore.getReconciledSignatures();
-    expect(savedSigsAfterCatalog.catalogSig, isNot(savedSigsAfterState.catalogSig));
-  });
+      final mapper5 = SyncMapper(db: db, repo: repo, syncStore: SyncLocalStore(db), mountManager: mountManager);
+      expect(await mapper5.ensureJournalUpToDate(), greaterThanOrEqualTo(2));
+      final savedSigsAfterCatalog = await syncStore.getReconciledSignatures();
+      expect(savedSigsAfterCatalog.catalogSig, isNot(savedSigsAfterState.catalogSig));
+    },
+  );
 
   testWidgets('Fresh install and explicit logout still route to AuthScreen mode picker', (tester) async {
     final db = AppDatabase.forTesting(NativeDatabase.memory());
@@ -283,7 +286,8 @@ void main() {
 
     expect(find.byType(AuthScreen), findsOneWidget);
     expect(find.text(t.sync.modeLanTitle), findsOneWidget);
-    expect(find.text(t.sync.modeCloudTitle), findsOneWidget);
+    expect(find.text(t.sync.modeOfficialTitle), findsOneWidget);
+    expect(find.text(t.sync.modeSelfHostedTitle), findsOneWidget);
 
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pumpAndSettle();
@@ -385,10 +389,7 @@ void main() {
     final discover = mainElement.read<DiscoverProvider>();
     final libraries = mainElement.read<LibrariesProvider>();
     expect(libraries.libraries, isNotEmpty);
-    expect(
-      discover.hubs.expand((h) => h.items).map((item) => item.title),
-      contains('Inception'),
-    );
+    expect(discover.hubs.expand((h) => h.items).map((item) => item.title), contains('Inception'));
 
     // Advance FakeAsync past ConnectivityProbe's 3s fallback timeout before tearing down MainScreen.
     await tester.pump(const Duration(seconds: 4));
@@ -548,9 +549,6 @@ void main() {
     expect(activeProfile.isBinding, isTrue);
     expect(serverManager.addJellyfinCalls, 1);
     expect(libraries.hasLibraries, isTrue);
-    expect(
-      discover.hubs.expand((h) => h.items).map((item) => item.title),
-      contains('Spirited Away'),
-    );
+    expect(discover.hubs.expand((h) => h.items).map((item) => item.title), contains('Spirited Away'));
   });
 }

@@ -12,7 +12,7 @@ import 'package:plezy/library/library_repository.dart';
 import 'package:plezy/library/library_scan_service.dart';
 import 'package:plezy/library/library_scanner.dart';
 import 'package:plezy/library/local_library_client.dart';
-import 'package:plezy/library/sync/lan_peer_sync_service.dart';
+import 'package:plezy/library/sync/library_workspace_store.dart';
 import 'package:plezy/library/sync/sync_coordinator.dart';
 import 'package:plezy/library/sync/sync_crypto.dart';
 import 'package:plezy/library/sync/sync_models.dart';
@@ -52,7 +52,10 @@ class _SyncPeerNode {
   _SyncPeerNode(this.name) : db = AppDatabase.forTesting(NativeDatabase.memory()) {
     repo = LibraryRepository(db);
     registry = MountRegistry(db);
-    mountManager = MountManager(registry, driverFactory: (mount, {bool useFallback = false}) => _NoScanMockDriver(mount.kind));
+    mountManager = MountManager(
+      registry,
+      driverFactory: (mount, {bool useFallback = false}) => _NoScanMockDriver(mount.kind),
+    );
     client = LocalLibraryClient(repository: repo, mounts: mountManager);
     scans = LibraryScanService(repository: repo, scanner: LibraryScanner(db, repo), mounts: mountManager);
     sync = SyncAndScanCoordinator(
@@ -64,11 +67,7 @@ class _SyncPeerNode {
       autoStartLanService: true,
     );
     scans.onScopedCatalogChanged = (mountIds, {directoryPrefixes, allowTombstones = true}) => unawaited(
-      sync.onCatalogChanged(
-        mountIds: mountIds,
-        directoryPrefixes: directoryPrefixes,
-        allowTombstones: allowTombstones,
-      ),
+      sync.onCatalogChanged(mountIds: mountIds, directoryPrefixes: directoryPrefixes, allowTombstones: allowTombstones),
     );
     client.onSyncOutboxEnqueued = () => unawaited(sync.onPlaybackOutboxQueued());
   }
@@ -83,46 +82,28 @@ class _SyncPeerNode {
   late final SyncAndScanCoordinator sync;
   bool _disposed = false;
 
-  Future<void> initLan() async {
+  Future<void> initLocal() async {
     await sync.initialize();
     await sync.syncStore.setDeviceName(name);
-    await sync.selectLanMode();
+    await sync.selectLocalMode();
   }
 
-  LanDiscoveredPeer asDiscoveredPeer({int? revisionOverride}) => LanDiscoveredPeer(
-    deviceId: sync.lanService.deviceId!,
-    deviceName: name,
-    platform: 'linux',
-    host: '127.0.0.1',
-    httpPort: sync.lanService.listeningPort!,
-    pubKeyBase64: sync.lanService.publicKeyBase64!,
-    revision: revisionOverride ?? 0,
-    lastSeen: clock.now(),
-    syncEpoch: sync.lanService.trustedPeers.isEmpty ? null : null,
-  );
+  Future<void> waitIdle() async {
+    while (sync.isSyncing) {
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+    }
+  }
 
-  Future<void> pairWith(_SyncPeerNode target) async {
-    final targetRev = await target.sync.syncStore.getLocalLanRevision();
-    final targetEpoch = await target.sync.syncStore.getOrCreateSyncEpoch();
-    final discovered = LanDiscoveredPeer(
-      deviceId: target.sync.lanService.deviceId!,
-      deviceName: target.name,
-      platform: 'android',
-      host: '127.0.0.1',
-      httpPort: target.sync.lanService.listeningPort!,
-      pubKeyBase64: target.sync.lanService.publicKeyBase64!,
-      revision: targetRev,
-      lastSeen: clock.now(),
-      syncEpoch: targetEpoch,
-    );
-    await sync.lanService.requestPairWithPeer(discovered);
-    final req = target.sync.lanService.incomingPairRequests.singleWhere((r) => r.deviceId == sync.lanService.deviceId);
-    await target.sync.lanService.acceptPairRequest(req);
+  Future<void> drainAndSyncNow() async {
+    await waitIdle();
+    await sync.syncNow(allowBackgroundScan: false);
+    await waitIdle();
   }
 
   Future<void> dispose() async {
     if (_disposed) return;
     _disposed = true;
+    await waitIdle();
     client.close();
     scans.dispose();
     sync.dispose();
@@ -155,8 +136,7 @@ Future<({int showId, int seasonId, int epId, int fileId})> _seedEpisode(
         updatedAt: updatedAt,
       ),
     ),
-  ))!
-      .item;
+  ))!.item;
 
   final season = await node.repo.findChild(show.id, seasonNumber: 1);
   final seasonId =
@@ -238,10 +218,7 @@ Future<({int itemId, int fileId})> _seedMovie(
   await node.repo.linkFile(fileId, itemId);
   await node.repo.updateFile(
     fileId,
-    LibraryFilesCompanion(
-      matchState: const Value(LibraryMatchStates.matched),
-      matchLocked: Value(locked),
-    ),
+    LibraryFilesCompanion(matchState: const Value(LibraryMatchStates.matched), matchLocked: Value(locked)),
   );
   return (itemId: itemId, fileId: fileId);
 }
@@ -266,7 +243,7 @@ void main() {
       'go',
       ['build', '-o', serverExePath, '.'],
       workingDirectory: p.join(Directory.current.path, 'sync_server'),
-      environment: {'GOTOOLCHAIN': 'local'},
+      environment: {'GOTOOLCHAIN': 'auto'},
     );
     if (buildResult.exitCode != 0) {
       fail('Failed to build sync_server:\n${buildResult.stdout}\n${buildResult.stderr}');
@@ -309,14 +286,15 @@ void main() {
     CredentialVault.resetKeyForTesting();
   });
 
-  test('1. Zero-churn idle reconnect and 1-item watch progress delta without re-applying 80+ files', () async {
+  test('1. Zero-churn idle sync and 1-item watch progress delta without re-applying 80+ files', () async {
+    final serverUrl = await startSyncServer();
     final pc = _SyncPeerNode('PC');
     final android = _SyncPeerNode('Android');
     addTearDown(pc.dispose);
     addTearDown(android.dispose);
 
-    await pc.initLan();
-    await android.initLan();
+    await pc.initLocal();
+    await android.initLocal();
 
     await pc.registry.upsert(
       const StorageMount(
@@ -336,36 +314,24 @@ void main() {
       );
     }
 
-    await pc.pairWith(android);
-    await android.sync.lanService.syncWithAllTrustedPeers();
+    await pc.sync.register(serverUrl: serverUrl, username: 'inc1', password: 'pw', kdfParams: fastKdf);
+    await android.sync.loginWithPassword(serverUrl: serverUrl, username: 'inc1', password: 'pw');
     expect((await android.db.select(android.db.libraryItems).get()).length, 85);
+    final seqAfterInitial = await android.sync.syncStore.getLastPullSeq();
 
-    // Idle rediscovery must execute 0 HTTP requests and 0 applying updates.
+    // Idle syncNow must advance 0 seqs and trigger 0 applying updates.
     final applyingEventsIdle = <SyncProgress>[];
-    android.sync.addListener(() {
+    void trackIdleApplying() {
       if (android.sync.progress.phase == SyncPhase.applying) {
         applyingEventsIdle.add(android.sync.progress);
       }
-    });
-    final reqCountAfterInitial = android.sync.lanService.debugSyncHttpRequestCount;
-    final pcRev1 = await pc.sync.syncStore.getLocalLanRevision();
-    final pcEpoch = await pc.sync.syncStore.getOrCreateSyncEpoch();
-    android.sync.lanService.registerDiscoveredPeer(
-      LanDiscoveredPeer(
-        deviceId: pc.sync.lanService.deviceId!,
-        deviceName: pc.name,
-        platform: 'windows',
-        host: '127.0.0.1',
-        httpPort: pc.sync.lanService.listeningPort!,
-        pubKeyBase64: pc.sync.lanService.publicKeyBase64!,
-        revision: pcRev1,
-        lastSeen: clock.now(),
-        syncEpoch: pcEpoch,
-      ),
-    );
-    await Future<void>.delayed(const Duration(milliseconds: 50));
-    expect(android.sync.lanService.debugSyncHttpRequestCount, reqCountAfterInitial);
+    }
+
+    android.sync.addListener(trackIdleApplying);
+    await android.sync.syncNow(allowBackgroundScan: false);
+    android.sync.removeListener(trackIdleApplying);
     expect(applyingEventsIdle, isEmpty);
+    expect(await android.sync.syncStore.getLastPullSeq(), seqAfterInitial);
 
     // Update 1 movie's watch progress on PC -> Android must receive ONLY 1 item (NOT 85 files).
     final applyingTotals = <int>[];
@@ -375,7 +341,6 @@ void main() {
       }
     }
 
-    android.sync.addListener(trackApplying);
     final firstMovie = (await pc.repo.findByExternalId(kind: LibraryKinds.movie, tmdbId: '700001'))!;
     await pc.client.reportPlaybackStopped(
       itemId: '${firstMovie.id}',
@@ -383,8 +348,10 @@ void main() {
       duration: const Duration(minutes: 90),
     );
     await pc.sync.onPlaybackOutboxQueued();
-    await Future<void>.delayed(const Duration(milliseconds: 50));
-    await android.sync.lanService.syncWithAllTrustedPeers();
+    await pc.drainAndSyncNow();
+
+    android.sync.addListener(trackApplying);
+    await android.drainAndSyncNow();
     android.sync.removeListener(trackApplying);
 
     expect(applyingTotals, isNotEmpty);
@@ -394,36 +361,22 @@ void main() {
       (await android.repo.findByExternalId(kind: LibraryKinds.movie, tmdbId: '700001'))!.id,
     ))!;
     expect(androidMovie1.state?.positionMs, 900000);
+    expect(await android.sync.syncStore.getLastPullSeq(), seqAfterInitial + 1);
 
-    // Next idle discovery check stays at 0 HTTP requests.
-    final reqCountAfterDelta = android.sync.lanService.debugSyncHttpRequestCount;
-    final pcRev2 = await pc.sync.syncStore.getLocalLanRevision();
-    android.sync.lanService.registerDiscoveredPeer(
-      LanDiscoveredPeer(
-        deviceId: pc.sync.lanService.deviceId!,
-        deviceName: pc.name,
-        platform: 'windows',
-        host: '127.0.0.1',
-        httpPort: pc.sync.lanService.listeningPort!,
-        pubKeyBase64: pc.sync.lanService.publicKeyBase64!,
-        revision: pcRev2,
-        lastSeen: clock.now(),
-        syncEpoch: pcEpoch,
-      ),
-    );
-    await Future<void>.delayed(const Duration(milliseconds: 50));
-    expect(android.sync.lanService.debugSyncHttpRequestCount, reqCountAfterDelta);
+    // Next idle syncNow stays at exact same seq with 0 churn.
+    await android.sync.syncNow(allowBackgroundScan: false);
+    expect(await android.sync.syncStore.getLastPullSeq(), seqAfterInitial + 1);
   });
 
-  test('2. Concurrent partial increments on A & B converge via single-direction LAN sync and Cloud seq delta', () async {
+  test('2. Concurrent partial increments on A & B converge via Cloud seq delta', () async {
     final serverUrl = await startSyncServer();
     final a = _SyncPeerNode('Device-A');
     final b = _SyncPeerNode('Device-B');
     addTearDown(a.dispose);
     addTearDown(b.dispose);
 
-    await a.initLan();
-    await b.initLan();
+    await a.initLocal();
+    await b.initLocal();
     const mount = StorageMount(
       id: 'm_shared',
       kind: StorageKind.webdav,
@@ -447,9 +400,12 @@ void main() {
       filePath: '/Movies/Shared.mkv',
     );
 
-    await a.pairWith(b);
-    await b.sync.lanService.syncWithAllTrustedPeers();
-    expect(await b.repo.episodesOfShow((await b.repo.findByExternalId(kind: LibraryKinds.show, tmdbId: '10001'))!.id), hasLength(1));
+    await a.sync.register(serverUrl: serverUrl, username: 'incuser', password: 'pw', kdfParams: fastKdf);
+    await b.sync.loginWithPassword(serverUrl: serverUrl, username: 'incuser', password: 'pw');
+    expect(
+      await b.repo.episodesOfShow((await b.repo.findByExternalId(kind: LibraryKinds.show, tmdbId: '10001'))!.id),
+      hasLength(1),
+    );
 
     // Concurrent changes offline from each other:
     // A adds Ep 2 and marks Ep 1 watched.
@@ -465,6 +421,7 @@ void main() {
     );
     await a.client.markWatched(MediaItem.jellyfin(id: '${ep1.epId}', kind: MediaKind.episode, title: 'Episode 1'));
     await a.sync.onCatalogChanged(mountIds: {'m_shared'}, allowTombstones: false);
+    await a.drainAndSyncNow();
 
     // B adds Ep 3 and favorites Shared Film.
     await _seedEpisode(
@@ -477,12 +434,15 @@ void main() {
       updatedAt: 2000,
     );
     final bFilm = (await b.repo.findByExternalId(kind: LibraryKinds.movie, tmdbId: '20001'))!;
-    await b.client.setFavorite(MediaItem.jellyfin(id: '${bFilm.id}', kind: MediaKind.movie, title: 'Shared Film'), true);
+    await b.client.setFavorite(
+      MediaItem.jellyfin(id: '${bFilm.id}', kind: MediaKind.movie, title: 'Shared Film'),
+      true,
+    );
     await b.sync.onCatalogChanged(mountIds: {'m_shared'}, allowTombstones: false);
 
-    // Single-direction A.syncWithPeer(B) must Pull B's increments AND Push A's increments!
-    final trustedBOnA = a.sync.lanService.trustedPeers.singleWhere((p) => p.deviceId == b.sync.lanService.deviceId);
-    await a.sync.lanService.syncWithPeer(trustedBOnA, hostOverride: '127.0.0.1', portOverride: b.sync.lanService.listeningPort);
+    await b.drainAndSyncNow();
+    await a.drainAndSyncNow();
+    await b.drainAndSyncNow();
 
     final aShow = (await a.repo.findByExternalId(kind: LibraryKinds.show, tmdbId: '10001'))!;
     final bShow = (await b.repo.findByExternalId(kind: LibraryKinds.show, tmdbId: '10001'))!;
@@ -492,8 +452,6 @@ void main() {
     expect((await b.repo.episodesOfShow(bShow.id)).firstWhere((e) => e.item.episodeNumber == 1).isWatched, isTrue);
 
     // Also verify Cloud server incremental push only advances seq for actual deltas:
-    await a.sync.register(serverUrl: serverUrl, username: 'incuser', password: 'pw', kdfParams: fastKdf);
-    await b.sync.loginWithPassword(serverUrl: serverUrl, username: 'incuser', password: 'pw');
     final baselineCloudSeq = await b.sync.syncStore.getLastPullSeq();
 
     await _seedMovie(
@@ -505,21 +463,22 @@ void main() {
       updatedAt: 5000,
     );
     await a.sync.onCatalogChanged(mountIds: {'m_shared'}, allowTombstones: false);
-    await Future<void>.delayed(const Duration(milliseconds: 100));
-    await b.sync.syncNow();
+    await a.drainAndSyncNow();
+    await b.drainAndSyncNow();
     final afterCloudSeq = await b.sync.syncStore.getLastPullSeq();
     // Only 1 work + 1 file = 2 seqs, NOT all baseline entities!
     expect(afterCloudSeq - baselineCloudSeq, 2);
   });
 
   test('3. Offline duplicate mount merges sync_journal so unique files on B sync back to A', () async {
+    final serverUrl = await startSyncServer();
     final a = _SyncPeerNode('Phone-A');
     final b = _SyncPeerNode('TV-B');
     addTearDown(a.dispose);
     addTearDown(b.dispose);
 
-    await a.initLan();
-    await b.initLan();
+    await a.initLocal();
+    await b.initLocal();
 
     await a.registry.upsert(
       StorageMount(
@@ -547,68 +506,90 @@ void main() {
     await _seedMovie(b, mountId: 'uuid-B', tmdbId: '157336', title: '星际穿越', filePath: '/Movies/Interstellar.mkv');
     await b.sync.mapper.ensureJournalUpToDate();
 
-    await a.pairWith(b);
-    await a.sync.lanService.syncWithAllTrustedPeers();
+    await a.sync.register(serverUrl: serverUrl, username: 'dup3', password: 'pw', kdfParams: fastKdf);
+    await b.sync.loginWithPassword(serverUrl: serverUrl, username: 'dup3', password: 'pw');
+    await b.sync.syncNow(allowBackgroundScan: false);
+    await a.sync.syncNow(allowBackgroundScan: false);
 
     expect((await a.registry.list()).single.id, 'uuid-A');
     expect((await b.registry.list()).single.id, 'uuid-A');
-    final aMovies = (await a.repo.queryTitles(const LibraryQuery(libraryType: LibraryTypes.movie))).items.map((v) => v.item.title).toSet();
-    final bMovies = (await b.repo.queryTitles(const LibraryQuery(libraryType: LibraryTypes.movie))).items.map((v) => v.item.title).toSet();
+    final aMovies = (await a.repo.queryTitles(
+      const LibraryQuery(libraryType: LibraryTypes.movie),
+    )).items.map((v) => v.item.title).toSet();
+    final bMovies = (await b.repo.queryTitles(
+      const LibraryQuery(libraryType: LibraryTypes.movie),
+    )).items.map((v) => v.item.title).toSet();
     expect(aMovies, {'盗梦空间', '星际穿越'});
     expect(bMovies, {'盗梦空间', '星际穿越'});
   });
 
-  test('4. Scoped directory refresh preserves untouched directories while deleting removed file via tombstone', () async {
-    final pc = _SyncPeerNode('PC');
-    final phone = _SyncPeerNode('Phone');
-    addTearDown(pc.dispose);
-    addTearDown(phone.dispose);
+  test(
+    '4. Scoped directory refresh preserves untouched directories while deleting removed file via tombstone',
+    () async {
+      final serverUrl = await startSyncServer();
+      final pc = _SyncPeerNode('PC');
+      final phone = _SyncPeerNode('Phone');
+      addTearDown(pc.dispose);
+      addTearDown(phone.dispose);
 
-    await pc.initLan();
-    await phone.initLan();
+      await pc.initLocal();
+      await phone.initLocal();
 
-    await pc.registry.upsert(
-      const StorageMount(
-        id: 'm_scoped',
-        kind: StorageKind.webdav,
-        displayName: 'Scoped DAV',
-        config: {MountKeys.baseUrl: 'http://192.168.1.33/dav'},
-      ),
-    );
-    final ep1 = await _seedEpisode(
-      pc,
-      mountId: 'm_scoped',
-      showTmdbId: '30001',
-      showTitle: 'Scoped Show',
-      episodeNumber: 1,
-      filePath: '/ShowA/Season 1/S01E01.mkv',
-    );
-    await _seedEpisode(
-      pc,
-      mountId: 'm_scoped',
-      showTmdbId: '30001',
-      showTitle: 'Scoped Show',
-      episodeNumber: 2,
-      filePath: '/ShowA/Season 1/S01E02.mkv',
-    );
-    await _seedMovie(pc, mountId: 'm_scoped', tmdbId: '40001', title: 'Untouched Film', filePath: '/Movies/Film1.mkv');
+      await pc.registry.upsert(
+        const StorageMount(
+          id: 'm_scoped',
+          kind: StorageKind.webdav,
+          displayName: 'Scoped DAV',
+          config: {MountKeys.baseUrl: 'http://192.168.1.33/dav'},
+        ),
+      );
+      final ep1 = await _seedEpisode(
+        pc,
+        mountId: 'm_scoped',
+        showTmdbId: '30001',
+        showTitle: 'Scoped Show',
+        episodeNumber: 1,
+        filePath: '/ShowA/Season 1/S01E01.mkv',
+      );
+      await _seedEpisode(
+        pc,
+        mountId: 'm_scoped',
+        showTmdbId: '30001',
+        showTitle: 'Scoped Show',
+        episodeNumber: 2,
+        filePath: '/ShowA/Season 1/S01E02.mkv',
+      );
+      await _seedMovie(
+        pc,
+        mountId: 'm_scoped',
+        tmdbId: '40001',
+        title: 'Untouched Film',
+        filePath: '/Movies/Film1.mkv',
+      );
 
-    await pc.pairWith(phone);
-    await phone.sync.lanService.syncWithAllTrustedPeers();
+      await pc.sync.register(serverUrl: serverUrl, username: 'scoped4', password: 'pw', kdfParams: fastKdf);
+      await phone.sync.loginWithPassword(serverUrl: serverUrl, username: 'scoped4', password: 'pw');
 
-    // Remove ONLY S01E01 from DB and run scoped directory reconcile on /ShowA/Season 1.
-    await (pc.db.delete(pc.db.libraryFiles)..where((t) => t.id.equals(ep1.fileId))).go();
-    await pc.repo.pruneEmptyTitles();
-    await pc.sync.onCatalogChanged(mountIds: {'m_scoped'}, directoryPrefixes: {'/ShowA/Season 1'}, allowTombstones: true);
-    await phone.sync.lanService.syncWithAllTrustedPeers();
+      // Remove ONLY S01E01 from DB and run scoped directory reconcile on /ShowA/Season 1.
+      await (pc.db.delete(pc.db.libraryFiles)..where((t) => t.id.equals(ep1.fileId))).go();
+      await pc.repo.pruneEmptyTitles();
+      await pc.sync.onCatalogChanged(
+        mountIds: {'m_scoped'},
+        directoryPrefixes: {'/ShowA/Season 1'},
+        allowTombstones: true,
+      );
+      await pc.sync.syncNow(allowBackgroundScan: false);
+      await phone.sync.syncNow(allowBackgroundScan: false);
 
-    final phoneShow = (await phone.repo.findByExternalId(kind: LibraryKinds.show, tmdbId: '30001'))!;
-    final phoneEps = await phone.repo.episodesOfShow(phoneShow.id);
-    expect(phoneEps.map((e) => e.item.episodeNumber).toList(), [2]);
-    expect(await phone.repo.findByExternalId(kind: LibraryKinds.movie, tmdbId: '40001'), isNotNull);
-  });
+      final phoneShow = (await phone.repo.findByExternalId(kind: LibraryKinds.show, tmdbId: '30001'))!;
+      final phoneEps = await phone.repo.episodesOfShow(phoneShow.id);
+      expect(phoneEps.map((e) => e.item.episodeNumber).toList(), [2]);
+      expect(await phone.repo.findByExternalId(kind: LibraryKinds.movie, tmdbId: '40001'), isNotNull);
+    },
+  );
 
   test('5. Provisional raw work upgrade to matched TMDB tombstones old raw work and protects Level 4 lock', () async {
+    final serverUrl = await startSyncServer();
     final a = _SyncPeerNode('PC');
     final b = _SyncPeerNode('Phone');
     final c = _SyncPeerNode('LateTV');
@@ -616,9 +597,9 @@ void main() {
     addTearDown(b.dispose);
     addTearDown(c.dispose);
 
-    await a.initLan();
-    await b.initLan();
-    await c.initLan();
+    await a.initLocal();
+    await b.initLocal();
+    await c.initLocal();
 
     await a.registry.upsert(
       const StorageMount(
@@ -648,8 +629,8 @@ void main() {
     );
     await a.repo.linkFile(rawFileId, rawMovieId);
 
-    await a.pairWith(b);
-    await b.sync.lanService.syncWithAllTrustedPeers();
+    await a.sync.register(serverUrl: serverUrl, username: 'raw5', password: 'pw', kdfParams: fastKdf);
+    await b.sync.loginWithPassword(serverUrl: serverUrl, username: 'raw5', password: 'pw');
     expect((await b.repo.queryTitles(const LibraryQuery(libraryType: LibraryTypes.pending))).items, hasLength(1));
 
     // A scrapes Unknown Film -> TMDB 27205 (Level 3 matched).
@@ -668,21 +649,24 @@ void main() {
     );
     await a.repo.updateFile(rawFileId, const LibraryFilesCompanion(matchState: Value(LibraryMatchStates.matched)));
     await a.sync.onCatalogChanged(mountIds: {'m_raw'}, allowTombstones: false);
+    await a.drainAndSyncNow();
 
-    await b.sync.lanService.syncWithAllTrustedPeers();
+    await b.drainAndSyncNow();
     expect((await b.repo.queryTitles(const LibraryQuery(libraryType: LibraryTypes.pending))).items, isEmpty);
 
     // Old raw:* entry in sync_journal must be tombstoned, so LateTV joining fresh gets 0 ghost raw items.
-    await a.pairWith(c);
-    await c.sync.lanService.syncWithAllTrustedPeers();
+    await c.sync.loginWithPassword(serverUrl: serverUrl, username: 'raw5', password: 'pw');
     expect((await c.repo.queryTitles(const LibraryQuery(libraryType: LibraryTypes.pending))).items, isEmpty);
-    expect((await c.repo.queryTitles(const LibraryQuery(libraryType: LibraryTypes.movie))).items.map((v) => v.item.title), ['Inception']);
+    expect(
+      (await c.repo.queryTitles(const LibraryQuery(libraryType: LibraryTypes.movie))).items.map((v) => v.item.title),
+      ['Inception'],
+    );
 
     // Level 4 lock on B rejects an older/unmatched overwrite attempt.
     final bMovie = (await b.repo.findByExternalId(kind: LibraryKinds.movie, tmdbId: '27205'))!;
     await b.repo.updateItem(bMovie.id, const LibraryItemsCompanion(locked: Value(true), metadataSource: Value('nfo')));
     await b.sync.mapper.applyPullBatch(
-      masterKey: b.sync.lanService.trustedPeers.single.sharedKey,
+      masterKey: (await b.sync.syncStore.loadSession())!.masterKey,
       sources: const [],
       works: [
         {
@@ -707,7 +691,8 @@ void main() {
     expect((await b.repo.getItem(bMovie.id))!.item.title, 'Inception');
   });
 
-  test('6. 3-device mesh (PC -> Phone -> TV) works offline and restores wiped PC completely', () async {
+  test('6. 3-device Cloud sync works across devices and restores wiped PC completely', () async {
+    final serverUrl = await startSyncServer();
     final pc = _SyncPeerNode('PC');
     final phone = _SyncPeerNode('Phone');
     final tv = _SyncPeerNode('TV');
@@ -715,9 +700,9 @@ void main() {
     addTearDown(phone.dispose);
     addTearDown(tv.dispose);
 
-    await pc.initLan();
-    await phone.initLan();
-    await tv.initLan();
+    await pc.initLocal();
+    await phone.initLocal();
+    await tv.initLocal();
 
     await pc.registry.upsert(
       const StorageMount(
@@ -729,50 +714,51 @@ void main() {
     );
     await _seedMovie(pc, mountId: 'm_mesh', tmdbId: '603', title: 'The Matrix', filePath: '/Movies/Matrix.mkv');
 
-    await pc.pairWith(phone);
-    await phone.sync.lanService.syncWithAllTrustedPeers();
+    await pc.sync.register(serverUrl: serverUrl, username: 'meshuser', password: 'pw', kdfParams: fastKdf);
+    await phone.sync.loginWithPassword(serverUrl: serverUrl, username: 'meshuser', password: 'pw');
     expect((await phone.repo.findByExternalId(kind: LibraryKinds.movie, tmdbId: '603')), isNotNull);
 
-    // Pair Phone <-> TV, stop PC, and verify TV pulls PC's movie via Phone!
-    final savedPcDeviceId = pc.sync.lanService.deviceId!;
+    // Stop PC, login TV while PC is offline, and verify TV pulls PC's movie from Cloud!
+    final savedPcDeviceId = await pc.sync.syncStore.getOrCreateDeviceId();
     await pc.dispose();
 
-    await phone.pairWith(tv);
-    await tv.sync.lanService.syncWithAllTrustedPeers();
+    await tv.sync.loginWithPassword(serverUrl: serverUrl, username: 'meshuser', password: 'pw');
     expect((await tv.repo.findByExternalId(kind: LibraryKinds.movie, tmdbId: '603')), isNotNull);
 
-    // Normal incremental sync check from same origin epoch has 0 echo items back to origin.
+    // Normal incremental sync check from local cursor has 0 echo items.
     final deltaSameEpoch = await phone.sync.mapper.buildDeltaBundle(
-      encryptionKey: phone.sync.lanService.trustedPeers.first.sharedKey,
-      sinceSeq: 1,
+      encryptionKey: (await phone.sync.syncStore.loadSession())!.masterKey,
+      sinceSeq: await phone.sync.syncStore.getLocalLanRevision(),
       limit: 500,
-      skipOriginDeviceId: savedPcDeviceId,
-      skipOriginEpoch: phone.sync.lanService.trustedPeers.firstWhere((p) => p.deviceId == savedPcDeviceId).lastSyncedEpoch,
     );
     expect(deltaSameEpoch.works, isEmpty);
     expect(deltaSameEpoch.files, isEmpty);
 
-    // Simulate PC DB wipe & reinstall (brand-new DB, reusing savedPcDeviceId -> new sync_epoch, since_seq=0).
+    // Simulate PC DB wipe & reinstall (brand-new DB, reusing savedPcDeviceId -> accountOnly restore).
     final wipedPc = _SyncPeerNode('PC-Reinstalled');
     addTearDown(wipedPc.dispose);
     await wipedPc.sync.db
         .into(wipedPc.sync.db.syncMetadata)
         .insertOnConflictUpdate(SyncMetadataCompanion.insert(key: 'device_id', value: savedPcDeviceId));
-    await wipedPc.initLan();
-    // Re-pair reinstalled PC with Phone and verify Phone restores 100% of items!
-    await phone.pairWith(wipedPc);
-    await wipedPc.sync.lanService.syncWithAllTrustedPeers();
+    await wipedPc.initLocal();
+    await wipedPc.sync.loginWithPassword(
+      serverUrl: serverUrl,
+      username: 'meshuser',
+      password: 'pw',
+      mergePolicy: LocalMergePolicy.accountOnly,
+    );
     expect(await wipedPc.repo.findByExternalId(kind: LibraryKinds.movie, tmdbId: '603'), isNotNull);
   });
 
   test('7. Clock-skew HLC ensures normal-clock Phone progress beats skewed PC and preserves movie favorite', () async {
+    final serverUrl = await startSyncServer();
     final pc = _SyncPeerNode('Skewed-PC');
     final phone = _SyncPeerNode('Normal-Phone');
     addTearDown(pc.dispose);
     addTearDown(phone.dispose);
 
-    await pc.initLan();
-    await phone.initLan();
+    await pc.initLocal();
+    await phone.initLocal();
 
     await pc.registry.upsert(
       const StorageMount(
@@ -782,9 +768,15 @@ void main() {
         config: {MountKeys.baseUrl: 'http://192.168.1.70/dav'},
       ),
     );
-    final movie = await _seedMovie(pc, mountId: 'm_hlc', tmdbId: '155', title: 'Dark Knight', filePath: '/Movies/TDK.mkv');
+    final movie = await _seedMovie(
+      pc,
+      mountId: 'm_hlc',
+      tmdbId: '155',
+      title: 'Dark Knight',
+      filePath: '/Movies/TDK.mkv',
+    );
 
-    // Simulate PC clock +5 minutes in the future when favoriting and watching to 10:00.
+    // Simulate PC clock +5 minutes in the future while offline when favoriting and watching to 10:00.
     final futureTime = clock.now().add(const Duration(minutes: 5));
     await withClock(Clock.fixed(futureTime), () async {
       await pc.client.setFavorite(
@@ -799,9 +791,11 @@ void main() {
       await pc.sync.onPlaybackOutboxQueued();
     });
 
-    await pc.pairWith(phone);
-    await phone.sync.lanService.syncWithAllTrustedPeers();
-    final phoneMovie = (await phone.repo.getItem((await phone.repo.findByExternalId(kind: LibraryKinds.movie, tmdbId: '155'))!.id))!;
+    await pc.sync.register(serverUrl: serverUrl, username: 'hlcuser', password: 'pw', kdfParams: fastKdf);
+    await phone.sync.loginWithPassword(serverUrl: serverUrl, username: 'hlcuser', password: 'pw');
+    final phoneMovie = (await phone.repo.getItem(
+      (await phone.repo.findByExternalId(kind: LibraryKinds.movie, tmdbId: '155'))!.id,
+    ))!;
     expect(phoneMovie.state?.favorite, isTrue);
     expect(phoneMovie.state?.positionMs, 600000);
 
@@ -812,7 +806,8 @@ void main() {
       duration: const Duration(minutes: 120),
     );
     await phone.sync.onPlaybackOutboxQueued();
-    await pc.sync.lanService.syncWithAllTrustedPeers();
+    await phone.drainAndSyncNow();
+    await pc.drainAndSyncNow();
 
     final pcMovieAfter = (await pc.repo.getItem(movie.itemId))!;
     expect(pcMovieAfter.state?.positionMs, 1800000);
@@ -824,13 +819,14 @@ void main() {
   });
 
   test('8. Mid-sync page checkpointing persists page 1 cursor and resumes from page 2 after interruption', () async {
+    final serverUrl = await startSyncServer();
     final sender = _SyncPeerNode('Big-PC');
     final receiver = _SyncPeerNode('Phone');
     addTearDown(sender.dispose);
     addTearDown(receiver.dispose);
 
-    await sender.initLan();
-    await receiver.initLan();
+    await sender.initLocal();
+    await receiver.initLocal();
 
     await sender.registry.upsert(
       const StorageMount(
@@ -840,13 +836,9 @@ void main() {
         config: {MountKeys.baseUrl: 'http://192.168.1.80/dav'},
       ),
     );
-    sender.sync.lanService.syncPageLimit = 250;
-    receiver.sync.lanService.syncPageLimit = 250;
 
-    await sender.pairWith(receiver);
-    // Wait for initial pair sync (only m_big source) to settle, then seed 260 movies offline.
-    await Future<void>.delayed(const Duration(milliseconds: 50));
-    await receiver.sync.lanService.syncWithAllTrustedPeers();
+    await sender.sync.register(serverUrl: serverUrl, username: 'pageuser', password: 'pw', kdfParams: fastKdf);
+    await receiver.sync.loginWithPassword(serverUrl: serverUrl, username: 'pageuser', password: 'pw');
 
     // 260 movies -> 260 works + 260 files = 520 new seqs -> 3 pages at limit=250.
     for (var i = 1; i <= 260; i++) {
@@ -858,34 +850,41 @@ void main() {
         filePath: '/Movies/Big_$i.mkv',
       );
     }
-    await sender.sync.mapper.ensureJournalUpToDate();
-    final senderMaxSeq = await sender.sync.syncStore.getLocalLanRevision();
-    expect(senderMaxSeq, greaterThan(500));
+    await sender.sync.onCatalogChanged(mountIds: {'m_big'}, allowTombstones: false);
+    await sender.drainAndSyncNow();
 
-    // Simulate interruption right after Page 1 commits!
-    var interrupted = false;
-    receiver.sync.lanService.debugOnPullPageCommitted = (pageIndex, nextSeq) {
-      if (pageIndex == 1 && !interrupted) {
-        interrupted = true;
-        throw const HttpException('simulated drop after page 1');
-      }
-    };
-
-    await expectLater(
-      receiver.sync.lanService.syncWithPeer(receiver.sync.lanService.trustedPeers.single, notifyBack: false),
-      throwsA(isA<HttpException>()),
+    // Simulate interruption right after Page 1 commits on receiver!
+    final sess = (await receiver.sync.syncStore.loadSession())!;
+    final page1 = await receiver.sync.apiClient.pullDelta(
+      sess.serverUrl,
+      sess.accessToken,
+      sinceSeq: await receiver.sync.syncStore.getLastPullSeq(),
+      limit: 250,
     );
-    final checkpointRev = receiver.sync.lanService.trustedPeers.single.lastSyncedRevision;
-    expect(checkpointRev, greaterThan(0));
-    expect(checkpointRev, lessThan(senderMaxSeq));
+    expect(page1.hasMore, isTrue);
+    await receiver.sync.mapper.applyPullBatch(
+      masterKey: sess.masterKey,
+      sources: page1.sources,
+      works: page1.works,
+      files: page1.files,
+      workPrefs: page1.workPrefs,
+      watchProgress: page1.watchProgress,
+      lists: page1.lists,
+      userSettings: page1.userSettings,
+      nextSeq: page1.nextSeq,
+      isFinalPage: false,
+    );
+
+    final checkpointSeq = await receiver.sync.syncStore.getLastPullSeq();
+    expect(checkpointSeq, page1.nextSeq);
+    expect(checkpointSeq, greaterThan(0));
     final countAfterPage1 = (await receiver.db.select(receiver.db.libraryItems).get()).length;
     expect(countAfterPage1, greaterThan(0));
     expect(countAfterPage1, lessThan(260));
 
-    // Reconnect and resume: must resume from checkpointRev rather than 0, finishing all 260 items.
-    receiver.sync.lanService.debugOnPullPageCommitted = null;
-    await receiver.sync.lanService.syncWithAllTrustedPeers();
-    expect(receiver.sync.lanService.trustedPeers.single.lastSyncedRevision, senderMaxSeq);
+    // Reconnect and resume: must resume from checkpointSeq rather than 0, finishing all 260 items.
+    await receiver.sync.syncNow(allowBackgroundScan: false);
+    expect(await receiver.sync.syncStore.getLastPullSeq(), greaterThan(checkpointSeq));
     expect((await receiver.db.select(receiver.db.libraryItems).get()).length, 260);
   });
 }

@@ -115,11 +115,7 @@ class LibraryScanService extends ChangeNotifier {
   /// Optional scoped catalog change callback passing directory prefixes and tombstone scope.
   void Function(Set<String>? mountIds, {Set<String>? directoryPrefixes, bool allowTombstones})? onScopedCatalogChanged;
 
-  void _emitCatalogChanged(
-    Set<String>? mountIds, {
-    Set<String>? directoryPrefixes,
-    bool allowTombstones = true,
-  }) {
+  void _emitCatalogChanged(Set<String>? mountIds, {Set<String>? directoryPrefixes, bool allowTombstones = true}) {
     final scoped = onScopedCatalogChanged;
     if (scoped != null) {
       scoped(mountIds, directoryPrefixes: directoryPrefixes, allowTombstones: allowTombstones);
@@ -201,7 +197,11 @@ class LibraryScanService extends ChangeNotifier {
 
   Future<bool> hasIncrementalBaseline(StorageMount mount) => _libraryScanner.hasQuarkBaseline(mount);
 
-  Future<Duration> checkIncrementalUpdates({required bool Function() canRun, bool force = false}) async {
+  Future<Duration> checkIncrementalUpdates({
+    required bool Function() canRun,
+    bool force = false,
+    Set<String>? allowedMountIds,
+  }) async {
     if (_disposed || _checkingAutomatic || _update != null || _running.isNotEmpty || !canRun()) {
       return automaticInterval;
     }
@@ -215,6 +215,7 @@ class LibraryScanService extends ChangeNotifier {
       final mounts = await _mountManager.registry.list();
       _automaticFailures.removeWhere((id, _) => !mounts.any((mount) => mount.id == id));
       for (final mount in mounts) {
+        if (allowedMountIds != null && !allowedMountIds.contains(mount.id)) continue;
         if (!_mountManager.isMountOnline(mount.id)) continue;
         final cookie = mount.secret(MountKeys.secretCookie);
         if (!supportsIncremental(mount) || cookie == null) continue;
@@ -507,11 +508,7 @@ class LibraryScanService extends ChangeNotifier {
     }
     if (!_disposed) {
       _libraryChanged();
-      _emitCatalogChanged(
-        changedMounts,
-        directoryPrefixes: changedDirectories,
-        allowTombstones: true,
-      );
+      _emitCatalogChanged(changedMounts, directoryPrefixes: changedDirectories, allowTombstones: true);
     }
     return true;
   }
@@ -734,7 +731,9 @@ class LibraryScanService extends ChangeNotifier {
           _publishScrape(LibraryScrapeStatus(running: true, done: done, total: total, runs: _scrapeStatus.runs));
           final last = _lastLiveRefresh;
           final now = clock.now();
-          if (done > 0 && (streaming || done < total) && (last == null || now.difference(last) >= _liveRefreshInterval)) {
+          if (done > 0 &&
+              (streaming || done < total) &&
+              (last == null || now.difference(last) >= _liveRefreshInterval)) {
             _libraryChanged();
           }
         },

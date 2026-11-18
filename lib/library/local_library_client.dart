@@ -50,6 +50,7 @@ import '../utils/global_key_utils.dart';
 import '../utils/media_server_http_client.dart' show AbortController;
 import 'library_repository.dart' as lib;
 import 'library_scanner.dart';
+import 'library_scrape_runner.dart';
 import 'media_probe.dart';
 import 'scrapers/bangumi_provider.dart';
 import 'sync/sync_local_store.dart';
@@ -73,6 +74,7 @@ class LocalLibraryClient implements MediaServerClient {
   LocalLibraryClient({
     required lib.LibraryRepository repository,
     required MountManager mounts,
+    this.scrapeRunner,
     this.seekDebounceDuration = const Duration(seconds: 3),
     this.onSyncOutboxEnqueued,
   }) : _repo = repository,
@@ -98,6 +100,7 @@ class LocalLibraryClient implements MediaServerClient {
 
   final lib.LibraryRepository _repo;
   final MountManager _mountManager;
+  LibraryScrapeRunner? scrapeRunner;
   final Duration seekDebounceDuration;
   void Function()? onSyncOutboxEnqueued;
   late final SyncLocalStore _syncStore = SyncLocalStore(_repo.database);
@@ -495,7 +498,25 @@ class LocalLibraryClient implements MediaServerClient {
   // ─── Items ─────────────────────────────────────────────────────────────
 
   @override
-  Future<MediaItem?> fetchItem(String id) => _itemById(id, withDetails: true);
+  Future<MediaItem?> fetchItem(String id) async {
+    final item = await _itemById(id, withDetails: true);
+    if (item == null) return null;
+    final numericId = _id(id);
+    final runner = scrapeRunner;
+    if (numericId != null && runner != null) {
+      try {
+        final hydrated = await runner
+            .hydrateItemDetailsIfNeeded(numericId)
+            .timeout(const Duration(seconds: 4), onTimeout: () => false);
+        if (hydrated) {
+          return (await _itemById(id, withDetails: true)) ?? item;
+        }
+      } catch (e) {
+        appLogger.d('Lazy hydration error in fetchItem($id): $e');
+      }
+    }
+    return item;
+  }
 
   @override
   Future<({MediaItem? item, MediaItem? onDeckEpisode})> fetchItemWithOnDeck(
@@ -504,13 +525,32 @@ class LocalLibraryClient implements MediaServerClient {
   }) async {
     final item = await _itemById(id, withDetails: true);
     if (item == null) return (item: null, onDeckEpisode: null);
-    onItemReady?.call(item);
+    var current = item;
+    onItemReady?.call(current);
+    final numericId = _id(id);
+    final runner = scrapeRunner;
+    if (numericId != null && runner != null) {
+      try {
+        final hydrated = await runner
+            .hydrateItemDetailsIfNeeded(numericId)
+            .timeout(const Duration(seconds: 4), onTimeout: () => false);
+        if (hydrated) {
+          final refreshed = await _itemById(id, withDetails: true);
+          if (refreshed != null) {
+            current = refreshed;
+            onItemReady?.call(current);
+          }
+        }
+      } catch (e) {
+        appLogger.d('Lazy hydration error in fetchItemWithOnDeck($id): $e');
+      }
+    }
     MediaItem? onDeck;
-    if (item.kind == MediaKind.show) {
+    if (current.kind == MediaKind.show) {
       final next = await _repo.nextUnwatchedEpisode(int.parse(id));
       if (next != null) onDeck = (await _toItems([next])).single;
     }
-    return (item: item, onDeckEpisode: onDeck);
+    return (item: current, onDeckEpisode: onDeck);
   }
 
   @override
@@ -874,6 +914,24 @@ class LocalLibraryClient implements MediaServerClient {
     await _enqueueProgress(id);
   }
 
+  /// Flushes every active playback session's latest progress into the sync
+  /// outbox and wakes the sync coordinator immediately (e.g. before app suspend).
+  Future<void> flushActivePlaybackToOutbox() async {
+    if (_closed || _playbackSyncSessions.isEmpty) return;
+    final activeIds = _playbackSyncSessions.keys.toList(growable: false);
+    for (final id in activeIds) {
+      final session = _playbackSyncSessions[id];
+      if (session == null) continue;
+      session.seekDebounce?.cancel();
+      session.seekDebounce = null;
+      session.lastOutboxWallMs = clock.now().millisecondsSinceEpoch;
+      await _syncStore.enqueueWatchProgressForItemId(id);
+    }
+    if (activeIds.isNotEmpty) {
+      onSyncOutboxEnqueued?.call();
+    }
+  }
+
   Future<void> _saveProgress(String itemId, Duration position, Duration? duration) async {
     final id = _id(itemId);
     if (id == null) return;
@@ -932,6 +990,17 @@ class LocalLibraryClient implements MediaServerClient {
   Future<List<CollectionMembership>> fetchCollectionMemberships(Set<String> itemIds, {AbortController? abort}) async =>
       const [];
 
+  Future<void> _enqueueList(int id) async {
+    await _syncStore.enqueueListById(id);
+    onSyncOutboxEnqueued?.call();
+  }
+
+  Future<void> _enqueueDeletedListRow(LibraryListRow? row) async {
+    if (row == null) return;
+    await _syncStore.enqueueDeletedList(kind: row.kind, title: row.title, tmdbId: row.tmdbId);
+    onSyncOutboxEnqueued?.call();
+  }
+
   @override
   Future<String?> createCollection({
     required String libraryId,
@@ -941,6 +1010,7 @@ class LocalLibraryClient implements MediaServerClient {
   }) async {
     final id = await _repo.createList(kind: lib.LibraryListKinds.collection, title: title);
     await addToCollection(collectionId: '$id', items: items);
+    await _enqueueList(id);
     return '$_collectionPrefix$id';
   }
 
@@ -951,6 +1021,7 @@ class LocalLibraryClient implements MediaServerClient {
       final itemId = _id(item.id);
       if (itemId != null) await _repo.addToList(id, itemId);
     }
+    await _enqueueList(id);
     return true;
   }
 
@@ -959,6 +1030,7 @@ class LocalLibraryClient implements MediaServerClient {
     final itemId = _id(item.id);
     if (id == null || itemId == null) return false;
     await _repo.removeFromList(id, itemId);
+    await _enqueueList(id);
     return true;
   }
 
@@ -974,7 +1046,9 @@ class LocalLibraryClient implements MediaServerClient {
   Future<bool> deleteCollection(MediaItem collection) async {
     final id = _listId(collection.id);
     if (id == null) return false;
+    final existing = (await _repo.lists(lib.LibraryListKinds.collection)).where((l) => l.id == id).firstOrNull;
     await _repo.deleteList(id);
+    await _enqueueDeletedListRow(existing);
     return true;
   }
 
@@ -1032,6 +1106,7 @@ class LocalLibraryClient implements MediaServerClient {
   Future<MediaPlaylist?> createPlaylist({required String title, required List<MediaItem> items}) async {
     final id = await _repo.createList(kind: lib.LibraryListKinds.playlist, title: title);
     await _addToList('$id', items);
+    await _enqueueList(id);
     return fetchPlaylistMetadata('$id');
   }
 
@@ -1043,7 +1118,9 @@ class LocalLibraryClient implements MediaServerClient {
   Future<bool> deletePlaylist(MediaPlaylist playlist) async {
     final id = _listId(playlist.id);
     if (id == null) return false;
+    final existing = (await _repo.lists(lib.LibraryListKinds.playlist)).where((l) => l.id == id).firstOrNull;
     await _repo.deleteList(id);
+    await _enqueueDeletedListRow(existing);
     return true;
   }
 
@@ -1296,51 +1373,92 @@ class LocalLibraryClient implements MediaServerClient {
         reason: PlaybackFailureReason.noPlayableSource,
       );
     }
-    if (!_mountManager.isMountOnline(picked.file.mountId)) {
-      throw const PlaybackException(
-        'Storage source is currently offline',
-        reason: PlaybackFailureReason.localFileUnavailable,
-      );
+
+    // Build candidate list starting with picked version, then remaining versions
+    // in mount priority order so unreachable LAN sources transparently fall back
+    // to remote-accessible mounts (e.g. WebDAV or Quark) when resuming away from home.
+    final candidates = <({int index, LibraryFileRow file})>[
+      picked,
+      for (var i = 0; i < files.length; i++)
+        if (i != picked.index) (index: i, file: files[i]),
+    ];
+
+    PlaybackException? lastError;
+    for (final candidate in candidates) {
+      final StorageMount mount;
+      try {
+        mount = await _mountOf(candidate.file);
+      } on PlaybackException catch (e) {
+        lastError ??= e;
+        continue;
+      }
+
+      final needsProbe = candidates.length > 1 || mount.configString(MountKeys.fallbackUrl) != null;
+      if (needsProbe && _mountManager.statusOf(candidate.file.mountId) == MountOnlineStatus.unknown) {
+        final probed = await _mountManager.probeMount(mount);
+        _mountManager.setStatus(mount.id, probed);
+        if (probed == MountOnlineStatus.onlineFallback) {
+          await _mountManager.dropCachedDriver(mount.id);
+        }
+      }
+
+      if (!_mountManager.isMountOnline(candidate.file.mountId)) {
+        lastError ??= const PlaybackException(
+          'Storage source is currently offline',
+          reason: PlaybackFailureReason.localFileUnavailable,
+        );
+        continue;
+      }
+
+      try {
+        final variants = await _streamVariants(mount, candidate.file);
+        final variant = StreamVariant.pick(variants, options.streamQuality, _mountManager.variantOrder(mount));
+        final url =
+            (variant == null
+                    ? await _mountManager.streamUrl(mount, _entryOf(candidate.file))
+                    : await _mountManager.variantUrl(mount, _entryOf(candidate.file), variant))
+                .toString();
+        final subtitles = await _externalSubtitles(candidate.file);
+
+        return PlaybackInitializationResult(
+          availableVersions: [for (final file in files) _toVersion(file)],
+          videoUrl: url,
+          // Audio and embedded subtitle tracks are read from the file by the player.
+          mediaInfo: MediaSourceInfo(
+            videoUrl: url,
+            audioTracks: const [],
+            subtitleTracks: const [],
+            chapters: const [],
+            mediaSourceId: '${candidate.file.id}',
+            mediaIndex: candidate.index,
+          ),
+          subtitleSidecars: [
+            for (final track in subtitles) PlaybackSubtitleSidecar(sourceStreamId: null, track: track),
+          ],
+          playMethod: variant == null ? 'DirectPlay' : 'DirectStream',
+          selectedMediaIndex: candidate.index,
+          selectedMediaSourceId: '${candidate.file.id}',
+          streamQualities: [for (final v in variants) StreamQuality(id: v.id, width: v.width, height: v.height)],
+          streamQuality: variant?.id ?? StreamQuality.original,
+        );
+      } on StorageException catch (e) {
+        final reason = e.kind == StorageErrorKind.network || e.kind == StorageErrorKind.notFound
+            ? PlaybackFailureReason.localFileUnavailable
+            : PlaybackFailureReason.serverUnavailable;
+        lastError = PlaybackException(e.message, reason: reason);
+        if (e.kind == StorageErrorKind.network || e.kind == StorageErrorKind.notFound) {
+          _mountManager.setStatus(candidate.file.mountId, MountOnlineStatus.offline);
+          continue;
+        }
+        throw lastError;
+      }
     }
-    final String url;
-    final List<SubtitleTrack> subtitles;
-    final List<StreamVariant> variants;
-    StreamVariant? variant;
-    try {
-      final mount = await _mountOf(picked.file);
-      variants = await _streamVariants(mount, picked.file);
-      variant = StreamVariant.pick(variants, options.streamQuality, _mountManager.variantOrder(mount));
-      url =
-          (variant == null
-                  ? await _mountManager.streamUrl(mount, _entryOf(picked.file))
-                  : await _mountManager.variantUrl(mount, _entryOf(picked.file), variant))
-              .toString();
-      subtitles = await _externalSubtitles(picked.file);
-    } on StorageException catch (e) {
-      final reason = e.kind == StorageErrorKind.network || e.kind == StorageErrorKind.notFound
-          ? PlaybackFailureReason.localFileUnavailable
-          : PlaybackFailureReason.serverUnavailable;
-      throw PlaybackException(e.message, reason: reason);
-    }
-    return PlaybackInitializationResult(
-      availableVersions: [for (final file in files) _toVersion(file)],
-      videoUrl: url,
-      // Audio and embedded subtitle tracks are read from the file by the player.
-      mediaInfo: MediaSourceInfo(
-        videoUrl: url,
-        audioTracks: const [],
-        subtitleTracks: const [],
-        chapters: const [],
-        mediaSourceId: '${picked.file.id}',
-        mediaIndex: picked.index,
-      ),
-      subtitleSidecars: [for (final track in subtitles) PlaybackSubtitleSidecar(sourceStreamId: null, track: track)],
-      playMethod: variant == null ? 'DirectPlay' : 'DirectStream',
-      selectedMediaIndex: picked.index,
-      selectedMediaSourceId: '${picked.file.id}',
-      streamQualities: [for (final v in variants) StreamQuality(id: v.id, width: v.width, height: v.height)],
-      streamQuality: variant?.id ?? StreamQuality.original,
-    );
+
+    throw lastError ??
+        const PlaybackException(
+          'Storage source is currently offline',
+          reason: PlaybackFailureReason.localFileUnavailable,
+        );
   }
 
   @override

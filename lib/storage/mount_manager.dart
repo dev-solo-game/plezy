@@ -27,12 +27,8 @@ typedef MountDriverFactory = StorageDriver Function(StorageMount mount, {bool us
 /// storage through here so each mount has exactly one driver instance — and
 /// therefore one request throttle and one link cache.
 class MountManager {
-  MountManager(
-    this.registry, {
-    StreamProxy? proxy,
-    BulkReadOptions Function()? bulkOptions,
-    this._driverFactory,
-  }) : proxy = proxy ?? StreamProxy(bulkOptions: bulkOptions);
+  MountManager(this.registry, {StreamProxy? proxy, BulkReadOptions Function()? bulkOptions, this._driverFactory})
+    : proxy = proxy ?? StreamProxy(bulkOptions: bulkOptions);
 
   final MountRegistry registry;
   final StreamProxy proxy;
@@ -175,18 +171,20 @@ class MountManager {
   }) async {
     switch (mount.kind) {
       case StorageKind.local:
-        final driver = createDriver(mount, useFallback: false);
+        StorageDriver? driver;
         try {
+          driver = createDriver(mount, useFallback: false);
           await driver.check().timeout(timeout);
           return MountOnlineStatus.onlinePrimary;
         } catch (_) {
           return MountOnlineStatus.offline;
         } finally {
-          await driver.close();
+          await driver?.close();
         }
       case StorageKind.quark:
-        final driver = createDriver(mount, useFallback: false);
+        StorageDriver? driver;
         try {
+          driver = createDriver(mount, useFallback: false);
           await driver.check().timeout(timeout);
           return MountOnlineStatus.onlinePrimary;
         } on TimeoutException {
@@ -198,7 +196,7 @@ class MountManager {
         } catch (_) {
           return MountOnlineStatus.onlinePrimary;
         } finally {
-          await driver.close();
+          await driver?.close();
         }
       case StorageKind.webdav:
       case StorageKind.smb:
