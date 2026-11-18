@@ -381,9 +381,11 @@ class SyncAndScanCoordinator extends ChangeNotifier {
     return true;
   }
 
-  Future<void> onMountSaved(StorageMount mount) async {
+  Future<void> onMountSaved(StorageMount mount, {bool dropDriver = true}) async {
     await initialize();
-    await mountManager.dropCachedDriver(mount.id);
+    if (dropDriver) {
+      await mountManager.dropCachedDriver(mount.id);
+    }
     if (mount.configStringList(MountKeys.includePaths).isNotEmpty ||
         mount.configStringList(MountKeys.excludePaths).isNotEmpty) {
       final localFiles = await (db.select(db.libraryFiles)..where((t) => t.mountId.equals(mount.id))).get();

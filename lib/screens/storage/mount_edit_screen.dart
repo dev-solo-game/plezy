@@ -278,6 +278,10 @@ class _MountEditScreenState extends State<MountEditScreen> {
     }
     final manager = context.read<MountManager>();
     final scans = context.read<LibraryScanService>();
+    SyncAndScanCoordinator? syncCoordinator;
+    try {
+      syncCoordinator = context.read<SyncAndScanCoordinator>();
+    } on ProviderNotFoundException catch (_) {}
     final navigator = Navigator.of(context);
     setState(() {
       _saving = true;
@@ -298,13 +302,12 @@ class _MountEditScreenState extends State<MountEditScreen> {
         );
       } else {
         final resolvedStatus = await _probeOnSave(manager, mount);
+        await scans.cancelAndAwaitMount(mount.id);
         await manager.save(mount);
         manager.setStatus(mount.id, resolvedStatus);
-        try {
-          if (mounted) {
-            unawaited(context.read<SyncAndScanCoordinator>().onMountSaved(mount));
-          }
-        } on ProviderNotFoundException catch (_) {}
+        if (syncCoordinator != null) {
+          await syncCoordinator.onMountSaved(mount, dropDriver: false);
+        }
         // A new or changed mount is scanned straight away; the list shows progress.
         unawaited(scans.scan(mount));
       }

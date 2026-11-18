@@ -4,6 +4,7 @@ import 'dart:math' as math;
 
 import 'package:clock/clock.dart';
 import 'package:drift/drift.dart';
+import 'package:flutter/foundation.dart' show mapEquals;
 
 import '../../database/app_database.dart';
 import '../../media/work_identity.dart';
@@ -1600,6 +1601,7 @@ class SyncMapper {
         await mountManager.dropCachedDriver(deletedId);
       }
       for (final updatedId in updatedMountIds) {
+        await onPreemptMountScan?.call(updatedId);
         await mountManager.dropCachedDriver(updatedId);
       }
       processedEntities += sources.length;
@@ -2328,7 +2330,13 @@ class SyncMapper {
         }
         if (metaOverrides || authUpdated) {
           await mountManager.registry.upsert(mountToSave);
-          updatedMountIds.add(sourceId);
+          final connectionChanged =
+              existingById != null &&
+              (!mapEquals(existingById.config, mountToSave.config) ||
+                  !mapEquals(existingById.secrets, mountToSave.secrets));
+          if (connectionChanged) {
+            updatedMountIds.add(sourceId);
+          }
         }
         final curScan = await (db.select(
           db.libraryScanStates,
