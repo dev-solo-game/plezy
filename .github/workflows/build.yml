@@ -484,7 +484,7 @@ jobs:
           $foundFiles | ForEach-Object { Write-Host "  $_" }
 
           $requiredFiles = @(
-            "plezy.exe"
+            "ttplay.exe"
             "flutter_windows.dll"
             "sqlite3.dll"
             "libmpv-2.dll"
@@ -498,8 +498,8 @@ jobs:
             "vcruntime140.dll"
           )
           $forbiddenFiles = @(
-            "plezy.lib"
-            "plezy.exp"
+            "ttplay.lib"
+            "ttplay.exp"
             "simdutf.lib"
           )
 

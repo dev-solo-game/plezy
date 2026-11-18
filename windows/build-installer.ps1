@@ -42,7 +42,7 @@ Source: "staging\arm64\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs
 #define Name "TTPlay"
 #define Version "$Version"
 #define Publisher "ttai.net"
-#define ExeName "plezy.exe"
+#define ExeName "ttplay.exe"
 
 [Setup]
 AppId={{$AppGuid}

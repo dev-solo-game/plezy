@@ -96,7 +96,7 @@ function New-AppxManifest {
   </Capabilities>
 
   <Applications>
-    <Application Id="Plezy" Executable="plezy.exe" EntryPoint="Windows.FullTrustApplication">
+    <Application Id="Plezy" Executable="ttplay.exe" EntryPoint="Windows.FullTrustApplication">
       <uap:VisualElements DisplayName="Plezy"
                           Description="A modern client for Plex and Jellyfin"
                           BackgroundColor="transparent"
