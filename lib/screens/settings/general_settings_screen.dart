@@ -2,11 +2,9 @@ import 'dart:io' show Platform;
 
 import 'package:flutter/material.dart';
 import 'package:material_symbols_icons/symbols.dart';
-import 'package:provider/provider.dart';
 
 import '../../i18n/strings.g.dart';
 import '../../navigation/navigation_tabs.dart';
-import '../../profiles/active_profile_provider.dart';
 import '../../services/settings_service.dart';
 import '../../services/settings_mutation_service.dart';
 import '../../utils/platform_detector.dart';
@@ -24,9 +22,6 @@ class GeneralSettingsScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Watched at build level so the tiles can be excluded with a plain `if` —
-    // a child that renders SizedBox.shrink() would corrupt the group corners.
-    final hasMultipleProfiles = context.watch<ActiveProfileProvider>().hasMultipleProfiles;
     return SettingsPage(
       title: Text(t.settings.general),
       children: [
@@ -36,13 +31,6 @@ class GeneralSettingsScreen extends StatelessWidget {
           title: t.settings.startup,
           children: [
             _startupSectionSelector(),
-            if (hasMultipleProfiles)
-              SettingSwitchTile(
-                pref: SettingsService.requireProfileSelectionOnOpen,
-                icon: Symbols.person_rounded,
-                title: t.settings.requireProfileSelectionOnOpen,
-                subtitle: t.settings.requireProfileSelectionOnOpenDescription,
-              ),
             if (Platform.isAndroid || PlatformDetector.isDesktopOS())
               SettingSwitchTile(
                 pref: SettingsService.forceTvMode,

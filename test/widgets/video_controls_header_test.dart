@@ -5,9 +5,7 @@ import 'package:plezy/i18n/strings.g.dart';
 import 'package:plezy/media/ids.dart';
 import 'package:plezy/media/media_item.dart';
 import 'package:plezy/services/jellyfin_mappers.dart';
-import 'package:plezy/watch_together/providers/watch_together_provider.dart';
 import 'package:plezy/widgets/video_controls/widgets/video_controls_header.dart';
-import 'package:provider/provider.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -82,20 +80,14 @@ MediaItem _mappedItem(Map<String, dynamic> json) {
 }
 
 Future<void> _pumpHeader(WidgetTester tester, {required MediaItem metadata, required VideoHeaderStyle style}) async {
-  final watchTogether = WatchTogetherProvider();
-  addTearDown(watchTogether.dispose);
-
   await tester.pumpWidget(
     TranslationProvider(
-      child: ChangeNotifierProvider<WatchTogetherProvider>.value(
-        value: watchTogether,
-        child: MaterialApp(
-          home: Scaffold(
-            backgroundColor: Colors.black,
-            body: SizedBox(
-              width: 900,
-              child: VideoControlsHeader(metadata: metadata, style: style, onBack: () {}),
-            ),
+      child: MaterialApp(
+        home: Scaffold(
+          backgroundColor: Colors.black,
+          body: SizedBox(
+            width: 900,
+            child: VideoControlsHeader(metadata: metadata, style: style, onBack: () {}),
           ),
         ),
       ),

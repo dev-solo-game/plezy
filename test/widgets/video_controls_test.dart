@@ -21,7 +21,6 @@ import 'package:plezy/services/video_volume_controller.dart';
 import 'package:plezy/widgets/video_controls/widgets/player_toast_indicator.dart';
 import 'package:plezy/widgets/video_controls/desktop_video_controls.dart';
 import 'package:plezy/widgets/video_controls/mobile_video_controls.dart';
-import 'package:plezy/watch_together/providers/watch_together_provider.dart';
 import 'package:plezy/widgets/video_controls/video_controls.dart';
 import 'package:plezy/widgets/video_controls/models/track_controls_state.dart';
 import 'package:plezy/widgets/video_controls/player_chrome_controller.dart';
@@ -1190,34 +1189,29 @@ void main() {
       addTearDown(volume.dispose);
       var requests = 0;
 
-      final watchTogether = WatchTogetherProvider();
-      addTearDown(watchTogether.dispose);
       await tester.pumpWidget(
-        ChangeNotifierProvider<WatchTogetherProvider>.value(
-          value: watchTogether,
-          child: MaterialApp(
-            theme: ThemeData(extensions: const [testMonoTokens]),
-            home: Scaffold(
-              body: SizedBox(
-                width: 1000,
-                height: 700,
-                child: DesktopVideoControls(
-                  useDpadNavigation: false,
-                  player: player,
-                  volumeController: volume,
-                  metadata: testMediaItem(id: 'desktop'),
-                  onPlayPause: () => requests++,
-                  chapters: const [],
-                  chaptersLoaded: true,
-                  seekTimeSmall: 10,
-                  onSeekToPreviousChapter: () {},
-                  onSeekToNextChapter: () {},
-                  onSeek: (_) {},
-                  onSeekEnd: (_) {},
-                  getReplayIcon: (_) => Icons.replay,
-                  getForwardIcon: (_) => Icons.forward_10,
-                  trackControlsState: const TrackControlsState(canControl: true),
-                ),
+        MaterialApp(
+          theme: ThemeData(extensions: const [testMonoTokens]),
+          home: Scaffold(
+            body: SizedBox(
+              width: 1000,
+              height: 700,
+              child: DesktopVideoControls(
+                useDpadNavigation: false,
+                player: player,
+                volumeController: volume,
+                metadata: testMediaItem(id: 'desktop'),
+                onPlayPause: () => requests++,
+                chapters: const [],
+                chaptersLoaded: true,
+                seekTimeSmall: 10,
+                onSeekToPreviousChapter: () {},
+                onSeekToNextChapter: () {},
+                onSeek: (_) {},
+                onSeekEnd: (_) {},
+                getReplayIcon: (_) => Icons.replay,
+                getForwardIcon: (_) => Icons.forward_10,
+                trackControlsState: const TrackControlsState(canControl: true),
               ),
             ),
           ),
@@ -1246,30 +1240,25 @@ void main() {
       var startAutoHide = 0;
       var cancelAutoHide = 0;
 
-      final watchTogether = WatchTogetherProvider();
-      addTearDown(watchTogether.dispose);
       await tester.pumpWidget(
-        ChangeNotifierProvider<WatchTogetherProvider>.value(
-          value: watchTogether,
-          child: MaterialApp(
-            theme: ThemeData(extensions: const [testMonoTokens]),
-            home: Scaffold(
-              body: SizedBox(
-                width: 500,
-                height: 800,
-                child: MobileVideoControls(
-                  player: player,
-                  metadata: testMediaItem(id: 'mobile'),
-                  chapters: const [],
-                  chaptersLoaded: true,
-                  seekTimeSmall: 10,
-                  trackChapterControls: const SizedBox.shrink(),
-                  onSeek: (_) {},
-                  onSeekEnd: (_) {},
-                  onPlayPause: () => requests++,
-                  onStartAutoHide: () => startAutoHide++,
-                  onCancelAutoHide: () => cancelAutoHide++,
-                ),
+        MaterialApp(
+          theme: ThemeData(extensions: const [testMonoTokens]),
+          home: Scaffold(
+            body: SizedBox(
+              width: 500,
+              height: 800,
+              child: MobileVideoControls(
+                player: player,
+                metadata: testMediaItem(id: 'mobile'),
+                chapters: const [],
+                chaptersLoaded: true,
+                seekTimeSmall: 10,
+                trackChapterControls: const SizedBox.shrink(),
+                onSeek: (_) {},
+                onSeekEnd: (_) {},
+                onPlayPause: () => requests++,
+                onStartAutoHide: () => startAutoHide++,
+                onCancelAutoHide: () => cancelAutoHide++,
               ),
             ),
           ),
@@ -1306,34 +1295,29 @@ void main() {
       addTearDown(volume.dispose);
       final seekEnds = <Duration>[];
 
-      final watchTogether = WatchTogetherProvider();
-      addTearDown(watchTogether.dispose);
       await tester.pumpWidget(
-        ChangeNotifierProvider<WatchTogetherProvider>.value(
-          value: watchTogether,
-          child: MaterialApp(
-            theme: ThemeData(extensions: const [testMonoTokens]),
-            home: Scaffold(
-              body: SizedBox(
-                width: 1000,
-                height: 700,
-                child: DesktopVideoControls(
-                  useDpadNavigation: true,
-                  player: player,
-                  volumeController: volume,
-                  metadata: testMediaItem(id: 'desktop-timeline'),
-                  onPlayPause: () {},
-                  chapters: const [],
-                  chaptersLoaded: true,
-                  seekTimeSmall: 10,
-                  onSeekToPreviousChapter: () {},
-                  onSeekToNextChapter: () {},
-                  onSeek: (_) {},
-                  onSeekEnd: seekEnds.add,
-                  getReplayIcon: (_) => Icons.replay,
-                  getForwardIcon: (_) => Icons.forward_10,
-                  trackControlsState: const TrackControlsState(canControl: true),
-                ),
+        MaterialApp(
+          theme: ThemeData(extensions: const [testMonoTokens]),
+          home: Scaffold(
+            body: SizedBox(
+              width: 1000,
+              height: 700,
+              child: DesktopVideoControls(
+                useDpadNavigation: true,
+                player: player,
+                volumeController: volume,
+                metadata: testMediaItem(id: 'desktop-timeline'),
+                onPlayPause: () {},
+                chapters: const [],
+                chaptersLoaded: true,
+                seekTimeSmall: 10,
+                onSeekToPreviousChapter: () {},
+                onSeekToNextChapter: () {},
+                onSeek: (_) {},
+                onSeekEnd: seekEnds.add,
+                getReplayIcon: (_) => Icons.replay,
+                getForwardIcon: (_) => Icons.forward_10,
+                trackControlsState: const TrackControlsState(canControl: true),
               ),
             ),
           ),
@@ -1375,28 +1359,23 @@ void main() {
       await SettingsService.getInstance();
       final player = FakeSyncPlayer();
       addTearDown(player.dispose);
-      final watchTogether = WatchTogetherProvider();
-      addTearDown(watchTogether.dispose);
 
       await tester.pumpWidget(
-        ChangeNotifierProvider<WatchTogetherProvider>.value(
-          value: watchTogether,
-          child: MaterialApp(
-            theme: ThemeData(platform: TargetPlatform.android, extensions: const [testMonoTokens]),
-            home: Scaffold(
-              body: MobileVideoControls(
-                player: player,
-                metadata: testMediaItem(id: 'mobile'),
-                chapters: const [],
-                chaptersLoaded: true,
-                seekTimeSmall: 10,
-                trackChapterControls: const SizedBox.shrink(),
-                onSeek: (_) {},
-                onSeekEnd: (_) {},
-                onPlayPause: () {},
-                onStartAutoHide: () {},
-                onCancelAutoHide: () {},
-              ),
+        MaterialApp(
+          theme: ThemeData(platform: TargetPlatform.android, extensions: const [testMonoTokens]),
+          home: Scaffold(
+            body: MobileVideoControls(
+              player: player,
+              metadata: testMediaItem(id: 'mobile'),
+              chapters: const [],
+              chaptersLoaded: true,
+              seekTimeSmall: 10,
+              trackChapterControls: const SizedBox.shrink(),
+              onSeek: (_) {},
+              onSeekEnd: (_) {},
+              onPlayPause: () {},
+              onStartAutoHide: () {},
+              onCancelAutoHide: () {},
             ),
           ),
         ),
@@ -1923,12 +1902,10 @@ void main() {
       final player = _FakeSubtitleVisibilityPlayer(writes: [firstWrite, secondWrite]);
       final volume = VideoVolumeController(player: player, settings: settings, initialVolume: 100);
       final playbackState = PlaybackStateProvider();
-      final watchTogether = WatchTogetherProvider();
       final chrome = PlayerChromeController();
       final toast = PlayerToastController();
       addTearDown(volume.dispose);
       addTearDown(playbackState.dispose);
-      addTearDown(watchTogether.dispose);
       addTearDown(chrome.dispose);
       addTearDown(toast.dispose);
 
@@ -1936,7 +1913,6 @@ void main() {
         MultiProvider(
           providers: [
             ChangeNotifierProvider<PlaybackStateProvider>.value(value: playbackState),
-            ChangeNotifierProvider<WatchTogetherProvider>.value(value: watchTogether),
           ],
           child: MaterialApp(
             theme: ThemeData(platform: TargetPlatform.macOS, extensions: const [testMonoTokens]),

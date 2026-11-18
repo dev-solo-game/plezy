@@ -131,7 +131,7 @@ class _AuthScreenState extends State<AuthScreen> {
         if (!mounted) return;
       }
       if (activeProfile.active == null && activeProfile.profiles.isNotEmpty) {
-        final candidate = activeProfile.profiles.where((p) => !p.isPinProtected).firstOrNull;
+        final candidate = activeProfile.profiles.firstOrNull;
         if (candidate != null) {
           await activeProfile.activate(candidate);
           if (!mounted) return;

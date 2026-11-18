@@ -123,14 +123,9 @@ sealed class Profile with _$Profile {
     PlexHomeProfile() => ProfileKind.plexHome,
   };
 
-  /// True when entering this profile requires user-supplied PIN.
-  ///
-  /// Locals: gated by their own [pinHash].
-  /// Plex Home: gated by Plex's own protected flag (`plexProtected`).
-  bool get isPinProtected => switch (this) {
-    LocalProfile(:final pinHash) => pinHash != null && pinHash.isNotEmpty,
-    PlexHomeProfile(:final plexProtected) => plexProtected,
-  };
+  /// PIN locking is disabled in this build; kept as `false` for compatibility
+  /// with persisted schema rows.
+  bool get isPinProtected => false;
 
   /// Hashed PIN, only set for [LocalProfile]. Returns null for plexHome.
   String? get pinHash => switch (this) {

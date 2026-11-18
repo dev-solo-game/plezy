@@ -129,7 +129,6 @@ void main() {
         focusLabel: 'settings_donate',
         isVisible: DonationService.isEnabled,
       ),
-      _MigratedRow(title: t.settings.watchTogetherRelay, focusLabel: 'settings_watch_together_relay'),
       _MigratedRow(title: t.settings.clearImageCache, focusLabel: 'settings_clear_image_cache'),
       _MigratedRow(title: t.settings.resetSettings, focusLabel: 'settings_reset_settings'),
       const _MigratedRow(title: 'Test Sentry', isVisible: kDebugMode),
@@ -189,16 +188,16 @@ void main() {
 
     // Exercise both input paths against real callbacks rather than merely
     // checking that callbacks are non-null.
-    final relayMaterialTile = tester.widget<ListTile>(
-      find.descendant(of: _focusableTileFor(t.settings.watchTogetherRelay), matching: find.byType(ListTile)),
+    final clearCacheTile = tester.widget<ListTile>(
+      find.descendant(of: _focusableTileFor(t.settings.clearImageCache), matching: find.byType(ListTile)),
     );
-    relayMaterialTile.focusNode!.requestFocus();
+    clearCacheTile.focusNode!.requestFocus();
     await tester.pump();
-    expect(relayMaterialTile.focusNode!.hasFocus, isTrue);
+    expect(clearCacheTile.focusNode!.hasFocus, isTrue);
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);
     await _pumpUi(tester);
     expect(find.byType(AlertDialog), findsOneWidget);
-    expect(find.text(t.settings.watchTogetherRelay), findsWidgets);
+    expect(find.text(t.settings.clearImageCache), findsWidgets);
     Navigator.of(tester.element(find.byType(AlertDialog))).pop();
     await _pumpUi(tester);
 
@@ -336,39 +335,6 @@ void main() {
     await _pumpUi(tester);
 
     expect(find.text(t.settings.downloadConnectionsDescription(count: 8, effective: 8)), findsOneWidget);
-  });
-
-  testWidgets('relay dialog rejects invalid bases without persisting them', (tester) async {
-    final harness = await _pumpSettingsScreen(tester);
-    addTearDown(() => harness.dispose(tester));
-
-    await tester.tap(find.text(t.settings.watchTogetherRelay));
-    await _pumpUi(tester);
-    await tester.enterText(find.byType(TextField), 'ws://opaque-user@relay.example.test/path?wrong=route');
-    await tester.tap(find.text(t.common.save));
-    await _pumpUi(tester);
-
-    expect(find.byType(AlertDialog), findsOneWidget);
-    expect(find.text(t.settings.watchTogetherRelayInvalid), findsOneWidget);
-    expect(SettingsService.instance.read(SettingsService.watchPartyRelayUrl), isNull);
-  });
-
-  testWidgets('relay dialog saves and reopens the canonical base', (tester) async {
-    final harness = await _pumpSettingsScreen(tester);
-    addTearDown(() => harness.dispose(tester));
-
-    await tester.tap(find.text(t.settings.watchTogetherRelay));
-    await _pumpUi(tester);
-    await tester.enterText(find.byType(TextField), '  HTTP://Relay.Example.Test:8080/prefix///  ');
-    await tester.tap(find.text(t.common.save));
-    await _pumpUi(tester);
-
-    expect(find.byType(AlertDialog), findsNothing);
-    expect(SettingsService.instance.read(SettingsService.watchPartyRelayUrl), 'http://relay.example.test:8080/prefix');
-
-    await tester.tap(find.text(t.settings.watchTogetherRelay));
-    await _pumpUi(tester);
-    expect(find.widgetWithText(TextField, 'http://relay.example.test:8080/prefix'), findsOneWidget);
   });
 
   testWidgets('selected download folder becomes the persisted location', (tester) async {

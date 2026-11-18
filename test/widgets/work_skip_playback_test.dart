@@ -25,7 +25,6 @@ import 'package:plezy/services/video_volume_controller.dart';
 import 'package:plezy/services/work_skip_settings_store.dart';
 import 'package:plezy/theme/mono_theme.dart';
 import 'package:plezy/utils/platform_detector.dart';
-import 'package:plezy/watch_together/providers/watch_together_provider.dart';
 import 'package:plezy/widgets/video_controls/desktop_video_controls.dart';
 import 'package:plezy/widgets/video_controls/painters/skip_range_painter.dart';
 import 'package:plezy/widgets/video_controls/player_chrome_controller.dart';
@@ -127,7 +126,6 @@ void main() {
   late PlayerToastController toast;
   late VideoVolumeController volume;
   late PlaybackStateProvider playback;
-  late WatchTogetherProvider together;
   late SettingsService settings;
   late ValueNotifier<bool> firstFrame;
   late GlobalKey capture;
@@ -168,7 +166,6 @@ void main() {
     toast = PlayerToastController();
     volume = VideoVolumeController(player: player, settings: settings, initialVolume: 100);
     playback = PlaybackStateProvider();
-    together = WatchTogetherProvider();
     firstFrame = ValueNotifier(true);
     capture = GlobalKey();
     completions = 0;
@@ -180,7 +177,6 @@ void main() {
     TvDetectionService.setForceTVSync(false);
     volume.dispose();
     playback.dispose();
-    together.dispose();
     chrome.dispose();
     toast.dispose();
     firstFrame.dispose();
@@ -219,7 +215,6 @@ void main() {
             providers: [
               Provider<AppDatabase>.value(value: db),
               ChangeNotifierProvider<PlaybackStateProvider>.value(value: playback),
-              ChangeNotifierProvider<WatchTogetherProvider>.value(value: together),
             ],
             child: MaterialApp(
               debugShowCheckedModeBanner: false,

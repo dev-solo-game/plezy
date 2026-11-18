@@ -31,7 +31,6 @@ import 'package:plezy/services/playback_coordinator.dart';
 import 'package:plezy/services/playback_initialization_types.dart';
 import 'package:plezy/services/settings_service.dart';
 import 'package:plezy/utils/video_player_navigation.dart';
-import 'package:plezy/watch_together/providers/watch_together_provider.dart';
 import 'package:plezy/widgets/video_controls/video_controls.dart';
 import 'package:provider/provider.dart';
 
@@ -149,7 +148,6 @@ void main() {
               ChangeNotifierProvider<OfflineWatchSyncService>.value(value: offlineWatch),
               ChangeNotifierProvider<AccountPreferencesController>.value(value: accountPreferences),
               ChangeNotifierProvider(create: (_) => CompanionRemoteProvider()),
-              ChangeNotifierProvider(create: (_) => WatchTogetherProvider()),
               ChangeNotifierProvider(create: (_) => ShaderProvider()),
               ChangeNotifierProvider<MusicPlaybackService>(create: (_) => StubMusicPlaybackService()),
               Provider<AppDatabase>.value(value: db),

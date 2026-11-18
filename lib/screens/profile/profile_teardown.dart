@@ -121,16 +121,7 @@ Future<bool> settleSessionAfterRemoval(
       }
     }
   } else {
-    // Auto-activation must not bypass PIN gates ([activate] rejects local
-    // PIN profiles without a pin; protected Plex Home profiles would PIN
-    // prompt at bind time) — skip protected profiles instead.
-    Profile? next;
-    for (final profile in result.profiles) {
-      if (!profile.isPinProtected) {
-        next = profile;
-        break;
-      }
-    }
+    final next = result.profiles.firstOrNull;
     // The removal was a user action: mark the hand-off activation as
     // user-initiated so the binder binds it (bypassing the initial-bind
     // defer and any suppressed failed-bind marker).

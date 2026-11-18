@@ -29,8 +29,6 @@ import '../../widgets/settings_section.dart';
 import '../../utils/dialogs.dart';
 import '../settings/add_connection_screen.dart';
 import '../settings/edit_jellyfin_connection_screen.dart';
-import 'pin_entry_dialog.dart';
-import 'pin_status_row.dart';
 import 'profile_teardown.dart';
 import 'profile_name_field.dart';
 
@@ -54,8 +52,6 @@ class _ProfileDetailScreenState extends State<ProfileDetailScreen> with Controll
   late final TextEditingController _nameController = createTextEditingController(text: widget.profile.displayName);
   final _nameFocusNode = FocusNode(debugLabel: 'ProfileDetail:Name');
   final _saveNameFocusNode = FocusNode(debugLabel: 'ProfileDetail:SaveName');
-  final _setPinFocusNode = FocusNode(debugLabel: 'ProfileDetail:SetPin');
-  final _changePinFocusNode = FocusNode(debugLabel: 'ProfileDetail:ChangePin');
   final _addConnectionFocusNode = FocusNode(debugLabel: 'ProfileDetail:AddConnection');
   final _deleteProfileFocusNode = FocusNode(debugLabel: 'ProfileDetail:DeleteProfile');
   late Profile _profile;
@@ -92,8 +88,6 @@ class _ProfileDetailScreenState extends State<ProfileDetailScreen> with Controll
     _profileSub?.cancel();
     _nameFocusNode.dispose();
     _saveNameFocusNode.dispose();
-    _setPinFocusNode.dispose();
-    _changePinFocusNode.dispose();
     _addConnectionFocusNode.dispose();
     _deleteProfileFocusNode.dispose();
     super.dispose();
@@ -107,42 +101,6 @@ class _ProfileDetailScreenState extends State<ProfileDetailScreen> with Controll
     if (!mounted) return;
     setState(() => _profile = updated);
     showSuccessSnackBar(context, t.profiles.profileRenamed);
-  }
-
-  Future<void> _setPin() async {
-    final pin = await captureAndConfirmPin(
-      context,
-      onMismatch: (ctx) => showErrorSnackBar(ctx, t.profiles.pinsDontMatch),
-    );
-    if (pin == null || !mounted) return;
-    final profile = _profile;
-    if (profile is! LocalProfile) return;
-    final hadPin = profile.pinHash != null;
-    final updated = profile.copyWith(pinHash: computePinHash(pin));
-    await context.read<ProfileRegistry>().upsert(updated);
-    if (!mounted) return;
-    setState(() => _profile = updated);
-    if (!hadPin) {
-      // The Set PIN button (and its focus node) just left the tree — hand
-      // DPAD focus to the replacing row instead of dropping it.
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _changePinFocusNode.requestFocus();
-      });
-    }
-  }
-
-  Future<void> _clearPin() async {
-    final profile = _profile;
-    if (profile is! LocalProfile) return;
-    final updated = profile.copyWith(pinHash: null);
-    await context.read<ProfileRegistry>().upsert(updated);
-    if (!mounted) return;
-    setState(() => _profile = updated);
-    // Reverse swap of _setPin: the row (and the focused Remove button)
-    // just left the tree.
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _setPinFocusNode.requestFocus();
-    });
   }
 
   Future<void> _addConnection() async {
@@ -310,27 +268,6 @@ class _ProfileDetailScreenState extends State<ProfileDetailScreen> with Controll
                     _profile.displayName,
                     style: theme.textTheme.bodyLarge?.copyWith(color: theme.colorScheme.onSurfaceVariant),
                   ),
-                const SizedBox(height: 24),
-                Text(t.profiles.pinProtectionLabel, style: theme.textTheme.labelLarge),
-                const SizedBox(height: 8),
-                if (!isLocal)
-                  Text(
-                    _profile.plexProtected ? t.profiles.pinManagedByPlex : t.profiles.noPinSetEditOnPlex,
-                    style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
-                  )
-                else if (_profile.pinHash == null)
-                  FocusableButton(
-                    focusNode: _setPinFocusNode,
-                    useBackgroundFocus: true,
-                    onPressed: _setPin,
-                    child: OutlinedButton.icon(
-                      onPressed: _setPin,
-                      icon: const AppIcon(Symbols.lock_outline_rounded, fill: 1),
-                      label: Text(t.profiles.setPin),
-                    ),
-                  )
-                else
-                  PinStatusRow(onChange: _setPin, onRemove: _clearPin, changeFocusNode: _changePinFocusNode),
                 const SizedBox(height: 32),
               ],
               Row(

@@ -2,7 +2,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:plezy/models/companion_remote/remote_command.dart';
 import 'package:plezy/models/mpv_config_models.dart';
 import 'package:plezy/models/trakt/trakt_ids.dart';
-import 'package:plezy/watch_together/services/recent_rooms_service.dart';
 
 void main() {
   group('JSON model round trips', () {
@@ -29,45 +28,6 @@ void main() {
       expect(decoded.tmdb, 42);
       expect(decoded.tvdb, 9);
       expect(decoded.hasAny, isTrue);
-    });
-
-    test('RecentRoom preserves epoch timestamp', () {
-      final lastUsed = DateTime.fromMillisecondsSinceEpoch(1700000000000);
-      final room = RecentRoom(code: 'K7MQ2X', relayScope: 'scope-digest', name: 'Movie night', lastUsed: lastUsed);
-
-      expect(room.toJson(), {
-        'code': 'K7MQ2X',
-        'relayScope': 'scope-digest',
-        'name': 'Movie night',
-        'lastUsed': 1700000000000,
-      });
-
-      final decoded = RecentRoom.fromJson(room.toJson());
-      expect(decoded.code, room.code);
-      expect(decoded.relayScope, room.relayScope);
-      expect(decoded.name, room.name);
-      expect(decoded.lastUsed, lastUsed);
-    });
-
-    test('RecentRoom reads a room stored with the former control mode', () {
-      final decoded = RecentRoom.fromJson({
-        'code': 'K7MQ2X',
-        'relayScope': 'scope-digest',
-        'lastUsed': 1700000000000,
-        'controlMode': 1,
-      });
-      expect(decoded.code, 'K7MQ2X');
-    });
-
-    test('RecentRoom omits nullable fields when absent', () {
-      final lastUsed = DateTime.fromMillisecondsSinceEpoch(1700000000000);
-      final room = RecentRoom(code: 'K7MQ2X', relayScope: 'scope-digest', lastUsed: lastUsed);
-
-      expect(room.toJson(), {'code': 'K7MQ2X', 'relayScope': 'scope-digest', 'lastUsed': 1700000000000});
-    });
-
-    test('RecentRoom requires relay scope when decoding', () {
-      expect(() => RecentRoom.fromJson({'code': 'ABCD', 'lastUsed': 1700000000000}), throwsA(anything));
     });
 
     test('RemoteCommand keeps compact protocol keys and unknown fallback', () {

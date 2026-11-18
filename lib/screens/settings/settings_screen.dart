@@ -10,7 +10,6 @@ import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../focus/focus_memory_tracker.dart';
-import '../../focus/focusable_text_field.dart';
 import '../../focus/input_mode_tracker.dart';
 import '../../i18n/strings.g.dart';
 import '../main_screen.dart';
@@ -49,7 +48,6 @@ import '../../widgets/settings_builder.dart';
 import '../../widgets/settings_section.dart';
 import '../../widgets/system_bottom_inset.dart';
 import '../../profiles/active_profile_provider.dart';
-import '../../watch_together/services/watch_party_relays.dart';
 import 'about_screen.dart';
 import 'add_connection_screen.dart';
 import '../profile/profile_detail_screen.dart';
@@ -131,7 +129,6 @@ class _SettingsScreenState extends State<SettingsScreen> with FocusableTab, Moun
   static const _kCheckForUpdates = 'check_for_updates';
   static const _kAutoCheckUpdatesOnStartup = 'auto_check_updates_on_startup';
   static const _kAbout = 'about';
-  static const _kWatchTogetherRelay = 'watch_together_relay';
   static const _kExportSettings = 'export_settings';
   static const _kImportSettings = 'import_settings';
   static const _kAccountPreferences = 'account_preferences';
@@ -575,13 +572,6 @@ class _SettingsScreenState extends State<SettingsScreen> with FocusableTab, Moun
     return SettingsGroup(
       title: t.settings.advanced,
       children: [
-        SettingNavigationTile(
-          focusNode: _focusTracker.get(_kWatchTogetherRelay),
-          icon: Symbols.dns_rounded,
-          title: t.settings.watchTogetherRelay,
-          subtitle: t.settings.watchTogetherRelayDescription,
-          onTap: () => _showRelayUrlDialog(),
-        ),
         SettingSwitchTile(
           focusNode: _focusTracker.get(_kCrashReporting),
           pref: settings.SettingsService.crashReporting,
@@ -834,13 +824,6 @@ class _SettingsScreenState extends State<SettingsScreen> with FocusableTab, Moun
     }
   }
 
-  Future<void> _showRelayUrlDialog() async {
-    await showScopedDialog<void>(
-      context: context,
-      builder: (_) => _RelayUrlDialog(settingsService: _settingsService),
-    );
-  }
-
   Future<void> _showClearImageCacheDialog() async {
     final confirmed = await showConfirmDialog(
       context,
@@ -974,88 +957,6 @@ class _SettingsScreenState extends State<SettingsScreen> with FocusableTab, Moun
     if (updateInfo == null) return;
     unawaited(
       showUpdateAvailableDialog(context, updateInfo, title: t.settings.updateAvailable, dismissLabel: t.common.close),
-    );
-  }
-}
-
-class _RelayUrlDialog extends StatefulWidget {
-  final settings.SettingsService settingsService;
-
-  const _RelayUrlDialog({required this.settingsService});
-
-  @override
-  State<_RelayUrlDialog> createState() => _RelayUrlDialogState();
-}
-
-class _RelayUrlDialogState extends State<_RelayUrlDialog> {
-  late final TextEditingController _controller;
-  final _saveFocusNode = FocusNode(debugLabel: 'WatchTogetherRelaySave');
-  bool _relayUrlInvalid = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = TextEditingController(
-      text: widget.settingsService.read(settings.SettingsService.watchPartyRelayUrl) ?? '',
-    );
-  }
-
-  @override
-  void dispose() {
-    _saveFocusNode.dispose();
-    _controller.dispose();
-    super.dispose();
-  }
-
-  Future<void> _reset() async {
-    _controller.clear();
-    await widget.settingsService.write(settings.SettingsService.watchPartyRelayUrl, null);
-    if (mounted) Navigator.pop(context);
-  }
-
-  Future<void> _save() async {
-    final value = _controller.text;
-    if (value.trim().isEmpty) {
-      await widget.settingsService.write(settings.SettingsService.watchPartyRelayUrl, null);
-      if (mounted) Navigator.pop(context);
-      return;
-    }
-
-    final base = canonicalRelayBaseUrl(value);
-    if (base == null) {
-      setState(() => _relayUrlInvalid = true);
-      return;
-    }
-    await widget.settingsService.write(settings.SettingsService.watchPartyRelayUrl, base);
-    if (mounted) Navigator.pop(context);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: Text(t.settings.watchTogetherRelay),
-      content: FocusableTextField(
-        controller: _controller,
-        decoration: InputDecoration(
-          labelText: t.common.url,
-          hintText: t.settings.watchTogetherRelayHint,
-          errorText: _relayUrlInvalid ? t.settings.watchTogetherRelayInvalid : null,
-        ),
-        autofocus: true,
-        textInputAction: TextInputAction.done,
-        onChanged: (_) {
-          if (_relayUrlInvalid) {
-            setState(() => _relayUrlInvalid = false);
-          }
-        },
-        onEditingComplete: () => _saveFocusNode.requestFocus(),
-        onNavigateDown: _saveFocusNode.requestFocus,
-      ),
-      actions: [
-        DialogActionButton(onPressed: _reset, label: t.settings.resetToDefault),
-        DialogActionButton(onPressed: () => Navigator.pop(context), label: t.common.cancel),
-        DialogActionButton(focusNode: _saveFocusNode, onPressed: _save, label: t.common.save),
-      ],
     );
   }
 }

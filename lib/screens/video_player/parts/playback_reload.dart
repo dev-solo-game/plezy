@@ -519,8 +519,6 @@ extension _VideoPlayerReloadMethods on VideoPlayerScreenState {
                 SubtitlePreference.trackOrNull(currentPlayer.state.track.secondarySubtitle)
           : null;
       final wasPlayingBeforeReload = _playbackIntentShouldPlay;
-      Completer<void>? reloadStartupHold;
-      final reloadDone = Completer<void>();
       var didOpenReplacement = false;
 
       // Capture context-dependent values before async gaps. The neutral
@@ -532,16 +530,12 @@ extension _VideoPlayerReloadMethods on VideoPlayerScreenState {
       late final PlaybackStateProvider playbackState;
       late final AppDatabase database;
       late final MultiServerManager serverManager;
-      late final bool wtOwnsStart;
       try {
         offlineWatchService = context.read<OfflineWatchSyncService>();
         accountPreferences = context.read<AccountPreferencesController>();
         playbackState = context.read<PlaybackStateProvider>();
         database = context.read<AppDatabase>();
         serverManager = context.read<MultiServerProvider>().serverManager;
-        // Read before the reload holds the room: the room starts a file it
-        // drives, or the room's file this reload opens for it.
-        wtOwnsStart = _watchTogetherOwnsPlaybackStart();
       } catch (e, stackTrace) {
         appLogger.e('Failed to prepare media reload during $reason', error: e, stackTrace: stackTrace);
         if (mounted && showErrorUi) {
@@ -553,7 +547,6 @@ extension _VideoPlayerReloadMethods on VideoPlayerScreenState {
 
       final shouldAutoStart = shouldAutoStartReloadedMedia(
         wasPlayingBeforeReload: wasPlayingBeforeReload,
-        watchTogetherOwnsStart: wtOwnsStart,
         startPaused: startPaused,
       );
 
@@ -617,10 +610,6 @@ extension _VideoPlayerReloadMethods on VideoPlayerScreenState {
         _episode.creditsPromptMarker = null;
         _episode.autoPlayTimer?.cancel();
         _firstFrame.resetUiForOpen();
-
-        // Hold the Watch Together room off the player while it reloads: the
-        // room waits for it and commands it once the file is back.
-        _holdWatchTogether(reloadDone.future);
         try {
           await currentPlayer.pause();
         } catch (e) {
@@ -732,15 +721,11 @@ extension _VideoPlayerReloadMethods on VideoPlayerScreenState {
           isCurrent: isCurrentReload,
           outcome: attempt.outcome,
           staleGuard: isCurrentReload,
-          // Captured before the reload detached the player from the sync
-          // layer; a live read would see the detached state.
-          watchTogetherOwnsStart: () => wtOwnsStart,
-          resolveShouldAutoStart: (_) => shouldAutoStart,
+          shouldAutoStart: shouldAutoStart,
           resumePosition: () => openResumePosition,
           mediaClient: () => mediaClient,
           getProfileSettings: () => accountPreferences.activePreferences,
           preferredAudioTrack: initializationAudioTrack,
-          wtStartupHold: () => reloadStartupHold,
           primarySubtitleTranscoding: () => result.isTranscoding,
           ensureAudioFocus: () => currentPlayer.requestAudioFocus(),
           clearFirstFrameForOpen: false,
@@ -765,8 +750,7 @@ extension _VideoPlayerReloadMethods on VideoPlayerScreenState {
             await _nativeSeekDrain?.future;
             return isCurrentReload();
           },
-          afterMediaOpened: (_, holdPlaybackStart, _) async {
-            if (wtOwnsStart && holdPlaybackStart) reloadStartupHold = Completer<void>();
+          afterMediaOpened: (_) async {
             _episode.completionLatch.reset();
             if (isItemChange) {
               // Same-item reloads (including the spurious-EOF recovery itself
@@ -876,7 +860,7 @@ extension _VideoPlayerReloadMethods on VideoPlayerScreenState {
           // If the stop report already went out, un-latch the tracker so the
           // resumed session keeps reporting (and its eventual real stop sends).
           _progressTracker?.resumeAfterStoppedReport();
-          if (!wtOwnsStart && wasPlayingBeforeReload && mounted && player == currentPlayer) {
+          if (wasPlayingBeforeReload && mounted && player == currentPlayer) {
             _dispatchPlaybackIntent(_playWithPlaybackIntent(currentPlayer), source: 'Reload rollback');
           }
         }
@@ -927,23 +911,6 @@ extension _VideoPlayerReloadMethods on VideoPlayerScreenState {
             VideoPlayerScreenState._activeRouteGuard.update(this, previousLaunchIdentity);
           }
           _firstFrame.restore(previousFirstFrame);
-        }
-        // Only the current screen/session/open hands its file to the room: a
-        // pre-open failure keeps A (the held adapter), a successful open
-        // binds B. Superseded work never binds over its successor.
-        try {
-          if (isCurrentReload()) {
-            _bindWatchTogether(startupHold: didOpenReplacement ? reloadStartupHold?.future : null);
-          } else {
-            _wtRoomOpen = false;
-          }
-        } catch (e, stackTrace) {
-          // Playback has already reached a definitive opened/failed outcome;
-          // a best-effort bind must not rewrite it or escape through the
-          // source-switch error classifier.
-          appLogger.w('Failed to hand the file to Watch Together after $reason', error: e, stackTrace: stackTrace);
-        } finally {
-          reloadDone.complete();
         }
       }
     } finally {

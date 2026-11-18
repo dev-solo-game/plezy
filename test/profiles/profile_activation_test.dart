@@ -204,25 +204,12 @@ void main() {
     expect(find.byType(SnackBar), findsNothing);
   });
 
-  testWidgets('selecting current profile and cancelling PIN verification do not clear', (tester) async {
+  testWidgets('selecting current profile does not clear', (tester) async {
     final harness = await _pumpHarness(tester, channel);
     addTearDown(harness.dispose);
 
     expect(await switchProfileFromUi(harness.context, harness.active.active!), isTrue);
     expect(harness.events, ['mark:owner']);
-
-    final protected = Profile.local(
-      id: 'protected',
-      displayName: 'Protected',
-      pinHash: computePinHash('1234'),
-      createdAt: DateTime(2026, 1, 3),
-    );
-    final attempt = switchProfileFromUi(harness.context, protected);
-    await tester.pumpAndSettle();
-    Navigator.of(harness.context, rootNavigator: true).pop();
-    await tester.pumpAndSettle();
-
-    expect(await attempt, isFalse);
     expect(harness.events.where((event) => event.startsWith('clear:')), isEmpty);
   });
 
@@ -356,51 +343,6 @@ void main() {
     expect(find.byType(SnackBar), findsOneWidget);
   });
 
-  testWidgets('protected switch rolls back to profile active when its activation is admitted', (tester) async {
-    final harness = await _pumpHarness(tester, channel, simulateBindingRollback: true, gateTargetBindingFailure: true);
-    addTearDown(harness.dispose);
-    final binder = harness.rollbackBinder!;
-    final protectedTarget = Profile.local(
-      id: harness.target.id,
-      displayName: 'Protected Target',
-      pinHash: computePinHash('1234'),
-      createdAt: harness.target.createdAt,
-    );
-
-    final pendingProtectedSwitch = switchProfileFromUi(harness.context, protectedTarget);
-    await tester.pumpAndSettle();
-    expect(find.text('Protected Target'), findsOneWidget);
-    expect(harness.active.activeId, 'owner');
-
-    expect(await switchProfileFromUi(harness.context, harness.newer), isTrue);
-    expect(harness.active.activeId, 'newer');
-    expect(binder.boundClientProfileId, 'newer');
-
-    final pinField = find.byType(TextField);
-    if (pinField.evaluate().isNotEmpty) {
-      await tester.enterText(pinField, '1234');
-    } else {
-      for (final digit in ['1', '2', '3', '4']) {
-        await tester.tap(find.text(digit));
-      }
-    }
-    await tester.pump();
-    await binder.targetBindingStarted.future;
-    binder.targetBindingRelease!.complete();
-    await binder.rebindStarted.future;
-    final restoredProfileId = harness.active.activeId;
-
-    binder.allowRebind.complete();
-    expect(await pendingProtectedSwitch, isFalse);
-    await tester.pump();
-
-    expect(restoredProfileId, 'newer');
-    expect(harness.active.activeId, 'newer');
-    expect(binder.boundClientProfileId, 'newer');
-    expect(SystemShelfService().debugActiveOwner, 'newer');
-    expect((await StorageService.getInstance()).getActiveProfileId(), 'newer');
-  });
-
   testWidgets('newer activation supersedes a failed switch while rollback shelf clear is pending', (tester) async {
     final harness = await _pumpHarness(tester, channel, simulateBindingRollback: true);
     addTearDown(harness.dispose);
@@ -529,37 +471,6 @@ void main() {
     expect(harness.events, isNot(contains('rebind:owner')));
     expect((await StorageService.getInstance()).getActiveProfileId(), 'newer');
     expect(harness.identityWrites, ['target', 'owner', 'target', 'newer']);
-  });
-
-  testWidgets('cancelled newer PIN attempt does not suppress pending failed-switch rollback', (tester) async {
-    final harness = await _pumpHarness(tester, channel, simulateBindingRollback: true, gateTargetBindingFailure: true);
-    addTearDown(harness.dispose);
-    final binder = harness.rollbackBinder!;
-    final failedSwitch = switchProfileFromUi(harness.context, harness.target);
-    await binder.targetBindingStarted.future;
-    final failedGeneration = harness.active.identityMutationGeneration;
-    final protectedNewer = Profile.local(
-      id: 'protected-newer',
-      displayName: 'Protected Newer',
-      pinHash: computePinHash('1234'),
-      createdAt: DateTime(2026, 1, 4),
-    );
-
-    final cancelledSwitch = switchProfileFromUi(harness.context, protectedNewer);
-    await tester.pumpAndSettle();
-    Navigator.of(harness.context, rootNavigator: true).pop();
-    await tester.pumpAndSettle();
-    expect(await cancelledSwitch, isFalse);
-    expect(harness.active.identityMutationGeneration, failedGeneration);
-
-    binder.targetBindingRelease!.complete();
-    await binder.rebindStarted.future;
-    binder.allowRebind.complete();
-    expect(await failedSwitch, isFalse);
-    expect(harness.active.activeId, 'owner');
-    expect(binder.boundClientProfileId, 'owner');
-    await tester.pump();
-    expect(find.byType(SnackBar), findsOneWidget);
   });
 
   testWidgets('failed queued activation lets superseded restore retry the prior profile', (tester) async {

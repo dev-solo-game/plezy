@@ -51,10 +51,6 @@ void main() {
 
     await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
     await tester.pump();
-    expect(FocusManager.instance.primaryFocus?.debugLabel, 'AddLocalProfile:SetPin');
-
-    await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
-    await tester.pump();
     expect(FocusManager.instance.primaryFocus?.debugLabel, 'AddLocalProfile:Continue');
 
     await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
@@ -82,7 +78,7 @@ void main() {
     await tester.testTextInput.receiveAction(TextInputAction.done);
     await tester.pumpAndSettle();
 
-    expect(FocusManager.instance.primaryFocus?.debugLabel, 'AddLocalProfile:SetPin');
+    expect(FocusManager.instance.primaryFocus?.debugLabel, 'AddLocalProfile:Cancel');
   });
 
   testWidgets('remote back pops the new profile page', (tester) async {

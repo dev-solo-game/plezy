@@ -30,19 +30,15 @@ void main() {
 
   test('in-place reload preserves the current playback intent', () {
     expect(
-      shouldAutoStartReloadedMedia(wasPlayingBeforeReload: false, watchTogetherOwnsStart: false, startPaused: false),
+      shouldAutoStartReloadedMedia(wasPlayingBeforeReload: false, startPaused: false),
       isFalse,
     );
     expect(
-      shouldAutoStartReloadedMedia(wasPlayingBeforeReload: true, watchTogetherOwnsStart: false, startPaused: false),
+      shouldAutoStartReloadedMedia(wasPlayingBeforeReload: true, startPaused: false),
       isTrue,
     );
     expect(
-      shouldAutoStartReloadedMedia(wasPlayingBeforeReload: true, watchTogetherOwnsStart: true, startPaused: false),
-      isFalse,
-    );
-    expect(
-      shouldAutoStartReloadedMedia(wasPlayingBeforeReload: true, watchTogetherOwnsStart: false, startPaused: true),
+      shouldAutoStartReloadedMedia(wasPlayingBeforeReload: true, startPaused: true),
       isFalse,
     );
   });

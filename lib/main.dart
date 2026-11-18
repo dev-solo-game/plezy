@@ -32,7 +32,6 @@ import 'mixins/mounted_set_state_mixin.dart';
 import 'theme/mono_theme.dart';
 import 'profiles/plex_home_service.dart';
 import 'screens/auth_screen.dart';
-import 'screens/profile/pin_entry_dialog.dart';
 import 'screens/profile/profile_switch_screen.dart';
 import 'services/storage_service.dart';
 import 'services/assistive_technology_service.dart';
@@ -1062,7 +1061,7 @@ Future<StartupSessionBootstrap> resolveStartupSessionBootstrap({
   );
   await activeProfileProvider.initialize();
   if (activeProfileProvider.active == null && activeProfileProvider.profiles.isNotEmpty) {
-    final candidate = activeProfileProvider.profiles.where((p) => !p.isPinProtected).firstOrNull;
+    final candidate = activeProfileProvider.profiles.firstOrNull;
     if (candidate != null) {
       await activeProfileProvider.activate(candidate);
     }
@@ -1510,20 +1509,8 @@ Future<bool> awaitStartupBindSettle(Future<bool> settle, {required bool hasNetwo
   return settle.timeout(MediaServerTimeouts.noNetworkStartupBind, onTimeout: () => false);
 }
 
-/// Top-level PIN prompt used by [ActiveProfileBinder] when it runs above the
-/// profile-scoped widget tree. Routes through the app-global
-/// [rootNavigatorKey] so the dialog survives profile-session remounts. Returns
-/// `null` when no Navigator is available yet (early boot, post-dispose) so the
-/// binder treats it as "PIN cancelled".
-Future<String?> _rootPinPrompt(Profile profile, {String? errorMessage}) {
-  final ctx = rootNavigatorKey.currentContext;
-  if (ctx == null) return Future.value(null);
-  return showPinEntryDialog(ctx, profile.displayName, errorMessage: errorMessage);
-}
-
 /// Applies the profile a deep link names once the app is running, from the
-/// root navigator so the PIN dialog and the switch outlive the profile
-/// session they replace.
+/// root navigator so the switch outlives the profile session it replaces.
 class _RootDeepLinkProfileHost implements DeepLinkProfileHost {
   const _RootDeepLinkProfileHost();
 
@@ -2170,7 +2157,6 @@ class _MainAppState extends State<MainApp> with WidgetsBindingObserver {
               profileConnections: context.read<ProfileConnectionRegistry>(),
               serverManager: _serverManager,
               multiServerProvider: context.read<MultiServerProvider>(),
-              pinPrompt: _rootPinPrompt,
               shouldDeferInitialBind: (profile) async {
                 // A launch link that names another profile replaces this bind.
                 final linkProfileId = DeepLinkService.instance.startupProfileId;
@@ -2605,7 +2591,7 @@ class _SetupScreenState extends State<SetupScreen> with MountedSetStateMixin {
       await activeProfile.reloadFromStorage();
     }
     if (activeProfile.active == null && activeProfile.profiles.isNotEmpty) {
-      final candidate = activeProfile.profiles.where((p) => !p.isPinProtected).firstOrNull;
+      final candidate = activeProfile.profiles.firstOrNull;
       if (candidate != null) {
         await activeProfile.activate(candidate);
       }

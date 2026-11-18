@@ -50,7 +50,6 @@ import 'package:plezy/theme/mono_theme.dart';
 import 'package:plezy/utils/external_ids.dart';
 import 'package:plezy/utils/layout_constants.dart';
 import 'package:plezy/utils/platform_detector.dart';
-import 'package:plezy/watch_together/watch_together.dart';
 import 'package:plezy/widgets/rasterized_gradient.dart';
 import 'package:plezy/widgets/side_navigation_rail.dart';
 import 'package:plezy/widgets/tv_browse_rail.dart';
@@ -165,7 +164,6 @@ void main() {
     final multiServerProvider = testMultiServerProvider(manager);
     final hiddenLibrariesProvider = HiddenLibrariesProvider();
     final librariesProvider = LibrariesProvider();
-    final watchTogetherProvider = WatchTogetherProvider();
     final companionRemoteProvider = CompanionRemoteProvider();
 
     final db = AppDatabase.forTesting(NativeDatabase.memory());
@@ -202,7 +200,6 @@ void main() {
       discoverProvider.dispose();
       activeProfileProvider.dispose();
       companionRemoteProvider.dispose();
-      watchTogetherProvider.dispose();
       librariesProvider.dispose();
       hiddenLibrariesProvider.dispose();
       multiServerProvider.dispose();
@@ -217,7 +214,6 @@ void main() {
             ChangeNotifierProvider<MultiServerProvider>.value(value: multiServerProvider),
             ChangeNotifierProvider<HiddenLibrariesProvider>.value(value: hiddenLibrariesProvider),
             ChangeNotifierProvider<LibrariesProvider>.value(value: librariesProvider),
-            ChangeNotifierProvider<WatchTogetherProvider>.value(value: watchTogetherProvider),
             ChangeNotifierProvider<CompanionRemoteProvider>.value(value: companionRemoteProvider),
             ChangeNotifierProvider<ActiveProfileProvider>.value(value: activeProfileProvider),
             ChangeNotifierProvider<DiscoverProvider>.value(value: discoverProvider),
@@ -339,7 +335,6 @@ void main() {
     final multiServerProvider = testMultiServer(clients: [client]).provider;
     final hiddenLibrariesProvider = HiddenLibrariesProvider();
     final librariesProvider = LibrariesProvider();
-    final watchTogetherProvider = WatchTogetherProvider();
     final companionRemoteProvider = CompanionRemoteProvider();
     final db = AppDatabase.forTesting(NativeDatabase.memory());
     final connectionRegistry = _FakeConnectionRegistry(db);
@@ -369,7 +364,6 @@ void main() {
       discoverProvider.dispose();
       activeProfileProvider.dispose();
       companionRemoteProvider.dispose();
-      watchTogetherProvider.dispose();
       librariesProvider.dispose();
       hiddenLibrariesProvider.dispose();
       // multiServerProvider + its manager are torn down by testMultiServer.
@@ -385,7 +379,6 @@ void main() {
             ChangeNotifierProvider<HiddenLibrariesProvider>.value(value: hiddenLibrariesProvider),
             ChangeNotifierProvider<LibrariesProvider>.value(value: librariesProvider),
             ChangeNotifierProvider<DiscoverProvider>.value(value: discoverProvider),
-            ChangeNotifierProvider<WatchTogetherProvider>.value(value: watchTogetherProvider),
             ChangeNotifierProvider<CompanionRemoteProvider>.value(value: companionRemoteProvider),
             ChangeNotifierProvider<ActiveProfileProvider>.value(value: activeProfileProvider),
           ],
@@ -452,7 +445,6 @@ void main() {
     final multiServerProvider = testMultiServer(clients: [client]).provider;
     final hiddenLibrariesProvider = HiddenLibrariesProvider();
     final librariesProvider = LibrariesProvider();
-    final watchTogetherProvider = WatchTogetherProvider();
     final companionRemoteProvider = CompanionRemoteProvider();
     final db = AppDatabase.forTesting(NativeDatabase.memory());
     final connectionRegistry = _FakeConnectionRegistry(db);
@@ -483,7 +475,6 @@ void main() {
       discoverProvider.dispose();
       activeProfileProvider.dispose();
       companionRemoteProvider.dispose();
-      watchTogetherProvider.dispose();
       librariesProvider.dispose();
       hiddenLibrariesProvider.dispose();
       // multiServerProvider + its manager are torn down by testMultiServer.
@@ -499,7 +490,6 @@ void main() {
             ChangeNotifierProvider<HiddenLibrariesProvider>.value(value: hiddenLibrariesProvider),
             ChangeNotifierProvider<LibrariesProvider>.value(value: librariesProvider),
             ChangeNotifierProvider<DiscoverProvider>.value(value: discoverProvider),
-            ChangeNotifierProvider<WatchTogetherProvider>.value(value: watchTogetherProvider),
             ChangeNotifierProvider<CompanionRemoteProvider>.value(value: companionRemoteProvider),
             ChangeNotifierProvider<ActiveProfileProvider>.value(value: activeProfileProvider),
           ],
@@ -582,7 +572,6 @@ void main() {
     final multiServerProvider = MultiServerProvider(manager, DataAggregationService(manager));
     final hiddenLibrariesProvider = HiddenLibrariesProvider();
     final librariesProvider = LibrariesProvider();
-    final watchTogetherProvider = WatchTogetherProvider();
     final companionRemoteProvider = CompanionRemoteProvider();
 
     final db = AppDatabase.forTesting(NativeDatabase.memory());
@@ -616,7 +605,6 @@ void main() {
       discoverProvider.dispose();
       activeProfileProvider.dispose();
       companionRemoteProvider.dispose();
-      watchTogetherProvider.dispose();
       librariesProvider.dispose();
       hiddenLibrariesProvider.dispose();
       multiServerProvider.dispose();
@@ -631,7 +619,6 @@ void main() {
             ChangeNotifierProvider<MultiServerProvider>.value(value: multiServerProvider),
             ChangeNotifierProvider<HiddenLibrariesProvider>.value(value: hiddenLibrariesProvider),
             ChangeNotifierProvider<LibrariesProvider>.value(value: librariesProvider),
-            ChangeNotifierProvider<WatchTogetherProvider>.value(value: watchTogetherProvider),
             ChangeNotifierProvider<CompanionRemoteProvider>.value(value: companionRemoteProvider),
             ChangeNotifierProvider<ActiveProfileProvider>.value(value: activeProfileProvider),
             ChangeNotifierProvider<DiscoverProvider>.value(value: discoverProvider),
@@ -692,7 +679,6 @@ void main() {
     final multiServerProvider = testMultiServerProvider(manager);
     final hiddenLibrariesProvider = HiddenLibrariesProvider();
     final librariesProvider = LibrariesProvider();
-    final watchTogetherProvider = WatchTogetherProvider();
     final companionRemoteProvider = CompanionRemoteProvider();
 
     final db = AppDatabase.forTesting(NativeDatabase.memory());
@@ -725,7 +711,6 @@ void main() {
       discoverProvider.dispose();
       activeProfileProvider.dispose();
       companionRemoteProvider.dispose();
-      watchTogetherProvider.dispose();
       librariesProvider.dispose();
       hiddenLibrariesProvider.dispose();
       multiServerProvider.dispose();
@@ -740,7 +725,6 @@ void main() {
             ChangeNotifierProvider<MultiServerProvider>.value(value: multiServerProvider),
             ChangeNotifierProvider<HiddenLibrariesProvider>.value(value: hiddenLibrariesProvider),
             ChangeNotifierProvider<LibrariesProvider>.value(value: librariesProvider),
-            ChangeNotifierProvider<WatchTogetherProvider>.value(value: watchTogetherProvider),
             ChangeNotifierProvider<CompanionRemoteProvider>.value(value: companionRemoteProvider),
             ChangeNotifierProvider<ActiveProfileProvider>.value(value: activeProfileProvider),
             ChangeNotifierProvider<DiscoverProvider>.value(value: discoverProvider),
@@ -875,19 +859,6 @@ void main() {
       await tester.pumpWidget(const SizedBox.shrink());
     });
   }
-
-  testWidgets('clicking the Watch Together participant count opens Watch Together (#2846)', (tester) async {
-    await _pumpDiscoverShell(tester, isTv: false, watchTogether: _InSessionWatchTogether(participantCount: 3));
-    final badge = find.descendant(of: find.byType(FocusableActionBar), matching: find.text('3'));
-    expect(badge, findsOneWidget);
-
-    // Click where the badge is drawn; the button underneath must take it.
-    await tester.tapAt(tester.getCenter(badge));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 500));
-    expect(find.byType(WatchTogetherScreen), findsOneWidget, reason: 'the badge sits on the button it labels');
-    await tester.pumpWidget(const SizedBox());
-  });
 
   testWidgets('a pending TV rail focus is dropped once the user has moved to the sidebar', (tester) async {
     // The first load arms "focus the rail when it has hubs"; an empty-items
@@ -1088,7 +1059,6 @@ Future<_GatedDiscover> _pumpGatedDiscover(WidgetTester tester, {bool underRootCo
   final multiServerProvider = testMultiServer(clients: [client]).provider;
   final hiddenLibrariesProvider = HiddenLibrariesProvider();
   final librariesProvider = LibrariesProvider();
-  final watchTogetherProvider = WatchTogetherProvider();
   final companionRemoteProvider = CompanionRemoteProvider();
   final db = AppDatabase.forTesting(NativeDatabase.memory());
   final connectionRegistry = _FakeConnectionRegistry(db);
@@ -1125,7 +1095,6 @@ Future<_GatedDiscover> _pumpGatedDiscover(WidgetTester tester, {bool underRootCo
     discoverProvider.dispose();
     activeProfileProvider.dispose();
     companionRemoteProvider.dispose();
-    watchTogetherProvider.dispose();
     librariesProvider.dispose();
     hiddenLibrariesProvider.dispose();
     // multiServerProvider + its manager are torn down by testMultiServer.
@@ -1160,7 +1129,6 @@ Future<_GatedDiscover> _pumpGatedDiscover(WidgetTester tester, {bool underRootCo
           ChangeNotifierProvider<HiddenLibrariesProvider>.value(value: hiddenLibrariesProvider),
           ChangeNotifierProvider<LibrariesProvider>.value(value: librariesProvider),
           ChangeNotifierProvider<DiscoverProvider>.value(value: discoverProvider),
-          ChangeNotifierProvider<WatchTogetherProvider>.value(value: watchTogetherProvider),
           ChangeNotifierProvider<CompanionRemoteProvider>.value(value: companionRemoteProvider),
           ChangeNotifierProvider<ActiveProfileProvider>.value(value: activeProfileProvider),
         ],
@@ -1206,11 +1174,9 @@ Future<_GatedDiscover> _pumpGatedDiscover(WidgetTester tester, {bool underRootCo
 
 /// Mounts [DiscoverScreen] in the smallest graph both layout branches need, so
 /// one test can compare the TV and non-TV chrome without rebuilding it twice.
-/// Takes ownership of [watchTogether].
 Future<_FakeMediaServerClient> _pumpDiscoverShell(
   WidgetTester tester, {
   required bool isTv,
-  WatchTogetherProvider? watchTogether,
   List<MediaItem> continueWatching = const [],
   _PlaybackRequests? downloads,
   MediaBackend backend = MediaBackend.plex,
@@ -1230,7 +1196,6 @@ Future<_FakeMediaServerClient> _pumpDiscoverShell(
   final multiServerProvider = testMultiServerProvider(manager);
   final hiddenLibrariesProvider = HiddenLibrariesProvider();
   final librariesProvider = LibrariesProvider();
-  final watchTogetherProvider = watchTogether ?? WatchTogetherProvider();
   final companionRemoteProvider = CompanionRemoteProvider();
 
   final db = AppDatabase.forTesting(NativeDatabase.memory());
@@ -1266,7 +1231,6 @@ Future<_FakeMediaServerClient> _pumpDiscoverShell(
     discoverProvider.dispose();
     activeProfileProvider.dispose();
     companionRemoteProvider.dispose();
-    watchTogetherProvider.dispose();
     librariesProvider.dispose();
     hiddenLibrariesProvider.dispose();
     multiServerProvider.dispose();
@@ -1284,7 +1248,6 @@ Future<_FakeMediaServerClient> _pumpDiscoverShell(
           ChangeNotifierProvider<MultiServerProvider>.value(value: multiServerProvider),
           ChangeNotifierProvider<HiddenLibrariesProvider>.value(value: hiddenLibrariesProvider),
           ChangeNotifierProvider<LibrariesProvider>.value(value: librariesProvider),
-          ChangeNotifierProvider<WatchTogetherProvider>.value(value: watchTogetherProvider),
           ChangeNotifierProvider<CompanionRemoteProvider>.value(value: companionRemoteProvider),
           ChangeNotifierProvider<ActiveProfileProvider>.value(value: activeProfileProvider),
           ChangeNotifierProvider<DiscoverProvider>.value(value: discoverProvider),
@@ -1459,16 +1422,4 @@ class _FakeProfileConnectionRegistry extends ProfileConnectionRegistry {
 
   @override
   Stream<List<ProfileConnection>> watchAll() => Stream.value(const []);
-}
-
-/// A joined room with [participantCount] people, for chrome that only reads
-/// the session summary.
-class _InSessionWatchTogether extends WatchTogetherProvider {
-  _InSessionWatchTogether({required this.participantCount});
-
-  @override
-  final int participantCount;
-
-  @override
-  bool get isInSession => true;
 }

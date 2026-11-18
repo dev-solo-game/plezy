@@ -162,10 +162,6 @@ extension _VideoPlayerPlaybackStartMethods on VideoPlayerScreenState {
     // Capture providers before async gaps
     final offlineWatchService = context.read<OfflineWatchSyncService>();
     var primaryMediaOpened = false;
-    // Created by afterMediaOpened when the sync layer owns a gated start;
-    // released by the startup gate, or by the finally below if the open
-    // aborted, threw, or was superseded before the gate ran.
-    Completer<void>? wtStartupHold;
 
     try {
       PlaybackContext playbackContext;
@@ -283,10 +279,7 @@ extension _VideoPlayerPlaybackStartMethods on VideoPlayerScreenState {
         isLocalMedia: _isOfflinePlayback,
         isCurrent: isCurrentStart,
         outcome: attempt.outcome,
-        // In a Watch Together room the room owns the start: open paused and
-        // let the room start everyone together.
-        watchTogetherOwnsStart: _watchTogetherOwnsPlaybackStart,
-        resolveShouldAutoStart: (wtOwnsStart) => !wtOwnsStart,
+        shouldAutoStart: true,
         resumePosition: () => resumePosition,
         mediaClient: () => mediaClientForTracks,
         getProfileSettings: () => context.read<AccountPreferencesController>().activePreferences,
@@ -311,14 +304,7 @@ extension _VideoPlayerPlaybackStartMethods on VideoPlayerScreenState {
           );
           return mounted && player == currentPlayer;
         },
-        afterMediaOpened: (shouldAutoPlay, holdPlaybackStart, wtOwnsStart) async {
-          // Hand the opened file to the Watch Together room (a host shares
-          // it). With a frame-rate startup gate pending, the room waits for
-          // its release so the group start can't fire mid display switch.
-          if (isCurrentStart()) {
-            if (wtOwnsStart && holdPlaybackStart) wtStartupHold = Completer<void>();
-            _bindWatchTogether(startupHold: wtStartupHold?.future);
-          }
+        afterMediaOpened: (shouldAutoPlay) async {
           if (shouldAutoPlay && PlatformDetector.isAutomotive()) {
             await _playWithPlaybackIntent(currentPlayer);
             if (!attempt.isCurrent) return false;
@@ -372,7 +358,6 @@ extension _VideoPlayerPlaybackStartMethods on VideoPlayerScreenState {
           }
           return attempt.isCurrent;
         },
-        wtStartupHold: () => wtStartupHold,
         onMediaAvailabilityChanged: (available) => primaryMediaOpened = available,
       );
     } on PlaybackException catch (e, st) {
@@ -404,14 +389,6 @@ extension _VideoPlayerPlaybackStartMethods on VideoPlayerScreenState {
           primaryMediaOpened: primaryMediaOpened,
         );
       }
-    } finally {
-      // Backstop: whether the gate never ran its resume path, the open
-      // aborted, or the flow threw, never leave Watch Together readiness
-      // held forever.
-      final startupHold = wtStartupHold;
-      if (startupHold != null && !startupHold.isCompleted) {
-        startupHold.complete();
-      }
     }
   }
 
@@ -428,7 +405,6 @@ extension _VideoPlayerPlaybackStartMethods on VideoPlayerScreenState {
       return;
     }
     _hasFatalPlaybackError = true;
-    _detachWatchTogetherAfterFailure();
     if (_playbackFailureMessage == null) _presentPlaybackFailure(message);
   }
 }

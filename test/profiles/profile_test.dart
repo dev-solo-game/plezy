@@ -22,7 +22,6 @@ void main() {
         lastUsedAt: null,
       );
       expect(restored.pinHash, p.pinHash);
-      expect(restored.isPinProtected, isTrue);
     });
 
     test('plex_home configJson round-trips with all flags', () {

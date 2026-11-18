@@ -26,7 +26,6 @@ import '../utils/iphone_duo.dart';
 import '../utils/platform_detector.dart';
 import '../utils/snackbar_helper.dart';
 import '../utils/update_dialog.dart';
-import '../utils/video_player_navigation.dart';
 import '../mixins/mounted_set_state_mixin.dart';
 import '../mixins/refreshable.dart';
 import '../widgets/overlay_sheet.dart';
@@ -84,7 +83,6 @@ import '../library/library_scan_service.dart';
 import '../library/local_library_client.dart';
 import '../library/sync/sync_coordinator.dart';
 import 'profile/profile_teardown.dart';
-import '../watch_together/watch_together.dart';
 
 /// Provides access to the main screen's focus control.
 // MainScreenFocusScope and SideNavigationBleedBuilder live in
@@ -596,11 +594,6 @@ class _MainScreenState extends State<MainScreen>
       });
     }
 
-    // Set up Watch Together callbacks immediately (must be synchronous to catch early messages)
-    if (!_isOffline) {
-      _setupWatchTogetherCallback();
-    }
-
     // Wire profile binder + tracker bootstrap (skip in offline mode)
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (!mounted) return;
@@ -934,34 +927,10 @@ class _MainScreenState extends State<MainScreen>
     showSkipVersion: true,
   );
 
-  /// Lets the Watch Together room open its file when no player is open.
-  void _setupWatchTogetherCallback() {
-    try {
-      final watchTogether = context.read<WatchTogetherProvider>();
-      _watchTogether = watchTogether;
-      watchTogether.navigatorOpener = _navigateToWatchTogetherMedia;
-    } catch (e) {
-      appLogger.w('Could not set up Watch Together callback', error: e);
-    }
-  }
-
-  /// Opens the Watch Together room's file in a new player. Returns whether
-  /// navigation started.
-  Future<bool> _navigateToWatchTogetherMedia(WatchCopy copy) async {
-    if (!mounted) return false;
-    try {
-      return await navigateToWatchTogetherPlayback(context, copy);
-    } catch (e) {
-      appLogger.e('WatchTogether: Failed to navigate to media', error: e);
-      return false;
-    }
-  }
-
   bool _companionRemoteSetup = false;
   bool _autoStartingCompanionRemote = false;
   CompanionRemoteProvider? _companionRemoteForCleanup;
   SyncAndScanCoordinator? _syncForCompanionRemote;
-  WatchTogetherProvider? _watchTogether;
 
   @override
   void didChangeDependencies() {
@@ -1115,7 +1084,6 @@ class _MainScreenState extends State<MainScreen>
   @override
   void dispose() {
     _libraryUpdateTimer?.cancel();
-    if (_watchTogether?.navigatorOpener == _navigateToWatchTogetherMedia) _watchTogether?.navigatorOpener = null;
     WidgetsBinding.instance.removeObserver(this);
     _profileRouteObserver?.unsubscribe(this);
     if (PlatformDetector.isDesktopOS()) {

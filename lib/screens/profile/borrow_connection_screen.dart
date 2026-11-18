@@ -12,7 +12,6 @@ import '../../profiles/active_profile_binder.dart';
 import '../../profiles/plex_home_service.dart';
 import '../../profiles/plex_home_switch.dart';
 import '../../profiles/profile.dart';
-import '../../profiles/profile_activation.dart';
 import '../../profiles/profile_connection.dart';
 import '../../profiles/profile_connection_registry.dart';
 import '../../profiles/profile_merge.dart';
@@ -26,7 +25,6 @@ import '../../widgets/backend_badge.dart';
 import '../../widgets/loading_indicator_box.dart';
 import '../../widgets/focused_scroll_scaffold.dart';
 import '../libraries/state_messages.dart';
-import 'pin_entry_dialog.dart';
 
 /// Pick a connection from another profile and attach it to [targetProfile]
 /// as an independent copy.
@@ -248,7 +246,6 @@ class _BorrowConnectionScreenState extends State<BorrowConnectionScreen> {
     if (_busy) return;
     setState(() => _busy = true);
     try {
-      if (!await _verifySourcePin(cand)) return;
       switch (cand.connection) {
         case PlexAccountConnection():
           await _borrowPlex(cand);
@@ -256,7 +253,7 @@ class _BorrowConnectionScreenState extends State<BorrowConnectionScreen> {
           await _borrowJellyfin(cand);
       }
     } catch (e, st) {
-      // Without this, a throw from the verify/borrow steps (network, DB)
+      // Without this, a throw from the borrow steps (network, DB)
       // dies in the unawaited caller and the user gets no feedback.
       appLogger.w('Borrow failed', error: e, stackTrace: st);
       if (mounted) {
@@ -272,57 +269,6 @@ class _BorrowConnectionScreenState extends State<BorrowConnectionScreen> {
     }
   }
 
-  /// Verify the source profile's PIN if it has one. Locals check the local
-  /// hash; Plex Home sources doing a non-Plex borrow do a
-  /// `/home/users/{uuid}/switch` round-trip against the parent account so
-  /// Plex validates the PIN server-side (the minted token is discarded —
-  /// we only need the validation side effect).
-  ///
-  /// Plex-source borrows of a Plex Home profile pass through
-  /// `switchPlexHomeUserWithPin` in [_borrowPlex] anyway (it mints the
-  /// target's user-token), so re-validating here would prompt twice for
-  /// the same PIN. Skip in that case and let the inner call handle it.
-  Future<bool> _verifySourcePin(_BorrowCandidate cand) async {
-    if (!cand.source.isPinProtected) return true;
-    if (cand.source.isLocal) {
-      final pin = await showPinEntryDialog(context, cand.source.displayName);
-      if (pin == null) return false;
-      if (!verifyProfilePin(cand.source, pin)) {
-        if (!mounted) return false;
-        showErrorSnackBar(context, t.profiles.incorrectPin);
-        return false;
-      }
-      return true;
-    }
-    // Plex Home source: defer to _borrowPlex's PIN prompt for Plex borrows.
-    if (cand.connection is PlexAccountConnection) return true;
-    // Other backends (Jellyfin) — validate via /switch and discard the token.
-    final parentId = cand.source.parentConnectionId;
-    final homeUuid = cand.source.plexHomeUserUuid;
-    if (parentId == null || homeUuid == null) return false;
-    // Built before the await: capturing the prompt needs a live element.
-    final promptForPin = dialogPinPrompt(context, cand.source.displayName);
-    final parent = await context.read<ConnectionRegistry>().getPlexAccount(parentId);
-    if (parent == null) {
-      if (mounted) showErrorSnackBar(context, t.profiles.sourceProfileMissingParentAccount);
-      return false;
-    }
-    final result = await mintPlexHomeUserToken(
-      account: parent,
-      homeUserUuid: homeUuid,
-      requiresPin: true,
-      promptForPin: promptForPin,
-      logLabel: cand.source.displayName,
-    );
-    if (!result.succeeded) {
-      if (result.status != PlexHomeSwitchStatus.cancelled && mounted) {
-        showErrorSnackBar(context, t.profiles.failedToVerifyPin);
-      }
-      return false;
-    }
-    return true;
-  }
-
   Future<void> _borrowPlex(_BorrowCandidate cand) async {
     final pcRegistry = context.read<ProfileConnectionRegistry>();
     final account = cand.connection as PlexAccountConnection;
@@ -330,7 +276,7 @@ class _BorrowConnectionScreenState extends State<BorrowConnectionScreen> {
       account: account,
       homeUserUuid: cand.pc.userIdentifier,
       requiresPin: cand.source.plexProtected,
-      promptForPin: dialogPinPrompt(context, cand.source.displayName),
+      promptForPin: ({String? errorMessage}) async => null,
       persistTo: pcRegistry,
       persistProfileId: widget.targetProfile.id,
       logLabel: cand.source.displayName,
@@ -410,17 +356,9 @@ class _BorrowTile extends StatelessWidget {
                 children: [
                   Text(candidate.connectionLabel, style: theme.textTheme.titleMedium, overflow: .ellipsis),
                   const SizedBox(height: 2),
-                  Row(
-                    children: [
-                      Text(
-                        t.profiles.borrowFromProfile(displayName: candidate.source.displayName),
-                        style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
-                      ),
-                      if (candidate.source.isPinProtected) ...[
-                        const SizedBox(width: 6),
-                        AppIcon(Symbols.lock_rounded, fill: 1, size: 12, color: theme.colorScheme.onSurfaceVariant),
-                      ],
-                    ],
+                  Text(
+                    t.profiles.borrowFromProfile(displayName: candidate.source.displayName),
+                    style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
                   ),
                   if (candidate.connection is PlexAccountConnection)
                     Padding(

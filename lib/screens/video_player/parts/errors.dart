@@ -104,7 +104,6 @@ extension _VideoPlayerErrorMethods on VideoPlayerScreenState {
         _isOfflinePlayback ||
         _firstFrame.rendered ||
         _transitionGate.transition != PlaybackTransition.idle ||
-        widget.watchTogetherCopy != null ||
         widget.launchObserver != null) {
       return false;
     }
@@ -198,7 +197,6 @@ extension _VideoPlayerErrorMethods on VideoPlayerScreenState {
     _hasFatalPlaybackError = true;
     _progressTracker?.stopTracking();
     _abortCurrentOpen('player error: ${action.name}');
-    _detachWatchTogetherAfterFailure();
     final currentPlayer = player;
     if (currentPlayer != null) {
       unawaited(

@@ -1,9 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:material_symbols_icons/symbols.dart';
 
 import '../utils/initials_palette.dart';
 import '../utils/media_image_helper.dart';
-import '../widgets/app_icon.dart';
 import 'profile.dart';
 
 class ProfileAvatar extends StatelessWidget {
@@ -22,41 +20,10 @@ class ProfileAvatar extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final p = profile;
-    final lockBadgeSize = size * 0.34;
     final memCacheSize = (size * MediaQuery.devicePixelRatioOf(context)).round();
 
-    return SizedBox(
-      width: size,
-      height: size,
-      child: Stack(
-        clipBehavior: Clip.none,
-        children: [
-          ClipOval(
-            child: SizedBox(width: size, height: size, child: _buildContent(theme, p, memCacheSize)),
-          ),
-          if (showLockBadge && p != null && p.isPinProtected)
-            Positioned(
-              right: -2,
-              bottom: -2,
-              child: Container(
-                width: lockBadgeSize,
-                height: lockBadgeSize,
-                alignment: .center,
-                decoration: BoxDecoration(
-                  color: theme.colorScheme.surface,
-                  shape: BoxShape.circle,
-                  border: Border.all(color: theme.colorScheme.surface, width: 1),
-                ),
-                child: AppIcon(
-                  Symbols.lock_rounded,
-                  fill: 1,
-                  size: lockBadgeSize * 0.7,
-                  color: theme.colorScheme.onSurface,
-                ),
-              ),
-            ),
-        ],
-      ),
+    return ClipOval(
+      child: SizedBox(width: size, height: size, child: _buildContent(theme, p, memCacheSize)),
     );
   }
 

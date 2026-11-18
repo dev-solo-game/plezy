@@ -238,20 +238,7 @@ extension _VideoPlayerBuildMethods on VideoPlayerScreenState {
                     final newSize = Size(constraints.maxWidth, constraints.maxHeight);
                     _scheduleVideoLayoutUpdate(newSize);
 
-                    var authority = (canControlPlayback: true, canNavigateMediaItems: true);
-                    try {
-                      authority = context
-                          .select<WatchTogetherProvider, ({bool canControlPlayback, bool canNavigateMediaItems})>((wt) {
-                            final adapter = _wtAdapter;
-                            final following = adapter != null && wt.follows(adapter);
-                            return (
-                              canControlPlayback: !following || wt.canControl,
-                              canNavigateMediaItems: !following || wt.isHost,
-                            );
-                          });
-                    } catch (_) {
-                      // Watch Together is optional outside the main app shell.
-                    }
+                    const authority = (canControlPlayback: true, canNavigateMediaItems: true);
                     if (_lastMediaControlAuthority != authority) {
                       _lastMediaControlAuthority = authority;
                       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -380,8 +367,6 @@ extension _VideoPlayerBuildMethods on VideoPlayerScreenState {
                 hasFirstFrame: _firstFrame.uiReady,
                 isExiting: _isExiting,
               ),
-              // Watch Together overlays (isolated from video surface repaints)
-              const VideoPlayerWatchTogetherOverlays(),
               // Black overlay during exit (no spinner - just covers transparency)
               VideoPlayerExitOverlay(isExiting: _isExiting),
             ],

@@ -1,11 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
 import 'package:plezy/utils/formatters.dart';
 
 import '../../../media/media_item.dart';
 import '../../../i18n/strings.g.dart';
-import '../../../watch_together/widgets/watch_together_overlay.dart';
-import '../../../watch_together/providers/watch_together_provider.dart';
 import '../../app_bar_back_button.dart';
 import '../../system_clock.dart';
 
@@ -61,19 +58,6 @@ class VideoControlsHeader extends StatelessWidget {
           child: style == VideoHeaderStyle.singleLine
               ? _buildSingleLineTitle(itemTitle)
               : _buildMultiLineTitle(itemTitle),
-        ),
-        Selector<WatchTogetherProvider, bool>(
-          selector: (_, p) => p.isInSession,
-          builder: (context, inSession, child) {
-            if (!inSession) return const SizedBox.shrink();
-            return Padding(
-              padding: const EdgeInsets.only(right: 8),
-              child: WatchTogetherSessionIndicator(
-                onCancelAutoHide: onCancelAutoHide,
-                onStartAutoHide: onStartAutoHide,
-              ),
-            );
-          },
         ),
         if (showClock)
           const Padding(

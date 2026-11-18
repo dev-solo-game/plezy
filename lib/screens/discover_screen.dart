@@ -63,7 +63,6 @@ import 'libraries/content_state_builder.dart';
 import 'libraries/state_messages.dart';
 import 'main_screen.dart';
 import '../navigation/settings_shortcut.dart';
-import '../watch_together/watch_together.dart';
 import '../providers/companion_remote_provider.dart';
 import '../widgets/companion_remote/remote_device_menu.dart';
 import '../widgets/library_scan_controls.dart';
@@ -943,11 +942,8 @@ class _DiscoverScreenState extends State<DiscoverScreen>
               ],
             ),
           ),
-          Consumer2<WatchTogetherProvider, CompanionRemoteProvider>(
-            builder: (context, watchTogether, companionRemote, _) {
-              void openWatchTogether() =>
-                  Navigator.push(context, MaterialPageRoute(builder: (_) => const WatchTogetherScreen()));
-
+          Consumer<CompanionRemoteProvider>(
+            builder: (context, companionRemote, _) {
               return FocusableActionBar(
                 key: _actionBarKey,
                 onNavigateLeft: _navigateToSidebar,
@@ -958,43 +954,6 @@ class _DiscoverScreenState extends State<DiscoverScreen>
                     iconColor: foregroundColor,
                     tooltip: t.common.refresh,
                     onPressed: manualRefresh,
-                  ),
-                  // Watch Together
-                  FocusableAction(
-                    onPressed: openWatchTogether,
-                    child: Stack(
-                      children: [
-                        IconButton(
-                          icon: AppIcon(
-                            Symbols.group_rounded,
-                            fill: watchTogether.isInSession ? 1 : 0,
-                            color: watchTogether.isInSession ? colorScheme.primary : foregroundColor,
-                          ),
-                          onPressed: openWatchTogether,
-                          tooltip: t.watchTogether.title,
-                        ),
-                        // Badges sit over the button they label, so they must
-                        // not swallow its hover and clicks (#2846).
-                        if (watchTogether.isInSession && watchTogether.participantCount > 1)
-                          Positioned(
-                            top: 6,
-                            right: 6,
-                            child: IgnorePointer(
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-                                decoration: BoxDecoration(
-                                  color: colorScheme.primary,
-                                  borderRadius: const BorderRadius.all(Radius.circular(8)),
-                                ),
-                                child: Text(
-                                  '${watchTogether.participantCount}',
-                                  style: TextStyle(color: colorScheme.onPrimary, fontSize: 10, fontWeight: .bold),
-                                ),
-                              ),
-                            ),
-                          ),
-                      ],
-                    ),
                   ),
                   // Companion Remote & Multi-Device Playback Status
                   FocusableAction(

@@ -34,7 +34,6 @@ import 'package:plezy/storage/mount_manager.dart';
 import 'package:plezy/storage/mount_registry.dart';
 import 'package:plezy/theme/mono_theme.dart';
 import 'package:plezy/utils/platform_detector.dart';
-import 'package:plezy/watch_together/watch_together.dart';
 import 'package:plezy/widgets/side_navigation_rail.dart';
 import 'package:provider/provider.dart';
 
@@ -295,7 +294,6 @@ class _MenuHarness {
     required this.discoverProvider,
     required this.librariesProvider,
     required this.hiddenLibrariesProvider,
-    required this.watchTogetherProvider,
     required this.companionRemoteProvider,
     required this.multiServerProvider,
   });
@@ -306,7 +304,6 @@ class _MenuHarness {
   final DiscoverProvider discoverProvider;
   final LibrariesProvider librariesProvider;
   final HiddenLibrariesProvider hiddenLibrariesProvider;
-  final WatchTogetherProvider watchTogetherProvider;
   final CompanionRemoteProvider companionRemoteProvider;
   final MultiServerProvider multiServerProvider;
 
@@ -318,7 +315,6 @@ class _MenuHarness {
     discoverProvider.dispose();
     librariesProvider.dispose();
     hiddenLibrariesProvider.dispose();
-    watchTogetherProvider.dispose();
     companionRemoteProvider.dispose();
     multiServerProvider.dispose();
     await db.close();
@@ -339,7 +335,6 @@ Future<_MenuHarness> _pumpDiscoverWithSync(WidgetTester tester) async {
   final multiServerProvider = testMultiServerProvider(manager);
   final hiddenLibrariesProvider = HiddenLibrariesProvider();
   final librariesProvider = LibrariesProvider();
-  final watchTogetherProvider = WatchTogetherProvider();
   final companionRemoteProvider = CompanionRemoteProvider();
 
   final db = AppDatabase.forTesting(NativeDatabase.memory());
@@ -370,7 +365,6 @@ Future<_MenuHarness> _pumpDiscoverWithSync(WidgetTester tester) async {
           ChangeNotifierProvider<MultiServerProvider>.value(value: multiServerProvider),
           ChangeNotifierProvider<HiddenLibrariesProvider>.value(value: hiddenLibrariesProvider),
           ChangeNotifierProvider<LibrariesProvider>.value(value: librariesProvider),
-          ChangeNotifierProvider<WatchTogetherProvider>.value(value: watchTogetherProvider),
           ChangeNotifierProvider<CompanionRemoteProvider>.value(value: companionRemoteProvider),
           ChangeNotifierProvider<DiscoverProvider>.value(value: discoverProvider),
         ],
@@ -402,7 +396,6 @@ Future<_MenuHarness> _pumpDiscoverWithSync(WidgetTester tester) async {
     discoverProvider: discoverProvider,
     librariesProvider: librariesProvider,
     hiddenLibrariesProvider: hiddenLibrariesProvider,
-    watchTogetherProvider: watchTogetherProvider,
     companionRemoteProvider: companionRemoteProvider,
     multiServerProvider: multiServerProvider,
   );

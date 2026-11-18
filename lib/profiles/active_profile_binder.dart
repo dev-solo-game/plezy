@@ -89,12 +89,14 @@ class ActiveProfileBinder {
     required this.profileConnections,
     required this.serverManager,
     required this.multiServerProvider,
-    required this.pinPrompt,
+    PlexHomePinPrompt? pinPrompt,
     this.shouldDeferInitialBind,
     this._plexAuth,
-  }) {
+  }) : pinPrompt = pinPrompt ?? _noopPinPrompt {
     serverManager.plexServerListRefresher = _refreshPlexServerList;
   }
+
+  static Future<String?> _noopPinPrompt(Profile _, {String? errorMessage}) async => null;
 
   final ActiveProfileProvider activeProfile;
   final ConnectionRegistry connections;

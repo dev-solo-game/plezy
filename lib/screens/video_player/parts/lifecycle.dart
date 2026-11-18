@@ -75,10 +75,6 @@ extension _VideoPlayerLifecycleMethods on VideoPlayerScreenState {
       isAutomotive: isAutomotive,
     );
 
-    // A Watch Together room stops waiting for a player the background pauses.
-    // A covered desktop window keeps playing, so its player stays in the room.
-    if (shouldPauseForBackground) _watchTogetherProvider?.setBackgrounded(true);
-
     final currentPlayer = player;
     if (currentPlayer == null || !_isPlayerInitialized) {
       _recordLifecycleState('hidden', action: 'skipped_no_player');
@@ -113,18 +109,7 @@ extension _VideoPlayerLifecycleMethods on VideoPlayerScreenState {
       _wasPlayingBeforeInactive = _wasPlayingBeforeInactive || wasActive;
       if (wasActive) {
         try {
-          // On a car this is the driving transition itself, on every head unit whose vehicle cannot
-          // report its restrictions. It is forced on this peer alone, so it must not travel to the
-          // rest of a Watch Together room; elsewhere backgrounding keeps its existing meaning.
-          if (isAutomotive) {
-            if (await _pauseWithoutDisturbingTheRoom(currentPlayer)) {
-              // The sync layer owns this pause and its resume. Drop the latch so the screen does not
-              // also restore playback on the way back and ask the room to play along with it.
-              _wasPlayingBeforeInactive = false;
-            }
-          } else {
-            await _pauseWithPlaybackIntent(currentPlayer);
-          }
+          await _pauseWithPlaybackIntent(currentPlayer);
           appLogger.d(
             'Video paused due to app being hidden '
             '(${isAutomotive
@@ -161,7 +146,6 @@ extension _VideoPlayerLifecycleMethods on VideoPlayerScreenState {
   Future<void> _handleAppResumed() async {
     if (_shuttingDown) return;
     _recordLifecycleState('resumed', action: 'begin');
-    _watchTogetherProvider?.setBackgrounded(false);
 
     if (_consumeLiveExitOnResume()) {
       _recordLifecycleState('resumed', action: 'exit_stopped_live_session');
@@ -232,7 +216,6 @@ extension _VideoPlayerLifecycleMethods on VideoPlayerScreenState {
     if (!mounted || _shuttingDown) return;
     _profileSelectionHolds++;
     _recordLifecycleState('profile_selection', action: 'hold');
-    _watchTogetherProvider?.setAwaitingProfileSelection(true);
     final currentPlayer = player;
     if (currentPlayer != null && (currentPlayer.state.playing || _playbackIntentShouldPlay)) {
       _dispatchPlaybackIntent(_pauseWithPlaybackIntent(currentPlayer), source: 'Profile selection');
@@ -243,7 +226,6 @@ extension _VideoPlayerLifecycleMethods on VideoPlayerScreenState {
         _profileSelectionHolds--;
         if (_playbackHeldForProfileSelection) return;
         _recordLifecycleState('profile_selection', action: 'released');
-        _watchTogetherProvider?.setAwaitingProfileSelection(false);
       }),
     );
   }

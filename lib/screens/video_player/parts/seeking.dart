@@ -5,9 +5,6 @@ extension _VideoPlayerSeekingMethods on VideoPlayerScreenState {
     final currentPlayer = player;
     if (!mounted || _shuttingDown || currentPlayer == null) return;
     final target = clampSeekPosition(currentPlayer, position);
-    // The user's seek: while a Watch Together room drives the player, the
-    // room seeks everyone and then the player through its adapter.
-    if (_followedRoom()?.seek(target) == true) return;
     await _performSeekPlayback(target);
   }
 

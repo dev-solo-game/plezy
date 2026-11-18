@@ -65,14 +65,13 @@ PlayNextRetryPresentation playNextRetryPresentation({
   required PlaybackFailureReason? failureReason,
   required bool hasNext,
   required bool autoPlayEnabled,
-  required bool inWatchTogetherSession,
   required int autoRetriesUsed,
 }) {
   if (!wasAtCompletion || !hasNext) return PlayNextRetryPresentation.none;
   if (failureReason != PlaybackFailureReason.serverUnavailable) {
     return PlayNextRetryPresentation.none;
   }
-  final autoRetry = autoPlayEnabled && !inWatchTogetherSession && autoRetriesUsed < maxPlayNextTransientRetries;
+  final autoRetry = autoPlayEnabled && autoRetriesUsed < maxPlayNextTransientRetries;
   return autoRetry ? PlayNextRetryPresentation.countdown : PlayNextRetryPresentation.manual;
 }
 

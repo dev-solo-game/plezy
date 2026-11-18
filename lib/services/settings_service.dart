@@ -42,7 +42,6 @@ import 'trackers/tracker_constants.dart';
 import '../profiles/profile.dart';
 import '../storage/http_range_reader.dart' show BulkReadOptions;
 import '../theme/mono_theme.dart' show MonoPalette;
-import '../watch_together/services/watch_party_relays.dart';
 
 /// The app theme. Value names are the persisted ids. [system] follows the
 /// platform between [light] and [dark]; every other value is one fixed palette,
@@ -242,7 +241,6 @@ const String _legacyDemuxerModeKey = 'demuxer_mode';
 const String _legacyUseSeasonPosterKey = 'use_season_poster';
 const String _legacyMpvConfigEntriesKey = 'mpv_config_entries';
 const String _legacyUseExoPlayerKey = 'use_exoplayer';
-const String _legacyCustomRelayUrlKey = 'custom_relay_url';
 const String _legacyAutoSkipIntroKey = 'auto_skip_intro';
 const String _legacyAutoSkipCreditsKey = 'auto_skip_credits';
 const String _legacyAudioDownmixKey = 'audio_downmix';
@@ -516,15 +514,6 @@ class _AudioPassthroughPref extends Pref<bool> {
 String? _trimEmptyAsNull(String? v) {
   final t = v?.trim();
   return (t == null || t.isEmpty) ? null : t;
-}
-
-String? _normalizeRelayBaseUrl(String? value) {
-  if (value == null || value.trim().isEmpty) return null;
-  final base = canonicalRelayBaseUrl(value);
-  if (base == null) {
-    throw FormatException('Invalid Open Watch Party relay base URL');
-  }
-  return base;
 }
 
 String _legacyMpvEntriesToText(List<dynamic> entries) {
@@ -949,17 +938,6 @@ class SettingsService extends BaseSharedPreferencesService {
   static const autoPip = _AutoPipPref();
   static const customDownloadPath = NullableStringPref('custom_download_path');
 
-  /// A self-hosted Open Watch Party relay's base URL; null for the public
-  /// relays.
-  static final watchPartyRelayUrl = NullableStringPref('watch_party_relay_url', transform: _normalizeRelayBaseUrl);
-
-  static NullableStringPref recentRoomsForProfile(String profileId) {
-    if (profileId.trim().isEmpty) {
-      throw ArgumentError.value(profileId, 'profileId', 'Must not be empty');
-    }
-    return NullableStringPref(profileScopedPrefsKey(profileId, 'watch_together_recent_rooms'));
-  }
-
   static NullableStringPref recentMetadataTagsForProfile(String profileId) {
     if (profileId.trim().isEmpty) {
       throw ArgumentError.value(profileId, 'profileId', 'Must not be empty');
@@ -1202,24 +1180,10 @@ class SettingsService extends BaseSharedPreferencesService {
       await write(downloadChunkSizeMb, downloadChunkSizeMb.defaultValue);
     }
 
-    const legacyRecentRoomsKey = 'watch_together_recent_rooms';
-    await prefs.remove(legacyRecentRoomsKey);
     // One-way move to the mpv default: the pre-`android_use_exoplayer` pick is
     // dropped rather than carried over, and nothing reads the old key.
     await prefs.remove(_legacyUseExoPlayerKey);
     await _resetGlobalsOfKeyedPlayerScopes();
-
-    // The custom relay of Plezy's former Watch Together protocol: no Open
-    // Watch Party relay answers there.
-    await prefs.remove(_legacyCustomRelayUrlKey);
-    final storedRelay = readNullableString(watchPartyRelayUrl.key);
-    if (storedRelay == null) return;
-    final base = canonicalRelayBaseUrl(storedRelay);
-    if (base == null) {
-      await prefs.remove(watchPartyRelayUrl.key);
-    } else if (base != storedRelay) {
-      await prefs.setString(watchPartyRelayUrl.key, base);
-    }
   }
 
   /// One-time repair for #2722: a scope switched to per-library or per-title
@@ -1679,7 +1643,6 @@ class SettingsService extends BaseSharedPreferencesService {
     customShaderPresets,
     selectedExternalPlayer,
     customExternalPlayers,
-    watchPartyRelayUrl,
     companionRemoteLastHostAddress,
     rememberedBrightnessLevel,
     refusedVideoCodecs,
@@ -1703,7 +1666,6 @@ class SettingsService extends BaseSharedPreferencesService {
         pref,
     crashReporting,
     mpvConfigText,
-    watchPartyRelayUrl,
     rememberedBrightnessLevel,
   ]);
 

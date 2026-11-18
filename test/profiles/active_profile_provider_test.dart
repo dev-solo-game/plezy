@@ -517,16 +517,6 @@ void main() {
       expect(provider.active, isNull);
     });
 
-    test('activate rejects wrong PIN for a protected local profile', () async {
-      await registry.upsert(
-        Profile.local(id: 'p1', displayName: 'Kids', pinHash: computePinHash('1234'), createdAt: DateTime(2026, 1, 1)),
-      );
-      await provider.initialize();
-      final p1 = provider.profiles.first;
-      expect(await provider.activate(p1, pin: 'wrong'), isFalse);
-      expect(await provider.activate(p1, pin: '1234'), isTrue);
-    });
-
     test('hasMultipleProfiles reflects the registry size', () async {
       await registry.upsert(Profile.local(id: 'p1', displayName: 'Owner', createdAt: DateTime(2026, 1, 1)));
       await provider.initialize();

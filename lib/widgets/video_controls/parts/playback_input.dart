@@ -9,23 +9,11 @@ extension _PlexVideoControlsPlaybackInputMethods on _PlexVideoControlsState {
     if (_suppressRateToastUntil != null && DateTime.now().isBefore(_suppressRateToastUntil!)) {
       return;
     }
-    // A Watch Together drift nudge moves the rate a few percent for a few
-    // seconds; that is the sync layer's business, not a speed change to
-    // announce. Keep the last reported rate so the nudge's exit is silent too.
-    if (_syncOwnsRate()) return;
     final prev = _lastReportedRate;
     if (prev != null && (prev - newRate).abs() < 0.005) return;
     _lastReportedRate = newRate;
     final icon = newRate >= 1.0 ? Symbols.fast_forward_rounded : Symbols.slow_motion_video_rounded;
     widget.toastController.show(icon, formatPlaybackRate(newRate));
-  }
-
-  bool _syncOwnsRate() {
-    try {
-      return context.read<WatchTogetherProvider>().syncOwnsRate;
-    } catch (_) {
-      return false; // No session provider above this surface.
-    }
   }
 
   void _seekToPreviousChapter() => unawaited(_seekToChapter(forward: false));

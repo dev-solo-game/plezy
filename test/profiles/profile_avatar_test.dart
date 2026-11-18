@@ -1,7 +1,6 @@
 import 'package:cached_network_image_ce/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:material_symbols_icons/symbols.dart';
 import 'package:plezy/profiles/profile.dart';
 import 'package:plezy/profiles/profile_avatar.dart';
 import 'package:plezy/utils/initials_palette.dart';
@@ -128,16 +127,5 @@ void main() {
     final expectedDecodeSize = (size * devicePixelRatio).round();
     expect(resize.width, expectedDecodeSize);
     expect(resize.height, expectedDecodeSize);
-  });
-
-  testWidgets('a derived avatar keeps the PIN lock badge visible', (tester) async {
-    await pumpAvatar(
-      tester,
-      profile: localProfile(pinHash: 'stored-pin-hash'),
-      avatarUrl: 'https://jellyfin.example/Users/user-1/Images/Primary?tag=derived',
-    );
-
-    expect(find.byType(Image), findsOneWidget);
-    expect(find.byIcon(Symbols.lock_rounded), findsOneWidget);
   });
 }

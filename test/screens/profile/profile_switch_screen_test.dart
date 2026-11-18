@@ -18,7 +18,6 @@ import 'package:plezy/profiles/profile_avatar.dart';
 import 'package:plezy/profiles/profile_connection.dart';
 import 'package:plezy/profiles/profile_connection_registry.dart';
 import 'package:plezy/profiles/profile_registry.dart';
-import 'package:plezy/screens/profile/pin_entry_dialog.dart';
 import 'package:plezy/screens/profile/profile_detail_screen.dart';
 import 'package:plezy/screens/profile/profile_switch_screen.dart';
 import 'package:plezy/services/deep_links/deep_link.dart';
@@ -424,118 +423,6 @@ void main() {
     await tester.pump();
   });
 
-  testWidgets('Manage on a PIN-protected non-active local profile requires its PIN', (tester) async {
-    await _pumpPicker(
-      tester,
-      profiles: [
-        Profile.local(id: 'local-owner', displayName: 'Owner', createdAt: DateTime(2026, 1, 1)),
-        Profile.local(
-          id: 'local-kids',
-          displayName: 'Kids',
-          pinHash: computePinHash('1234'),
-          createdAt: DateTime(2026, 1, 2),
-        ),
-      ],
-      connections: const [],
-      activeProfileId: 'local-owner',
-    );
-
-    // Bounded pumps whenever the PIN dialog is open: its autofocused field's
-    // cursor blink keeps scheduling frames, so pumpAndSettle never settles.
-    await _openTileMenu(tester, 'Kids');
-    await tester.tap(find.text(t.profiles.manage));
-    await _pumpBounded(tester);
-
-    expect(find.byType(PinEntryDialog), findsOneWidget, reason: 'Manage on a protected profile must ask for its PIN');
-    expect(find.byType(ProfileDetailScreen), findsNothing);
-
-    // A wrong PIN re-prompts with the retry error and never navigates.
-    await tester.enterText(find.byType(TextField), '9999');
-    await _pumpBounded(tester);
-
-    expect(find.byType(PinEntryDialog), findsOneWidget);
-    expect(find.text(t.profiles.incorrectPinTryAgain), findsOneWidget);
-    expect(find.byType(ProfileDetailScreen), findsNothing);
-
-    // Backing out of the retry leaves the picker unnavigated.
-    await tester.tap(find.text(t.common.cancel));
-    await _pumpBounded(tester);
-
-    expect(find.byType(PinEntryDialog), findsNothing);
-    expect(find.byType(ProfileDetailScreen), findsNothing);
-
-    // The right PIN proceeds to the detail screen. Bounded pumps only from
-    // here: the mounted detail screen never settles (indeterminate chrome),
-    // so pumpAndSettle would run into the test timeout.
-    await _openTileMenu(tester, 'Kids');
-    await tester.tap(find.text(t.profiles.manage));
-    await _pumpBounded(tester);
-    await tester.enterText(find.byType(TextField), '1234');
-    await _pumpBounded(tester);
-
-    expect(find.byType(ProfileDetailScreen), findsOneWidget);
-
-    // Pop the detail route before the shrink teardown so its subtree disposes
-    // inside a live navigator rather than during a whole-tree unmount.
-    tester.state<NavigatorState>(find.byType(Navigator).first).pop();
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 400));
-
-    await tester.pumpWidget(const SizedBox.shrink());
-    // A duration pump: the detail screen's Drift stream builders schedule a
-    // zero-duration close timer on unmount, and a bare pump does not elapse
-    // fake time, so the timer would still be pending at the end-of-test check.
-    await tester.pump(const Duration(milliseconds: 100));
-  });
-
-  testWidgets('Delete on a PIN-protected non-active local profile requires its PIN', (tester) async {
-    await _pumpPicker(
-      tester,
-      profiles: [
-        Profile.local(id: 'local-owner', displayName: 'Owner', createdAt: DateTime(2026, 1, 1)),
-        Profile.local(
-          id: 'local-kids',
-          displayName: 'Kids',
-          pinHash: computePinHash('1234'),
-          createdAt: DateTime(2026, 1, 2),
-        ),
-      ],
-      connections: const [],
-      activeProfileId: 'local-owner',
-    );
-
-    // Bounded pumps while the PIN dialog is open — see the manage test.
-    await _openTileMenu(tester, 'Kids');
-    await tester.tap(find.text(t.profiles.delete));
-    await _pumpBounded(tester);
-
-    expect(find.byType(PinEntryDialog), findsOneWidget, reason: 'Delete on a protected profile must ask for its PIN');
-    expect(find.text(t.profiles.deleteThisProfileTitle), findsNothing);
-
-    // Cancelling the PIN prompt blocks the delete confirmation entirely.
-    await tester.tap(find.text(t.common.cancel));
-    await _pumpBounded(tester);
-
-    expect(find.byType(PinEntryDialog), findsNothing);
-    expect(find.text(t.profiles.deleteThisProfileTitle), findsNothing);
-
-    // The right PIN reaches the confirmation; close it without deleting.
-    await _openTileMenu(tester, 'Kids');
-    await tester.tap(find.text(t.profiles.delete));
-    await _pumpBounded(tester);
-    await tester.enterText(find.byType(TextField), '1234');
-    await _pumpBounded(tester);
-
-    expect(find.text(t.profiles.deleteThisProfileTitle), findsOneWidget);
-
-    await tester.tap(find.text(t.common.cancel));
-    await _pumpBounded(tester);
-    expect(find.text('Kids'), findsOneWidget);
-
-    await tester.pumpWidget(const SizedBox.shrink());
-    await tester.pump(const Duration(milliseconds: 100));
-  });
-
   testWidgets('Manage on an unprotected profile opens the detail screen without a PIN prompt', (tester) async {
     await _pumpPicker(
       tester,
@@ -550,7 +437,6 @@ void main() {
     await tester.pump(const Duration(milliseconds: 400));
     await tester.pump(const Duration(milliseconds: 400));
 
-    expect(find.byType(PinEntryDialog), findsNothing);
     expect(find.byType(ProfileDetailScreen), findsOneWidget);
 
     tester.state<NavigatorState>(find.byType(Navigator).first).pop();
@@ -560,16 +446,6 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump(const Duration(milliseconds: 100));
   });
-}
-
-/// Three bounded pumps covering a dialog/route transition without requiring
-/// quiescence: a focused text field's cursor blink and a mounted
-/// [ProfileDetailScreen] both keep scheduling work, so [WidgetTester
-/// .pumpAndSettle] would hang until the test timeout.
-Future<void> _pumpBounded(WidgetTester tester) async {
-  await tester.pump();
-  await tester.pump(const Duration(milliseconds: 400));
-  await tester.pump(const Duration(milliseconds: 400));
 }
 
 /// Boots the picker over a fixed profile/connection set. [homeUsers] seeds the
