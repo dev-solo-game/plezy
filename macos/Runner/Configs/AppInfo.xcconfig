@@ -1,6 +1,6 @@
 
 PRODUCT_NAME = TTPlay
 
-PRODUCT_BUNDLE_IDENTIFIER = net.ttai.ttplay
+PRODUCT_BUNDLE_IDENTIFIER = com.ttainet.ttplay
 
 PRODUCT_COPYRIGHT = Copyright © 2026 ttai.net

@@ -16,7 +16,7 @@ wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev, _In_ wchar_t* command
   // created. (On a stock engine the flag is a no-op and compositing breaks.)
   ::SetEnvironmentVariableW(L"FLUTTER_WINDOWS_DCOMP", L"1");
 
-  HANDLE mutex = CreateMutex(nullptr, TRUE, L"net.ttai.TTPlay.SingleInstance");
+  HANDLE mutex = CreateMutex(nullptr, TRUE, L"com.ttainet.TTPlay.SingleInstance");
   if (GetLastError() == ERROR_ALREADY_EXISTS) {
     HWND existing = FindWindow(L"FLUTTER_RUNNER_WIN32_WINDOW", L"TTPlay");
     if (existing && IsWindowVisible(existing)) {

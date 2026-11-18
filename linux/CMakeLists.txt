@@ -8,7 +8,7 @@ include(CTest)
 set(BINARY_NAME "plezy")
 # The unique GTK application identifier for this application. See:
 # https://wiki.gnome.org/HowDoI/ChooseApplicationID
-set(APPLICATION_ID "net.ttai.ttplay")
+set(APPLICATION_ID "com.ttainet.ttplay")
 
 # Explicitly opt in to modern CMake behaviors to avoid warnings with recent
 # versions of CMake.
