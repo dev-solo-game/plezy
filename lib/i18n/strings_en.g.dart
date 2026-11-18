@@ -6571,6 +6571,9 @@ class Translations$storage$en {
 	/// en: 'Start lookup'
 	String get scrapeStart => 'Start lookup';
 
+	/// en: 'Re-scrape'
+	String get rescrape => 'Re-scrape';
+
 	/// en: 'Looking up ${done} / ${total}…'
 	String scrapingProgress({required Object done, required Object total}) => 'Looking up ${done} / ${total}…';
 
@@ -6588,6 +6591,24 @@ class Translations$storage$en {
 
 	/// en: 'Scanning only reads file names. Lookup asks TMDB and Bangumi and sorts titles into the library; it runs by itself after a scan and does not touch your drives.'
 	String get scrapeHint => 'Scanning only reads file names. Lookup asks TMDB and Bangumi and sorts titles into the library; it runs by itself after a scan and does not touch your drives.';
+
+	/// en: 'Scan finished'
+	String get scanCompleted => 'Scan finished';
+
+	/// en: 'Scan finished (${files} files)'
+	String scanCompletedFiles({required Object files}) => 'Scan finished (${files} files)';
+
+	/// en: 'Scan ${files}'
+	String scanShort({required Object files}) => 'Scan ${files}';
+
+	/// en: 'Lookup ${done}/${total}'
+	String scrapeShort({required Object done, required Object total}) => 'Lookup ${done}/${total}';
+
+	/// en: 'Long-press or right-click a card to match manually'
+	String get unmatchedHint => 'Long-press or right-click a card to match manually';
+
+	/// en: 'Lookup finished; ${n} title(s) still unmatched'
+	String rescrapeFinishedRemaining({required Object n}) => 'Lookup finished; ${n} title(s) still unmatched';
 
 	/// en: 'Test connection'
 	String get tmdbTest => 'Test connection';
@@ -11597,12 +11618,19 @@ extension on Translations {
 			'storage.scanResults' => 'Scan results',
 			'storage.scrapeTitle' => 'Metadata',
 			'storage.scrapeStart' => 'Start lookup',
+			'storage.rescrape' => 'Re-scrape',
 			'storage.scrapingProgress' => ({required Object done, required Object total}) => 'Looking up ${done} / ${total}…',
 			'storage.scrapeQueued' => ({required Object n}) => '${n} waiting',
 			'storage.scrapeUnmatched' => ({required Object n}) => '${n} not found',
 			'storage.scrapeAllDone' => 'Every title has metadata',
 			'storage.scrapeStopped' => ({required Object message}) => 'Lookup stopped: ${message}',
 			'storage.scrapeHint' => 'Scanning only reads file names. Lookup asks TMDB and Bangumi and sorts titles into the library; it runs by itself after a scan and does not touch your drives.',
+			'storage.scanCompleted' => 'Scan finished',
+			'storage.scanCompletedFiles' => ({required Object files}) => 'Scan finished (${files} files)',
+			'storage.scanShort' => ({required Object files}) => 'Scan ${files}',
+			'storage.scrapeShort' => ({required Object done, required Object total}) => 'Lookup ${done}/${total}',
+			'storage.unmatchedHint' => 'Long-press or right-click a card to match manually',
+			'storage.rescrapeFinishedRemaining' => ({required Object n}) => 'Lookup finished; ${n} title(s) still unmatched',
 			'storage.tmdbTest' => 'Test connection',
 			'storage.tmdbTestOk' => 'Connected to TMDB',
 			'storage.tmdbTestNoKey' => 'Enter a TMDB API key first',
@@ -11676,6 +11704,8 @@ extension on Translations {
 			'workSkip.introStart' => 'Intro starts at',
 			'workSkip.introEnd' => 'Intro ends at',
 			'workSkip.credits' => 'Skip credits',
+			_ => null,
+		} ?? switch (path) {
 			'workSkip.creditsDuration' => 'Credits length',
 			'workSkip.resumeBeforeEnd' => 'Keep the final scene',
 			'workSkip.resumeHint' => 'Time remaining after the jump. 00:00 finishes playback.',
@@ -11683,8 +11713,6 @@ extension on Translations {
 			'workSkip.behavior' => 'Intro skips immediately. Credits use the delay in playback settings (5 seconds by default).',
 			'workSkip.invalid' => 'Check the time ranges: end must follow start, credits must fit, and ranges cannot overlap.',
 			'workSkip.unavailable' => 'Match this movie or series to TMDB or IMDb before saving skip settings.',
-			_ => null,
-		} ?? switch (path) {
 			'workSkip.loadFailed' => 'Unable to load skip settings. Please try again.',
 			'workSkip.saveFailed' => 'Unable to save. Your changes have not been applied.',
 			'workSkip.delay' => 'Skip credits delay',

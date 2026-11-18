@@ -9,6 +9,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:plezy/database/app_database.dart';
 import 'package:plezy/library/library_repository.dart';
 import 'package:plezy/library/library_scan_service.dart';
+import 'package:plezy/library/library_scrape_runner.dart';
 import 'package:plezy/library/library_scanner.dart';
 import 'package:plezy/library/local_library_client.dart';
 import 'package:plezy/services/playback_initialization_types.dart';
@@ -624,6 +625,83 @@ void main() {
       expect(changes, greaterThanOrEqualTo(1));
       final shelved = await repo.queryTitles(const LibraryQuery(libraryType: LibraryTypes.movie));
       expect(shelved.items.map((v) => v.item.title), ['Dune']);
+
+      releaseFolder2.complete();
+      expect(await fullScan, isTrue);
+      final allMovies = await repo.queryTitles(const LibraryQuery(libraryType: LibraryTypes.movie));
+      expect(allMovies.items.map((v) => v.item.title), unorderedEquals(['Dune', 'Arrival']));
+    });
+  });
+
+  test('calling scrapeLibrary(retryUnmatched: true) during a full scan unpauses and runs retry mid-scan', () async {
+    final now = DateTime(2026, 11, 18, 12);
+    final folder2Entered = Completer<void>();
+    final releaseFolder2 = Completer<void>();
+    final pausedOnce = Completer<void>();
+    final retriedMidScan = Completer<void>();
+    var hasKey = false;
+    final retryCalls = <bool>[];
+    final gatedDriver = _GatedStreamingDriver(
+      onFolder2: () async {
+        if (!folder2Entered.isCompleted) folder2Entered.complete();
+        await releaseFolder2.future;
+      },
+    );
+    final repo = LibraryRepository(db);
+    final scans = LibraryScanService(
+      repository: repo,
+      scanner: LibraryScanner(db, repo),
+      mounts: _DriverMountManager(MountRegistry(db), gatedDriver),
+      scrape: ({
+        retryUnmatched = false,
+        mountIds,
+        refreshMatched = false,
+        allowKindChange = true,
+        refreshBeforeMs,
+        isCancelled,
+        onProgress,
+      }) async {
+        retryCalls.add(retryUnmatched);
+        if (!hasKey) {
+          if (!pausedOnce.isCompleted) pausedOnce.complete();
+          return const LibraryScrapeOutcome(note: LibraryScrapeRunner.noTmdbKey);
+        }
+        final pendingMovies = await (db.select(db.libraryItems)
+              ..where((t) => t.kind.equals(LibraryKinds.movie) & t.libraryType.equals(LibraryTypes.pending)))
+            .get();
+        for (final movie in pendingMovies) {
+          await repo.setLibraryType(movie.id, LibraryTypes.movie);
+          await repo.updateItem(
+            movie.id,
+            LibraryItemsCompanion(
+              metadataSource: const Value('tmdb'),
+              tmdbId: Value('${movie.id}'),
+              scrapedAt: Value(now.millisecondsSinceEpoch),
+            ),
+          );
+          await (db.update(db.libraryFiles)..where((t) => t.itemId.equals(movie.id))).write(
+            const LibraryFilesCompanion(matchState: Value(LibraryMatchStates.matched)),
+          );
+        }
+        onProgress?.call(pendingMovies.length, pendingMovies.length);
+        if (retryUnmatched && !retriedMidScan.isCompleted) retriedMidScan.complete();
+        return LibraryScrapeOutcome(hasChanges: pendingMovies.isNotEmpty);
+      },
+    );
+    addTearDown(scans.dispose);
+
+    await withClock(Clock(() => now), () async {
+      final fullScan = scans.scanAllMounts();
+      await Future.wait([folder2Entered.future, pausedOnce.future]).timeout(const Duration(seconds: 5));
+
+      hasKey = true;
+      await scans.scrapeLibrary(retryUnmatched: true);
+      await retriedMidScan.future.timeout(const Duration(seconds: 5));
+
+      expect(scans.update?.scanning, isTrue);
+      expect(retryCalls, contains(true));
+      final duneShelved = await repo.queryTitles(const LibraryQuery(libraryType: LibraryTypes.movie));
+      expect(duneShelved.items.map((v) => v.item.title), ['Dune']);
 
       releaseFolder2.complete();
       expect(await fullScan, isTrue);

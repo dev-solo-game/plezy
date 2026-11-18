@@ -2618,12 +2618,19 @@ class Translations$storage$zh extends Translations$storage$en {
 	@override String get scanResults => '扫描结果';
 	@override String get scrapeTitle => '刮削';
 	@override String get scrapeStart => '开始刮削';
+	@override String get rescrape => '重新刮削';
 	@override String scrapingProgress({required Object done, required Object total}) => '正在刮削 ${done} / ${total}…';
 	@override String scrapeQueued({required Object n}) => '${n} 个待刮削';
 	@override String scrapeUnmatched({required Object n}) => '${n} 个未匹配';
 	@override String get scrapeAllDone => '所有条目都已刮削';
 	@override String scrapeStopped({required Object message}) => '刮削中断：${message}';
 	@override String get scrapeHint => '扫描只读取文件名；刮削向 TMDB、Bangumi 查询资料并归入媒体库，扫描完成后会自动进行，不会访问网盘。';
+	@override String get scanCompleted => '扫描已完成';
+	@override String scanCompletedFiles({required Object files}) => '扫描已完成（共 ${files} 个文件）';
+	@override String scanShort({required Object files}) => '扫描 ${files}';
+	@override String scrapeShort({required Object done, required Object total}) => '刮削 ${done}/${total}';
+	@override String get unmatchedHint => '长按或右键卡片可手动匹配';
+	@override String rescrapeFinishedRemaining({required Object n}) => '刮削完成，仍有 ${n} 个条目未匹配，可长按或右键卡片手动匹配';
 	@override String get tmdbTest => '测试连接';
 	@override String get tmdbTestOk => '已连上 TMDB';
 	@override String get tmdbTestNoKey => '请先填写 TMDB API key';
@@ -6266,12 +6273,19 @@ extension on TranslationsZh {
 			'storage.scanResults' => '扫描结果',
 			'storage.scrapeTitle' => '刮削',
 			'storage.scrapeStart' => '开始刮削',
+			'storage.rescrape' => '重新刮削',
 			'storage.scrapingProgress' => ({required Object done, required Object total}) => '正在刮削 ${done} / ${total}…',
 			'storage.scrapeQueued' => ({required Object n}) => '${n} 个待刮削',
 			'storage.scrapeUnmatched' => ({required Object n}) => '${n} 个未匹配',
 			'storage.scrapeAllDone' => '所有条目都已刮削',
 			'storage.scrapeStopped' => ({required Object message}) => '刮削中断：${message}',
 			'storage.scrapeHint' => '扫描只读取文件名；刮削向 TMDB、Bangumi 查询资料并归入媒体库，扫描完成后会自动进行，不会访问网盘。',
+			'storage.scanCompleted' => '扫描已完成',
+			'storage.scanCompletedFiles' => ({required Object files}) => '扫描已完成（共 ${files} 个文件）',
+			'storage.scanShort' => ({required Object files}) => '扫描 ${files}',
+			'storage.scrapeShort' => ({required Object done, required Object total}) => '刮削 ${done}/${total}',
+			'storage.unmatchedHint' => '长按或右键卡片可手动匹配',
+			'storage.rescrapeFinishedRemaining' => ({required Object n}) => '刮削完成，仍有 ${n} 个条目未匹配，可长按或右键卡片手动匹配',
 			'storage.tmdbTest' => '测试连接',
 			'storage.tmdbTestOk' => '已连上 TMDB',
 			'storage.tmdbTestNoKey' => '请先填写 TMDB API key',
@@ -6353,6 +6367,8 @@ extension on TranslationsZh {
 			'workSkip.invalid' => '请检查时间：片头结束需晚于开始，片尾不能超出视频，区间不能重叠。',
 			'workSkip.unavailable' => '请先为这部电影或剧集匹配 TMDB 或 IMDb 信息，再设置跳过。',
 			'workSkip.loadFailed' => '无法读取跳过设置，请重试。',
+			_ => null,
+		} ?? switch (path) {
 			'workSkip.saveFailed' => '保存失败，修改尚未生效，请重试。',
 			'workSkip.delay' => '跳过片尾延迟时间',
 			'workSkip.delayDescription' => ({required Object seconds}) => '进入片尾后等待 ${seconds} 秒再跳过；片头直接跳过。',
@@ -6360,8 +6376,6 @@ extension on TranslationsZh {
 			'workSkip.legend' => '蓝色：片头 · 金色：片尾',
 			'sync.title' => '多端同步模式',
 			'sync.subtitle' => '端到端加密媒体库索引、网盘配置与播放进度同步',
-			_ => null,
-		} ?? switch (path) {
 			'sync.modeLanTitle' => '本地与局域网同步（免登录）',
 			'sync.modeLanDesc' => '无需部署服务器，离线可用并在同一 Wi-Fi 下自动发现可信设备点对点同步。',
 			'sync.modeCloudTitle' => '登录云同步服务器',

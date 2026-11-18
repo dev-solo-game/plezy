@@ -1,13 +1,27 @@
 import 'dart:async';
 
+import 'package:drift/drift.dart' show Value;
+import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:plezy/database/app_database.dart';
 import 'package:plezy/exceptions/media_server_exceptions.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:plezy/focus/focusable_button.dart';
 import 'package:plezy/focus/input_mode_tracker.dart';
 import 'package:plezy/i18n/strings.g.dart';
+import 'package:plezy/library/library_repository.dart' hide LibraryPage, LibraryQuery;
+import 'package:plezy/library/library_scan_service.dart';
+import 'package:plezy/library/library_scanner.dart';
+import 'package:plezy/library/library_settings.dart';
+import 'package:plezy/library/local_library_client.dart';
 import 'package:plezy/media/ids.dart';
+import 'package:plezy/storage/mount_manager.dart';
+import 'package:plezy/storage/mount_registry.dart';
+import 'package:plezy/widgets/focusable_filter_chip.dart';
+import 'package:plezy/widgets/focusable_media_card.dart';
+import 'package:plezy/widgets/focusable_tab_chip.dart';
 import 'package:plezy/media/library_filter_result.dart';
 import 'package:plezy/media/library_genre.dart';
 import 'package:plezy/media/library_query.dart';
@@ -562,6 +576,167 @@ void main() {
     expect(client.libraryHubCalls, hubCalls + 1, reason: 'activation consumes the push-marked library epoch');
     expect(_rowState(tester, 'B').widget.hub.items.map((item) => item.id), ['B-0', 'B-1']);
   });
+
+  test('visibleLibraryTabs returns only browse for the local pending library', () {
+    const pendingLibrary = MediaLibrary(
+      id: LibraryTypes.pending,
+      backend: MediaBackend.jellyfin,
+      title: 'Unmatched',
+      kind: MediaKind.show,
+      serverId: LocalLibraryClient.localServerId,
+    );
+    expect(visibleLibraryTabs(pendingLibrary), [LibraryTabType.browse]);
+  });
+
+  testWidgets('local pending library hides tabs, irrelevant actions, and browse chips, and handles rescrape & empty transition', (
+    tester,
+  ) async {
+    TvDetectionService.debugSetAppleTVOverride(true);
+    addTearDown(() => TvDetectionService.debugSetAppleTVOverride(null));
+
+    final db = AppDatabase.forTesting(NativeDatabase.memory());
+    final repo = LibraryRepository(db);
+    await db
+        .into(db.mounts)
+        .insert(MountsCompanion.insert(id: 'm1', kind: 'local', displayName: 'Disk', configJson: '{}', createdAt: 0));
+    final pendingMovieId = await repo.insertItem(
+      LibraryItemsCompanion.insert(
+        kind: LibraryKinds.movie,
+        libraryType: LibraryTypes.pending,
+        title: 'Unknown Movie',
+        sortTitle: 'unknown movie',
+        year: const Value(2025),
+        addedAt: 100,
+        updatedAt: 100,
+      ),
+    );
+    await repo.insertItem(
+      LibraryItemsCompanion.insert(
+        kind: LibraryKinds.movie,
+        libraryType: LibraryTypes.movie,
+        title: 'Known Movie',
+        sortTitle: 'known movie',
+        year: const Value(2024),
+        metadataSource: const Value('tmdb'),
+        tmdbId: const Value('12345'),
+        scrapedAt: const Value(200),
+        addedAt: 200,
+        updatedAt: 200,
+      ),
+    );
+
+    final mounts = MountManager(MountRegistry(db));
+    final localClient = LocalLibraryClient(repository: repo, mounts: mounts);
+    final settingsStore = LibrarySettingsStore(db);
+    var retryUnmatchedCalls = 0;
+    var shouldMatch = false;
+    late LibraryScanService scans;
+    scans = LibraryScanService(
+      repository: repo,
+      scanner: LibraryScanner(db, repo),
+      mounts: mounts,
+      scrape: ({
+        retryUnmatched = false,
+        mountIds,
+        refreshMatched = false,
+        allowKindChange = true,
+        refreshBeforeMs,
+        isCancelled,
+        onProgress,
+      }) async {
+        if (retryUnmatched) retryUnmatchedCalls++;
+        if (!shouldMatch) {
+          return const LibraryScrapeOutcome();
+        }
+        await repo.setLibraryType(pendingMovieId, LibraryTypes.movie);
+        await repo.updateItem(
+          pendingMovieId,
+          const LibraryItemsCompanion(
+            metadataSource: Value('tmdb'),
+            tmdbId: Value('999'),
+            scrapedAt: Value(300),
+          ),
+        );
+        return const LibraryScrapeOutcome(hasChanges: true);
+      },
+    );
+    addTearDown(() async {
+      scans.dispose();
+      localClient.close();
+      await mounts.dispose();
+      await db.close();
+    });
+
+    final initialLibraries = await localClient.fetchLibraries();
+    final harness = await _Harness.create(
+      _GatedPreferences({'selected_library_key': LocalLibraryClient.pendingLibraryGlobalKey}),
+      clients: [localClient],
+      libraryOrder: initialLibraries,
+    );
+    addTearDown(harness.dispose);
+    scans.onLibraryChanged = () {
+      unawaited(() async {
+        harness.libraries.markServerLibrariesStale(LocalLibraryClient.localServerId);
+        await harness.libraries.updateLibraryOrder(await localClient.fetchLibraries());
+      }());
+    };
+
+    await harness.pump(tester, settle: false, scanService: scans, settingsStore: settingsStore);
+    await pumpRequestFrames(tester);
+
+    // Top sub-tabs, irrelevant app bar actions, and browse chips are all hidden.
+    expect(find.byType(TabChipStrip), findsNothing);
+    expect(find.text(t.libraries.tabs.recommended), findsNothing);
+    expect(find.text(t.libraries.tabs.collections), findsNothing);
+    expect(find.text(t.libraries.tabs.playlists), findsNothing);
+    expect(find.text(t.libraries.tabs.genres), findsNothing);
+    expect(find.byTooltip(t.libraries.manageLibraries), findsNothing);
+    expect(find.byTooltip(t.libraries.shuffleLibrary), findsNothing);
+    expect(find.byTooltip(t.common.refresh), findsNothing);
+    expect(find.byType(FocusableFilterChip), findsNothing);
+
+    // Pending header renders unmatched status + rescrape + settings actions.
+    expect(find.text(t.storage.rescrape), findsOneWidget);
+    expect(find.text(t.storage.scraperSettings), findsOneWidget);
+    expect(find.textContaining(t.storage.scrapeUnmatched(n: 1)), findsOneWidget);
+    expect(find.text('Unknown Movie'), findsOneWidget);
+
+    // D-pad navigation between first card and rescrape header button.
+    final cardNode = tester.widget<FocusableMediaCard>(find.byType(FocusableMediaCard).first).focusNode!;
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+    await tester.pump();
+    cardNode.requestFocus();
+    await tester.pump();
+    expect(cardNode.hasFocus, isTrue);
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
+    await tester.pump();
+    final rescrapeButton = tester.widget<FocusableButton>(
+      find.ancestor(of: find.text(t.storage.rescrape), matching: find.byType(FocusableButton)),
+    );
+    expect(rescrapeButton.focusNode!.hasFocus, isTrue);
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+    await tester.pump();
+    expect(cardNode.hasFocus, isTrue);
+
+    // Manual retry while still unmatched runs scrape(retryUnmatched: true) and reports remaining count.
+    await tester.tap(find.text(t.storage.rescrape));
+    await pumpRequestFrames(tester);
+    expect(retryUnmatchedCalls, 1);
+    expect(find.text(t.storage.rescrapeFinishedRemaining(n: 1)), findsOneWidget);
+
+    // Once all items match, the pending shelf disappears and LibrariesScreen switches to the remaining library.
+    shouldMatch = true;
+    await tester.tap(find.text(t.storage.rescrape));
+    await pumpRequestFrames(tester);
+    await pumpRequestFrames(tester);
+
+    expect(retryUnmatchedCalls, 2);
+    expect(find.byType(TabChipStrip), findsOneWidget);
+    expect(find.text(t.libraries.tabs.recommended), findsOneWidget);
+    expect(find.text(t.storage.scrapeAllDone), findsOneWidget);
+  });
 }
 
 final class _Harness {
@@ -597,6 +772,8 @@ final class _Harness {
     bool settle = true,
     VoidCallback? onFirstPostFrame,
     ValueListenable<bool>? enabled,
+    LibraryScanService? scanService,
+    LibrarySettingsStore? settingsStore,
   }) async {
     final downloads = NoSyncRulesDownloadProvider();
     addTearDown(downloads.dispose);
@@ -618,6 +795,11 @@ final class _Harness {
           ChangeNotifierProvider<HiddenLibrariesProvider>.value(value: hiddenLibraries),
           ChangeNotifierProvider<MultiServerProvider>.value(value: multiServer),
           ChangeNotifierProvider<DownloadProvider>.value(value: downloads),
+          if (scanService != null) ...[
+            ChangeNotifierProvider<LibraryScanService>.value(value: scanService),
+            Provider<LibraryRepository>.value(value: scanService.repository),
+          ],
+          if (settingsStore != null) Provider<LibrarySettingsStore>.value(value: settingsStore),
         ],
         child: InputModeTracker(
           child: MaterialApp(

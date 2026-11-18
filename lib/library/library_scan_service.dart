@@ -52,6 +52,8 @@ class LibraryUpdate {
   bool _streamingScrapePaused = false;
   bool _hasScrapeChanges = false;
   bool _pendingLibraryRefresh = false;
+  bool _retryUnmatchedInFinalPass = false;
+  Future<void> Function({required bool retryUnmatched, required bool restart})? _triggerManualScrape;
   bool get isBackground => mode == LibraryUpdateMode.incremental;
 }
 
@@ -168,6 +170,7 @@ class LibraryScanService extends ChangeNotifier {
   bool _scrapeCancelled = false;
   bool _scrapeAfterUpdate = false;
   bool _retryUnmatchedAfterUpdate = false;
+  bool _allowKindChangeAfterUpdate = false;
   bool _disposed = false;
   LibraryUpdate? _update;
   ({LibraryUpdateMode mode, String message})? _updateError;
@@ -262,6 +265,7 @@ class LibraryScanService extends ChangeNotifier {
     final activeMounts = <String>{};
     Future<void>? streamingScrape;
     var pendingStreamingScrape = false;
+    var retryUnmatchedNextWave = false;
 
     void triggerStreamingScrape() {
       if (mode != LibraryUpdateMode.full ||
@@ -281,20 +285,23 @@ class LibraryScanService extends ChangeNotifier {
               !_scrapeAfterUpdate &&
               !job._streamingScrapePaused) {
             pendingStreamingScrape = false;
+            final retry = retryUnmatchedNextWave;
+            retryUnmatchedNextWave = false;
             _scrapeCancelled = false;
             final targetMounts = Set.of(activeMounts);
-            if (targetMounts.isEmpty) break;
+            if (!retry && targetMounts.isEmpty) break;
             job.scraping = true;
             if (!_disposed) notifyListeners();
             final stopNote = await _runScrape(
-              mountIds: targetMounts,
+              retryUnmatched: retry,
+              mountIds: retry ? null : targetMounts,
               refreshMatched: false,
-              allowKindChange: false,
+              allowKindChange: retry,
               cancel: job.cancel,
               silent: job.isBackground,
               streaming: true,
             );
-            if (stopNote != null) {
+            if (stopNote != null && !pendingStreamingScrape && !_scrapeCancelled) {
               // Pause streaming scrape on missing key / unreachable primary API;
               // the post-scan pass reports the final status once.
               job._streamingScrapePaused = true;
@@ -306,6 +313,17 @@ class LibraryScanService extends ChangeNotifier {
           if (!_disposed) notifyListeners();
         }
       }();
+    }
+
+    if (mode == LibraryUpdateMode.full) {
+      job._triggerManualScrape = ({required retryUnmatched, required restart}) {
+        job._streamingScrapePaused = false;
+        retryUnmatchedNextWave |= retryUnmatched;
+        job._retryUnmatchedInFinalPass |= retryUnmatched;
+        if (restart && job.scraping) _scrapeCancelled = true;
+        triggerStreamingScrape();
+        return streamingScrape ?? Future.value();
+      };
     }
 
     try {
@@ -334,6 +352,7 @@ class LibraryScanService extends ChangeNotifier {
         _scrapeCancelled = false;
         if (!_disposed) notifyListeners();
         await _runScrape(
+          retryUnmatched: job._retryUnmatchedInFinalPass,
           mountIds: job.scrapingMounts,
           refreshMatched: mode == LibraryUpdateMode.full,
           refreshBeforeMs: mode == LibraryUpdateMode.full ? updateStartedAt : null,
@@ -361,9 +380,11 @@ class LibraryScanService extends ChangeNotifier {
         if (job._refreshWhenFinished || job._pendingLibraryRefresh) _libraryChanged();
         if (_scrapeAfterUpdate) {
           final retry = _retryUnmatchedAfterUpdate;
+          final allowKind = _allowKindChangeAfterUpdate;
           _scrapeAfterUpdate = false;
           _retryUnmatchedAfterUpdate = false;
-          unawaited(scrapeLibrary(retryUnmatched: retry));
+          _allowKindChangeAfterUpdate = false;
+          unawaited(scrapeLibrary(retryUnmatched: retry, allowKindChange: allowKind));
         }
         notifyListeners();
       }
@@ -404,10 +425,18 @@ class LibraryScanService extends ChangeNotifier {
       }
     }
     _updateError = null;
+    var streamingPaused = false;
     final result = await _scan(
       mount,
       token: ScanCancelToken(),
-      onPendingVideosAdded: () => unawaited(scrapeLibrary(allowKindChange: false)),
+      onPendingVideosAdded: () {
+        if (streamingPaused) return;
+        unawaited(
+          scrapeLibrary(allowKindChange: false).then((_) {
+            if (_scrapeStatus.note != null) streamingPaused = true;
+          }),
+        );
+      },
     );
     if (result != null && !result.cancelled) unawaited(scrapeLibrary());
     return result;
@@ -620,9 +649,14 @@ class LibraryScanService extends ChangeNotifier {
   /// over at once, for when the settings it was started with changed.
   Future<void> scrapeLibrary({bool retryUnmatched = false, bool restart = false, bool allowKindChange = true}) {
     if (_disposed || scrape == null) return Future.value();
-    if (_update != null) {
+    final job = _update;
+    if (job != null) {
+      if (job.scanning && job._triggerManualScrape != null) {
+        return job._triggerManualScrape!(retryUnmatched: retryUnmatched, restart: restart);
+      }
       _scrapeAfterUpdate = true;
       _retryUnmatchedAfterUpdate |= retryUnmatched;
+      _allowKindChangeAfterUpdate |= allowKindChange;
       if (restart) _scrapeCancelled = true;
       return Future.value();
     }
@@ -664,6 +698,10 @@ class LibraryScanService extends ChangeNotifier {
     bool streaming = false,
   }) async {
     final job = cancel == null ? null : _update;
+    if (job != null) {
+      job.scraped = 0;
+      job.scrapeTotal = 0;
+    }
     bool isCancelled() => _disposed || _scrapeCancelled || cancel?.isCancelled == true;
     if (!silent) _publishScrape(LibraryScrapeStatus(running: true, runs: _scrapeStatus.runs));
     String? note;

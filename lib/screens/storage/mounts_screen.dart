@@ -8,7 +8,6 @@ import 'package:provider/provider.dart';
 
 import '../../i18n/strings.g.dart';
 import '../../library/library_scan_service.dart';
-import '../../library/library_scrape_runner.dart';
 import '../../library/sync/sync_coordinator.dart';
 import '../../storage/mount_manager.dart';
 import '../../storage/storage_mount.dart';
@@ -163,11 +162,9 @@ class MountsScreen extends StatelessWidget {
               constraints: const BoxConstraints(maxWidth: storageContentMaxWidth),
               child: ListView.separated(
                 padding: const EdgeInsets.all(16),
-                itemCount: mounts.length + 2,
+                itemCount: mounts.length + 1,
                 separatorBuilder: (_, _) => const SizedBox(height: 12),
                 itemBuilder: (context, index) {
-                  if (index == 0) return const _LibraryStatusCard();
-                  index--;
                   if (index == mounts.length) {
                     return Padding(
                       padding: const EdgeInsets.only(top: 4),
@@ -472,122 +469,6 @@ class _ScanLine extends StatelessWidget {
           style: muted,
         );
       },
-    );
-  }
-}
-
-/// The library as a whole: how many titles still wait for metadata, and the
-/// button that looks them up. Scanning only reads names; this is where they
-/// become library entries.
-class _LibraryStatusCard extends StatelessWidget {
-  const _LibraryStatusCard();
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final scans = context.watch<LibraryScanService>();
-    final status = scans.scrapeStatus;
-    final muted = theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant);
-    return Card(
-      margin: EdgeInsets.zero,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
-        child: FutureBuilder<({int queued, int unmatched})>(
-          // Re-counted whenever a lookup starts, advances or ends.
-          key: ValueKey((status.running, status.done, status.runs)),
-          future: scans.repository.pendingCounts(),
-          builder: (context, snapshot) {
-            final counts = snapshot.data;
-            final queued = counts?.queued ?? 0;
-            final unmatched = counts?.unmatched ?? 0;
-            final note = status.note;
-
-            final Widget line;
-            if (status.running) {
-              line = Row(
-                children: [
-                  const SizedBox.square(dimension: 14, child: CircularProgressIndicator(strokeWidth: 2)),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      status.total == 0
-                          ? t.storage.scraping
-                          : t.storage.scrapingProgress(done: status.done, total: status.total),
-                      style: muted?.copyWith(color: theme.colorScheme.primary),
-                    ),
-                  ),
-                ],
-              );
-            } else if (note != null) {
-              line = Text(
-                note == LibraryScrapeRunner.noTmdbKey ? t.storage.scrapeNoKey : t.storage.scrapeStopped(message: note),
-                style: muted?.copyWith(color: theme.colorScheme.error),
-              );
-            } else if (queued == 0 && unmatched == 0) {
-              line = Text(t.storage.scrapeAllDone, style: muted);
-            } else {
-              line = Text(
-                [
-                  if (queued > 0) t.storage.scrapeQueued(n: queued),
-                  if (unmatched > 0) t.storage.scrapeUnmatched(n: unmatched),
-                ].join(' · '),
-                style: muted,
-              );
-            }
-
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    const AppIcon(Symbols.auto_awesome_rounded),
-                    const SizedBox(width: 10),
-                    Expanded(child: Text(t.storage.scrapeTitle, style: theme.textTheme.titleMedium)),
-                    if (status.running)
-                      TextButton(onPressed: scans.cancelScrape, child: Text(t.common.cancel))
-                    else if (note == LibraryScrapeRunner.noTmdbKey)
-                      FilledButton.tonal(
-                        onPressed: () => Navigator.of(
-                          context,
-                        ).push(MaterialPageRoute<void>(builder: (_) => const ScraperSettingsScreen())),
-                        child: Text(t.storage.scraperSettings),
-                      )
-                    else
-                      FilledButton.icon(
-                        onPressed: queued == 0 && unmatched == 0
-                            ? null
-                            : () => unawaited(scans.scrapeLibrary(retryUnmatched: true)),
-                        icon: const AppIcon(Symbols.play_arrow_rounded),
-                        label: Text(t.storage.scrapeStart),
-                      ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                line,
-                if (!status.running && unmatched > 0)
-                  Align(
-                    alignment: AlignmentDirectional.centerStart,
-                    child: TextButton.icon(
-                      style: TextButton.styleFrom(padding: EdgeInsets.zero, visualDensity: VisualDensity.compact),
-                      onPressed: () => Navigator.of(context).push(
-                        MaterialPageRoute<void>(
-                          builder: (_) => LibraryPreviewScreen(initialTab: LibraryPreviewScreen.unmatchedTab),
-                        ),
-                      ),
-                      icon: const AppIcon(Symbols.manage_search_rounded),
-                      label: Text(t.storage.reviewUnmatched),
-                    ),
-                  ),
-                const SizedBox(height: 4),
-                Text(
-                  t.storage.scrapeHint,
-                  style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.outline),
-                ),
-              ],
-            );
-          },
-        ),
-      ),
     );
   }
 }

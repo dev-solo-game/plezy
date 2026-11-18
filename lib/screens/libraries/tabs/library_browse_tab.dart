@@ -14,7 +14,13 @@ import '../../../media/media_library.dart';
 import '../../../providers/multi_server_provider.dart';
 import '../../../utils/media_server_http_client.dart';
 import '../../../focus/dpad_navigator.dart';
+import '../../../focus/focusable_button.dart';
 import '../../../focus/input_mode_tracker.dart';
+import '../../../library/library_scan_service.dart';
+import '../../../library/library_scrape_runner.dart';
+import '../../../library/library_settings.dart';
+import '../../../library/local_library_client.dart';
+import '../../storage/scraper_settings_screen.dart';
 import '../../../media/media_filter.dart';
 import '../../../media/media_sort.dart';
 import '../../../widgets/settings_builder.dart';
@@ -284,7 +290,7 @@ class _LibraryBrowseTabState extends BaseLibraryTabState<MediaItem, LibraryBrows
     recordLibraryContentEpoch(epoch);
     // Alpha-bar bucket counts shifted with the content; refresh is cheap and
     // best-effort.
-    unawaited(_loadFirstCharacters());
+    if (!_isPendingLibrary) unawaited(_loadFirstCharacters());
     reconcileGridFocusNodes({for (final entry in loadedItems.entries) entry.value.id: entry.key});
 
     final oldIndex = result.anchorOldIndex;
@@ -422,12 +428,15 @@ class _LibraryBrowseTabState extends BaseLibraryTabState<MediaItem, LibraryBrows
   }
 
   bool get _isMediaBrowserLibrary => widget.library.backend.usesMediaBrowserApi;
+  bool get _isPendingLibrary => LocalLibraryClient.isPendingLibrary(widget.library);
   int get _activeFetchSize => _isMediaBrowserLibrary ? _mediaBrowserFetchSize : _fetchSize;
 
   // Focus nodes for filter chips
   final FocusNode _groupingChipFocusNode = FocusNode(debugLabel: 'grouping_chip');
   final FocusNode _filtersChipFocusNode = FocusNode(debugLabel: 'filters_chip');
   final FocusNode _sortChipFocusNode = FocusNode(debugLabel: 'sort_chip');
+  final FocusNode _pendingPrimaryButtonFocusNode = FocusNode(debugLabel: 'pending_rescrape_button');
+  final FocusNode _pendingSettingsButtonFocusNode = FocusNode(debugLabel: 'pending_scraper_settings_button');
 
   // Anchor keys for the desktop dropdown variants of the chip menus.
   final GlobalKey _groupingChipKey = GlobalKey();
@@ -464,6 +473,8 @@ class _LibraryBrowseTabState extends BaseLibraryTabState<MediaItem, LibraryBrows
     _groupingChipFocusNode.dispose();
     _filtersChipFocusNode.dispose();
     _sortChipFocusNode.dispose();
+    _pendingPrimaryButtonFocusNode.dispose();
+    _pendingSettingsButtonFocusNode.dispose();
     _alphaJumpBarFocusNode.dispose();
     _currentFirstVisibleIndex.dispose();
     _isScrollActive.dispose();
@@ -564,16 +575,36 @@ class _LibraryBrowseTabState extends BaseLibraryTabState<MediaItem, LibraryBrows
 
   /// Height of the chips bar — see [optionsChipsBarHeight].
   static const double _chipsBarHeight = optionsChipsBarHeight;
+  static const double _pendingHeaderHeight = 48.0;
 
   /// Focus the chips bar (for navigating from tab bar to content).
   /// Called by libraries screen when pressing DOWN on tab bar.
   void focusChipsBar() {
+    if (_isPendingLibrary) {
+      lastFocusedGridIndex = null;
+      _focusPendingHeaderBar();
+      return;
+    }
     if (_usesMobileBrowseOptions) {
       focusFirstItem();
       return;
     }
     lastFocusedGridIndex = null;
     _groupingChipFocusNode.requestFocus();
+  }
+
+  void _focusPendingHeaderBar() {
+    if (_innerPosition case final pos? when pos.hasPixels && pos.pixels > 0) {
+      pos.jumpTo(0);
+    }
+    widget.onResetScroll?.call();
+    if (_pendingPrimaryButtonFocusNode.canRequestFocus) {
+      _pendingPrimaryButtonFocusNode.requestFocus();
+    } else if (_pendingSettingsButtonFocusNode.canRequestFocus) {
+      _pendingSettingsButtonFocusNode.requestFocus();
+    } else {
+      widget.onBack?.call();
+    }
   }
 
   /// Show the mobile browse options sheet from the parent app bar.
@@ -645,16 +676,19 @@ class _LibraryBrowseTabState extends BaseLibraryTabState<MediaItem, LibraryBrows
       final storage = await StorageService.getInstance();
       if (!isCurrentLibraryLoad(generation, libraryGlobalKey)) return;
 
-      final savedFilters = storage.getLibraryFilters(sectionId: libraryGlobalKey);
-      final savedSort = storage.getLibrarySort(libraryGlobalKey);
-      final savedGrouping = storage.getLibraryGrouping(libraryGlobalKey);
+      final isPending = _isPendingLibrary;
+      final savedFilters = isPending ? const <LibraryFilter>[] : storage.getLibraryFilters(sectionId: libraryGlobalKey);
+      final savedSort = isPending ? null : storage.getLibrarySort(libraryGlobalKey);
+      final savedGrouping = isPending ? browseGroupingAll : storage.getLibraryGrouping(libraryGlobalKey);
       // Resolve the restored grouping before the sort fetch — music groupings
       // (albums/tracks) request their own per-type sort list.
-      final restoredGrouping = _normalizeGrouping(savedGrouping);
+      final restoredGrouping = isPending ? browseGroupingAll : _normalizeGrouping(savedGrouping);
       final sortLibraryType = _sortOptionsLibraryType(restoredGrouping);
 
       final LoadedFiltersAndSorts loaded;
-      if (library.backend.usesMediaBrowserApi) {
+      if (isPending) {
+        loaded = const LoadedFiltersAndSorts(filters: [], sorts: []);
+      } else if (library.backend.usesMediaBrowserApi) {
         // MediaBrowser filter discovery can be much slower than the paged
         // `/Items` browse request on large libraries. Load only the local sort
         // list before page 1, then fill filter values in the background.
@@ -701,7 +735,7 @@ class _LibraryBrowseTabState extends BaseLibraryTabState<MediaItem, LibraryBrows
       });
       _notifyFiltersActive();
 
-      if (library.backend.usesMediaBrowserApi) {
+      if (!isPending && library.backend.usesMediaBrowserApi) {
         _loadMediaBrowserFiltersInBackground(generation, libraryGlobalKey, library);
       }
 
@@ -713,10 +747,14 @@ class _LibraryBrowseTabState extends BaseLibraryTabState<MediaItem, LibraryBrows
         return;
       }
 
-      await Future.wait([
-        _loadItems(loadGeneration: generation, libraryGlobalKey: libraryGlobalKey, epoch: epoch),
-        _loadFirstCharacters(requestId: firstCharactersGeneration),
-      ]);
+      if (isPending) {
+        await _loadItems(loadGeneration: generation, libraryGlobalKey: libraryGlobalKey, epoch: epoch);
+      } else {
+        await Future.wait([
+          _loadItems(loadGeneration: generation, libraryGlobalKey: libraryGlobalKey, epoch: epoch),
+          _loadFirstCharacters(requestId: firstCharactersGeneration),
+        ]);
+      }
     } catch (e, stackTrace) {
       if (!isCurrentLibraryLoad(generation, libraryGlobalKey)) return;
       releaseLibraryContentEpoch();
@@ -1400,7 +1438,9 @@ class _LibraryBrowseTabState extends BaseLibraryTabState<MediaItem, LibraryBrows
     // dpad DOWN from a chip occasionally fails to move focus to the grid.
     if (FocusManager.instance.primaryFocus == _groupingChipFocusNode ||
         FocusManager.instance.primaryFocus == _filtersChipFocusNode ||
-        FocusManager.instance.primaryFocus == _sortChipFocusNode) {
+        FocusManager.instance.primaryFocus == _sortChipFocusNode ||
+        FocusManager.instance.primaryFocus == _pendingPrimaryButtonFocusNode ||
+        FocusManager.instance.primaryFocus == _pendingSettingsButtonFocusNode) {
       FocusManager.instance.primaryFocus?.unfocus();
     }
 
@@ -1451,8 +1491,12 @@ class _LibraryBrowseTabState extends BaseLibraryTabState<MediaItem, LibraryBrows
     }
   }
 
-  /// Navigate focus from grid up to the chips bar, or the tab bar on mobile.
+  /// Navigate focus from grid up to the chips bar, pending bar, or the tab bar on mobile.
   void _navigateToChips() {
+    if (_isPendingLibrary) {
+      _focusPendingHeaderBar();
+      return;
+    }
     if (_usesMobileBrowseOptions) {
       widget.onBack?.call();
       return;
@@ -1489,14 +1533,16 @@ class _LibraryBrowseTabState extends BaseLibraryTabState<MediaItem, LibraryBrows
     return key == 'title' || key == 'name' || key == 'sortname' || key.startsWith('titlesort');
   }
 
-  bool get _shouldShowAlphaJumpBar => _alphaStrategy.shouldShow(
-    totalItemCount: totalSize,
-    loadedCharacterCount: _firstCharacters.length,
-    sortKey: _selectedSort?.key,
-    isFolderGrouping: _selectedGrouping == 'folders',
-    mediaBrowserAlphaPrefix: _mediaBrowserAlphaPrefix,
-    isPhone: _isPhone(context),
-  );
+  bool get _shouldShowAlphaJumpBar =>
+      !_isPendingLibrary &&
+      _alphaStrategy.shouldShow(
+        totalItemCount: totalSize,
+        loadedCharacterCount: _firstCharacters.length,
+        sortKey: _selectedSort?.key,
+        isFolderGrouping: _selectedGrouping == 'folders',
+        mediaBrowserAlphaPrefix: _mediaBrowserAlphaPrefix,
+        isPhone: _isPhone(context),
+      );
 
   /// Fetch first characters for the current library/filter state
   Future<void> _loadFirstCharacters({int? requestId}) async {
@@ -1606,7 +1652,9 @@ class _LibraryBrowseTabState extends BaseLibraryTabState<MediaItem, LibraryBrows
     );
   }
 
-  double get _contentStartScrollOffset => (_usesMobileBrowseOptions ? 0.0 : _chipsBarHeight) + _effectiveTopPadding;
+  double get _contentStartScrollOffset =>
+      (_isPendingLibrary ? _pendingHeaderHeight : (_usesMobileBrowseOptions ? 0.0 : _chipsBarHeight)) +
+      _effectiveTopPadding;
 
   /// Handle a tap on the letter at [targetIndex] in the alpha bar. The
   /// active [LibraryAlphaBarStrategy] owns the per-backend behaviour and
@@ -1795,10 +1843,29 @@ class _LibraryBrowseTabState extends BaseLibraryTabState<MediaItem, LibraryBrows
                 },
               ),
             ),
-            // Floating chips: scroll off with content but snap back into view
-            // on upward direction reversal, matching the outer floating
-            // SliverAppBar's behavior.
-            if (!_usesMobileBrowseOptions)
+            // Floating chips or unmatched scrape bar: scroll off with content
+            // but snap back into view on upward direction reversal, matching the
+            // outer floating SliverAppBar's behavior.
+            if (_isPendingLibrary)
+              SliverPersistentHeader(
+                floating: true,
+                pinned: false,
+                delegate: OptionsChipsBarDelegate(
+                  height: _pendingHeaderHeight,
+                  builder: (_) => _PendingScrapeHeader(
+                    totalSize: totalSize,
+                    primaryButtonFocusNode: _pendingPrimaryButtonFocusNode,
+                    settingsButtonFocusNode: _pendingSettingsButtonFocusNode,
+                    onRescrape: _triggerRescrape,
+                    onOpenSettings: _openScraperSettings,
+                    onNavigateDown: _navigateToGrid,
+                    onNavigateUp: widget.onBack,
+                    onNavigateLeft: _navigateToSidebar,
+                    onBack: widget.onBack,
+                  ),
+                ),
+              )
+            else if (!_usesMobileBrowseOptions)
               SliverPersistentHeader(
                 floating: true,
                 pinned: false,
@@ -2032,7 +2099,12 @@ class _LibraryBrowseTabState extends BaseLibraryTabState<MediaItem, LibraryBrows
           ),
         ];
       }
-      return [SliverEmptyState(message: t.libraries.thisLibraryIsEmpty, icon: Symbols.folder_open_rounded)];
+      return [
+        SliverEmptyState(
+          message: _isPendingLibrary ? t.storage.scrapeAllDone : t.libraries.thisLibraryIsEmpty,
+          icon: _isPendingLibrary ? Symbols.check_circle_outline_rounded : Symbols.folder_open_rounded,
+        ),
+      ];
     }
 
     return [
@@ -2314,6 +2386,189 @@ class _LibraryBrowseTabState extends BaseLibraryTabState<MediaItem, LibraryBrows
     if (targetIndex < 0 || targetIndex >= totalSize) return;
     final node = _cardFocusNode(targetIndex);
     node.requestFocus();
+  }
+
+  Future<void> _triggerRescrape() async {
+    final scans = Provider.of<LibraryScanService?>(context, listen: false);
+    if (scans == null) return;
+    await scans.scrapeLibrary(retryUnmatched: true);
+    if (!mounted) return;
+    await performLiveLibraryRefresh();
+    if (!mounted) return;
+    if (scans.scrapeStatus.note != null) return;
+    final counts = await scans.repository.pendingCounts();
+    if (!mounted) return;
+    final remaining = counts.queued + counts.unmatched;
+    if (remaining > 0) {
+      ScaffoldMessenger.maybeOf(context)
+        ?..hideCurrentSnackBar()
+        ..showSnackBar(SnackBar(content: Text(t.storage.rescrapeFinishedRemaining(n: remaining))));
+    }
+  }
+
+  void _openScraperSettings() {
+    Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const ScraperSettingsScreen()));
+  }
+}
+
+class _PendingScrapeHeader extends StatelessWidget {
+  const _PendingScrapeHeader({
+    required this.totalSize,
+    required this.primaryButtonFocusNode,
+    required this.settingsButtonFocusNode,
+    required this.onRescrape,
+    required this.onOpenSettings,
+    required this.onNavigateDown,
+    required this.onNavigateUp,
+    required this.onNavigateLeft,
+    required this.onBack,
+  });
+
+  final int totalSize;
+  final FocusNode primaryButtonFocusNode;
+  final FocusNode settingsButtonFocusNode;
+  final VoidCallback onRescrape;
+  final VoidCallback onOpenSettings;
+  final VoidCallback onNavigateDown;
+  final VoidCallback? onNavigateUp;
+  final VoidCallback onNavigateLeft;
+  final VoidCallback? onBack;
+
+  static final ButtonStyle _compactButtonStyle = FilledButton.styleFrom(
+    minimumSize: const Size(0, 34),
+    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+    visualDensity: VisualDensity.compact,
+  );
+
+  static final ButtonStyle _compactOutlinedStyle = OutlinedButton.styleFrom(
+    minimumSize: const Size(0, 34),
+    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+    visualDensity: VisualDensity.compact,
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final scans = context.watch<LibraryScanService?>();
+    final hasSettingsStore = Provider.of<LibrarySettingsStore?>(context, listen: false) != null;
+
+    final update = scans?.update;
+    final scrapeStatus = scans?.scrapeStatus;
+    final isScraping = (update?.scraping ?? false) || (scrapeStatus?.running ?? false);
+    final done = (update?.scraping ?? false) ? update!.scraped : (scrapeStatus?.done ?? 0);
+    final total = (update?.scraping ?? false) ? update!.scrapeTotal : (scrapeStatus?.total ?? 0);
+    final note = scrapeStatus?.note ?? scans?.updateError?.message;
+
+    final Widget leadingIcon;
+    final String statusText;
+    final Color statusColor;
+    if (isScraping) {
+      leadingIcon = const SizedBox.square(dimension: 14, child: CircularProgressIndicator(strokeWidth: 2));
+      statusText = total > 0 ? t.storage.scrapingProgress(done: done, total: total) : t.storage.scraping;
+      statusColor = scheme.primary;
+    } else if (note != null) {
+      leadingIcon = AppIcon(Symbols.error_outline_rounded, size: 16, color: scheme.error);
+      statusText = note == LibraryScrapeRunner.noTmdbKey ? t.storage.scrapeNoKey : t.storage.scrapeStopped(message: note);
+      statusColor = scheme.error;
+    } else {
+      leadingIcon = AppIcon(Symbols.auto_awesome_rounded, size: 16, color: scheme.onSurfaceVariant);
+      statusText = totalSize > 0
+          ? '${t.storage.scrapeUnmatched(n: totalSize)} · ${t.storage.unmatchedHint}'
+          : t.storage.scrapeAllDone;
+      statusColor = scheme.onSurfaceVariant;
+    }
+
+    final canRescrape = scans != null && totalSize > 0;
+
+    return Container(
+      color: theme.scaffoldBackgroundColor,
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      alignment: Alignment.centerLeft,
+      child: Row(
+        children: [
+          Expanded(
+            child: Row(
+              children: [
+                leadingIcon,
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    statusText,
+                    style: theme.textTheme.bodyMedium?.copyWith(color: statusColor),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          if (isScraping && scans != null)
+            FocusableButton(
+              focusNode: primaryButtonFocusNode,
+              autoScroll: false,
+              onPressed: scans.cancelScrape,
+              onNavigateDown: onNavigateDown,
+              onNavigateUp: onNavigateUp,
+              onNavigateLeft: onNavigateLeft,
+              onBack: onBack,
+              child: OutlinedButton.icon(
+                style: _compactOutlinedStyle,
+                onPressed: scans.cancelScrape,
+                icon: const AppIcon(Symbols.close_rounded, size: 16),
+                label: Text(t.common.cancel),
+              ),
+            )
+          else ...[
+            if (hasSettingsStore) ...[
+              FocusableButton(
+                focusNode: settingsButtonFocusNode,
+                autoScroll: false,
+                onPressed: onOpenSettings,
+                onNavigateDown: onNavigateDown,
+                onNavigateUp: onNavigateUp,
+                onNavigateLeft: onNavigateLeft,
+                onNavigateRight: canRescrape ? primaryButtonFocusNode.requestFocus : null,
+                onBack: onBack,
+                child: note == LibraryScrapeRunner.noTmdbKey
+                    ? FilledButton.tonalIcon(
+                        style: _compactButtonStyle,
+                        onPressed: onOpenSettings,
+                        icon: const AppIcon(Symbols.travel_explore_rounded, size: 16),
+                        label: Text(t.storage.scraperSettings),
+                      )
+                    : OutlinedButton.icon(
+                        style: _compactOutlinedStyle,
+                        onPressed: onOpenSettings,
+                        icon: const AppIcon(Symbols.travel_explore_rounded, size: 16),
+                        label: Text(t.storage.scraperSettings),
+                      ),
+              ),
+              if (scans != null) const SizedBox(width: 8),
+            ],
+            if (scans != null)
+              FocusableButton(
+                focusNode: primaryButtonFocusNode,
+                autoScroll: false,
+                onPressed: canRescrape ? onRescrape : null,
+                onNavigateDown: onNavigateDown,
+                onNavigateUp: onNavigateUp,
+                onNavigateLeft: hasSettingsStore ? settingsButtonFocusNode.requestFocus : onNavigateLeft,
+                onBack: onBack,
+                child: FilledButton.icon(
+                  style: _compactButtonStyle,
+                  onPressed: canRescrape ? onRescrape : null,
+                  icon: const AppIcon(Symbols.refresh_rounded, size: 16),
+                  label: Text(t.storage.rescrape),
+                ),
+              ),
+          ],
+        ],
+      ),
+    );
   }
 }
 

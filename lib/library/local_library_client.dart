@@ -46,6 +46,7 @@ import '../storage/storage_path.dart';
 import '../storage/stream_variant.dart';
 import '../utils/app_logger.dart';
 import '../utils/external_ids.dart';
+import '../utils/global_key_utils.dart';
 import '../utils/media_server_http_client.dart' show AbortController;
 import 'library_repository.dart' as lib;
 import 'library_scanner.dart';
@@ -78,6 +79,13 @@ class LocalLibraryClient implements MediaServerClient {
        _mountManager = mounts;
 
   static const String localServerId = 'local-library';
+
+  /// Global key for the local library's unmatched (`pending`) shelf.
+  static String get pendingLibraryGlobalKey => buildGlobalKey(ServerId(localServerId), lib.LibraryTypes.pending);
+
+  /// Whether [library] is the local library's unmatched (`pending`) shelf.
+  static bool isPendingLibrary(MediaLibrary library) =>
+      library.serverId == localServerId && library.id == lib.LibraryTypes.pending;
 
   /// Shelf ids double as the `libraryType` stored on titles.
   static const List<String> shelves = lib.LibraryTypes.shelves;

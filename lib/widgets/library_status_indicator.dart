@@ -5,8 +5,10 @@ import 'package:provider/provider.dart';
 import '../i18n/strings.g.dart';
 import '../library/library_scan_service.dart';
 import '../library/library_scrape_runner.dart';
+import '../library/library_settings.dart';
 import '../library/sync/sync_coordinator.dart';
 import '../library/sync/sync_models.dart';
+import '../screens/storage/scraper_settings_screen.dart';
 import 'app_icon.dart';
 
 /// Formats a localized status line for an active [SyncProgress].
@@ -43,37 +45,51 @@ class LibraryStatusIndicator extends StatelessWidget {
 
     final theme = Theme.of(context);
     final color = status.failed ? theme.colorScheme.error : theme.colorScheme.onSurface;
-    final text = status.failed
-        ? '${status.label} · ${t.common.error}'
-        : (status.detail.isEmpty ? status.label : '${status.label} · ${status.detail}');
+    final canOpenSettings =
+        status.isNoTmdbKey && Provider.of<LibrarySettingsStore?>(context, listen: false) != null;
+
+    Widget content = Padding(
+      padding: const EdgeInsetsDirectional.only(end: 8),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (status.failed)
+            AppIcon(Symbols.error_outline_rounded, color: color, size: 14)
+          else
+            const SizedBox.square(dimension: 12, child: CircularProgressIndicator(strokeWidth: 2)),
+          const SizedBox(width: 6),
+          Flexible(
+            child: Text(
+              status.inlineText,
+              style: theme.textTheme.labelMedium?.copyWith(color: color),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ],
+      ),
+    );
+
+    if (canOpenSettings) {
+      content = MouseRegion(
+        cursor: SystemMouseCursors.click,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: () => Navigator.of(context).push(
+            MaterialPageRoute<void>(builder: (_) => const ScraperSettingsScreen()),
+          ),
+          child: content,
+        ),
+      );
+    }
 
     return Tooltip(
-      message: status.detail.isEmpty ? status.label : '${status.label}\n${status.detail}',
-      child: Padding(
-        padding: const EdgeInsetsDirectional.only(end: 8),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (status.failed)
-              AppIcon(Symbols.error_outline_rounded, color: color, size: 14)
-            else
-              const SizedBox.square(dimension: 12, child: CircularProgressIndicator(strokeWidth: 2)),
-            const SizedBox(width: 6),
-            Flexible(
-              child: Text(
-                text,
-                style: theme.textTheme.labelMedium?.copyWith(color: color),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-          ],
-        ),
-      ),
+      message: status.tooltip,
+      child: content,
     );
   }
 
-  static ({String label, String detail, bool failed})? _resolveStatus(
+  static ({String inlineText, String tooltip, bool failed, bool isNoTmdbKey})? _resolveStatus(
     LibraryScanService? scans,
     SyncAndScanCoordinator? sync,
   ) {
@@ -85,39 +101,125 @@ class LibraryStatusIndicator extends StatelessWidget {
                 ? t.sync.progressLanWithPeer(peer: syncProgress.peerName!)
                 : t.sync.progressLan);
       final detail = formatSyncProgressDetail(t, syncProgress) ?? '';
-      return (label: label, detail: detail, failed: false);
+      return (
+        inlineText: detail.isEmpty ? label : '$label · $detail',
+        tooltip: detail.isEmpty ? label : '$label\n$detail',
+        failed: false,
+        isNoTmdbKey: false,
+      );
     }
 
     final job = scans?.update;
     final files = job?.filesSeen ?? scans?.standaloneScanFiles;
     final scanError = scans?.updateError;
+    final scrapeStatus = scans?.scrapeStatus;
     if (job != null || files != null) {
       final mode = job?.mode ?? scanError?.mode ?? LibraryUpdateMode.full;
-      final label = mode == LibraryUpdateMode.incremental ? t.storage.incrementalUpdate : t.storage.fullUpdate;
-      final progress = switch (job) {
-        LibraryUpdate(cancel: final cancel) when cancel.isCancelled => t.storage.cancellingUpdate,
-        LibraryUpdate(scanning: true, scraping: true, :final scraped, :final scrapeTotal) when files != null =>
-          '${t.storage.scanning(files: files)} · ${scrapeTotal == 0 ? t.storage.scraping : t.storage.scrapingProgress(done: scraped, total: scrapeTotal)}',
-        LibraryUpdate(scraping: true, :final scraped, :final scrapeTotal) =>
-          scrapeTotal == 0 ? t.storage.scraping : t.storage.scrapingProgress(done: scraped, total: scrapeTotal),
-        _ when files != null => t.storage.scanning(files: files),
-        _ => t.storage.waitingToUpdate(mode: label),
-      };
-      return (label: label, detail: progress, failed: false);
+      final scanLabel = mode == LibraryUpdateMode.incremental ? t.storage.incrementalUpdate : t.storage.fullUpdate;
+      final isCancelled = job != null && job.cancel.isCancelled;
+      final isScraping = (job?.scraping ?? false) || (scrapeStatus?.running ?? false);
+      final done = (job?.scraping ?? false) ? job!.scraped : (scrapeStatus?.done ?? 0);
+      final total = (job?.scraping ?? false) ? job!.scrapeTotal : (scrapeStatus?.total ?? 0);
+
+      final String line1;
+      if (isCancelled) {
+        line1 = '$scanLabel · ${t.storage.cancellingUpdate}';
+      } else if ((job == null || job.scanning) && files != null) {
+        line1 = job != null ? '$scanLabel · ${t.storage.scanning(files: files)}' : t.storage.scanning(files: files);
+      } else if (job != null && !job.scanning) {
+        line1 = files != null && files > 0
+            ? '$scanLabel · ${t.storage.scanCompletedFiles(files: files)}'
+            : '$scanLabel · ${t.storage.scanCompleted}';
+      } else {
+        line1 = t.storage.waitingToUpdate(mode: scanLabel);
+      }
+
+      String? line2;
+      if (!isCancelled) {
+        if (isScraping) {
+          final scrapeDetail = total > 0 ? t.storage.scrapingProgress(done: done, total: total) : t.storage.scraping;
+          line2 = '${t.storage.scrapeTitle} · $scrapeDetail';
+        } else if (scrapeStatus?.note case final note?) {
+          final noteMsg = note == LibraryScrapeRunner.noTmdbKey
+              ? t.storage.scrapeNoKey
+              : t.storage.scrapeStopped(message: note);
+          line2 = '${t.storage.scrapeTitle} · $noteMsg';
+        } else {
+          line2 = '${t.storage.scrapeTitle} · ${t.storage.waitingToScrape}';
+        }
+      }
+
+      final String inlineText;
+      if (isCancelled) {
+        inlineText = '$scanLabel · ${t.storage.cancellingUpdate}';
+      } else if ((job == null || job.scanning) && files != null && isScraping) {
+        final scrapeShort = total > 0 ? t.storage.scrapeShort(done: done, total: total) : t.storage.scrapeTitle;
+        inlineText = '${t.storage.scanShort(files: files)} · $scrapeShort';
+      } else if (isScraping) {
+        inlineText = total > 0 ? t.storage.scrapingProgress(done: done, total: total) : t.storage.scraping;
+      } else if (files != null) {
+        inlineText = job != null
+            ? '$scanLabel · ${t.storage.scanning(files: files)}'
+            : t.storage.scanning(files: files);
+      } else {
+        inlineText = t.storage.waitingToUpdate(mode: scanLabel);
+      }
+
+      return (
+        inlineText: inlineText,
+        tooltip: line2 == null ? line1 : '$line1\n$line2',
+        failed: false,
+        isNoTmdbKey: false,
+      );
+    }
+
+    if (scrapeStatus != null && scrapeStatus.running) {
+      final detail = scrapeStatus.total > 0
+          ? t.storage.scrapingProgress(done: scrapeStatus.done, total: scrapeStatus.total)
+          : t.storage.scraping;
+      return (
+        inlineText: detail,
+        tooltip: '${t.storage.scrapeTitle} · $detail',
+        failed: false,
+        isNoTmdbKey: false,
+      );
     }
 
     final syncError = sync?.lastError;
     if (sync != null && syncError != null && syncError.isNotEmpty) {
       final label = sync.isSignedIn ? t.sync.progressCloud : t.sync.progressLan;
-      return (label: label, detail: syncError, failed: true);
+      return (
+        inlineText: '$label · ${t.common.error}',
+        tooltip: '$label\n$syncError',
+        failed: true,
+        isNoTmdbKey: false,
+      );
     }
 
     if (scanError != null) {
       final label = scanError.mode == LibraryUpdateMode.incremental
           ? t.storage.incrementalUpdate
           : t.storage.fullUpdate;
-      final detail = scanError.message == LibraryScrapeRunner.noTmdbKey ? t.storage.scrapeNoKey : scanError.message;
-      return (label: label, detail: detail, failed: true);
+      final isNoKey = scanError.message == LibraryScrapeRunner.noTmdbKey;
+      final detail = isNoKey ? t.storage.scrapeNoKey : scanError.message;
+      return (
+        inlineText: '$label · ${isNoKey ? t.storage.tmdbTestNoKey : t.common.error}',
+        tooltip: '$label\n$detail',
+        failed: true,
+        isNoTmdbKey: isNoKey,
+      );
+    }
+
+    final scrapeNote = scrapeStatus?.note;
+    if (scrapeNote != null) {
+      final isNoKey = scrapeNote == LibraryScrapeRunner.noTmdbKey;
+      final detail = isNoKey ? t.storage.scrapeNoKey : t.storage.scrapeStopped(message: scrapeNote);
+      return (
+        inlineText: '${t.storage.scrapeTitle} · ${isNoKey ? t.storage.tmdbTestNoKey : t.common.error}',
+        tooltip: '${t.storage.scrapeTitle}\n$detail',
+        failed: true,
+        isNoTmdbKey: isNoKey,
+      );
     }
 
     return null;

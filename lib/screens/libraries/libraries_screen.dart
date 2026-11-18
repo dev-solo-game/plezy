@@ -45,6 +45,7 @@ import 'tabs/base_library_tab.dart';
 enum LibraryTabType { recommended, browse, collections, playlists, genres }
 
 List<LibraryTabType> visibleLibraryTabs(MediaLibrary library) {
+  if (LocalLibraryClient.isPendingLibrary(library)) return const [LibraryTabType.browse];
   if (library.isShared) return [LibraryTabType.browse, LibraryTabType.playlists];
   // Genres filter the library's own type; only movie and show libraries
   // browse a type both backends tag with genres.
@@ -89,6 +90,9 @@ class _LibrariesScreenState extends State<LibrariesScreen>
   /// Whether a post-frame [_initializeWithLibraries] is already queued.
   bool _initializeScheduled = false;
 
+  /// Whether a post-frame fallback away from an emptied `pending` shelf is queued.
+  bool _pendingFallbackScheduled = false;
+
   /// Track which tabs have loaded data (used to trigger focus after tab restore)
   final Set<int> _loadedTabs = {};
 
@@ -98,6 +102,7 @@ class _LibrariesScreenState extends State<LibrariesScreen>
   final _libraryDropdownKey = GlobalKey<AppMenuButtonState<String>>();
 
   List<LibraryTabType> _visibleTabs = LibraryTabType.values;
+  bool get _hasTabStrip => _visibleTabs.length > 1;
   List<FocusNode> _tabFocusNodes = List.generate(
     LibraryTabType.values.length,
     (i) => FocusNode(debugLabel: 'tab_chip_${LibraryTabType.values[i].name}'),
@@ -135,6 +140,10 @@ class _LibrariesScreenState extends State<LibrariesScreen>
   @override
   void focusTabBar() {
     _resetOuterScroll();
+    if (!_hasTabStrip) {
+      onTabBarBack();
+      return;
+    }
     super.focusTabBar();
   }
 
@@ -284,7 +293,7 @@ class _LibrariesScreenState extends State<LibrariesScreen>
     // back to focusTabBar, which sets suppressAutoFocus — and the load's
     // onDataLoaded then leaves focus stranded on the tab bar. Hold focus on
     // the tab chip without suppressing, so that completion moves it on.
-    if (awaitLoad && tabState is BaseLibraryTabState && tabState.isLoading) {
+    if (_hasTabStrip && awaitLoad && tabState is BaseLibraryTabState && tabState.isLoading) {
       _resetOuterScroll();
       getTabChipFocusNode(tabController.index).requestFocus();
       return;
@@ -726,6 +735,9 @@ class _LibrariesScreenState extends State<LibrariesScreen>
 
     // On desktop/TV with side nav, show tabs in app bar (library name is in side nav)
     if (PlatformDetector.shouldUseSideNavigation(context)) {
+      if (!_hasTabStrip) {
+        return Text(selectedLibrary?.title ?? t.libraries.title);
+      }
       return TabChipStrip(
         children: [
           for (int i = 0; i < _visibleTabs.length; i++) ...[
@@ -818,13 +830,17 @@ class _LibrariesScreenState extends State<LibrariesScreen>
         ? allLibraries.where((lib) => lib.globalKey == _selectedLibraryGlobalKey).firstOrNull
         : null;
 
+    final isPendingLibrary = selectedLibrary != null && LocalLibraryClient.isPendingLibrary(selectedLibrary);
     final useSideNavigation = PlatformDetector.shouldUseSideNavigation(context);
-    final showMobileTabsRow = selectedLibrary != null && !useSideNavigation;
+    final showMobileTabsRow = selectedLibrary != null && !useSideNavigation && _hasTabStrip;
     final currentTabIndex = _visibleTabs.isEmpty ? 0 : tabController.index.clamp(0, _visibleTabs.length - 1).toInt();
     final currentTabType = _visibleTabs.isEmpty ? null : _visibleTabs[currentTabIndex];
     final useTvRecommendedBackdrop = PlatformDetector.isTV() && currentTabType == LibraryTabType.recommended;
     final showBrowseOptionsAction =
-        selectedLibrary != null && PlatformDetector.isMobile(context) && currentTabType == LibraryTabType.browse;
+        !isPendingLibrary &&
+        selectedLibrary != null &&
+        PlatformDetector.isMobile(context) &&
+        currentTabType == LibraryTabType.browse;
     final canSelectedLibraryGroupByFolders = context.select<MultiServerProvider, bool>((provider) {
       if (selectedLibrary == null || selectedLibrary.isShared) return false;
       final serverId = serverIdOrNull(selectedLibrary.serverId);
@@ -832,53 +848,58 @@ class _LibrariesScreenState extends State<LibrariesScreen>
       return provider.getClientForServer(serverId)?.capabilities.folderGrouping ?? false;
     });
 
-    List<FocusableAction> appBarActions() => [
-      if (allLibraries.isNotEmpty)
-        FocusableAction(
-          icon: Symbols.edit_rounded,
-          tooltip: t.libraries.manageLibraries,
-          onPressed: _showLibraryManagementSheet,
-        ),
-      if (showBrowseOptionsAction)
-        FocusableAction(
-          icon: Symbols.tune_rounded,
-          tooltip: t.libraries.libraryOptions,
-          onPressed: _showBrowseOptionsForCurrentTab,
-          // Badge the icon with a dot while the browse tab has active filters
-          // (issue #1470). A null child keeps the default rendering.
-          child: _browseFiltersActive
-              ? IconButton(
-                  tooltip: t.libraries.libraryOptions,
-                  onPressed: _showBrowseOptionsForCurrentTab,
-                  icon: Stack(
-                    clipBehavior: Clip.none,
-                    children: [
-                      const AppIcon(Symbols.tune_rounded, fill: 1),
-                      Positioned(
-                        top: -2,
-                        right: -2,
-                        child: Container(
-                          width: 8,
-                          height: 8,
-                          decoration: BoxDecoration(
-                            color: Theme.of(context).colorScheme.primary,
-                            shape: BoxShape.circle,
+    List<FocusableAction> appBarActions() {
+      if (isPendingLibrary) return const [];
+      return [
+        if (allLibraries.isNotEmpty)
+          FocusableAction(
+            icon: Symbols.edit_rounded,
+            tooltip: t.libraries.manageLibraries,
+            onPressed: _showLibraryManagementSheet,
+          ),
+        if (showBrowseOptionsAction)
+          FocusableAction(
+            icon: Symbols.tune_rounded,
+            tooltip: t.libraries.libraryOptions,
+            onPressed: _showBrowseOptionsForCurrentTab,
+            // Badge the icon with a dot while the browse tab has active filters
+            // (issue #1470). A null child keeps the default rendering.
+            child: _browseFiltersActive
+                ? IconButton(
+                    tooltip: t.libraries.libraryOptions,
+                    onPressed: _showBrowseOptionsForCurrentTab,
+                    icon: Stack(
+                      clipBehavior: Clip.none,
+                      children: [
+                        const AppIcon(Symbols.tune_rounded, fill: 1),
+                        Positioned(
+                          top: -2,
+                          right: -2,
+                          child: Container(
+                            width: 8,
+                            height: 8,
+                            decoration: BoxDecoration(
+                              color: Theme.of(context).colorScheme.primary,
+                              shape: BoxShape.circle,
+                            ),
                           ),
                         ),
-                      ),
-                    ],
-                  ),
-                )
-              : null,
-        ),
-      if (selectedLibrary != null && MediaListPlaybackLauncher.canShuffleLibrary(selectedLibrary))
-        FocusableAction(
-          icon: Symbols.shuffle_rounded,
-          tooltip: t.libraries.shuffleLibrary,
-          onPressed: () => unawaited(MediaListPlaybackLauncher.shuffleLibrary(context, selectedLibrary)),
-        ),
-      FocusableAction(icon: Symbols.refresh_rounded, tooltip: t.common.refresh, onPressed: manualRefresh),
-    ];
+                      ],
+                    ),
+                  )
+                : null,
+          ),
+        if (selectedLibrary != null && MediaListPlaybackLauncher.canShuffleLibrary(selectedLibrary))
+          FocusableAction(
+            icon: Symbols.shuffle_rounded,
+            tooltip: t.libraries.shuffleLibrary,
+            onPressed: () => unawaited(MediaListPlaybackLauncher.shuffleLibrary(context, selectedLibrary)),
+          ),
+        FocusableAction(icon: Symbols.refresh_rounded, tooltip: t.common.refresh, onPressed: manualRefresh),
+      ];
+    }
+
+    final actions = appBarActions();
 
     Widget appBar({required bool floating}) => DesktopSliverAppBar(
       title: _buildAppBarTitle(visibleLibraries, selectedLibrary, groupByServer: groupByServerSetting),
@@ -899,12 +920,13 @@ class _LibrariesScreenState extends State<LibrariesScreen>
             child: const LibraryStatusIndicator(),
           ),
         ),
-        FocusableActionBar(
-          key: _actionBarKey,
-          onNavigateLeft: () => getTabChipFocusNode(_visibleTabs.length - 1).requestFocus(),
-          onNavigateDown: _focusCurrentTab,
-          actions: appBarActions(),
-        ),
+        if (actions.isNotEmpty)
+          FocusableActionBar(
+            key: _actionBarKey,
+            onNavigateLeft: _hasTabStrip ? () => getTabChipFocusNode(_visibleTabs.length - 1).requestFocus() : onTabBarBack,
+            onNavigateDown: _focusCurrentTab,
+            actions: actions,
+          ),
       ],
     );
 
@@ -936,12 +958,15 @@ class _LibrariesScreenState extends State<LibrariesScreen>
                 child: const LibraryStatusIndicator(),
               ),
             ),
-            FocusableActionBar(
-              key: _actionBarKey,
-              onNavigateLeft: () => getTabChipFocusNode(_visibleTabs.length - 1).requestFocus(),
-              onNavigateDown: _focusCurrentTab,
-              actions: appBarActions(),
-            ),
+            if (actions.isNotEmpty)
+              FocusableActionBar(
+                key: _actionBarKey,
+                onNavigateLeft: _hasTabStrip
+                    ? () => getTabChipFocusNode(_visibleTabs.length - 1).requestFocus()
+                    : onTabBarBack,
+                onNavigateDown: _focusCurrentTab,
+                actions: actions,
+              ),
           ],
         ),
       );
@@ -1109,7 +1134,29 @@ class _LibrariesScreenState extends State<LibrariesScreen>
         ),
       );
     } else {
-      if (_selectedLibraryGlobalKey == null) _scheduleInitializeWithLibraries();
+      if (_selectedLibraryGlobalKey == null) {
+        _scheduleInitializeWithLibraries();
+      } else if (_selectedLibraryGlobalKey == LocalLibraryClient.pendingLibraryGlobalKey && !_pendingFallbackScheduled) {
+        _pendingFallbackScheduled = true;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _pendingFallbackScheduled = false;
+          if (!mounted) return;
+          if (_selectedLibraryGlobalKey != LocalLibraryClient.pendingLibraryGlobalKey) return;
+          final currentAll = context.read<LibrariesProvider>().libraries;
+          final currentHidden = context.read<HiddenLibrariesProvider>().hiddenLibraryKeys;
+          final stillExists = currentAll.any((lib) => lib.globalKey == LocalLibraryClient.pendingLibraryGlobalKey);
+          if (stillExists) return;
+          final nextVisible = currentAll.where((lib) => !currentHidden.contains(lib.globalKey)).toList();
+          if (nextVisible.isNotEmpty) {
+            ScaffoldMessenger.maybeOf(context)
+              ?..hideCurrentSnackBar()
+              ..showSnackBar(SnackBar(content: Text(t.storage.scrapeAllDone)));
+            unawaited(_loadLibraryContent(nextVisible.first.globalKey));
+          } else {
+            setState(() => _selectedLibraryGlobalKey = null);
+          }
+        });
+      }
       body = buildSimpleScroll(body: const SizedBox.shrink());
     }
 

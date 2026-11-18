@@ -2589,12 +2589,19 @@ class _Translations$storage$zh_Hant extends Translations$storage$zh {
 	@override String get scanResults => '掃描結果';
 	@override String get scrapeTitle => '刮削';
 	@override String get scrapeStart => '開始刮削';
+	@override String get rescrape => '重新刮削';
 	@override String scrapingProgress({required Object done, required Object total}) => '正在刮削 ${done} / ${total}…';
 	@override String scrapeQueued({required Object n}) => '${n} 個待刮削';
 	@override String scrapeUnmatched({required Object n}) => '${n} 個未匹配';
 	@override String get scrapeAllDone => '所有條目都已刮削';
 	@override String scrapeStopped({required Object message}) => '刮削中斷：${message}';
 	@override String get scrapeHint => '掃描只讀取檔名；刮削向 TMDB、Bangumi 查詢資料並歸入媒體庫，掃描完成後會自動進行，不會存取網盤。';
+	@override String get scanCompleted => '掃描已完成';
+	@override String scanCompletedFiles({required Object files}) => '掃描已完成（共 ${files} 個檔案）';
+	@override String scanShort({required Object files}) => '掃描 ${files}';
+	@override String scrapeShort({required Object done, required Object total}) => '刮削 ${done}/${total}';
+	@override String get unmatchedHint => '長按或右鍵卡片可手動匹配';
+	@override String rescrapeFinishedRemaining({required Object n}) => '刮削完成，仍有 ${n} 個項目未匹配，可長按或右鍵卡片手動匹配';
 	@override String get tmdbTest => '測試連線';
 	@override String get tmdbTestOk => '已連上 TMDB';
 	@override String get tmdbTestNoKey => '請先填寫 TMDB API key';
@@ -6077,12 +6084,19 @@ extension on TranslationsZhHant {
 			'storage.scanResults' => '掃描結果',
 			'storage.scrapeTitle' => '刮削',
 			'storage.scrapeStart' => '開始刮削',
+			'storage.rescrape' => '重新刮削',
 			'storage.scrapingProgress' => ({required Object done, required Object total}) => '正在刮削 ${done} / ${total}…',
 			'storage.scrapeQueued' => ({required Object n}) => '${n} 個待刮削',
 			'storage.scrapeUnmatched' => ({required Object n}) => '${n} 個未匹配',
 			'storage.scrapeAllDone' => '所有條目都已刮削',
 			'storage.scrapeStopped' => ({required Object message}) => '刮削中斷：${message}',
 			'storage.scrapeHint' => '掃描只讀取檔名；刮削向 TMDB、Bangumi 查詢資料並歸入媒體庫，掃描完成後會自動進行，不會存取網盤。',
+			'storage.scanCompleted' => '掃描已完成',
+			'storage.scanCompletedFiles' => ({required Object files}) => '掃描已完成（共 ${files} 個檔案）',
+			'storage.scanShort' => ({required Object files}) => '掃描 ${files}',
+			'storage.scrapeShort' => ({required Object done, required Object total}) => '刮削 ${done}/${total}',
+			'storage.unmatchedHint' => '長按或右鍵卡片可手動匹配',
+			'storage.rescrapeFinishedRemaining' => ({required Object n}) => '刮削完成，仍有 ${n} 個項目未匹配，可長按或右鍵卡片手動匹配',
 			'storage.tmdbTest' => '測試連線',
 			'storage.tmdbTestOk' => '已連上 TMDB',
 			'storage.tmdbTestNoKey' => '請先填寫 TMDB API key',
