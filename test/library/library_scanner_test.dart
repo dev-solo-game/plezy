@@ -147,9 +147,14 @@ void main() {
       await mounts.dispose();
     });
     final hubs = await client.fetchGlobalHubs(includePlaybackHubs: false);
-    final recentItems = hubs.single.items;
+    expect(hubs.map((h) => h.id), ['local.recent', 'local.recent.show']);
+    final recentItems = hubs.first.items;
     expect(
       recentItems.map((item) => (item.title, item.addedAt)),
+      [('The Wire', 6), ('Severance', 0), ('Breaking Bad', 0), ('Zero', null)],
+    );
+    expect(
+      hubs.last.items.map((item) => (item.title, item.addedAt)),
       [('The Wire', 6), ('Severance', 0), ('Breaking Bad', 0), ('Zero', null)],
     );
   });

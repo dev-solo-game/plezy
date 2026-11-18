@@ -42,6 +42,7 @@ void configureLocalLibraryClientLabels(LocalLibraryClient local) {
       'addedAt': t.storage.sortAddedAt,
       'lastPlayed': t.storage.sortLastPlayed,
     }
+    ..recentlyAddedAllTitle = t.discover.recentlyAdded
     ..recentlyAddedTitle = t.storage.recentlyAdded(shelf: '{shelf}')
     ..continueWatchingTitle = t.storage.continueWatching;
 }

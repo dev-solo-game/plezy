@@ -352,7 +352,7 @@ class ExternalPlayerService {
   static Future<bool> handleCallbackUrl(Uri uri) async {
     _callbackLog('received: ${_redactTokens(uri.toString())}');
     final segments = uri.pathSegments;
-    if (uri.scheme != DeepLink.scheme || uri.host != ExternalPlayerReturnLink.host || segments.length < 2) {
+    if (!DeepLink.isSupportedScheme(uri.scheme) || uri.host != ExternalPlayerReturnLink.host || segments.length < 2) {
       _callbackLog('not an external-player return link; ignoring');
       return false;
     }

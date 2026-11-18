@@ -155,6 +155,7 @@ class SyncJournalStore {
     for (final entry in meta.entries) {
       final key = entry.key;
       final val = entry.value;
+      if (key == 'source_added_at') continue;
       if (key == 'locked' && val == false) continue;
       if ((key == 'genres' || key == 'credits') && val is List && val.isEmpty) continue;
       out[key] = val;
@@ -332,21 +333,26 @@ class SyncJournalStore {
     return [for (final row in rows) _rowToEntry(row)];
   }
 
-  Future<List<SyncJournalEntry>> findOrphanedActiveRawWorks() async {
+  Future<List<SyncJournalEntry>> findOrphanedActiveWorks({bool includeMatchedUnreferenced = false}) async {
+    final condition = includeMatchedUnreferenced
+        ? "(w.entity_key LIKE 'raw:%' OR ("
+              "NOT EXISTS (SELECT 1 FROM sync_journal f WHERE f.entity_type = 'file' AND f.is_deleted = 0 AND f.work_key = w.entity_key) "
+              'AND NOT EXISTS (SELECT 1 FROM library_items i WHERE i.work_key = w.entity_key)'
+              '))'
+        : "w.entity_key LIKE 'raw:%'";
     final rows = await db
         .customSelect(
-          "SELECT w.entity_type, w.entity_key, w.source_id, w.relative_path, w.work_key, w.local_seq, "
-          "w.payload_hash, w.payload_json, w.client_updated_at, w.is_deleted, w.origin_device_id, w.origin_epoch "
-          "FROM sync_journal w "
-          "WHERE w.entity_type = 'work' AND w.entity_key LIKE 'raw:%' AND w.is_deleted = 0 "
-          "AND NOT EXISTS ("
-          "  SELECT 1 FROM sync_journal f "
-          "  WHERE f.entity_type = 'file' AND f.is_deleted = 0 AND f.work_key = w.entity_key"
-          ")",
+          'SELECT w.entity_type, w.entity_key, w.source_id, w.relative_path, w.work_key, w.local_seq, '
+          'w.payload_hash, w.payload_json, w.client_updated_at, w.is_deleted, w.origin_device_id, w.origin_epoch '
+          'FROM sync_journal w '
+          "WHERE w.entity_type = 'work' AND w.is_deleted = 0 AND $condition",
         )
         .get();
     return [for (final row in rows) _rowToEntry(row)];
   }
+
+  Future<List<SyncJournalEntry>> findOrphanedActiveRawWorks() =>
+      findOrphanedActiveWorks(includeMatchedUnreferenced: false);
 
   Future<void> upsertEntry(SyncJournalEntry entry) async {
     await db.customStatement(

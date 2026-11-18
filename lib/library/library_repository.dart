@@ -7,6 +7,7 @@ import 'package:drift/drift.dart';
 import '../database/app_database.dart';
 import 'media_probe.dart';
 import 'library_watch_state_store.dart';
+import 'sync/deterministic_keys.dart';
 
 /// String ids persisted in the library tables.
 abstract final class LibraryKinds {
@@ -206,21 +207,284 @@ class LibraryRepository {
 
   // ─── Titles ────────────────────────────────────────────────────────────
 
+  Future<String?> _computeWorkKeyForCompanion(LibraryItemsCompanion item) async {
+    if (item.workKey.present) {
+      final raw = item.workKey.value;
+      if (raw == null || raw.isEmpty) return null;
+      return DeterministicKeys.canonicalizeWorkKey(raw);
+    }
+    final kind = item.kind.present ? item.kind.value : '';
+    final libraryType = item.libraryType.present ? item.libraryType.value : LibraryTypes.pending;
+    if (kind == LibraryKinds.movie || kind == LibraryKinds.show) {
+      return DeterministicKeys.workKeyForMatchedItem(
+        kind: kind,
+        tmdbId: item.tmdbId.present ? item.tmdbId.value : null,
+        bangumiId: item.bangumiId.present ? item.bangumiId.value : null,
+        imdbId: item.imdbId.present ? item.imdbId.value : null,
+        tvdbId: item.tvdbId.present ? item.tvdbId.value : null,
+        metadataSource: item.metadataSource.present ? item.metadataSource.value : null,
+        libraryType: libraryType,
+        sortTitle: item.sortTitle.present ? item.sortTitle.value : '',
+        year: item.year.present ? item.year.value : null,
+      );
+    }
+    if (kind == LibraryKinds.season || kind == LibraryKinds.episode) {
+      var showId = item.showId.present ? item.showId.value : null;
+      if (showId == null && kind == LibraryKinds.season) {
+        showId = item.parentId.present ? item.parentId.value : null;
+      } else if (showId == null && item.parentId.present && item.parentId.value != null) {
+        final parent = await (_db.select(
+          _db.libraryItems,
+        )..where((t) => t.id.equals(item.parentId.value!))).getSingleOrNull();
+        showId = parent?.showId ?? parent?.id;
+      }
+      final resolvedShowId = showId;
+      if (resolvedShowId == null) return null;
+      final show = await (_db.select(_db.libraryItems)..where((t) => t.id.equals(resolvedShowId))).getSingleOrNull();
+      final rootKey = show?.workKey;
+      if (rootKey == null || rootKey.isEmpty) return null;
+      final seasonNum = item.seasonNumber.present ? item.seasonNumber.value : null;
+      if (seasonNum == null) return null;
+      if (kind == LibraryKinds.season) return '$rootKey:s$seasonNum';
+      final epNum = item.episodeNumber.present ? item.episodeNumber.value : null;
+      if (epNum == null) return null;
+      return '$rootKey:s$seasonNum:e$epNum';
+    }
+    return null;
+  }
+
+  Future<int> _refreshHierarchyWorkKeys(int itemId) async {
+    final row = await (_db.select(_db.libraryItems)..where((t) => t.id.equals(itemId))).getSingleOrNull();
+    if (row == null) return itemId;
+
+    if (row.kind == LibraryKinds.season || row.kind == LibraryKinds.episode) {
+      final parentShowId = row.showId ?? row.parentId;
+      if (parentShowId != null && parentShowId != row.id) {
+        await _refreshHierarchyWorkKeys(parentShowId);
+        return row.id;
+      }
+      return row.id;
+    }
+
+    final newRootKey = DeterministicKeys.workKeyForMatchedItem(
+      kind: row.kind,
+      tmdbId: row.tmdbId,
+      bangumiId: row.bangumiId,
+      imdbId: row.imdbId,
+      tvdbId: row.tvdbId,
+      metadataSource: row.metadataSource,
+      libraryType: row.libraryType,
+      sortTitle: row.sortTitle,
+      year: row.year,
+    );
+
+    var targetId = row.id;
+    if (newRootKey != null) {
+      final conflict = await (_db.select(
+        _db.libraryItems,
+      )..where((t) => t.workKey.equals(newRootKey) & t.id.isNotValue(row.id))).getSingleOrNull();
+      if (conflict != null) {
+        if (row.kind == LibraryKinds.movie) {
+          await (_db.update(
+            _db.libraryFiles,
+          )..where((t) => t.itemId.equals(row.id))).write(LibraryFilesCompanion(itemId: Value(conflict.id)));
+        } else {
+          await _mergeDuplicateShowInto(row.id, conflict.id);
+        }
+        await (_db.delete(_db.libraryItems)..where((t) => t.id.equals(row.id))).go();
+        targetId = conflict.id;
+      }
+    }
+
+    final targetRow = await (_db.select(_db.libraryItems)..where((t) => t.id.equals(targetId))).getSingleOrNull();
+    if (targetRow == null) return targetId;
+    if (targetRow.workKey != newRootKey) {
+      await (_db.update(_db.libraryItems)..where((t) => t.id.equals(targetId))).write(
+        LibraryItemsCompanion(workKey: Value(newRootKey)),
+      );
+    }
+
+    if (targetRow.kind == LibraryKinds.movie) {
+      await (_db.update(
+        _db.libraryFiles,
+      )..where((t) => t.itemId.equals(targetId) & t.role.equals(LibraryFileRoles.video))).write(
+        LibraryFilesCompanion(
+          workKey: Value(newRootKey),
+          syncSeasonNumber: const Value(null),
+          syncEpisodeNumber: const Value(null),
+        ),
+      );
+      return targetId;
+    }
+
+    // Show: sync season keys, episode keys, and child video file bindings.
+    final seasons = await (_db.select(
+      _db.libraryItems,
+    )..where((t) => (t.parentId.equals(targetId) | t.showId.equals(targetId)) & t.kind.equals(LibraryKinds.season)))
+        .get();
+    for (final s in seasons) {
+      final sKey = (newRootKey != null && s.seasonNumber != null) ? '$newRootKey:s${s.seasonNumber}' : null;
+      if (sKey != null) {
+        final dupSeason = await (_db.select(
+          _db.libraryItems,
+        )..where((t) => t.workKey.equals(sKey) & t.id.isNotValue(s.id))).getSingleOrNull();
+        if (dupSeason != null) {
+          await (_db.update(_db.libraryItems)..where((t) => t.parentId.equals(s.id))).write(
+            LibraryItemsCompanion(parentId: Value(dupSeason.id), showId: Value(targetId)),
+          );
+          await (_db.delete(_db.libraryItems)..where((t) => t.id.equals(s.id))).go();
+          continue;
+        }
+      }
+      if (s.workKey != sKey) {
+        await (_db.update(_db.libraryItems)..where((t) => t.id.equals(s.id))).write(
+          LibraryItemsCompanion(workKey: Value(sKey)),
+        );
+      }
+    }
+
+    final episodes = await (_db.select(
+      _db.libraryItems,
+    )..where((t) => t.showId.equals(targetId) & t.kind.equals(LibraryKinds.episode))).get();
+    for (final ep in episodes) {
+      final epKey = (newRootKey != null && ep.seasonNumber != null && ep.episodeNumber != null)
+          ? '$newRootKey:s${ep.seasonNumber}:e${ep.episodeNumber}'
+          : null;
+      var effectiveEpId = ep.id;
+      if (epKey != null) {
+        final dupEp = await (_db.select(
+          _db.libraryItems,
+        )..where((t) => t.workKey.equals(epKey) & t.id.isNotValue(ep.id))).getSingleOrNull();
+        if (dupEp != null) {
+          await (_db.update(
+            _db.libraryFiles,
+          )..where((t) => t.itemId.equals(ep.id))).write(LibraryFilesCompanion(itemId: Value(dupEp.id)));
+          await (_db.delete(_db.libraryItems)..where((t) => t.id.equals(ep.id))).go();
+          effectiveEpId = dupEp.id;
+        }
+      }
+      if (effectiveEpId == ep.id && ep.workKey != epKey) {
+        await (_db.update(_db.libraryItems)..where((t) => t.id.equals(ep.id))).write(
+          LibraryItemsCompanion(workKey: Value(epKey)),
+        );
+      }
+      await (_db.update(
+        _db.libraryFiles,
+      )..where((t) => t.itemId.equals(effectiveEpId) & t.role.equals(LibraryFileRoles.video))).write(
+        LibraryFilesCompanion(
+          workKey: Value(newRootKey),
+          syncSeasonNumber: Value(newRootKey != null ? ep.seasonNumber : null),
+          syncEpisodeNumber: Value(newRootKey != null ? ep.episodeNumber : null),
+        ),
+      );
+    }
+
+    return targetId;
+  }
+
+  Future<void> _mergeDuplicateShowInto(int fromShowId, int toShowId) async {
+    final seasons = await (_db.select(
+      _db.libraryItems,
+    )..where((t) => t.parentId.equals(fromShowId) & t.kind.equals(LibraryKinds.season))).get();
+    for (final s in seasons) {
+      final targetSeason = s.seasonNumber == null ? null : await findChild(toShowId, seasonNumber: s.seasonNumber);
+      if (targetSeason == null) {
+        await (_db.update(_db.libraryItems)..where((t) => t.id.equals(s.id))).write(
+          LibraryItemsCompanion(parentId: Value(toShowId), showId: Value(toShowId)),
+        );
+        await (_db.update(
+          _db.libraryItems,
+        )..where((t) => t.parentId.equals(s.id))).write(LibraryItemsCompanion(showId: Value(toShowId)));
+      } else {
+        final eps = await (_db.select(
+          _db.libraryItems,
+        )..where((t) => t.parentId.equals(s.id) & t.kind.equals(LibraryKinds.episode))).get();
+        for (final ep in eps) {
+          final targetEp = ep.episodeNumber == null
+              ? null
+              : await findChild(targetSeason.id, episodeNumber: ep.episodeNumber);
+          if (targetEp == null) {
+            await (_db.update(_db.libraryItems)..where((t) => t.id.equals(ep.id))).write(
+              LibraryItemsCompanion(parentId: Value(targetSeason.id), showId: Value(toShowId)),
+            );
+          } else {
+            await (_db.update(
+              _db.libraryFiles,
+            )..where((t) => t.itemId.equals(ep.id))).write(LibraryFilesCompanion(itemId: Value(targetEp.id)));
+          }
+        }
+      }
+    }
+  }
+
+  Future<void> _syncFileWorkBinding(int fileId, int? itemId) async {
+    if (itemId == null) {
+      await (_db.update(_db.libraryFiles)..where((t) => t.id.equals(fileId))).write(
+        const LibraryFilesCompanion(
+          workKey: Value(null),
+          syncSeasonNumber: Value(null),
+          syncEpisodeNumber: Value(null),
+        ),
+      );
+      return;
+    }
+    final item = await (_db.select(_db.libraryItems)..where((t) => t.id.equals(itemId))).getSingleOrNull();
+    if (item == null) return;
+    if (item.kind == LibraryKinds.movie) {
+      await (_db.update(_db.libraryFiles)..where((t) => t.id.equals(fileId))).write(
+        LibraryFilesCompanion(
+          workKey: Value(item.workKey),
+          syncSeasonNumber: const Value(null),
+          syncEpisodeNumber: const Value(null),
+        ),
+      );
+      return;
+    }
+    if (item.kind == LibraryKinds.episode) {
+      final showId = item.showId ?? item.parentId;
+      final show = showId == null
+          ? null
+          : await (_db.select(_db.libraryItems)..where((t) => t.id.equals(showId))).getSingleOrNull();
+      final rootKey = show?.workKey;
+      await (_db.update(_db.libraryFiles)..where((t) => t.id.equals(fileId))).write(
+        LibraryFilesCompanion(
+          workKey: Value(rootKey),
+          syncSeasonNumber: Value(rootKey != null ? item.seasonNumber : null),
+          syncEpisodeNumber: Value(rootKey != null ? item.episodeNumber : null),
+        ),
+      );
+    }
+  }
+
   Future<int> insertItem(LibraryItemsCompanion item) => _db.transaction(() async {
-    final id = await _db.into(_db.libraryItems).insert(item);
+    final workKey = await _computeWorkKeyForCompanion(item);
+    if (workKey != null) {
+      final existing = await findByWorkKey(workKey);
+      if (existing != null) {
+        await (_db.update(
+          _db.libraryItems,
+        )..where((t) => t.id.equals(existing.id))).write(item.copyWith(workKey: Value(workKey)));
+        await _watchStates.restoreItemAndChildren(existing.id);
+        return existing.id;
+      }
+    }
+    final companion = workKey == null ? item : item.copyWith(workKey: Value(workKey));
+    final id = await _db.into(_db.libraryItems).insert(companion);
     await _watchStates.restoreItemAndChildren(id);
     return id;
   });
 
-  Future<void> updateItem(int id, LibraryItemsCompanion changes) async {
+  Future<void> updateItem(int id, LibraryItemsCompanion changes, {bool preserveUpdatedAt = false}) async {
     await _db.transaction(() async {
       final previous = await (_db.select(_db.libraryItems)..where((t) => t.id.equals(id))).getSingleOrNull();
-      await (_db.update(
-        _db.libraryItems,
-      )..where((t) => t.id.equals(id))).write(changes.copyWith(updatedAt: Value(_now())));
-      final current = await (_db.select(_db.libraryItems)..where((t) => t.id.equals(id))).getSingleOrNull();
+      final effective = (preserveUpdatedAt && changes.updatedAt.present)
+          ? changes
+          : changes.copyWith(updatedAt: Value(_now()));
+      await (_db.update(_db.libraryItems)..where((t) => t.id.equals(id))).write(effective);
+      final effectiveId = await _refreshHierarchyWorkKeys(id);
+      final current = await (_db.select(_db.libraryItems)..where((t) => t.id.equals(effectiveId))).getSingleOrNull();
       if (previous != null && current != null) await _watchStates.addTmdbIdentity(previous, current);
-      await _watchStates.restoreItemAndChildren(id);
+      await _watchStates.restoreItemAndChildren(effectiveId);
     });
   }
 
@@ -249,6 +513,15 @@ class LibraryRepository {
   Future<LibraryItemView?> getItem(int id) async {
     final row = await (_viewSelect()..where(_db.libraryItems.id.equals(id))).getSingleOrNull();
     return row == null ? null : _toView(row);
+  }
+
+  Future<LibraryItemRow?> findByWorkKey(String workKey) {
+    final canonical = DeterministicKeys.canonicalizeWorkKey(workKey);
+    if (canonical.isEmpty) return Future.value(null);
+    return (_db.select(_db.libraryItems)
+          ..where((t) => t.workKey.equals(canonical))
+          ..limit(1))
+        .getSingleOrNull();
   }
 
   /// Finds a title a scraper already created, so a second file for the same
@@ -280,13 +553,21 @@ class LibraryRepository {
   /// of its aliases, on whichever shelf it ended up. A [year] only rules a
   /// candidate out when both sides have one and they differ beyond scraped
   /// one-year regional release drift.
-  Future<LibraryItemRow?> findTitleByName({required String kind, required String name, int? year}) async {
+  Future<LibraryItemRow?> findTitleByName({
+    required String kind,
+    required String name,
+    int? year,
+    bool pendingOnly = false,
+  }) async {
     final items = _db.libraryItems;
     final key = sortTitleFor(name);
     final wanted = name.trim().toLowerCase();
     Expression<bool> filter =
         items.kind.equals(kind) &
         (items.sortTitle.equals(key) | items.aliases.like(_likePattern(name.trim()), escapeChar: r'\'));
+    if (pendingOnly) {
+      filter = filter & items.libraryType.equals(LibraryTypes.pending) & items.workKey.isNull();
+    }
     if (year != null) {
       filter =
           filter &
@@ -559,7 +840,8 @@ class LibraryRepository {
       await (_db.update(_db.libraryItems)..where((t) => t.id.equals(itemId) | t.showId.equals(itemId))).write(
         LibraryItemsCompanion(libraryType: Value(libraryType)),
       );
-      await _watchStates.restoreItemAndChildren(itemId);
+      final effectiveId = await _refreshHierarchyWorkKeys(itemId);
+      await _watchStates.restoreItemAndChildren(effectiveId);
     });
   }
 
@@ -966,14 +1248,17 @@ class LibraryRepository {
     int? ownerFileId,
   }) async {
     final files = _db.libraryFiles;
-    final existing = await (_db.select(
-      files,
-    )..where((t) => t.mountId.equals(mountId) & t.path.equals(path))).getSingleOrNull();
+    final fileKey = DeterministicKeys.generateFileId(sourceId: mountId, mountRelativePath: path);
+    final existingByKey = await (_db.select(files)..where((t) => t.fileKey.equals(fileKey))).getSingleOrNull();
+    final existing =
+        existingByKey ??
+        await (_db.select(files)..where((t) => t.mountId.equals(mountId) & t.path.equals(path))).getSingleOrNull();
     if (existing == null) {
       return _db
           .into(files)
           .insert(
             LibraryFilesCompanion.insert(
+              fileKey: Value(fileKey),
               mountId: mountId,
               path: path,
               role: role,
@@ -995,6 +1280,9 @@ class LibraryRepository {
     final replaced = existing.size != size || existing.modifiedAt != modifiedAt;
     await (_db.update(files)..where((t) => t.id.equals(existing.id))).write(
       LibraryFilesCompanion(
+        fileKey: Value(fileKey),
+        mountId: Value(mountId),
+        path: Value(path),
         role: Value(role),
         remoteId: Value(remoteId),
         size: Value(size),
@@ -1024,8 +1312,26 @@ class LibraryRepository {
     return (_db.select(_db.libraryFiles)..where((t) => t.id.equals(id))).getSingleOrNull();
   }
 
+  Future<LibraryFileRow?> findFileByKey(String fileKey) {
+    return (_db.select(_db.libraryFiles)..where((t) => t.fileKey.equals(fileKey))..limit(1)).getSingleOrNull();
+  }
+
   Future<void> updateFile(int id, LibraryFilesCompanion changes) async {
-    await (_db.update(_db.libraryFiles)..where((t) => t.id.equals(id))).write(changes);
+    var effective = changes;
+    if ((changes.mountId.present || changes.path.present) && !changes.fileKey.present) {
+      final current = await getFile(id);
+      if (current != null) {
+        final mountId = changes.mountId.present ? changes.mountId.value : current.mountId;
+        final path = changes.path.present ? changes.path.value : current.path;
+        effective = effective.copyWith(
+          fileKey: Value(DeterministicKeys.generateFileId(sourceId: mountId, mountRelativePath: path)),
+        );
+      }
+    }
+    await (_db.update(_db.libraryFiles)..where((t) => t.id.equals(id))).write(effective);
+    if (changes.itemId.present && !changes.workKey.present) {
+      await _syncFileWorkBinding(id, changes.itemId.value);
+    }
   }
 
   /// The playable versions of a movie or episode, largest first.
@@ -1078,6 +1384,7 @@ class LibraryRepository {
         matchLocked: locked ? const Value(true) : const Value.absent(),
       ),
     );
+    await _syncFileWorkBinding(fileId, itemId);
   }
 
   /// Records what probing [fileId]'s header found. A file the probe cannot
@@ -1105,6 +1412,7 @@ class LibraryRepository {
     await (_db.update(
       _db.libraryFiles,
     )..where((t) => t.id.equals(fileId))).write(LibraryFilesCompanion(itemId: Value(itemId)));
+    await _syncFileWorkBinding(fileId, itemId);
   }
 
   /// How many videos a mount holds, and how many of them no title claims.

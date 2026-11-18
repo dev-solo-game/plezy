@@ -185,7 +185,7 @@ class SymbolPlan {
 }
 
 List<File> _files(String root) {
-  final directory = Directory(root);
+  final directory = Directory(path.normalize(root));
   if (!directory.existsSync()) return [];
   return directory.listSync(recursive: true, followLinks: false).whereType<File>().toList()
     ..sort((a, b) => a.path.compareTo(b.path));
@@ -640,11 +640,13 @@ Future<SymbolPlan> createSymbolPlan(
   }
   final explicitMap = environment['SENTRY_DART_SYMBOL_MAP_PATH'];
   final mapFile = File(
-    explicitMap != null && explicitMap.isNotEmpty
-        ? path.isAbsolute(explicitMap)
-              ? explicitMap
-              : path.join(sourceRoot, explicitMap)
-        : path.join(symbolRoot, 'obfuscation.map.json'),
+    path.normalize(
+      explicitMap != null && explicitMap.isNotEmpty
+          ? path.isAbsolute(explicitMap)
+                ? explicitMap
+                : path.join(sourceRoot, explicitMap)
+          : path.join(symbolRoot, 'obfuscation.map.json'),
+    ),
   );
   List<String>? entries;
   if (android || mapFile.existsSync() || (explicitMap != null && explicitMap.isNotEmpty)) {

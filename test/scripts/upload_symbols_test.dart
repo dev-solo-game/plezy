@@ -60,11 +60,13 @@ void main() {
   late List<Uri> downloads;
   late Set<String> unaccepted;
 
+  String repoPath(String relative) => path.normalize(path.join(repository.path, relative));
+
   File put(String relative, List<int> bytes, {String info = 'debug, symtab, unwind'}) {
-    final file = File(path.join(repository.path, relative));
+    final file = File(repoPath(relative));
     file.parent.createSync(recursive: true);
     file.writeAsBytesSync(bytes);
-    features[file.path] = info;
+    features[path.normalize(file.path)] = info;
     return file;
   }
 
@@ -88,7 +90,7 @@ void main() {
         jsonEncode({
           'type': typeOf(file.path),
           'is_usable': !packaged,
-          'features': features[file.path] ?? 'none',
+          'features': features[path.normalize(file.path)] ?? 'none',
           'variants': [
             {'debug_id': id, 'code_id': null, 'arch': machine == 62 ? 'x86_64' : 'arm64'},
           ],
@@ -154,7 +156,7 @@ void main() {
 
   // Extracted debug files are registered like any other fixture file.
   String extracted(String asset, String name, {String info = 'debug, symtab, unwind'}) {
-    final file = path.join(repository.path, 'build/symbols/mpv-build', path.withoutExtension(asset), name);
+    final file = repoPath('build/symbols/mpv-build/${path.withoutExtension(asset)}/$name');
     features[file] = info;
     return file;
   }
@@ -245,10 +247,7 @@ void main() {
     expect(selected.native.map((a) => path.basename(a.file.path)).toList()..sort(), ['libapp.so', 'libmpv.so']);
     expect(
       selected.native.singleWhere((a) => path.basename(a.file.path) == 'libmpv.so').file.path,
-      path.join(
-        repository.path,
-        'build/app/intermediates/merged_native_libs/release/mergeReleaseNativeLibs/out/lib/arm64-v8a/libmpv.so',
-      ),
+      repoPath('build/app/intermediates/merged_native_libs/release/mergeReleaseNativeLibs/out/lib/arm64-v8a/libmpv.so'),
     );
     expect(selected.dart.map((a) => a.variants.single.debugId), [fixtureDebugId(1)]);
   });
@@ -278,7 +277,7 @@ void main() {
     put('debug-info/android-apk/obfuscation.map.json', utf8.encode('["Original","a"]'));
     final selected = await plan('android-apk');
     expect(selected.native.expand((a) => a.variants).map((v) => v.arch).toSet(), {'arm64'});
-    expect(selected.dart.single.file.parent.path, path.join(repository.path, 'debug-info/android-apk'));
+    expect(selected.dart.single.file.parent.path, repoPath('debug-info/android-apk'));
   });
 
   test('desktop release roots and Dart files isolate the requested architecture', () async {
@@ -349,7 +348,7 @@ void main() {
     // libmpv-2.pdb as mpv-build's winbuild graph links it (zhongfly/mpv-winbuild's
     // mpv.pdb) and the patched engine's PDB from run 38170180917, as sparse files.
     SymbolArtifact sized(String name, int size, int seed) {
-      final file = File(path.join(repository.path, name));
+      final file = File(repoPath(name));
       file.openSync(mode: FileMode.write)
         ..truncateSync(size)
         ..closeSync();
@@ -400,7 +399,7 @@ void main() {
 
   test('dry run and execution share selection; maps use temporary paired copies', () async {
     android();
-    final map = File(path.join(repository.path, 'debug-info/android-aab/obfuscation.map.json'));
+    final map = File(repoPath('debug-info/android-aab/obfuscation.map.json'));
     final before = map.readAsBytesSync();
     final dryOutput = StringBuffer();
     final executionOutput = StringBuffer();
@@ -491,7 +490,7 @@ void main() {
       plan('linux-x64'),
       throwsA(isA<SymbolFailure>().having((e) => e.message, 'message', contains('Checksum mismatch'))),
     );
-    final directory = Directory(path.join(repository.path, 'build/symbols/mpv-build'));
+    final directory = Directory(repoPath('build/symbols/mpv-build'));
     expect(directory.listSync(), isEmpty);
 
     lock({
@@ -596,9 +595,9 @@ void main() {
     final selected = await plan('windows-x64');
     final pdbs = selected.native.where((a) => a.type == 'pdb').map((a) => a.file.path).toSet();
     expect(pdbs, {
-      path.join(repository.path, 'build/windows/x64/link-artifacts/Release/plezy.pdb'),
-      path.join(repository.path, 'build/windows/x64/plugins/window_manager/Release/window_manager_plugin.pdb'),
-      path.join(repository.path, 'windows/flutter/ephemeral/flutter_windows.dll.pdb'),
+      repoPath('build/windows/x64/link-artifacts/Release/plezy.pdb'),
+      repoPath('build/windows/x64/plugins/window_manager/Release/window_manager_plugin.pdb'),
+      repoPath('windows/flutter/ephemeral/flutter_windows.dll.pdb'),
       libmpv,
     });
     // Each PDB rides with, not instead of, its binary's unwind information.

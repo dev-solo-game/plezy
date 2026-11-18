@@ -91,6 +91,7 @@ class LocalLibraryClient implements MediaServerClient {
   static const List<String> shelves = lib.LibraryTypes.shelves;
 
   static const String _hubContinue = 'local.continuewatching';
+  static const String _hubRecentAll = 'local.recent';
   static const String _hubRecentPrefix = 'local.recent.';
   static const String _collectionPrefix = 'list-';
   static const int _pageSize = 50;
@@ -133,6 +134,7 @@ class LocalLibraryClient implements MediaServerClient {
     userFavorites: true,
     continueWatchingRemoval: true,
     folderGrouping: false,
+    richHubs: true,
   );
 
   @override
@@ -603,6 +605,7 @@ class LocalLibraryClient implements MediaServerClient {
   }
 
   /// Hub titles shown by the UI; `{shelf}` is replaced by the shelf's title.
+  String recentlyAddedAllTitle = 'Recently Added';
   String recentlyAddedTitle = 'Recently added in {shelf}';
   String continueWatchingTitle = 'Continue watching';
 
@@ -645,6 +648,21 @@ class LocalLibraryClient implements MediaServerClient {
         );
       }
     }
+    final allRecentRows = await _repo.recentlyAdded(limit: limit);
+    if (allRecentRows.isNotEmpty) {
+      hubs.add(
+        MediaHub(
+          id: _hubRecentAll,
+          title: recentlyAddedAllTitle,
+          type: 'mixed',
+          items: await _toItems(allRecentRows),
+          size: allRecentRows.length,
+          more: allRecentRows.length >= limit,
+          serverId: localServerId,
+          serverName: serverName,
+        ),
+      );
+    }
     for (final shelf in shelves) {
       final hub = await _recentHub(shelf, limit);
       if (hub != null) hubs.add(hub);
@@ -668,6 +686,9 @@ class LocalLibraryClient implements MediaServerClient {
   @override
   Future<List<MediaItem>> fetchMoreHubItems(String hubId, {int? limit}) async {
     if (hubId == _hubContinue) return fetchContinueWatching(count: limit ?? 100);
+    if (hubId == _hubRecentAll) {
+      return _toItems(await _repo.recentlyAdded(limit: limit ?? 200));
+    }
     if (hubId.startsWith(_hubRecentPrefix)) {
       final shelf = hubId.substring(_hubRecentPrefix.length);
       return _toItems(await _repo.recentlyAdded(libraryType: shelf, limit: limit ?? 200));
@@ -1068,7 +1089,7 @@ class LocalLibraryClient implements MediaServerClient {
   // ─── Playback ──────────────────────────────────────────────────────────
 
   Future<StorageMount> _mountOf(LibraryFileRow file) async {
-    final mount = _mountsById[file.mountId] ?? await _mountManager.registry.get(file.mountId);
+    final mount = await _mountManager.registry.get(file.mountId) ?? _mountsById[file.mountId];
     if (mount == null) {
       throw const PlaybackException(
         'The mount this file is on was removed',
@@ -1111,7 +1132,7 @@ class LocalLibraryClient implements MediaServerClient {
   Future<bool> offersStreamQualities(MediaItem item, {String? mediaSourceId}) async {
     final picked = _pickVersion(await _versions(item.id), 0, mediaSourceId);
     if (picked == null) return false;
-    final mount = _mountsById[picked.file.mountId] ?? await _mountManager.registry.get(picked.file.mountId);
+    final mount = await _mountManager.registry.get(picked.file.mountId) ?? _mountsById[picked.file.mountId];
     return mount != null && _mountManager.variantOrder(mount).isNotEmpty;
   }
 
@@ -1224,7 +1245,13 @@ class LocalLibraryClient implements MediaServerClient {
   }
 
   Future<List<StorageEntry>?> _subtitleDirectory(StorageMount mount, LibraryFileRow video, {bool refresh = false}) {
-    final driver = _mountManager.driverFor(mount);
+    final StorageDriver driver;
+    try {
+      driver = _mountManager.driverFor(mount);
+    } catch (error) {
+      appLogger.d('Could not open storage driver for subtitles', error: error);
+      return Future.value(null);
+    }
     final directory = StoragePath.parent(video.path);
     final key = (driver, directory);
     final active = _subtitleLookups[key];

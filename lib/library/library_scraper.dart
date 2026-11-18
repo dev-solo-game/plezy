@@ -526,6 +526,20 @@ class LibraryScraper {
     final provider = _metadataProviders.firstWhere((p) => p.source == candidate.source);
     final isShow = item.kind == LibraryKinds.show;
     final details = isShow ? await provider.show(candidate.id) : await provider.movie(candidate.id);
+    final target = await _existingWithIds(
+      item,
+      tmdbId: details.tmdbId,
+      imdbId: details.imdbId,
+      bangumiId: details.bangumiId,
+    );
+    if (target != null) {
+      await _mergeInto(item, target);
+      await _apply(target, details, folder: await _folderOf(target), locked: true, libraryType: libraryType);
+      final latestTarget = await (_db.select(_db.libraryItems)..where((t) => t.id.equals(target.id))).getSingle();
+      if (isShow) await _fillSeasons(latestTarget, provider, candidate.id, details.title);
+      await _setFilesState(latestTarget, LibraryMatchStates.matched, locked: true);
+      return;
+    }
     await _apply(item, details, folder: await _folderOf(item), locked: true, libraryType: libraryType);
     if (isShow) await _fillSeasons(item, provider, candidate.id, details.title);
     await _setFilesState(item, LibraryMatchStates.matched, locked: true);

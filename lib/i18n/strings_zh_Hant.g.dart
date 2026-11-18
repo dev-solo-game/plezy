@@ -2645,6 +2645,8 @@ class _Translations$storage$zh_Hant extends Translations$storage$zh {
 	@override String get noMatchResults => '沒有結果';
 	@override String get mediaSources => '媒體來源';
 	@override String get scraperSettingsDescription => 'TMDB key、語言與刮削代理';
+	@override String get addScanFolder => '新增目錄';
+	@override String get allFolders => '全部目錄（掃描整盤）';
 }
 
 // Path: streamQuality
@@ -6140,6 +6142,8 @@ extension on TranslationsZhHant {
 			'storage.noMatchResults' => '沒有結果',
 			'storage.mediaSources' => '媒體來源',
 			'storage.scraperSettingsDescription' => 'TMDB key、語言與刮削代理',
+			'storage.addScanFolder' => '新增目錄',
+			'storage.allFolders' => '全部目錄（掃描整盤）',
 			'streamQuality.preferred' => '偏好畫質',
 			'streamQuality.localPreference' => '本機媒體庫畫質',
 			'streamQuality.noneForFile' => '這個檔案暫時沒有轉碼畫質，會播放原畫',

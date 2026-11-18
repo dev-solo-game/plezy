@@ -35,12 +35,12 @@ class MountRegistry {
   }
 
   /// Returns an existing mount with the same [DeterministicKeys.canonicalSourceKey]
-  /// and a different [id], or null if none collides.
-  Future<StorageMount?> findDuplicate(StorageMount candidate) async {
+  /// (ignoring [ignoreId] when editing an existing mount), or null if none collides.
+  Future<StorageMount?> findDuplicate(StorageMount candidate, {String? ignoreId}) async {
     final targetKey = DeterministicKeys.canonicalSourceKey(candidate);
     for (final existing in await list()) {
-      if (existing.id == candidate.id) continue;
-      if (DeterministicKeys.canonicalSourceKey(existing) == targetKey) {
+      if (ignoreId != null && existing.id == ignoreId) continue;
+      if (DeterministicKeys.sameCanonicalSourceKey(DeterministicKeys.canonicalSourceKey(existing), targetKey)) {
         return existing;
       }
     }

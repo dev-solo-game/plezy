@@ -903,6 +903,7 @@ class LanPeerSyncService extends ChangeNotifier {
               'sender_epoch': myEpoch,
               'from_seq': pushCursor,
               'to_seq': nextPushSeq,
+              'has_more': delta.hasMore,
               'bundle': {
                 'user_settings': delta.userSettings,
                 'sources': delta.sources,
@@ -1173,6 +1174,7 @@ class LanPeerSyncService extends ChangeNotifier {
         final body = await _readJsonBody(req);
         final senderEpoch = body['sender_epoch'] as String?;
         final toSeq = (body['to_seq'] as num?)?.toInt() ?? 0;
+        final hasMore = body['has_more'] == true;
         final bundle = body['bundle'] as Map<String, dynamic>? ?? const {};
         final sources = _listOfMaps(bundle['sources']);
         final works = _listOfMaps(bundle['works']);
@@ -1193,7 +1195,7 @@ class LanPeerSyncService extends ChangeNotifier {
             watchProgress: watchProgress,
             userSettings: _mapOf(bundle['user_settings']),
             nextSeq: 0,
-            isFinalPage: true,
+            isFinalPage: !hasMore,
             updateCloudCursor: false,
             deterministicP2pSourceTieBreak: true,
             originDeviceId: verifiedPeer.deviceId,

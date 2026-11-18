@@ -1150,6 +1150,19 @@ class _MainScreenState extends State<MainScreen>
     if (!_libraryUpdateReady || !mounted || !_canScheduleLibraryUpdates || _checkingLibraryUpdates) return;
     final scans = context.read<LibraryScanService?>();
     if (scans == null) return;
+    SyncAndScanCoordinator? sync;
+    try {
+      sync = Provider.of<SyncAndScanCoordinator?>(context, listen: false);
+    } on ProviderNotFoundException {
+      sync = null;
+    }
+    if (sync != null && !await sync.shouldAllowAutomaticIncrementalScan()) {
+      if (mounted && _canScheduleLibraryUpdates) {
+        _libraryUpdateTimer?.cancel();
+        _libraryUpdateTimer = Timer(LibraryScanService.automaticInterval, _checkLibraryUpdates);
+      }
+      return;
+    }
     _libraryUpdateTimer?.cancel();
     _checkingLibraryUpdates = true;
     var delay = LibraryScanService.automaticInterval;

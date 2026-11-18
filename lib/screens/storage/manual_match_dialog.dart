@@ -151,7 +151,7 @@ class _ManualMatchDialogState extends State<_ManualMatchDialog> {
         (scraper, settings) =>
             scraper.applyManualMatch(widget.item.id, candidate, asShow: _asShow, libraryType: _shelf),
       );
-      scans.notifyLibraryChanged();
+      scans.notifyCatalogMutated();
       if (mounted) navigator.pop(true);
     } catch (e) {
       if (mounted) {

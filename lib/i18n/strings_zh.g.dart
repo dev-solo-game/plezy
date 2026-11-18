@@ -2689,6 +2689,8 @@ class Translations$storage$zh extends Translations$storage$en {
 	@override String get showOffline => '显示全部';
 	@override String get hideOffline => '隐藏离线';
 	@override String duplicateMount({required Object name}) => '该媒体来源已存在（“${name}”），请直接编辑已有来源。';
+	@override String get addScanFolder => '添加目录';
+	@override String get allFolders => '全部目录（扫描整盘）';
 }
 
 // Path: streamQuality
@@ -6344,6 +6346,8 @@ extension on TranslationsZh {
 			'storage.showOffline' => '显示全部',
 			'storage.hideOffline' => '隐藏离线',
 			'storage.duplicateMount' => ({required Object name}) => '该媒体来源已存在（“${name}”），请直接编辑已有来源。',
+			'storage.addScanFolder' => '添加目录',
+			'storage.allFolders' => '全部目录（扫描整盘）',
 			'streamQuality.preferred' => '首选画质',
 			'streamQuality.localPreference' => '本地媒体库画质',
 			'streamQuality.noneForFile' => '这个文件暂时没有转码画质，会播放原画',
@@ -6365,10 +6369,10 @@ extension on TranslationsZh {
 			'workSkip.timeHint' => '分:秒',
 			'workSkip.behavior' => '片头直接跳过；片尾使用播放设置中的延迟，默认 5 秒。',
 			'workSkip.invalid' => '请检查时间：片头结束需晚于开始，片尾不能超出视频，区间不能重叠。',
-			'workSkip.unavailable' => '请先为这部电影或剧集匹配 TMDB 或 IMDb 信息，再设置跳过。',
-			'workSkip.loadFailed' => '无法读取跳过设置，请重试。',
 			_ => null,
 		} ?? switch (path) {
+			'workSkip.unavailable' => '请先为这部电影或剧集匹配 TMDB 或 IMDb 信息，再设置跳过。',
+			'workSkip.loadFailed' => '无法读取跳过设置，请重试。',
 			'workSkip.saveFailed' => '保存失败，修改尚未生效，请重试。',
 			'workSkip.delay' => '跳过片尾延迟时间',
 			'workSkip.delayDescription' => ({required Object seconds}) => '进入片尾后等待 ${seconds} 秒再跳过；片头直接跳过。',

@@ -762,14 +762,111 @@ class LibraryScanner {
     }
   }
 
-  Future<int> _movieFor(ClassifiedVideo video) async {
-    final existing = await _repo.findTitleByName(kind: LibraryKinds.movie, name: video.title!, year: video.year);
+  /// Files an unmatched synced or local video (`workKey == null`) under its
+  /// deterministic local `pending` placeholder so it appears in the Unmatched
+  /// shelf and can be played before it has a global work key.
+  Future<int?> ensureLocalPendingItemForFile(LibraryFileRow file) async {
+    if (file.role != LibraryFileRoles.video || file.workKey != null) return file.itemId;
+
+    final dir = StoragePath.parent(file.path);
+    final folders = [
+      for (final segment in StoragePath.segments(dir).reversed.take(3)) MediaNameParser.parseFolder(segment),
+    ];
+    final parsedFile = MediaNameParser.parseFile(StoragePath.name(file.path));
+
+    final siblings = await _directFilesIn(file.mountId, dir);
+    var numberedSiblings = 0;
+    for (final s in siblings) {
+      if (s.role != LibraryFileRoles.video) continue;
+      final p = MediaNameParser.parseFile(StoragePath.name(s.path));
+      if (p.episode != null || p.looseEpisode != null) numberedSiblings++;
+    }
+    if (numberedSiblings == 0 && (parsedFile.episode != null || parsedFile.looseEpisode != null)) {
+      numberedSiblings = 1;
+    }
+
+    final classified = MediaClassifier.classify(file: parsedFile, folders: folders, numberedSiblings: numberedSiblings);
+    final encodedParsed = jsonEncode({...parsedFile.toJson(), 'key': classified.key});
+    final nextMatchState = file.matchState == LibraryMatchStates.unmatched
+        ? LibraryMatchStates.unmatched
+        : LibraryMatchStates.pending;
+
+    if (!classified.isKnown) {
+      await _repo.updateFile(
+        file.id,
+        LibraryFilesCompanion(
+          itemId: const Value(null),
+          workKey: const Value(null),
+          syncSeasonNumber: const Value(null),
+          syncEpisodeNumber: const Value(null),
+          parsed: Value(encodedParsed),
+          matchState: const Value(LibraryMatchStates.unmatched),
+        ),
+      );
+      return null;
+    }
+
+    final existingItem = file.itemId == null
+        ? null
+        : await (_db.select(_db.libraryItems)..where((t) => t.id.equals(file.itemId!))).getSingleOrNull();
+    if (existingItem != null && existingItem.libraryType == LibraryTypes.pending && existingItem.workKey == null) {
+      return existingItem.id;
+    }
+
+    final int targetItemId;
+    if (classified.kind == LibraryKinds.movie) {
+      targetItemId = await _movieFor(classified, pendingOnly: true);
+    } else {
+      targetItemId = await _episodeFor(classified, pendingOnly: true);
+    }
+
+    if (nextMatchState == LibraryMatchStates.unmatched) {
+      final targetRow = await (_db.select(_db.libraryItems)..where((t) => t.id.equals(targetItemId))).getSingleOrNull();
+      final rootId = targetRow?.showId ?? targetRow?.id;
+      if (rootId != null) {
+        final rootRow = await (_db.select(_db.libraryItems)..where((t) => t.id.equals(rootId))).getSingleOrNull();
+        if (rootRow != null && rootRow.scrapedAt == null) {
+          await (_db.update(_db.libraryItems)..where((t) => t.id.equals(rootId))).write(
+            LibraryItemsCompanion(scrapedAt: Value(file.modifiedAt ?? _now())),
+          );
+        }
+      }
+    }
+
+    await _repo.updateFile(
+      file.id,
+      LibraryFilesCompanion(
+        itemId: Value(targetItemId),
+        workKey: const Value(null),
+        syncSeasonNumber: const Value(null),
+        syncEpisodeNumber: const Value(null),
+        parsed: Value(encodedParsed),
+        versionLabel: file.versionLabel == null ? Value(classified.versionLabel) : const Value.absent(),
+        matchState: Value(nextMatchState),
+        matchLocked: const Value(false),
+      ),
+    );
+    return targetItemId;
+  }
+
+  Future<int> _movieFor(ClassifiedVideo video, {bool pendingOnly = false}) async {
+    final existing = await _repo.findTitleByName(
+      kind: LibraryKinds.movie,
+      name: video.title!,
+      year: video.year,
+      pendingOnly: pendingOnly,
+    );
     if (existing != null) return existing.id;
     return _insert(kind: LibraryKinds.movie, libraryType: LibraryTypes.pending, title: video.title!, year: video.year);
   }
 
-  Future<int> _episodeFor(ClassifiedVideo video) async {
-    final known = await _repo.findTitleByName(kind: LibraryKinds.show, name: video.title!, year: video.year);
+  Future<int> _episodeFor(ClassifiedVideo video, {bool pendingOnly = false}) async {
+    final known = await _repo.findTitleByName(
+      kind: LibraryKinds.show,
+      name: video.title!,
+      year: video.year,
+      pendingOnly: pendingOnly,
+    );
     // New seasons and episodes join the show on the shelf it already has.
     final libraryType = known?.libraryType ?? LibraryTypes.pending;
     final show =

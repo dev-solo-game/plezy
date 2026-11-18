@@ -2732,7 +2732,9 @@
     "manualMatch": "手動匹配",
     "noMatchResults": "沒有結果",
     "mediaSources": "媒體來源",
-    "scraperSettingsDescription": "TMDB key、語言與刮削代理"
+    "scraperSettingsDescription": "TMDB key、語言與刮削代理",
+    "addScanFolder": "新增目錄",
+    "allFolders": "全部目錄（掃描整盤）"
   },
   "streamQuality": {
     "preferred": "偏好畫質",

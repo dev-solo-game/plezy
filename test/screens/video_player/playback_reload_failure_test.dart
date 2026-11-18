@@ -601,7 +601,7 @@ void main() {
     }
     final item = (await client.fetchItem('$id'))!;
     final versions = item.mediaVersions!;
-    final quark = versions.indexWhere((v) => v.name!.startsWith('Quark'));
+    final quark = versions.indexWhere((v) => v.name!.contains('Quark'));
     final smb = versions.indexWhere((v) => v.name!.contains('SMB'));
     expect(await client.offersStreamQualities(item, mediaSourceId: versions[quark].id), isTrue);
     expect(await client.offersStreamQualities(item, mediaSourceId: versions[smb].id), isFalse);
@@ -629,6 +629,10 @@ void main() {
         }
 
         const progress = Duration(minutes: 12);
+        if (quark != 0) {
+          await switchTo(quark);
+          expect(result, PlaybackSourceChangeOutcome.applied);
+        }
         player.setPosition(progress);
         mounts.smbUnavailable = true;
         await switchTo(smb);

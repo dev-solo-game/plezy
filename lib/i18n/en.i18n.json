@@ -2791,7 +2791,9 @@
     "offlineMountsShown": "Showing ${count} offline mount(s)",
     "showOffline": "Show all",
     "hideOffline": "Hide offline",
-    "duplicateMount": "This media source is already added as \"${name}\". Please edit the existing source instead."
+    "duplicateMount": "This media source is already added as \"${name}\". Please edit the existing source instead.",
+    "addScanFolder": "Add folder",
+    "allFolders": "All folders (entire storage)"
   },
   "streamQuality": {
     "preferred": "Preferred quality",

@@ -6783,6 +6783,12 @@ class Translations$storage$en {
 
 	/// en: 'This media source is already added as "${name}". Please edit the existing source instead.'
 	String duplicateMount({required Object name}) => 'This media source is already added as "${name}". Please edit the existing source instead.';
+
+	/// en: 'Add folder'
+	String get addScanFolder => 'Add folder';
+
+	/// en: 'All folders (entire storage)'
+	String get allFolders => 'All folders (entire storage)';
 }
 
 // Path: streamQuality
@@ -11689,6 +11695,8 @@ extension on Translations {
 			'storage.showOffline' => 'Show all',
 			'storage.hideOffline' => 'Hide offline',
 			'storage.duplicateMount' => ({required Object name}) => 'This media source is already added as "${name}". Please edit the existing source instead.',
+			'storage.addScanFolder' => 'Add folder',
+			'storage.allFolders' => 'All folders (entire storage)',
 			'streamQuality.preferred' => 'Preferred quality',
 			'streamQuality.localPreference' => 'Local library quality',
 			'streamQuality.noneForFile' => 'This file has no transcoded qualities yet; it plays the original',
@@ -11702,10 +11710,10 @@ extension on Translations {
 			'workSkip.scopeMovie' => 'Applies to every file version of this movie, within this media source.',
 			'workSkip.intro' => 'Skip intro',
 			'workSkip.introStart' => 'Intro starts at',
-			'workSkip.introEnd' => 'Intro ends at',
-			'workSkip.credits' => 'Skip credits',
 			_ => null,
 		} ?? switch (path) {
+			'workSkip.introEnd' => 'Intro ends at',
+			'workSkip.credits' => 'Skip credits',
 			'workSkip.creditsDuration' => 'Credits length',
 			'workSkip.resumeBeforeEnd' => 'Keep the final scene',
 			'workSkip.resumeHint' => 'Time remaining after the jump. 00:00 finishes playback.',

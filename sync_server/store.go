@@ -847,7 +847,10 @@ func (s *SyncStore) applySourceLocked(u *UserSyncState, incoming *SyncSource, ba
 		}
 		existing.IncludePaths = incoming.IncludePaths
 		existing.ExcludePaths = incoming.ExcludePaths
-		if incoming.CanonicalKey != "" {
+		if incoming.CanonicalKey != "" && incoming.CanonicalKey != existing.CanonicalKey {
+			if prevWinner, ok := u.CanonicalToSource[existing.CanonicalKey]; ok && prevWinner == existing.SourceID {
+				delete(u.CanonicalToSource, existing.CanonicalKey)
+			}
 			existing.CanonicalKey = incoming.CanonicalKey
 		}
 		existing.ClientUpdatedAt = incoming.ClientUpdatedAt

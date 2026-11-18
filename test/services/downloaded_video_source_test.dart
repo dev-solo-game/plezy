@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path/path.dart' as p;
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 import 'package:plezy/database/app_database.dart';
 import 'package:plezy/database/download_operations.dart';
@@ -100,13 +101,13 @@ void main() {
 
   group('file copies', () {
     test('a deleted file yields no source', () async {
-      final row = await completedRow('${tmpRoot.path}/gone.mkv');
+      final row = await completedRow(p.join(tmpRoot.path, 'gone.mkv'));
 
       expect(await resolveDownloadedVideoSource(row, requestedMediaIndex: 0), isNull);
     });
 
     test('a present file resolves to its absolute path', () async {
-      final video = File('${tmpRoot.path}/movie-1.mkv');
+      final video = File(p.join(tmpRoot.path, 'movie-1.mkv'));
       await video.writeAsBytes(const <int>[0]);
       final row = await completedRow(video.path);
 
@@ -119,7 +120,7 @@ void main() {
   group('stacked files', () {
     Future<List<File>> writeFiles(List<String> names) async {
       return [
-        for (final name in names) await File('${tmpRoot.path}/$name').writeAsBytes(const <int>[0]),
+        for (final name in names) await File(p.join(tmpRoot.path, name)).writeAsBytes(const <int>[0]),
       ];
     }
 
@@ -148,7 +149,7 @@ void main() {
     test('an unreachable later file yields no source rather than another file', () async {
       final files = await writeFiles(['movie-1.mkv']);
       var row = await completedRow(files[0].path);
-      await db.updateAdditionalPartPaths(row.globalKey, ['${tmpRoot.path}/movie-1 - part2.mkv']);
+      await db.updateAdditionalPartPaths(row.globalKey, [p.join(tmpRoot.path, 'movie-1 - part2.mkv')]);
       row = (await db.getDownloadedMedia(row.globalKey))!;
 
       expect(await resolveDownloadedVideoSource(row, requestedMediaIndex: 0, partIndex: 1), isNull);

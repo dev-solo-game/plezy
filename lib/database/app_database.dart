@@ -11,6 +11,7 @@ import 'package:path/path.dart' as p;
 
 import 'library_tables.dart';
 import '../library/library_watch_state_store.dart';
+import '../library/sync/deterministic_keys.dart';
 import 'tables.dart';
 import 'plex_metadata_recovery.dart';
 import 'tvos_database_recovery_store.dart';
@@ -386,7 +387,7 @@ class AppDatabase extends _$AppDatabase {
   static const FormatException _invalidRecoveryImage = FormatException('Invalid tvOS database recovery image');
 
   @override
-  int get schemaVersion => 36;
+  int get schemaVersion => 37;
 
   @override
   MigrationStrategy get migration {
@@ -902,8 +903,173 @@ class AppDatabase extends _$AppDatabase {
           appLogger.i('Adding sync_journal table and indexes (v36 migration)');
           await _ensureSyncJournalSchema();
         }
+        if (from < 37) {
+          appLogger.i('Adding fixed sync key columns & indexes (v37 migration)');
+          await _ignoreAlreadyExists(
+            'LibraryItems.workKey column',
+            () => m.addColumn(libraryItems, libraryItems.workKey),
+          );
+          await _ignoreAlreadyExists(
+            'LibraryFiles.fileKey column',
+            () => m.addColumn(libraryFiles, libraryFiles.fileKey),
+          );
+          await _ignoreAlreadyExists(
+            'LibraryFiles.workKey column',
+            () => m.addColumn(libraryFiles, libraryFiles.workKey),
+          );
+          await _ignoreAlreadyExists(
+            'LibraryFiles.syncSeasonNumber column',
+            () => m.addColumn(libraryFiles, libraryFiles.syncSeasonNumber),
+          );
+          await _ignoreAlreadyExists(
+            'LibraryFiles.syncEpisodeNumber column',
+            () => m.addColumn(libraryFiles, libraryFiles.syncEpisodeNumber),
+          );
+          await _backfillFixedLibraryKeys();
+          for (final index in allSchemaEntities.whereType<Index>()) {
+            if (index.entityName != 'idx_library_items_work_key' &&
+                index.entityName != 'idx_library_files_file_key' &&
+                index.entityName != 'idx_library_files_work_key') {
+              continue;
+            }
+            await _ignoreAlreadyExists('${index.entityName} index', () => m.create(index));
+          }
+        }
       },
     );
+  }
+
+  Future<void> _backfillFixedLibraryKeys() async {
+    final files = await customSelect('SELECT id, mount_id, path, item_id, role FROM library_files').get();
+    final seenFileKeys = <String, int>{};
+    for (final row in files) {
+      final id = row.read<int>('id');
+      final mountId = row.read<String>('mount_id');
+      final path = row.read<String>('path');
+      final fileKey = DeterministicKeys.generateFileId(sourceId: mountId, mountRelativePath: path);
+      if (seenFileKeys.containsKey(fileKey)) {
+        await customStatement('DELETE FROM library_files WHERE id = ?', [id]);
+        continue;
+      }
+      seenFileKeys[fileKey] = id;
+      await customStatement('UPDATE library_files SET file_key = ? WHERE id = ?', [fileKey, id]);
+    }
+
+    final itemRows = await customSelect(
+      'SELECT id, kind, library_type, parent_id, show_id, sort_title, year, '
+      'tmdb_id, imdb_id, tvdb_id, bangumi_id, metadata_source, season_number, episode_number '
+      'FROM library_items',
+    ).get();
+
+    final winnerByWorkKey = <String, int>{};
+    final rootWorkKeyById = <int, String>{};
+    final mergedRootIds = <int, int>{};
+
+    for (final row in itemRows) {
+      final id = row.read<int>('id');
+      final kind = row.read<String>('kind');
+      if (kind != 'movie' && kind != 'show') continue;
+      final workKey = DeterministicKeys.workKeyForMatchedItem(
+        kind: kind,
+        tmdbId: row.readNullable<String>('tmdb_id'),
+        bangumiId: row.readNullable<String>('bangumi_id'),
+        imdbId: row.readNullable<String>('imdb_id'),
+        tvdbId: row.readNullable<String>('tvdb_id'),
+        metadataSource: row.readNullable<String>('metadata_source'),
+        libraryType: row.read<String>('library_type'),
+        sortTitle: row.read<String>('sort_title'),
+        year: row.readNullable<int>('year'),
+      );
+      if (workKey == null) continue;
+      final existingWinner = winnerByWorkKey[workKey];
+      if (existingWinner != null && existingWinner != id) {
+        mergedRootIds[id] = existingWinner;
+        await customStatement('UPDATE library_files SET item_id = ? WHERE item_id = ?', [existingWinner, id]);
+        await customStatement('UPDATE library_items SET parent_id = ? WHERE parent_id = ?', [existingWinner, id]);
+        await customStatement('UPDATE library_items SET show_id = ? WHERE show_id = ?', [existingWinner, id]);
+        await customStatement('DELETE FROM library_items WHERE id = ?', [id]);
+      } else {
+        winnerByWorkKey[workKey] = id;
+        rootWorkKeyById[id] = workKey;
+        await customStatement('UPDATE library_items SET work_key = ? WHERE id = ?', [workKey, id]);
+      }
+    }
+
+    for (final row in itemRows) {
+      final id = row.read<int>('id');
+      final kind = row.read<String>('kind');
+      if (kind != 'season') continue;
+      final rawShowId = row.readNullable<int>('show_id') ?? row.readNullable<int>('parent_id');
+      final showId = rawShowId == null ? null : (mergedRootIds[rawShowId] ?? rawShowId);
+      final rootKey = showId == null ? null : rootWorkKeyById[showId];
+      final seasonNum = row.readNullable<int>('season_number');
+      if (rootKey == null || seasonNum == null) continue;
+      final seasonKey = '$rootKey:s$seasonNum';
+      final existingWinner = winnerByWorkKey[seasonKey];
+      if (existingWinner != null && existingWinner != id) {
+        mergedRootIds[id] = existingWinner;
+        await customStatement('UPDATE library_items SET parent_id = ? WHERE parent_id = ?', [existingWinner, id]);
+        await customStatement('DELETE FROM library_items WHERE id = ?', [id]);
+      } else {
+        winnerByWorkKey[seasonKey] = id;
+        await customStatement('UPDATE library_items SET work_key = ? WHERE id = ?', [seasonKey, id]);
+      }
+    }
+
+    for (final row in itemRows) {
+      final id = row.read<int>('id');
+      final kind = row.read<String>('kind');
+      if (kind != 'episode') continue;
+      final rawShowId = row.readNullable<int>('show_id');
+      final showId = rawShowId == null ? null : (mergedRootIds[rawShowId] ?? rawShowId);
+      final rootKey = showId == null ? null : rootWorkKeyById[showId];
+      final seasonNum = row.readNullable<int>('season_number');
+      final epNum = row.readNullable<int>('episode_number');
+      if (rootKey == null || seasonNum == null || epNum == null) continue;
+      final epKey = '$rootKey:s$seasonNum:e$epNum';
+      final existingWinner = winnerByWorkKey[epKey];
+      if (existingWinner != null && existingWinner != id) {
+        await customStatement('UPDATE library_files SET item_id = ? WHERE item_id = ?', [existingWinner, id]);
+        await customStatement('DELETE FROM library_items WHERE id = ?', [id]);
+      } else {
+        winnerByWorkKey[epKey] = id;
+        await customStatement('UPDATE library_items SET work_key = ? WHERE id = ?', [epKey, id]);
+      }
+    }
+
+    await customStatement('''
+      UPDATE library_files
+      SET
+        work_key = (
+          SELECT CASE
+            WHEN item.kind = 'movie' THEN item.work_key
+            WHEN item.kind = 'episode' THEN show.work_key
+            ELSE NULL
+          END
+          FROM library_items item
+          LEFT JOIN library_items show ON show.id = item.show_id
+          WHERE item.id = library_files.item_id
+        ),
+        sync_season_number = (
+          SELECT CASE WHEN item.kind = 'episode' THEN item.season_number ELSE NULL END
+          FROM library_items item WHERE item.id = library_files.item_id
+        ),
+        sync_episode_number = (
+          SELECT CASE WHEN item.kind = 'episode' THEN item.episode_number ELSE NULL END
+          FROM library_items item WHERE item.id = library_files.item_id
+        )
+      WHERE item_id IS NOT NULL AND role = 'video'
+    ''');
+
+    final syncJournalExists = await customSelect(
+      "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'sync_journal'",
+    ).getSingleOrNull();
+    if (syncJournalExists != null) {
+      await customStatement("DELETE FROM sync_journal WHERE entity_type = 'work' AND entity_key LIKE 'raw:%'");
+      await customStatement(
+        "UPDATE sync_journal SET work_key = NULL WHERE entity_type = 'file' AND work_key LIKE 'raw:%'",
+      );
+    }
   }
 
   Future<void> _ensureSyncJournalSchema() async {

@@ -10,6 +10,7 @@ import '../../focus/focusable_button.dart';
 import '../../focus/focusable_text_field.dart';
 import '../../i18n/strings.g.dart';
 import '../../library/library_scan_service.dart';
+import '../../library/sync/deterministic_keys.dart';
 import '../../library/sync/sync_coordinator.dart';
 import '../../services/file_picker_service.dart';
 import '../../services/settings_service.dart';
@@ -17,9 +18,9 @@ import '../../storage/drivers/quark_pc_device_store.dart';
 import '../../storage/drivers/quark_pc_session.dart';
 import '../../storage/drivers/quark_storage_driver.dart';
 import '../../storage/drivers/smb_storage_driver.dart';
+import '../../storage/drivers/webdav_storage_driver.dart';
 import '../../storage/http_range_reader.dart';
 import '../../storage/mount_manager.dart';
-import '../../storage/mount_registry.dart';
 import '../../storage/storage_driver.dart';
 import '../../storage/storage_mount.dart';
 import '../../storage/storage_path.dart';
@@ -70,9 +71,8 @@ class _MountEditScreenState extends State<MountEditScreen> {
   late final TextEditingController _includePaths;
   late final TextEditingController _excludePaths;
 
-  /// Quark's mount root: the folder id the API needs and the path shown for it.
-  late String _quarkFolderId;
-  late String _quarkFolderPath;
+  /// Scan root subfolders stored in `MountKeys.includePaths`.
+  late List<String> _selectedDirs;
   late QuarkMode _quarkMode;
   late int _downloadConnections;
   late int _downloadChunkMiB;
@@ -81,7 +81,6 @@ class _MountEditScreenState extends State<MountEditScreen> {
   late final TextEditingController _host;
   late final TextEditingController _share;
   late final TextEditingController _domain;
-  late final TextEditingController _subfolder;
 
   bool _saving = false;
   String? _error;
@@ -109,16 +108,39 @@ class _MountEditScreenState extends State<MountEditScreen> {
     _username = TextEditingController(text: mount?.configString(MountKeys.username) ?? '');
     _password = TextEditingController(text: mount?.secret(MountKeys.secretPassword) ?? '');
     _cookie = TextEditingController(text: mount?.secret(MountKeys.secretCookie) ?? '');
-    _includePaths = TextEditingController(text: mount?.configStringList(MountKeys.includePaths).join('\n') ?? '');
+    final initialIncludes = [
+      for (final p in mount?.configStringList(MountKeys.includePaths) ?? const <String>[])
+        StoragePath.normalize(p),
+    ];
+    var migratedQuarkRoot = false;
+    if (mount?.kind == StorageKind.quark) {
+      final savedFolderId = mount?.configString(MountKeys.rootFolderId) ?? QuarkStorageDriver.defaultRootFolderId;
+      final savedFolderPath = StoragePath.normalize(mount?.configString(MountKeys.rootFolderPath) ?? StoragePath.root);
+      if (savedFolderId != QuarkStorageDriver.defaultRootFolderId) {
+        migratedQuarkRoot = true;
+        if (initialIncludes.isEmpty && savedFolderPath != StoragePath.root) {
+          initialIncludes.add(savedFolderPath);
+        }
+      }
+    }
+    final smbLegacySubfolder = mount?.kind == StorageKind.smb
+        ? (mount?.configString(MountKeys.rootPath)?.trim() ?? '')
+        : '';
+    if (smbLegacySubfolder.isNotEmpty) {
+      final norm = StoragePath.normalize(smbLegacySubfolder);
+      if (initialIncludes.isEmpty && norm != StoragePath.root) {
+        initialIncludes.add(norm);
+      }
+    }
+    _selectedDirs = [
+      for (final p in initialIncludes)
+        if (p != StoragePath.root) p,
+    ];
+    _includePaths = TextEditingController(text: _selectedDirs.join('\n'));
     _excludePaths = TextEditingController(text: mount?.configStringList(MountKeys.excludePaths).join('\n') ?? '');
     _host = TextEditingController(text: mount?.configString(MountKeys.host) ?? '');
     _share = TextEditingController(text: mount?.configString(MountKeys.share) ?? '');
     _domain = TextEditingController(text: mount?.configString(MountKeys.domain) ?? '');
-    _subfolder = TextEditingController(
-      text: mount?.kind == StorageKind.smb ? mount?.configString(MountKeys.rootPath) ?? '' : '',
-    );
-    _quarkFolderId = mount?.configString(MountKeys.rootFolderId) ?? QuarkStorageDriver.defaultRootFolderId;
-    _quarkFolderPath = mount?.configString(MountKeys.rootFolderPath) ?? StoragePath.root;
     _quarkMode = QuarkMode.parse(mount?.configString(MountKeys.quarkMode));
     final downloadDefaults =
         (mount?.kind == StorageKind.quark ? SettingsService.instanceOrNull?.bulkReadOptions : null) ??
@@ -130,7 +152,9 @@ class _MountEditScreenState extends State<MountEditScreen> {
       text:
           '${mount?.configInt(MountKeys.requestIntervalMs) ?? QuarkStorageDriver.defaultRequestInterval.inMilliseconds}',
     );
-    if (_kind == StorageKind.quark) _initialQuarkMount = _buildMount(StorageKind.quark);
+    if (_kind == StorageKind.quark && !migratedQuarkRoot) {
+      _initialQuarkMount = _buildMount(StorageKind.quark);
+    }
     if (_kind != null) _focusFormOnTv();
   }
 
@@ -163,7 +187,6 @@ class _MountEditScreenState extends State<MountEditScreen> {
       _host,
       _share,
       _domain,
-      _subfolder,
     ]) {
       controller.dispose();
     }
@@ -176,6 +199,7 @@ class _MountEditScreenState extends State<MountEditScreen> {
       final trimmed = segment.trim();
       if (trimmed.isEmpty) continue;
       final normalized = StoragePath.normalize(trimmed);
+      if (normalized == StoragePath.root) continue;
       if (!paths.contains(normalized)) paths.add(normalized);
     }
     return paths;
@@ -204,8 +228,8 @@ class _MountEditScreenState extends State<MountEditScreen> {
       StorageKind.quark => (
         {
           MountKeys.quarkMode: _quarkMode.name,
-          MountKeys.rootFolderId: _quarkFolderId,
-          MountKeys.rootFolderPath: _quarkFolderPath,
+          MountKeys.rootFolderId: QuarkStorageDriver.defaultRootFolderId,
+          MountKeys.rootFolderPath: StoragePath.root,
           MountKeys.quarkDownloadConnections: _downloadConnections,
           MountKeys.quarkDownloadChunkMiB: _downloadChunkMiB,
           MountKeys.requestIntervalMs:
@@ -219,7 +243,6 @@ class _MountEditScreenState extends State<MountEditScreen> {
           MountKeys.host: _host.text.trim(),
           if (fallback.isNotEmpty) MountKeys.fallbackUrl: fallback,
           MountKeys.share: _share.text.trim(),
-          MountKeys.rootPath: _subfolder.text.trim(),
           MountKeys.username: _username.text.trim(),
           MountKeys.domain: _domain.text.trim(),
           ...filterConfig,
@@ -228,10 +251,18 @@ class _MountEditScreenState extends State<MountEditScreen> {
       ),
     };
     final name = _name.text.trim();
-    return StorageMount(
-      id: widget.mount?.id ?? MountRegistry.newId(),
+    final draft = StorageMount(
+      id: widget.mount?.id ?? '',
       kind: kind,
       displayName: name.isEmpty ? storageKindLabel(kind) : name,
+      config: config,
+      secrets: secrets,
+      createdAt: widget.mount?.createdAt,
+    );
+    return StorageMount(
+      id: widget.mount?.id ?? DeterministicKeys.deterministicSourceId(draft),
+      kind: kind,
+      displayName: draft.displayName,
       config: config,
       secrets: secrets,
       createdAt: widget.mount?.createdAt,
@@ -256,7 +287,7 @@ class _MountEditScreenState extends State<MountEditScreen> {
     String? error;
     try {
       final mount = _buildMount(kind);
-      final duplicate = await manager.registry.findDuplicate(mount);
+      final duplicate = await manager.registry.findDuplicate(mount, ignoreId: widget.mount?.id);
       if (duplicate != null) {
         error = t.storage.duplicateMount(name: duplicate.displayName);
       } else if (_onlyQuarkDownloadOptionsChanged(mount)) {
@@ -360,25 +391,49 @@ class _MountEditScreenState extends State<MountEditScreen> {
     }
   }
 
-  Future<void> _pickQuarkFolder() async {
-    final cookie = _cookie.text.trim();
-    if (cookie.isEmpty) {
-      setState(() => _error = t.storage.quarkFolderNeedsLogin);
-      return;
+  Future<void> _addScanFolder(StorageKind kind) async {
+    StorageDriver driver;
+    switch (kind) {
+      case StorageKind.quark:
+        final cookie = _cookie.text.trim();
+        if (cookie.isEmpty) {
+          setState(() => _error = t.storage.quarkFolderNeedsLogin);
+          return;
+        }
+        driver = QuarkStorageDriver(
+          cookie: cookie,
+          mode: _quarkMode,
+          requestInterval: const Duration(milliseconds: 300),
+        );
+      case StorageKind.smb:
+        if (_host.text.trim().isEmpty || _share.text.trim().isEmpty) {
+          setState(() => _error = t.storage.smbFolderNeedsServer);
+          return;
+        }
+        final whole = _buildMount(StorageKind.smb);
+        driver = SmbStorageDriver.fromMount(whole.copyWith(config: {...whole.config, MountKeys.rootPath: ''}));
+      case StorageKind.webdav:
+        final whole = _buildMount(StorageKind.webdav);
+        try {
+          driver = WebDavStorageDriver.fromMount(whole);
+        } on StorageException catch (e) {
+          setState(() => _error = e.message);
+          return;
+        }
+      case StorageKind.local:
+        return;
     }
-    // Browses the whole drive, whatever root is currently selected. A short
-    // gap keeps a person clicking through folders from waiting on the throttle.
-    final driver = QuarkStorageDriver(
-      cookie: cookie,
-      mode: _quarkMode,
-      requestInterval: const Duration(milliseconds: 300),
-    );
     try {
       final picked = await showStorageFolderPicker(context, driver: driver);
       if (picked == null || !mounted) return;
+      final norm = StoragePath.normalize(picked.path);
       setState(() {
-        _quarkFolderId = picked.id ?? QuarkStorageDriver.defaultRootFolderId;
-        _quarkFolderPath = picked.path;
+        if (norm == StoragePath.root) {
+          _selectedDirs = [];
+        } else if (!_selectedDirs.contains(norm)) {
+          _selectedDirs = [..._selectedDirs, norm];
+        }
+        _includePaths.text = _selectedDirs.join('\n');
         _error = null;
       });
     } finally {
@@ -386,24 +441,21 @@ class _MountEditScreenState extends State<MountEditScreen> {
     }
   }
 
-  Future<void> _pickSmbFolder() async {
-    if (_host.text.trim().isEmpty || _share.text.trim().isEmpty) {
-      setState(() => _error = t.storage.smbFolderNeedsServer);
-      return;
-    }
-    final whole = _buildMount(StorageKind.smb);
-    final driver = SmbStorageDriver.fromMount(whole.copyWith(config: {...whole.config, MountKeys.rootPath: ''}));
-    try {
-      final picked = await showStorageFolderPicker(context, driver: driver);
-      if (picked == null || !mounted) return;
-      setState(() {
-        _subfolder.text = picked.path == StoragePath.root ? '' : picked.path;
-        _error = null;
-      });
-    } finally {
-      await driver.close();
-    }
+  void _removeScanFolder(String path) {
+    setState(() {
+      _selectedDirs = [
+        for (final dir in _selectedDirs)
+          if (dir != path) dir,
+      ];
+      _includePaths.text = _selectedDirs.join('\n');
+    });
   }
+
+  Widget _scanFoldersTile(StorageKind kind) => _ScanFoldersTile(
+    paths: _selectedDirs,
+    onAdd: _saving ? null : () => _addScanFolder(kind),
+    onRemove: _saving ? null : _removeScanFolder,
+  );
 
   static String? _required(String? value) => (value == null || value.trim().isEmpty) ? t.storage.required : null;
 
@@ -503,6 +555,8 @@ class _MountEditScreenState extends State<MountEditScreen> {
           ),
           const SizedBox(height: _fieldGap),
           _credentials(),
+          const SizedBox(height: _fieldGap),
+          _scanFoldersTile(StorageKind.webdav),
         ];
       case StorageKind.smb:
         return [
@@ -547,7 +601,7 @@ class _MountEditScreenState extends State<MountEditScreen> {
           const SizedBox(height: _fieldGap),
           _credentials(),
           const SizedBox(height: _fieldGap),
-          _FolderTile(path: StoragePath.normalize(_subfolder.text), onChoose: _saving ? null : _pickSmbFolder),
+          _scanFoldersTile(StorageKind.smb),
         ];
       case StorageKind.quark:
         return [
@@ -588,7 +642,7 @@ class _MountEditScreenState extends State<MountEditScreen> {
             account: snapshot == null ? null : QuarkAccountDetails(snapshot: snapshot),
           ),
           const SizedBox(height: _fieldGap),
-          _FolderTile(path: _quarkFolderPath, onChoose: _saving ? null : _pickQuarkFolder),
+          _scanFoldersTile(StorageKind.quark),
           if (account != null) ..._quarkDownloadFields(QuarkDownloadTier.forAccount(account)),
         ],
       );
@@ -681,6 +735,10 @@ class _MountEditScreenState extends State<MountEditScreen> {
         minLines: 1,
         maxLines: maxLines,
         autocorrect: false,
+        onChanged: (value) {
+          final parsed = _parsePaths(value);
+          setState(() => _selectedDirs = parsed);
+        },
       ),
       const SizedBox(height: _fieldGap),
       FocusableTextFormField(
@@ -956,12 +1014,14 @@ class _SectionTitle extends StatelessWidget {
   }
 }
 
-/// The folder a mount is rooted at, with a button that opens the picker.
-class _FolderTile extends StatelessWidget {
-  const _FolderTile({required this.path, required this.onChoose});
+/// Visual multi-directory list for scan include paths, with folder-picker add
+/// and per-folder removal.
+class _ScanFoldersTile extends StatelessWidget {
+  const _ScanFoldersTile({required this.paths, required this.onAdd, required this.onRemove});
 
-  final String path;
-  final VoidCallback? onChoose;
+  final List<String> paths;
+  final VoidCallback? onAdd;
+  final void Function(String path)? onRemove;
 
   @override
   Widget build(BuildContext context) {
@@ -974,31 +1034,76 @@ class _FolderTile extends StatelessWidget {
       ),
       child: Padding(
         padding: const EdgeInsets.all(14),
-        child: Row(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            AppIcon(Symbols.folder_rounded, color: scheme.outline, size: 28),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    t.storage.mountFolder,
-                    style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+            Row(
+              children: [
+                AppIcon(Symbols.folder_rounded, color: scheme.outline, size: 28),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        t.storage.mountFolder,
+                        style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+                      ),
+                      if (paths.isEmpty) Text(t.storage.allFolders, style: theme.textTheme.titleSmall),
+                    ],
                   ),
-                  Text(
-                    path == StoragePath.root ? t.storage.rootFolder : path,
-                    style: theme.textTheme.titleSmall,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
+                ),
+                FocusableButton(
+                  onPressed: onAdd,
+                  child: OutlinedButton.icon(
+                    onPressed: onAdd,
+                    icon: const AppIcon(Symbols.add_rounded, size: 18),
+                    label: Text(t.storage.addScanFolder),
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
-            FocusableButton(
-              onPressed: onChoose,
-              child: OutlinedButton(onPressed: onChoose, child: Text(t.storage.choose)),
-            ),
+            if (paths.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              for (final dir in paths)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: scheme.surfaceContainerHighest.withValues(alpha: 0.45),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                      child: Row(
+                        children: [
+                          AppIcon(Symbols.subdirectory_arrow_right_rounded, size: 16, color: scheme.onSurfaceVariant),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              dir,
+                              style: theme.textTheme.bodyMedium,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          FocusableButton(
+                            onPressed: onRemove == null ? null : () => onRemove!(dir),
+                            child: IconButton(
+                              tooltip: t.storage.remove,
+                              visualDensity: VisualDensity.compact,
+                              padding: EdgeInsets.zero,
+                              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                              icon: const AppIcon(Symbols.close_rounded, size: 18),
+                              onPressed: onRemove == null ? null : () => onRemove!(dir),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+            ],
           ],
         ),
       ),

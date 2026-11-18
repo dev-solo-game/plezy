@@ -124,6 +124,10 @@ class SyncAndScanCoordinator extends ChangeNotifier {
         await syncStore.saveMinRetainedSeq(gc.maxPurgedSeq);
       }
     }
+    final healed = await mapper.healCatalogFromJournal();
+    if (healed > 0) {
+      scanService?.notifyLibraryChanged();
+    }
 
     if (_session != null) {
       await syncStore.setSyncMode(SyncMode.cloudServer);
@@ -368,16 +372,49 @@ class SyncAndScanCoordinator extends ChangeNotifier {
     return skips.isNotEmpty;
   }
 
+  Future<bool> shouldAllowAutomaticIncrementalScan() async {
+    await initialize();
+    if (_disposed || isTvDevice || _isSyncing || lanService.isSyncing) {
+      return false;
+    }
+    if (_session != null) return false;
+    return true;
+  }
+
   Future<void> onMountSaved(StorageMount mount) async {
     await initialize();
+    await mountManager.dropCachedDriver(mount.id);
+    if (mount.configStringList(MountKeys.includePaths).isNotEmpty ||
+        mount.configStringList(MountKeys.excludePaths).isNotEmpty) {
+      final localFiles = await (db.select(db.libraryFiles)..where((t) => t.mountId.equals(mount.id))).get();
+      final affectedIds = <int>{};
+      var pruned = 0;
+      for (final f in localFiles) {
+        if (!mount.isFileAllowed(f.path)) {
+          if (f.itemId != null) affectedIds.add(f.itemId!);
+          await (db.delete(db.libraryFiles)..where((t) => t.id.equals(f.id))).go();
+          pruned++;
+        }
+      }
+      if (pruned > 0) {
+        await repo.pruneEmptyTitles();
+        if (affectedIds.isNotEmpty) {
+          await repo.refreshSourceAddedTimesForLeaves(affectedIds, recomputeFromFilesOnly: true);
+        }
+        scanService?.notifyLibraryChanged();
+      }
+    }
     if (mount.kind == StorageKind.local) return;
+    if (mount.secrets.isNotEmpty) {
+      await syncStore.setAuthUpdatedAt(mount.id, await syncStore.calibratedNowMs());
+    }
+    await mapper.reconcileCatalogToJournal(mountIds: {mount.id}, allowTombstones: true);
     final sess = _session;
     if (sess == null) {
-      await mapper.reconcileCatalogToJournal(mountIds: {mount.id}, allowTombstones: false);
       unawaited(lanService.notifyTrustedPeersOfLocalChange());
       return;
     }
-    await syncStore.setAuthUpdatedAt(mount.id, await syncStore.calibratedNowMs());
+    await mapper.enqueuePendingJournalForCloud(masterKey: sess.masterKey);
     await mapper.enqueueMount(mount, masterKey: sess.masterKey, forceAuthOverride: true);
     await refreshOutboxCount();
     unawaited(pushOutboxOnly());
@@ -385,6 +422,10 @@ class SyncAndScanCoordinator extends ChangeNotifier {
 
   Future<void> onMountRemoved(String mountId) async {
     await initialize();
+    await mountManager.dropCachedDriver(mountId);
+    await (db.delete(db.libraryFiles)..where((t) => t.mountId.equals(mountId))).go();
+    await repo.pruneEmptyTitles();
+    scanService?.notifyLibraryChanged();
     await mapper.reconcileMountRemovalToJournal(mountId);
     final sess = _session;
     if (sess == null) {
@@ -471,6 +512,7 @@ class SyncAndScanCoordinator extends ChangeNotifier {
     try {
       // [Stage 2] Pull-Before-Scan (_pullAllDeltas fires throttled + final live refreshes immediately).
       await _pullAllDeltas(sess);
+      await mapper.healCatalogFromJournal();
 
       // Export pre-login / unsynced local journal delta cleanly without re-pushing unchanged items.
       final exportedRow = await (db.select(

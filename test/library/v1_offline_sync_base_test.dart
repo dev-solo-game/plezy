@@ -118,8 +118,10 @@ void main() {
         config: {MountKeys.rootFolderId: '0'},
         secrets: {MountKeys.secretCookie: '__pus=xyz; uid=888999; other=1'},
       );
-      expect(DeterministicKeys.canonicalSourceKey(q1), 'quark:888999:0');
-      expect(DeterministicKeys.canonicalSourceKey(q2), 'quark:888999:0');
+      expect(DeterministicKeys.canonicalSourceKey(q1), 'quark:888999');
+      expect(DeterministicKeys.canonicalSourceKey(q2), 'quark:888999');
+      expect(DeterministicKeys.deterministicSourceId(q1), 'quark_888999');
+      expect(DeterministicKeys.deterministicSourceId(q2), 'quark_888999');
 
       const s1 = StorageMount(
         id: 's1',
@@ -134,6 +136,7 @@ void main() {
         config: {MountKeys.host: 'nas.local', MountKeys.share: 'media', MountKeys.rootPath: '/Movies'},
       );
       expect(DeterministicKeys.canonicalSourceKey(s1), DeterministicKeys.canonicalSourceKey(s2));
+      expect(DeterministicKeys.deterministicSourceId(s1).contains(':'), isFalse);
 
       const w1 = StorageMount(
         id: 'w1',
@@ -767,17 +770,32 @@ void main() {
         ))?.id,
         'quark-1',
       );
-      // Editing the same mount ID -> allowed.
-      expect(await registry.findDuplicate(q1), isNull);
-      // Different Quark root folder -> allowed.
+      // Editing the same mount ID (passing ignoreId) -> allowed.
+      expect(await registry.findDuplicate(q1, ignoreId: q1.id), isNull);
+      // Creating a new mount whose deterministic ID matches an existing mount without ignoreId -> duplicate detected.
+      expect((await registry.findDuplicate(q1))?.id, 'quark-1');
+      // Same Quark uid even with different folder is still duplicate (one mount per Quark account, multiple dirs via includePaths).
       expect(
-        await registry.findDuplicate(
+        (await registry.findDuplicate(
           const StorageMount(
             id: 'quark-sub',
             kind: StorageKind.quark,
             displayName: 'Anime Folder',
             config: {MountKeys.rootFolderId: 'folder-anime'},
             secrets: {MountKeys.secretCookie: 'uid=888999; __pus=new'},
+          ),
+        ))?.id,
+        'quark-1',
+      );
+      // Different Quark uid -> allowed.
+      expect(
+        await registry.findDuplicate(
+          const StorageMount(
+            id: 'quark-other',
+            kind: StorageKind.quark,
+            displayName: 'Second Quark',
+            config: {MountKeys.rootFolderId: '0'},
+            secrets: {MountKeys.secretCookie: 'uid=999111; __pus=new'},
           ),
         ),
         isNull,

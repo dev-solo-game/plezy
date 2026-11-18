@@ -146,6 +146,13 @@ class LibraryScanService extends ChangeNotifier {
   /// a manual match, a removed mount.
   void notifyLibraryChanged() => _libraryChanged();
 
+  /// Notifies UI listeners AND triggers catalog sync reconciliation for out-of-band
+  /// mutations (e.g. manual match).
+  void notifyCatalogMutated({Set<String>? mountIds, bool allowTombstones = false}) {
+    _libraryChanged();
+    _emitCatalogChanged(mountIds, allowTombstones: allowTombstones);
+  }
+
   void _libraryChanged() {
     if (_disposed) return;
     _lastLiveRefresh = clock.now();

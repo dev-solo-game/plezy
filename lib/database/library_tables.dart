@@ -16,8 +16,14 @@ import 'tables.dart';
 @TableIndex(name: 'idx_library_items_show', columns: {#showId})
 @TableIndex(name: 'idx_library_items_tmdb', columns: {#kind, #tmdbId})
 @TableIndex(name: 'idx_library_items_added', columns: {#addedAt})
+@TableIndex(name: 'idx_library_items_work_key', columns: {#workKey}, unique: true)
 class LibraryItems extends Table {
   IntColumn get id => integer().autoIncrement()();
+
+  /// Deterministic work identity key for matched titles (`tmdb:movie:693134`,
+  /// `tmdb:show:235412`, `tmdb:show:235412:s1`, `tmdb:show:235412:s1:e1`).
+  /// Null for local-only `pending` placeholders.
+  TextColumn get workKey => text().nullable()();
 
   /// `'movie'`, `'show'`, `'season'` or `'episode'`.
   TextColumn get kind => text()();
@@ -99,8 +105,20 @@ class LibraryItems extends Table {
 @TableIndex(name: 'idx_library_files_item', columns: {#itemId})
 @TableIndex(name: 'idx_library_files_match', columns: {#role, #matchState})
 @TableIndex(name: 'idx_library_files_owner', columns: {#ownerFileId})
+@TableIndex(name: 'idx_library_files_file_key', columns: {#fileKey}, unique: true)
+@TableIndex(name: 'idx_library_files_work_key', columns: {#workKey})
 class LibraryFiles extends Table {
   IntColumn get id => integer().autoIncrement()();
+
+  /// Deterministic file key `sha256(mountId:normPath)` shared across devices.
+  TextColumn get fileKey => text().nullable()();
+
+  /// Root matched work key (`tmdb:movie:...`, `tmdb:show:...`). Null when unmatched.
+  TextColumn get workKey => text().nullable()();
+
+  /// Season and episode numbers synced with [workKey] for show video files.
+  IntColumn get syncSeasonNumber => integer().nullable()();
+  IntColumn get syncEpisodeNumber => integer().nullable()();
 
   TextColumn get mountId => text().references(Mounts, #id, onDelete: KeyAction.cascade)();
 

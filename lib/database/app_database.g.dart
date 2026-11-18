@@ -7745,6 +7745,17 @@ class $LibraryItemsTable extends LibraryItems
       'PRIMARY KEY AUTOINCREMENT',
     ),
   );
+  static const VerificationMeta _workKeyMeta = const VerificationMeta(
+    'workKey',
+  );
+  @override
+  late final GeneratedColumn<String> workKey = GeneratedColumn<String>(
+    'work_key',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
   static const VerificationMeta _kindMeta = const VerificationMeta('kind');
   @override
   late final GeneratedColumn<String> kind = GeneratedColumn<String>(
@@ -8101,6 +8112,7 @@ class $LibraryItemsTable extends LibraryItems
   @override
   List<GeneratedColumn> get $columns => [
     id,
+    workKey,
     kind,
     libraryType,
     parentId,
@@ -8149,6 +8161,12 @@ class $LibraryItemsTable extends LibraryItems
     final data = instance.toColumns(true);
     if (data.containsKey('id')) {
       context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    }
+    if (data.containsKey('work_key')) {
+      context.handle(
+        _workKeyMeta,
+        workKey.isAcceptableOrUnknown(data['work_key']!, _workKeyMeta),
+      );
     }
     if (data.containsKey('kind')) {
       context.handle(
@@ -8406,6 +8424,10 @@ class $LibraryItemsTable extends LibraryItems
         DriftSqlType.int,
         data['${effectivePrefix}id'],
       )!,
+      workKey: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}work_key'],
+      ),
       kind: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
         data['${effectivePrefix}kind'],
@@ -8550,6 +8572,11 @@ class $LibraryItemsTable extends LibraryItems
 class LibraryItemRow extends DataClass implements Insertable<LibraryItemRow> {
   final int id;
 
+  /// Deterministic work identity key for matched titles (`tmdb:movie:693134`,
+  /// `tmdb:show:235412`, `tmdb:show:235412:s1`, `tmdb:show:235412:s1:e1`).
+  /// Null for local-only `pending` placeholders.
+  final String? workKey;
+
   /// `'movie'`, `'show'`, `'season'` or `'episode'`.
   final String kind;
 
@@ -8613,6 +8640,7 @@ class LibraryItemRow extends DataClass implements Insertable<LibraryItemRow> {
   final int? scrapedAt;
   const LibraryItemRow({
     required this.id,
+    this.workKey,
     required this.kind,
     required this.libraryType,
     this.parentId,
@@ -8651,6 +8679,9 @@ class LibraryItemRow extends DataClass implements Insertable<LibraryItemRow> {
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
     map['id'] = Variable<int>(id);
+    if (!nullToAbsent || workKey != null) {
+      map['work_key'] = Variable<String>(workKey);
+    }
     map['kind'] = Variable<String>(kind);
     map['library_type'] = Variable<String>(libraryType);
     if (!nullToAbsent || parentId != null) {
@@ -8742,6 +8773,9 @@ class LibraryItemRow extends DataClass implements Insertable<LibraryItemRow> {
   LibraryItemsCompanion toCompanion(bool nullToAbsent) {
     return LibraryItemsCompanion(
       id: Value(id),
+      workKey: workKey == null && nullToAbsent
+          ? const Value.absent()
+          : Value(workKey),
       kind: Value(kind),
       libraryType: Value(libraryType),
       parentId: parentId == null && nullToAbsent
@@ -8835,6 +8869,7 @@ class LibraryItemRow extends DataClass implements Insertable<LibraryItemRow> {
     serializer ??= driftRuntimeOptions.defaultSerializer;
     return LibraryItemRow(
       id: serializer.fromJson<int>(json['id']),
+      workKey: serializer.fromJson<String?>(json['workKey']),
       kind: serializer.fromJson<String>(json['kind']),
       libraryType: serializer.fromJson<String>(json['libraryType']),
       parentId: serializer.fromJson<int?>(json['parentId']),
@@ -8875,6 +8910,7 @@ class LibraryItemRow extends DataClass implements Insertable<LibraryItemRow> {
     serializer ??= driftRuntimeOptions.defaultSerializer;
     return <String, dynamic>{
       'id': serializer.toJson<int>(id),
+      'workKey': serializer.toJson<String?>(workKey),
       'kind': serializer.toJson<String>(kind),
       'libraryType': serializer.toJson<String>(libraryType),
       'parentId': serializer.toJson<int?>(parentId),
@@ -8913,6 +8949,7 @@ class LibraryItemRow extends DataClass implements Insertable<LibraryItemRow> {
 
   LibraryItemRow copyWith({
     int? id,
+    Value<String?> workKey = const Value.absent(),
     String? kind,
     String? libraryType,
     Value<int?> parentId = const Value.absent(),
@@ -8948,6 +8985,7 @@ class LibraryItemRow extends DataClass implements Insertable<LibraryItemRow> {
     Value<int?> scrapedAt = const Value.absent(),
   }) => LibraryItemRow(
     id: id ?? this.id,
+    workKey: workKey.present ? workKey.value : this.workKey,
     kind: kind ?? this.kind,
     libraryType: libraryType ?? this.libraryType,
     parentId: parentId.present ? parentId.value : this.parentId,
@@ -8999,6 +9037,7 @@ class LibraryItemRow extends DataClass implements Insertable<LibraryItemRow> {
   LibraryItemRow copyWithCompanion(LibraryItemsCompanion data) {
     return LibraryItemRow(
       id: data.id.present ? data.id.value : this.id,
+      workKey: data.workKey.present ? data.workKey.value : this.workKey,
       kind: data.kind.present ? data.kind.value : this.kind,
       libraryType: data.libraryType.present
           ? data.libraryType.value
@@ -9063,6 +9102,7 @@ class LibraryItemRow extends DataClass implements Insertable<LibraryItemRow> {
   String toString() {
     return (StringBuffer('LibraryItemRow(')
           ..write('id: $id, ')
+          ..write('workKey: $workKey, ')
           ..write('kind: $kind, ')
           ..write('libraryType: $libraryType, ')
           ..write('parentId: $parentId, ')
@@ -9103,6 +9143,7 @@ class LibraryItemRow extends DataClass implements Insertable<LibraryItemRow> {
   @override
   int get hashCode => Object.hashAll([
     id,
+    workKey,
     kind,
     libraryType,
     parentId,
@@ -9142,6 +9183,7 @@ class LibraryItemRow extends DataClass implements Insertable<LibraryItemRow> {
       identical(this, other) ||
       (other is LibraryItemRow &&
           other.id == this.id &&
+          other.workKey == this.workKey &&
           other.kind == this.kind &&
           other.libraryType == this.libraryType &&
           other.parentId == this.parentId &&
@@ -9179,6 +9221,7 @@ class LibraryItemRow extends DataClass implements Insertable<LibraryItemRow> {
 
 class LibraryItemsCompanion extends UpdateCompanion<LibraryItemRow> {
   final Value<int> id;
+  final Value<String?> workKey;
   final Value<String> kind;
   final Value<String> libraryType;
   final Value<int?> parentId;
@@ -9214,6 +9257,7 @@ class LibraryItemsCompanion extends UpdateCompanion<LibraryItemRow> {
   final Value<int?> scrapedAt;
   const LibraryItemsCompanion({
     this.id = const Value.absent(),
+    this.workKey = const Value.absent(),
     this.kind = const Value.absent(),
     this.libraryType = const Value.absent(),
     this.parentId = const Value.absent(),
@@ -9250,6 +9294,7 @@ class LibraryItemsCompanion extends UpdateCompanion<LibraryItemRow> {
   });
   LibraryItemsCompanion.insert({
     this.id = const Value.absent(),
+    this.workKey = const Value.absent(),
     required String kind,
     required String libraryType,
     this.parentId = const Value.absent(),
@@ -9291,6 +9336,7 @@ class LibraryItemsCompanion extends UpdateCompanion<LibraryItemRow> {
        updatedAt = Value(updatedAt);
   static Insertable<LibraryItemRow> custom({
     Expression<int>? id,
+    Expression<String>? workKey,
     Expression<String>? kind,
     Expression<String>? libraryType,
     Expression<int>? parentId,
@@ -9327,6 +9373,7 @@ class LibraryItemsCompanion extends UpdateCompanion<LibraryItemRow> {
   }) {
     return RawValuesInsertable({
       if (id != null) 'id': id,
+      if (workKey != null) 'work_key': workKey,
       if (kind != null) 'kind': kind,
       if (libraryType != null) 'library_type': libraryType,
       if (parentId != null) 'parent_id': parentId,
@@ -9365,6 +9412,7 @@ class LibraryItemsCompanion extends UpdateCompanion<LibraryItemRow> {
 
   LibraryItemsCompanion copyWith({
     Value<int>? id,
+    Value<String?>? workKey,
     Value<String>? kind,
     Value<String>? libraryType,
     Value<int?>? parentId,
@@ -9401,6 +9449,7 @@ class LibraryItemsCompanion extends UpdateCompanion<LibraryItemRow> {
   }) {
     return LibraryItemsCompanion(
       id: id ?? this.id,
+      workKey: workKey ?? this.workKey,
       kind: kind ?? this.kind,
       libraryType: libraryType ?? this.libraryType,
       parentId: parentId ?? this.parentId,
@@ -9442,6 +9491,9 @@ class LibraryItemsCompanion extends UpdateCompanion<LibraryItemRow> {
     final map = <String, Expression>{};
     if (id.present) {
       map['id'] = Variable<int>(id.value);
+    }
+    if (workKey.present) {
+      map['work_key'] = Variable<String>(workKey.value);
     }
     if (kind.present) {
       map['kind'] = Variable<String>(kind.value);
@@ -9549,6 +9601,7 @@ class LibraryItemsCompanion extends UpdateCompanion<LibraryItemRow> {
   String toString() {
     return (StringBuffer('LibraryItemsCompanion(')
           ..write('id: $id, ')
+          ..write('workKey: $workKey, ')
           ..write('kind: $kind, ')
           ..write('libraryType: $libraryType, ')
           ..write('parentId: $parentId, ')
@@ -9605,6 +9658,50 @@ class $LibraryFilesTable extends LibraryFiles
     defaultConstraints: GeneratedColumn.constraintIsAlways(
       'PRIMARY KEY AUTOINCREMENT',
     ),
+  );
+  static const VerificationMeta _fileKeyMeta = const VerificationMeta(
+    'fileKey',
+  );
+  @override
+  late final GeneratedColumn<String> fileKey = GeneratedColumn<String>(
+    'file_key',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _workKeyMeta = const VerificationMeta(
+    'workKey',
+  );
+  @override
+  late final GeneratedColumn<String> workKey = GeneratedColumn<String>(
+    'work_key',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _syncSeasonNumberMeta = const VerificationMeta(
+    'syncSeasonNumber',
+  );
+  @override
+  late final GeneratedColumn<int> syncSeasonNumber = GeneratedColumn<int>(
+    'sync_season_number',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _syncEpisodeNumberMeta = const VerificationMeta(
+    'syncEpisodeNumber',
+  );
+  @override
+  late final GeneratedColumn<int> syncEpisodeNumber = GeneratedColumn<int>(
+    'sync_episode_number',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
   );
   static const VerificationMeta _mountIdMeta = const VerificationMeta(
     'mountId',
@@ -9874,6 +9971,10 @@ class $LibraryFilesTable extends LibraryFiles
   @override
   List<GeneratedColumn> get $columns => [
     id,
+    fileKey,
+    workKey,
+    syncSeasonNumber,
+    syncEpisodeNumber,
     mountId,
     path,
     remoteId,
@@ -9913,6 +10014,36 @@ class $LibraryFilesTable extends LibraryFiles
     final data = instance.toColumns(true);
     if (data.containsKey('id')) {
       context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    }
+    if (data.containsKey('file_key')) {
+      context.handle(
+        _fileKeyMeta,
+        fileKey.isAcceptableOrUnknown(data['file_key']!, _fileKeyMeta),
+      );
+    }
+    if (data.containsKey('work_key')) {
+      context.handle(
+        _workKeyMeta,
+        workKey.isAcceptableOrUnknown(data['work_key']!, _workKeyMeta),
+      );
+    }
+    if (data.containsKey('sync_season_number')) {
+      context.handle(
+        _syncSeasonNumberMeta,
+        syncSeasonNumber.isAcceptableOrUnknown(
+          data['sync_season_number']!,
+          _syncSeasonNumberMeta,
+        ),
+      );
+    }
+    if (data.containsKey('sync_episode_number')) {
+      context.handle(
+        _syncEpisodeNumberMeta,
+        syncEpisodeNumber.isAcceptableOrUnknown(
+          data['sync_episode_number']!,
+          _syncEpisodeNumberMeta,
+        ),
+      );
     }
     if (data.containsKey('mount_id')) {
       context.handle(
@@ -10094,6 +10225,22 @@ class $LibraryFilesTable extends LibraryFiles
         DriftSqlType.int,
         data['${effectivePrefix}id'],
       )!,
+      fileKey: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}file_key'],
+      ),
+      workKey: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}work_key'],
+      ),
+      syncSeasonNumber: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}sync_season_number'],
+      ),
+      syncEpisodeNumber: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}sync_episode_number'],
+      ),
       mountId: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
         data['${effectivePrefix}mount_id'],
@@ -10201,6 +10348,16 @@ class $LibraryFilesTable extends LibraryFiles
 
 class LibraryFileRow extends DataClass implements Insertable<LibraryFileRow> {
   final int id;
+
+  /// Deterministic file key `sha256(mountId:normPath)` shared across devices.
+  final String? fileKey;
+
+  /// Root matched work key (`tmdb:movie:...`, `tmdb:show:...`). Null when unmatched.
+  final String? workKey;
+
+  /// Season and episode numbers synced with [workKey] for show video files.
+  final int? syncSeasonNumber;
+  final int? syncEpisodeNumber;
   final String mountId;
 
   /// Mount-relative path, normalized (`/Movies/Film (2020)/film.mkv`).
@@ -10255,6 +10412,10 @@ class LibraryFileRow extends DataClass implements Insertable<LibraryFileRow> {
   final int addedAt;
   const LibraryFileRow({
     required this.id,
+    this.fileKey,
+    this.workKey,
+    this.syncSeasonNumber,
+    this.syncEpisodeNumber,
     required this.mountId,
     required this.path,
     this.remoteId,
@@ -10284,6 +10445,18 @@ class LibraryFileRow extends DataClass implements Insertable<LibraryFileRow> {
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
     map['id'] = Variable<int>(id);
+    if (!nullToAbsent || fileKey != null) {
+      map['file_key'] = Variable<String>(fileKey);
+    }
+    if (!nullToAbsent || workKey != null) {
+      map['work_key'] = Variable<String>(workKey);
+    }
+    if (!nullToAbsent || syncSeasonNumber != null) {
+      map['sync_season_number'] = Variable<int>(syncSeasonNumber);
+    }
+    if (!nullToAbsent || syncEpisodeNumber != null) {
+      map['sync_episode_number'] = Variable<int>(syncEpisodeNumber);
+    }
     map['mount_id'] = Variable<String>(mountId);
     map['path'] = Variable<String>(path);
     if (!nullToAbsent || remoteId != null) {
@@ -10348,6 +10521,18 @@ class LibraryFileRow extends DataClass implements Insertable<LibraryFileRow> {
   LibraryFilesCompanion toCompanion(bool nullToAbsent) {
     return LibraryFilesCompanion(
       id: Value(id),
+      fileKey: fileKey == null && nullToAbsent
+          ? const Value.absent()
+          : Value(fileKey),
+      workKey: workKey == null && nullToAbsent
+          ? const Value.absent()
+          : Value(workKey),
+      syncSeasonNumber: syncSeasonNumber == null && nullToAbsent
+          ? const Value.absent()
+          : Value(syncSeasonNumber),
+      syncEpisodeNumber: syncEpisodeNumber == null && nullToAbsent
+          ? const Value.absent()
+          : Value(syncEpisodeNumber),
       mountId: Value(mountId),
       path: Value(path),
       remoteId: remoteId == null && nullToAbsent
@@ -10414,6 +10599,10 @@ class LibraryFileRow extends DataClass implements Insertable<LibraryFileRow> {
     serializer ??= driftRuntimeOptions.defaultSerializer;
     return LibraryFileRow(
       id: serializer.fromJson<int>(json['id']),
+      fileKey: serializer.fromJson<String?>(json['fileKey']),
+      workKey: serializer.fromJson<String?>(json['workKey']),
+      syncSeasonNumber: serializer.fromJson<int?>(json['syncSeasonNumber']),
+      syncEpisodeNumber: serializer.fromJson<int?>(json['syncEpisodeNumber']),
       mountId: serializer.fromJson<String>(json['mountId']),
       path: serializer.fromJson<String>(json['path']),
       remoteId: serializer.fromJson<String?>(json['remoteId']),
@@ -10445,6 +10634,10 @@ class LibraryFileRow extends DataClass implements Insertable<LibraryFileRow> {
     serializer ??= driftRuntimeOptions.defaultSerializer;
     return <String, dynamic>{
       'id': serializer.toJson<int>(id),
+      'fileKey': serializer.toJson<String?>(fileKey),
+      'workKey': serializer.toJson<String?>(workKey),
+      'syncSeasonNumber': serializer.toJson<int?>(syncSeasonNumber),
+      'syncEpisodeNumber': serializer.toJson<int?>(syncEpisodeNumber),
       'mountId': serializer.toJson<String>(mountId),
       'path': serializer.toJson<String>(path),
       'remoteId': serializer.toJson<String?>(remoteId),
@@ -10474,6 +10667,10 @@ class LibraryFileRow extends DataClass implements Insertable<LibraryFileRow> {
 
   LibraryFileRow copyWith({
     int? id,
+    Value<String?> fileKey = const Value.absent(),
+    Value<String?> workKey = const Value.absent(),
+    Value<int?> syncSeasonNumber = const Value.absent(),
+    Value<int?> syncEpisodeNumber = const Value.absent(),
     String? mountId,
     String? path,
     Value<String?> remoteId = const Value.absent(),
@@ -10500,6 +10697,14 @@ class LibraryFileRow extends DataClass implements Insertable<LibraryFileRow> {
     int? addedAt,
   }) => LibraryFileRow(
     id: id ?? this.id,
+    fileKey: fileKey.present ? fileKey.value : this.fileKey,
+    workKey: workKey.present ? workKey.value : this.workKey,
+    syncSeasonNumber: syncSeasonNumber.present
+        ? syncSeasonNumber.value
+        : this.syncSeasonNumber,
+    syncEpisodeNumber: syncEpisodeNumber.present
+        ? syncEpisodeNumber.value
+        : this.syncEpisodeNumber,
     mountId: mountId ?? this.mountId,
     path: path ?? this.path,
     remoteId: remoteId.present ? remoteId.value : this.remoteId,
@@ -10530,6 +10735,14 @@ class LibraryFileRow extends DataClass implements Insertable<LibraryFileRow> {
   LibraryFileRow copyWithCompanion(LibraryFilesCompanion data) {
     return LibraryFileRow(
       id: data.id.present ? data.id.value : this.id,
+      fileKey: data.fileKey.present ? data.fileKey.value : this.fileKey,
+      workKey: data.workKey.present ? data.workKey.value : this.workKey,
+      syncSeasonNumber: data.syncSeasonNumber.present
+          ? data.syncSeasonNumber.value
+          : this.syncSeasonNumber,
+      syncEpisodeNumber: data.syncEpisodeNumber.present
+          ? data.syncEpisodeNumber.value
+          : this.syncEpisodeNumber,
       mountId: data.mountId.present ? data.mountId.value : this.mountId,
       path: data.path.present ? data.path.value : this.path,
       remoteId: data.remoteId.present ? data.remoteId.value : this.remoteId,
@@ -10579,6 +10792,10 @@ class LibraryFileRow extends DataClass implements Insertable<LibraryFileRow> {
   String toString() {
     return (StringBuffer('LibraryFileRow(')
           ..write('id: $id, ')
+          ..write('fileKey: $fileKey, ')
+          ..write('workKey: $workKey, ')
+          ..write('syncSeasonNumber: $syncSeasonNumber, ')
+          ..write('syncEpisodeNumber: $syncEpisodeNumber, ')
           ..write('mountId: $mountId, ')
           ..write('path: $path, ')
           ..write('remoteId: $remoteId, ')
@@ -10610,6 +10827,10 @@ class LibraryFileRow extends DataClass implements Insertable<LibraryFileRow> {
   @override
   int get hashCode => Object.hashAll([
     id,
+    fileKey,
+    workKey,
+    syncSeasonNumber,
+    syncEpisodeNumber,
     mountId,
     path,
     remoteId,
@@ -10640,6 +10861,10 @@ class LibraryFileRow extends DataClass implements Insertable<LibraryFileRow> {
       identical(this, other) ||
       (other is LibraryFileRow &&
           other.id == this.id &&
+          other.fileKey == this.fileKey &&
+          other.workKey == this.workKey &&
+          other.syncSeasonNumber == this.syncSeasonNumber &&
+          other.syncEpisodeNumber == this.syncEpisodeNumber &&
           other.mountId == this.mountId &&
           other.path == this.path &&
           other.remoteId == this.remoteId &&
@@ -10668,6 +10893,10 @@ class LibraryFileRow extends DataClass implements Insertable<LibraryFileRow> {
 
 class LibraryFilesCompanion extends UpdateCompanion<LibraryFileRow> {
   final Value<int> id;
+  final Value<String?> fileKey;
+  final Value<String?> workKey;
+  final Value<int?> syncSeasonNumber;
+  final Value<int?> syncEpisodeNumber;
   final Value<String> mountId;
   final Value<String> path;
   final Value<String?> remoteId;
@@ -10694,6 +10923,10 @@ class LibraryFilesCompanion extends UpdateCompanion<LibraryFileRow> {
   final Value<int> addedAt;
   const LibraryFilesCompanion({
     this.id = const Value.absent(),
+    this.fileKey = const Value.absent(),
+    this.workKey = const Value.absent(),
+    this.syncSeasonNumber = const Value.absent(),
+    this.syncEpisodeNumber = const Value.absent(),
     this.mountId = const Value.absent(),
     this.path = const Value.absent(),
     this.remoteId = const Value.absent(),
@@ -10721,6 +10954,10 @@ class LibraryFilesCompanion extends UpdateCompanion<LibraryFileRow> {
   });
   LibraryFilesCompanion.insert({
     this.id = const Value.absent(),
+    this.fileKey = const Value.absent(),
+    this.workKey = const Value.absent(),
+    this.syncSeasonNumber = const Value.absent(),
+    this.syncEpisodeNumber = const Value.absent(),
     required String mountId,
     required String path,
     this.remoteId = const Value.absent(),
@@ -10751,6 +10988,10 @@ class LibraryFilesCompanion extends UpdateCompanion<LibraryFileRow> {
        addedAt = Value(addedAt);
   static Insertable<LibraryFileRow> custom({
     Expression<int>? id,
+    Expression<String>? fileKey,
+    Expression<String>? workKey,
+    Expression<int>? syncSeasonNumber,
+    Expression<int>? syncEpisodeNumber,
     Expression<String>? mountId,
     Expression<String>? path,
     Expression<String>? remoteId,
@@ -10778,6 +11019,10 @@ class LibraryFilesCompanion extends UpdateCompanion<LibraryFileRow> {
   }) {
     return RawValuesInsertable({
       if (id != null) 'id': id,
+      if (fileKey != null) 'file_key': fileKey,
+      if (workKey != null) 'work_key': workKey,
+      if (syncSeasonNumber != null) 'sync_season_number': syncSeasonNumber,
+      if (syncEpisodeNumber != null) 'sync_episode_number': syncEpisodeNumber,
       if (mountId != null) 'mount_id': mountId,
       if (path != null) 'path': path,
       if (remoteId != null) 'remote_id': remoteId,
@@ -10807,6 +11052,10 @@ class LibraryFilesCompanion extends UpdateCompanion<LibraryFileRow> {
 
   LibraryFilesCompanion copyWith({
     Value<int>? id,
+    Value<String?>? fileKey,
+    Value<String?>? workKey,
+    Value<int?>? syncSeasonNumber,
+    Value<int?>? syncEpisodeNumber,
     Value<String>? mountId,
     Value<String>? path,
     Value<String?>? remoteId,
@@ -10834,6 +11083,10 @@ class LibraryFilesCompanion extends UpdateCompanion<LibraryFileRow> {
   }) {
     return LibraryFilesCompanion(
       id: id ?? this.id,
+      fileKey: fileKey ?? this.fileKey,
+      workKey: workKey ?? this.workKey,
+      syncSeasonNumber: syncSeasonNumber ?? this.syncSeasonNumber,
+      syncEpisodeNumber: syncEpisodeNumber ?? this.syncEpisodeNumber,
       mountId: mountId ?? this.mountId,
       path: path ?? this.path,
       remoteId: remoteId ?? this.remoteId,
@@ -10866,6 +11119,18 @@ class LibraryFilesCompanion extends UpdateCompanion<LibraryFileRow> {
     final map = <String, Expression>{};
     if (id.present) {
       map['id'] = Variable<int>(id.value);
+    }
+    if (fileKey.present) {
+      map['file_key'] = Variable<String>(fileKey.value);
+    }
+    if (workKey.present) {
+      map['work_key'] = Variable<String>(workKey.value);
+    }
+    if (syncSeasonNumber.present) {
+      map['sync_season_number'] = Variable<int>(syncSeasonNumber.value);
+    }
+    if (syncEpisodeNumber.present) {
+      map['sync_episode_number'] = Variable<int>(syncEpisodeNumber.value);
     }
     if (mountId.present) {
       map['mount_id'] = Variable<String>(mountId.value);
@@ -10946,6 +11211,10 @@ class LibraryFilesCompanion extends UpdateCompanion<LibraryFileRow> {
   String toString() {
     return (StringBuffer('LibraryFilesCompanion(')
           ..write('id: $id, ')
+          ..write('fileKey: $fileKey, ')
+          ..write('workKey: $workKey, ')
+          ..write('syncSeasonNumber: $syncSeasonNumber, ')
+          ..write('syncEpisodeNumber: $syncEpisodeNumber, ')
           ..write('mountId: $mountId, ')
           ..write('path: $path, ')
           ..write('remoteId: $remoteId, ')
@@ -15998,6 +16267,10 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     'idx_library_items_added',
     'CREATE INDEX idx_library_items_added ON library_items (added_at)',
   );
+  late final Index idxLibraryItemsWorkKey = Index(
+    'idx_library_items_work_key',
+    'CREATE UNIQUE INDEX idx_library_items_work_key ON library_items (work_key)',
+  );
   late final Index idxLibraryFilesMountPath = Index(
     'idx_library_files_mount_path',
     'CREATE UNIQUE INDEX idx_library_files_mount_path ON library_files (mount_id, path)',
@@ -16017,6 +16290,14 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   late final Index idxLibraryFilesOwner = Index(
     'idx_library_files_owner',
     'CREATE INDEX idx_library_files_owner ON library_files (owner_file_id)',
+  );
+  late final Index idxLibraryFilesFileKey = Index(
+    'idx_library_files_file_key',
+    'CREATE UNIQUE INDEX idx_library_files_file_key ON library_files (file_key)',
+  );
+  late final Index idxLibraryFilesWorkKey = Index(
+    'idx_library_files_work_key',
+    'CREATE INDEX idx_library_files_work_key ON library_files (work_key)',
   );
   late final Index idxLibraryUserStatesPlayed = Index(
     'idx_library_user_states_played',
@@ -16095,11 +16376,14 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     idxLibraryItemsShow,
     idxLibraryItemsTmdb,
     idxLibraryItemsAdded,
+    idxLibraryItemsWorkKey,
     idxLibraryFilesMountPath,
     idxLibraryFilesMountRemote,
     idxLibraryFilesItem,
     idxLibraryFilesMatch,
     idxLibraryFilesOwner,
+    idxLibraryFilesFileKey,
+    idxLibraryFilesWorkKey,
     idxLibraryUserStatesPlayed,
     idxLibraryItemGenresGenre,
     idxLibraryPeopleTmdb,
@@ -20738,6 +21022,7 @@ typedef $$MountsTableProcessedTableManager =
 typedef $$LibraryItemsTableCreateCompanionBuilder =
     LibraryItemsCompanion Function({
       Value<int> id,
+      Value<String?> workKey,
       required String kind,
       required String libraryType,
       Value<int?> parentId,
@@ -20775,6 +21060,7 @@ typedef $$LibraryItemsTableCreateCompanionBuilder =
 typedef $$LibraryItemsTableUpdateCompanionBuilder =
     LibraryItemsCompanion Function({
       Value<int> id,
+      Value<String?> workKey,
       Value<String> kind,
       Value<String> libraryType,
       Value<int?> parentId,
@@ -20982,6 +21268,11 @@ class $$LibraryItemsTableFilterComposer
   });
   ColumnFilters<int> get id => $composableBuilder(
     column: $table.id,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get workKey => $composableBuilder(
+    column: $table.workKey,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -21351,6 +21642,11 @@ class $$LibraryItemsTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<String> get workKey => $composableBuilder(
+    column: $table.workKey,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<String> get kind => $composableBuilder(
     column: $table.kind,
     builder: (column) => ColumnOrderings(column),
@@ -21564,6 +21860,9 @@ class $$LibraryItemsTableAnnotationComposer
   });
   GeneratedColumn<int> get id =>
       $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<String> get workKey =>
+      $composableBuilder(column: $table.workKey, builder: (column) => column);
 
   GeneratedColumn<String> get kind =>
       $composableBuilder(column: $table.kind, builder: (column) => column);
@@ -21920,6 +22219,7 @@ class $$LibraryItemsTableTableManager
           updateCompanionCallback:
               ({
                 Value<int> id = const Value.absent(),
+                Value<String?> workKey = const Value.absent(),
                 Value<String> kind = const Value.absent(),
                 Value<String> libraryType = const Value.absent(),
                 Value<int?> parentId = const Value.absent(),
@@ -21955,6 +22255,7 @@ class $$LibraryItemsTableTableManager
                 Value<int?> scrapedAt = const Value.absent(),
               }) => LibraryItemsCompanion(
                 id: id,
+                workKey: workKey,
                 kind: kind,
                 libraryType: libraryType,
                 parentId: parentId,
@@ -21992,6 +22293,7 @@ class $$LibraryItemsTableTableManager
           createCompanionCallback:
               ({
                 Value<int> id = const Value.absent(),
+                Value<String?> workKey = const Value.absent(),
                 required String kind,
                 required String libraryType,
                 Value<int?> parentId = const Value.absent(),
@@ -22027,6 +22329,7 @@ class $$LibraryItemsTableTableManager
                 Value<int?> scrapedAt = const Value.absent(),
               }) => LibraryItemsCompanion.insert(
                 id: id,
+                workKey: workKey,
                 kind: kind,
                 libraryType: libraryType,
                 parentId: parentId,
@@ -22301,6 +22604,10 @@ typedef $$LibraryItemsTableProcessedTableManager =
 typedef $$LibraryFilesTableCreateCompanionBuilder =
     LibraryFilesCompanion Function({
       Value<int> id,
+      Value<String?> fileKey,
+      Value<String?> workKey,
+      Value<int?> syncSeasonNumber,
+      Value<int?> syncEpisodeNumber,
       required String mountId,
       required String path,
       Value<String?> remoteId,
@@ -22329,6 +22636,10 @@ typedef $$LibraryFilesTableCreateCompanionBuilder =
 typedef $$LibraryFilesTableUpdateCompanionBuilder =
     LibraryFilesCompanion Function({
       Value<int> id,
+      Value<String?> fileKey,
+      Value<String?> workKey,
+      Value<int?> syncSeasonNumber,
+      Value<int?> syncEpisodeNumber,
       Value<String> mountId,
       Value<String> path,
       Value<String?> remoteId,
@@ -22423,6 +22734,26 @@ class $$LibraryFilesTableFilterComposer
   });
   ColumnFilters<int> get id => $composableBuilder(
     column: $table.id,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get fileKey => $composableBuilder(
+    column: $table.fileKey,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get workKey => $composableBuilder(
+    column: $table.workKey,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get syncSeasonNumber => $composableBuilder(
+    column: $table.syncSeasonNumber,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get syncEpisodeNumber => $composableBuilder(
+    column: $table.syncEpisodeNumber,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -22615,6 +22946,26 @@ class $$LibraryFilesTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<String> get fileKey => $composableBuilder(
+    column: $table.fileKey,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get workKey => $composableBuilder(
+    column: $table.workKey,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get syncSeasonNumber => $composableBuilder(
+    column: $table.syncSeasonNumber,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get syncEpisodeNumber => $composableBuilder(
+    column: $table.syncEpisodeNumber,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<String> get path => $composableBuilder(
     column: $table.path,
     builder: (column) => ColumnOrderings(column),
@@ -22802,6 +23153,22 @@ class $$LibraryFilesTableAnnotationComposer
   GeneratedColumn<int> get id =>
       $composableBuilder(column: $table.id, builder: (column) => column);
 
+  GeneratedColumn<String> get fileKey =>
+      $composableBuilder(column: $table.fileKey, builder: (column) => column);
+
+  GeneratedColumn<String> get workKey =>
+      $composableBuilder(column: $table.workKey, builder: (column) => column);
+
+  GeneratedColumn<int> get syncSeasonNumber => $composableBuilder(
+    column: $table.syncSeasonNumber,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get syncEpisodeNumber => $composableBuilder(
+    column: $table.syncEpisodeNumber,
+    builder: (column) => column,
+  );
+
   GeneratedColumn<String> get path =>
       $composableBuilder(column: $table.path, builder: (column) => column);
 
@@ -22980,6 +23347,10 @@ class $$LibraryFilesTableTableManager
           updateCompanionCallback:
               ({
                 Value<int> id = const Value.absent(),
+                Value<String?> fileKey = const Value.absent(),
+                Value<String?> workKey = const Value.absent(),
+                Value<int?> syncSeasonNumber = const Value.absent(),
+                Value<int?> syncEpisodeNumber = const Value.absent(),
                 Value<String> mountId = const Value.absent(),
                 Value<String> path = const Value.absent(),
                 Value<String?> remoteId = const Value.absent(),
@@ -23006,6 +23377,10 @@ class $$LibraryFilesTableTableManager
                 Value<int> addedAt = const Value.absent(),
               }) => LibraryFilesCompanion(
                 id: id,
+                fileKey: fileKey,
+                workKey: workKey,
+                syncSeasonNumber: syncSeasonNumber,
+                syncEpisodeNumber: syncEpisodeNumber,
                 mountId: mountId,
                 path: path,
                 remoteId: remoteId,
@@ -23034,6 +23409,10 @@ class $$LibraryFilesTableTableManager
           createCompanionCallback:
               ({
                 Value<int> id = const Value.absent(),
+                Value<String?> fileKey = const Value.absent(),
+                Value<String?> workKey = const Value.absent(),
+                Value<int?> syncSeasonNumber = const Value.absent(),
+                Value<int?> syncEpisodeNumber = const Value.absent(),
                 required String mountId,
                 required String path,
                 Value<String?> remoteId = const Value.absent(),
@@ -23060,6 +23439,10 @@ class $$LibraryFilesTableTableManager
                 required int addedAt,
               }) => LibraryFilesCompanion.insert(
                 id: id,
+                fileKey: fileKey,
+                workKey: workKey,
+                syncSeasonNumber: syncSeasonNumber,
+                syncEpisodeNumber: syncEpisodeNumber,
                 mountId: mountId,
                 path: path,
                 remoteId: remoteId,

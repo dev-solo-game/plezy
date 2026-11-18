@@ -5,7 +5,6 @@ import 'package:unorm_dart/unorm_dart.dart' as unorm;
 import 'package:uuid/uuid.dart';
 
 import '../../storage/drivers/quark_pc_session.dart';
-import '../../storage/drivers/quark_storage_driver.dart';
 import '../../storage/storage_mount.dart';
 
 /// Generates normalized paths and deterministic identifiers shared across
@@ -43,21 +42,20 @@ abstract final class DeterministicKeys {
 
   /// Computes a canonical fingerprint for deduplicating mounts added
   /// independently on multiple devices before synchronization.
+  ///
+  /// One account/origin maps to one mount (directories belong in `includePaths`).
   static String canonicalSourceKey(StorageMount mount) {
     switch (mount.kind) {
       case StorageKind.local:
         final root = normalizeMountPath(mount.configString(MountKeys.rootPath) ?? '/');
         return 'local:$root';
       case StorageKind.quark:
-        final rootFolderId = (mount.configString(MountKeys.rootFolderId) ?? QuarkStorageDriver.defaultRootFolderId)
-            .trim();
         final uid = _extractQuarkUid(mount.secret(MountKeys.secretCookie));
-        return 'quark:$uid:$rootFolderId';
+        return 'quark:$uid';
       case StorageKind.smb:
         final host = (mount.configString(MountKeys.host) ?? '').trim().toLowerCase();
         final share = (mount.configString(MountKeys.share) ?? '').trim().toLowerCase();
-        final rootPath = normalizeMountPath(mount.configString(MountKeys.rootPath) ?? '/');
-        return 'smb://$host/$share$rootPath';
+        return 'smb://$host/$share';
       case StorageKind.webdav:
         final rawUrl = (mount.configString(MountKeys.baseUrl) ?? '').trim();
         final uri = Uri.tryParse(rawUrl);
@@ -69,8 +67,108 @@ abstract final class DeterministicKeys {
         final isDefaultPort = (scheme == 'http' && uri.port == 80) || (scheme == 'https' && uri.port == 443);
         final portPart = uri.hasPort && !isDefaultPort ? ':${uri.port}' : '';
         final normPath = normalizeMountPath(uri.path);
-        return 'webdav://$scheme://$host$portPart$normPath';
+        final user = mount.configString(MountKeys.username)?.trim().toLowerCase() ?? '';
+        final userPart = user.isNotEmpty ? '${Uri.encodeComponent(user)}@' : '';
+        return 'webdav://$scheme://$userPart$host$portPart$normPath';
     }
+  }
+
+  /// Normalizes legacy canonical source keys (e.g. `quark:<uid>:<rootFolderId>`)
+  /// so comparisons stay compatible across upgrades and peers.
+  static String normalizeCanonicalSourceKey(String rawKey) {
+    final trimmed = rawKey.trim();
+    if (trimmed.isEmpty) return '';
+    if (trimmed.startsWith('quark:')) {
+      final rest = trimmed.substring('quark:'.length);
+      final sep = rest.indexOf(':');
+      final uid = sep == -1 ? rest : rest.substring(0, sep);
+      return 'quark:$uid';
+    }
+    if (trimmed.startsWith('smb://')) {
+      final rest = trimmed.substring('smb://'.length);
+      final parts = rest.split('/').where((s) => s.isNotEmpty).toList();
+      if (parts.length >= 2) {
+        return 'smb://${parts[0].toLowerCase()}/${parts[1].toLowerCase()}';
+      }
+      return trimmed.toLowerCase();
+    }
+    return trimmed;
+  }
+
+  static bool sameCanonicalSourceKey(String a, String b) {
+    final na = normalizeCanonicalSourceKey(a);
+    final nb = normalizeCanonicalSourceKey(b);
+    return na.isNotEmpty && na == nb;
+  }
+
+  /// Computes a colon-free deterministic mount identifier (`quark_<uid>`,
+  /// `smb_<hash24>`, `webdav_<hash24>`, `local_<hash24>`).
+  ///
+  /// Colons are forbidden because `mount:<mountId>:<path>` artwork sources
+  /// split on `':'`.
+  static String deterministicSourceId(StorageMount mount) {
+    final canonicalKey = canonicalSourceKey(mount);
+    final hash = sha256.convert(utf8.encode(canonicalKey)).toString().substring(0, 24);
+    switch (mount.kind) {
+      case StorageKind.quark:
+        final uid = _extractQuarkUid(mount.secret(MountKeys.secretCookie));
+        if (uid != 'anonymous' && RegExp(r'^[a-zA-Z0-9_-]+$').hasMatch(uid)) {
+          return 'quark_$uid';
+        }
+        return 'quark_$hash';
+      case StorageKind.smb:
+        return 'smb_$hash';
+      case StorageKind.webdav:
+        return 'webdav_$hash';
+      case StorageKind.local:
+        return 'local_$hash';
+    }
+  }
+
+  /// Normalizes a work key, mapping legacy `work:<kind>:<provider>:<id>` values
+  /// onto `<provider>:<kind>:<id>`.
+  static String canonicalizeWorkKey(String? raw) {
+    final trimmed = raw?.trim() ?? '';
+    if (trimmed.isEmpty) return '';
+    if (trimmed.startsWith('work:')) {
+      final parts = trimmed.split(':');
+      if (parts.length >= 4) {
+        final kind = parts[1];
+        final provider = parts[2];
+        final extId = parts.sublist(3).join(':');
+        if (kind.isNotEmpty && provider.isNotEmpty && extId.isNotEmpty) {
+          return '$provider:$kind:$extId';
+        }
+      }
+    }
+    return trimmed;
+  }
+
+  /// Computes the deterministic `work_key` for a matched movie or show item,
+  /// returning `null` for unmatched/pending placeholders.
+  static String? workKeyForMatchedItem({
+    required String kind,
+    String? tmdbId,
+    String? bangumiId,
+    String? imdbId,
+    String? tvdbId,
+    String? metadataSource,
+    required String libraryType,
+    required String sortTitle,
+    int? year,
+  }) {
+    if (libraryType == 'pending') return null;
+    final cleanTmdb = tmdbId?.trim() ?? '';
+    if (cleanTmdb.isNotEmpty) return 'tmdb:$kind:$cleanTmdb';
+    final cleanBangumi = bangumiId?.trim() ?? '';
+    if (cleanBangumi.isNotEmpty) return 'bangumi:$kind:$cleanBangumi';
+    final cleanImdb = imdbId?.trim() ?? '';
+    if (cleanImdb.isNotEmpty) return 'imdb:$kind:$cleanImdb';
+    final cleanTvdb = tvdbId?.trim() ?? '';
+    if (cleanTvdb.isNotEmpty) return 'tvdb:$kind:$cleanTvdb';
+    final cleanSource = metadataSource?.trim() ?? '';
+    if (cleanSource.isEmpty) return null;
+    return 'nfo:$kind:$sortTitle:${year ?? 0}';
   }
 
   static String _extractQuarkUid(String? secret) {

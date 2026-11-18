@@ -41,8 +41,20 @@ void main() {
     };
   });
 
-  tearDown(() {
-    directory.deleteSync(recursive: true);
+  tearDown(() async {
+    PaintingBinding.instance.imageCache.clear();
+    PaintingBinding.instance.imageCache.clearLiveImages();
+    for (var attempt = 0; attempt < 6; attempt++) {
+      try {
+        if (directory.existsSync()) {
+          directory.deleteSync(recursive: true);
+        }
+        return;
+      } on FileSystemException {
+        if (attempt == 5) return;
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      }
+    }
   });
 
   Widget buildBackdrop(

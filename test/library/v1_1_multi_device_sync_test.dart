@@ -446,7 +446,7 @@ void main() {
     expect(mountsOnB, hasLength(1));
     expect(mountsOnA.single.id, 'uuid-A');
     expect(mountsOnB.single.id, 'uuid-A');
-    expect(DeterministicKeys.canonicalSourceKey(mountsOnB.single), 'quark:777888:0');
+    expect(DeterministicKeys.canonicalSourceKey(mountsOnB.single), 'quark:777888');
 
     final scanA = await (devA.db.select(devA.db.libraryScanStates)..where((t) => t.mountId.equals('uuid-A'))).getSingle();
     final scanB = await (devB.db.select(devB.db.libraryScanStates)..where((t) => t.mountId.equals('uuid-A'))).getSingle();
