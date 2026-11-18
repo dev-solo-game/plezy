@@ -283,7 +283,9 @@ class LocalLibraryClient implements MediaServerClient {
       lastViewedAt: _seconds(state?.lastPlayedAt),
       leafCount: view.isContainer ? view.episodeCount : null,
       viewedLeafCount: view.isContainer ? view.watchedEpisodeCount : null,
-      addedAt: _seconds(row.addedAt),
+      addedAt: row.sourceAddedAt != null
+          ? (row.sourceAddedAt! > 0 ? _seconds(row.sourceAddedAt) : null)
+          : _seconds(row.addedAt),
       updatedAt: _seconds(row.updatedAt),
       rating: row.rating,
       isFavorite: state?.favorite ?? false,

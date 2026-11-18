@@ -239,4 +239,31 @@ void main() {
       expect((f.title, f.year), ('流浪地球2', 2023));
     });
   });
+
+  group('portal prefixes', () {
+    check([
+      (
+        name: '[电影天堂www.dytt89.com]飞驰人生2.2024.1080p.HD国语中字.mp4',
+        expect: {
+          'title': '飞驰人生2',
+          'year': 2024,
+          'resolution': '1080p',
+          'fansubStyle': null,
+          'releaseGroup': null,
+        },
+      ),
+      (
+        name: '【阳光电影】热辣滚烫 (2024).mkv',
+        expect: {'title': '热辣滚烫', 'year': 2024, 'fansubStyle': null, 'releaseGroup': null},
+      ),
+      (
+        name: '[飘花电影]庆余年.S02E01.mp4',
+        expect: {'title': '庆余年', 'season': 2, 'episode': 1, 'fansubStyle': null, 'releaseGroup': null},
+      ),
+      (
+        name: '[公众号xxx]繁花.第01集.mp4',
+        expect: {'title': '繁花', 'episode': 1, 'fansubStyle': null, 'releaseGroup': null},
+      ),
+    ]);
+  });
 }

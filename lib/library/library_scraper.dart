@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:clock/clock.dart';
 import 'package:drift/drift.dart';
 import 'package:string_similarity/string_similarity.dart';
@@ -48,6 +50,11 @@ class LibraryScraper {
   final LibraryRepository _repo;
   final List<MetadataProvider> _metadataProviders;
   final MountTextReader? _readText;
+  bool _bangumiUnreachable = false;
+
+  bool get _hasNonBangumiProvider => _metadataProviders.any((p) => p.source != 'bangumi');
+
+  bool _shouldFallbackFrom(MetadataProvider provider) => provider.source == 'bangumi' && _hasNonBangumiProvider;
 
   /// Below this a search hit is not trusted and the title stays unmatched.
   static const double _acceptScore = 0.72;
@@ -112,7 +119,7 @@ class LibraryScraper {
   Future<List<MetadataProvider>> _providersFor(LibraryItemRow item) async {
     final general = _metadataProviders.where((p) => p.source != 'bangumi').toList();
     if (!await _looksLikeAnime(item)) return general;
-    final bangumi = _metadataProviders.where((p) => p.source == 'bangumi').toList();
+    final bangumi = _metadataProviders.where((p) => p.source == 'bangumi' && !_bangumiUnreachable).toList();
     return item.kind == LibraryKinds.show ? [...bangumi, ...general] : [...general, ...bangumi];
   }
 
@@ -136,33 +143,62 @@ class LibraryScraper {
   Future<ScrapeSummary> scrapePending({
     Set<String>? mountIds,
     bool refreshMatched = false,
+    bool allowKindChange = true,
+    int? refreshBeforeMs,
     bool Function()? isCancelled,
     void Function(int done, int total)? onProgress,
   }) async {
     final items = _db.libraryItems;
     final files = _db.libraryFiles;
-    final parents = _db.alias(items, 'scrape_parent');
     final pending = items.metadataSource.isNull() & items.scrapedAt.isNull();
-    final mountedTitles = _db.selectOnly(files).join([innerJoin(parents, parents.id.equalsExp(files.itemId))])
-      ..addColumns([
-        coalesce([parents.showId, parents.id]),
-      ])
-      ..where(
-        (mountIds == null ? const Constant(true) : files.mountId.isIn(mountIds)) &
-            files.role.equals(LibraryFileRoles.video) &
-            (refreshMatched ? const Constant(true) : files.matchState.equals(LibraryMatchStates.pending)),
-      );
+
+    JoinedSelectStatement<HasResultSet, dynamic> mountedTitlesQuery({required bool pendingOnly}) {
+      final parents = _db.alias(items, pendingOnly ? 'scrape_parent_pending' : 'scrape_parent_all');
+      return _db.selectOnly(files).join([innerJoin(parents, parents.id.equalsExp(files.itemId))])
+        ..addColumns([
+          coalesce([parents.showId, parents.id]),
+        ])
+        ..where(
+          (mountIds == null ? const Constant(true) : files.mountId.isIn(mountIds)) &
+              files.role.equals(LibraryFileRoles.video) &
+              (pendingOnly ? files.matchState.equals(LibraryMatchStates.pending) : const Constant(true)),
+        );
+    }
+
+    final pendingMountedTitles = mountedTitlesQuery(pendingOnly: true);
+    final allMountedTitles = refreshMatched ? mountedTitlesQuery(pendingOnly: false) : null;
     final queue =
         await (_db.select(items)
-              ..where(
-                (t) =>
-                    t.kind.isIn([LibraryKinds.movie, LibraryKinds.show]) &
-                    (mountIds == null
-                        ? (pending & t.locked.equals(false)) |
-                              (t.metadataSource.isNotNull() & t.id.isInQuery(mountedTitles))
-                        : t.id.isInQuery(mountedTitles) &
-                              (refreshMatched ? t.locked.equals(false) : const Constant(true))),
-              )
+              ..where((t) {
+                final isTitle = t.kind.isIn([LibraryKinds.movie, LibraryKinds.show]);
+                if (mountIds == null) {
+                  if (!refreshMatched) {
+                    return isTitle &
+                        ((pending & t.locked.equals(false)) |
+                            (t.metadataSource.isNotNull() & t.id.isInQuery(pendingMountedTitles)));
+                  }
+                  final refreshAge = refreshBeforeMs == null
+                      ? const Constant(true)
+                      : (t.scrapedAt.isNull() | t.scrapedAt.isSmallerThanValue(refreshBeforeMs));
+                  return isTitle &
+                      ((pending & t.locked.equals(false)) |
+                          (t.metadataSource.isNotNull() &
+                              (t.id.isInQuery(pendingMountedTitles) |
+                                  (t.id.isInQuery(allMountedTitles!) & t.locked.equals(false) & refreshAge))));
+                }
+                if (!refreshMatched) {
+                  return isTitle & t.id.isInQuery(pendingMountedTitles);
+                }
+                if (refreshBeforeMs == null) {
+                  return isTitle & t.id.isInQuery(allMountedTitles!) & t.locked.equals(false);
+                }
+                return isTitle &
+                    (((t.locked.equals(false) | t.metadataSource.isNotNull()) &
+                            t.id.isInQuery(pendingMountedTitles)) |
+                        (t.locked.equals(false) &
+                            t.id.isInQuery(allMountedTitles!) &
+                            (t.scrapedAt.isNull() | t.scrapedAt.isSmallerThanValue(refreshBeforeMs))));
+              })
               ..orderBy([(t) => OrderingTerm.asc(t.id)]))
             .get();
 
@@ -174,16 +210,26 @@ class LibraryScraper {
       if (isCancelled?.call() ?? false) break;
       onProgress?.call(index, queue.length);
       try {
-        if (!refreshMatched && item.metadataSource == null) {
-          final latest = await (_db.select(_db.libraryItems)..where((t) => t.id.equals(item.id))).getSingleOrNull();
-          if (latest == null || latest.locked || latest.metadataSource != null) {
-            skipped++;
-            continue;
-          }
+        final latest = await (_db.select(_db.libraryItems)..where((t) => t.id.equals(item.id))).getSingleOrNull();
+        if (latest == null) {
+          skipped++;
+          continue;
         }
-        final outcome = item.metadataSource != null
-            ? await _refreshKnown(item, refreshMatched: refreshMatched)
-            : await scrapeItem(item.id);
+        if (!refreshMatched && item.metadataSource == null && (latest.locked || latest.metadataSource != null)) {
+          skipped++;
+          continue;
+        }
+        final shouldRefreshItem =
+            refreshMatched &&
+            !latest.locked &&
+            (refreshBeforeMs == null || latest.scrapedAt == null || latest.scrapedAt! < refreshBeforeMs);
+        if (refreshMatched && item.metadataSource == null && latest.metadataSource != null && !shouldRefreshItem) {
+          skipped++;
+          continue;
+        }
+        final outcome = latest.metadataSource != null
+            ? await _refreshKnown(latest, refreshMatched: shouldRefreshItem)
+            : await scrapeItem(latest.id, allowKindChange: allowKindChange);
         switch (outcome) {
           case ScrapeOutcome.matched:
             matched++;
@@ -213,27 +259,51 @@ class LibraryScraper {
   Future<ScrapeOutcome> _refreshKnown(LibraryItemRow item, {required bool refreshMatched}) async {
     final isShow = item.kind == LibraryKinds.show;
     if (item.metadataSource == 'nfo') {
+      final candidatePendingFiles = isShow ? await _pendingVideoFileIds(item) : const <int>{};
       if (isShow) {
         await _fillEpisodesFromNfo(item, pendingOnly: !refreshMatched);
       }
       await _setFilesState(item, LibraryMatchStates.matched, locked: true);
+      if (isShow && candidatePendingFiles.isNotEmpty) {
+        await _markRemainingPendingFilesUnmatched(item, onlyFileIds: candidatePendingFiles);
+      }
       return ScrapeOutcome.matched;
     }
     final provider = _metadataProviders.where((p) => p.source == item.metadataSource).firstOrNull;
     final id = provider?.source == 'tmdb' ? item.tmdbId : item.bangumiId;
     if (provider == null || id == null) return ScrapeOutcome.skipped;
-    var title = item.title;
-    if (refreshMatched) {
-      final details = isShow ? await provider.show(id) : await provider.movie(id);
-      await _apply(item, details, folder: await _folderOf(item));
-      title = details.title;
+    if (provider.source == 'bangumi' && _bangumiUnreachable && _hasNonBangumiProvider) {
+      return ScrapeOutcome.skipped;
     }
+    var title = item.title;
+    final candidatePendingFiles = isShow ? await _pendingVideoFileIds(item) : const <int>{};
     var filledEpisodes = 0;
-    if (isShow) {
-      filledEpisodes = await _fillSeasons(item, provider, id, title, pendingOnly: !refreshMatched);
+    try {
+      if (refreshMatched) {
+        final details = isShow ? await provider.show(id) : await provider.movie(id);
+        await _apply(item, details, folder: await _folderOf(item));
+        title = details.title;
+      }
+      if (isShow) {
+        filledEpisodes = await _fillSeasons(item, provider, id, title, pendingOnly: !refreshMatched);
+        if (filledEpisodes > 0) {
+          final latestType =
+              (await (_db.select(_db.libraryItems)..where((t) => t.id.equals(item.id))).getSingleOrNull())?.libraryType;
+          if (latestType != null) await _repo.setLibraryType(item.id, latestType);
+        }
+      }
+    } on ScrapeException catch (e) {
+      if (_shouldFallbackFrom(provider)) {
+        _bangumiUnreachable = true;
+        appLogger.w('Bangumi refresh failed for "${item.title}", skipping: ${e.message}');
+        return ScrapeOutcome.skipped;
+      }
+      rethrow;
     }
     final newlyMatchedFiles = await _setFilesState(item, LibraryMatchStates.matched);
-    final markedUnmatched = isShow ? await _markRemainingPendingFilesUnmatched(item) : 0;
+    final markedUnmatched = isShow
+        ? await _markRemainingPendingFilesUnmatched(item, onlyFileIds: candidatePendingFiles)
+        : 0;
     if (!refreshMatched && filledEpisodes == 0 && newlyMatchedFiles == 0) {
       return markedUnmatched > 0 ? ScrapeOutcome.unmatched : ScrapeOutcome.skipped;
     }
@@ -258,7 +328,7 @@ class LibraryScraper {
 
   /// Looks one movie or show up, applies what is found and files the title
   /// on its shelf. Exposed so a single title can be refreshed.
-  Future<ScrapeOutcome> scrapeItem(int itemId) async {
+  Future<ScrapeOutcome> scrapeItem(int itemId, {bool allowKindChange = true}) async {
     var item = await (_db.select(_db.libraryItems)..where((t) => t.id.equals(itemId))).getSingleOrNull();
     if (item == null || item.locked) return ScrapeOutcome.unmatched;
 
@@ -273,6 +343,7 @@ class LibraryScraper {
     final guessedShow = item.kind == LibraryKinds.show;
     var match = await _findMatch(providers, item, isShow: guessedShow);
     if (match == null && await canChangeKind(item.id)) {
+      if (!allowKindChange) return ScrapeOutcome.skipped;
       // Names alone can mistake a film for an episode and the reverse.
       match = await _findMatch(providers, item, isShow: !guessedShow);
       if (match != null) item = await _changeKind(item);
@@ -286,6 +357,47 @@ class LibraryScraper {
     }
 
     final (provider, candidate) = match;
+    try {
+      return await _applyMatchedCandidate(item, provider, candidate);
+    } on ScrapeException catch (e) {
+      if (!_shouldFallbackFrom(provider)) rethrow;
+      _bangumiUnreachable = true;
+      appLogger.w('Bangumi detail lookup failed for "${item.title}", falling back: ${e.message}');
+      final fallbackProviders = providers.where((p) => p.source != 'bangumi').toList();
+      final isShow = item.kind == LibraryKinds.show;
+      var fallbackMatch = await _findMatch(fallbackProviders, item, isShow: isShow);
+      if (fallbackMatch == null && await canChangeKind(item.id)) {
+        if (!allowKindChange) {
+          await (_db.update(_db.libraryItems)..where((t) => t.id.equals(itemId))).write(
+            const LibraryItemsCompanion(metadataSource: Value(null), bangumiId: Value(null)),
+          );
+          await _repo.setLibraryType(item.id, LibraryTypes.pending);
+          return ScrapeOutcome.skipped;
+        }
+        fallbackMatch = await _findMatch(fallbackProviders, item, isShow: !isShow);
+        if (fallbackMatch != null) item = await _changeKind(item);
+      }
+      if (fallbackMatch == null) {
+        await (_db.update(_db.libraryItems)..where((t) => t.id.equals(itemId))).write(
+          LibraryItemsCompanion(
+            metadataSource: const Value(null),
+            bangumiId: const Value(null),
+            scrapedAt: Value(_now()),
+          ),
+        );
+        await _repo.setLibraryType(item.id, LibraryTypes.pending);
+        await _setFilesState(item, LibraryMatchStates.unmatched);
+        return ScrapeOutcome.unmatched;
+      }
+      return _applyMatchedCandidate(item, fallbackMatch.$1, fallbackMatch.$2);
+    }
+  }
+
+  Future<ScrapeOutcome> _applyMatchedCandidate(
+    LibraryItemRow item,
+    MetadataProvider provider,
+    ScrapedCandidate candidate,
+  ) async {
     final isShow = item.kind == LibraryKinds.show;
     final target = await _existingWithIds(
       item,
@@ -295,10 +407,11 @@ class LibraryScraper {
     if (target != null) return _mergeInto(item, target);
 
     final details = isShow ? await provider.show(candidate.id) : await provider.movie(candidate.id);
+    final candidatePendingFiles = isShow ? await _pendingVideoFileIds(item) : const <int>{};
     await _apply(item, details, folder: await _folderOf(item));
     if (isShow) await _fillSeasons(item, provider, candidate.id, details.title);
     await _setFilesState(item, LibraryMatchStates.matched);
-    if (isShow) await _markRemainingPendingFilesUnmatched(item);
+    if (isShow) await _markRemainingPendingFilesUnmatched(item, onlyFileIds: candidatePendingFiles);
     return ScrapeOutcome.matched;
   }
 
@@ -308,8 +421,17 @@ class LibraryScraper {
     required bool isShow,
   }) async {
     for (final provider in providers) {
-      final candidate = await _bestCandidate(provider, item, isShow: isShow);
-      if (candidate != null) return (provider, candidate);
+      try {
+        final candidate = await _bestCandidate(provider, item, isShow: isShow);
+        if (candidate != null) return (provider, candidate);
+      } on ScrapeException catch (e) {
+        if (_shouldFallbackFrom(provider)) {
+          _bangumiUnreachable = true;
+          appLogger.w('Bangumi lookup failed for "${item.title}", falling back: ${e.message}');
+          continue;
+        }
+        rethrow;
+      }
     }
     return null;
   }
@@ -372,9 +494,19 @@ class LibraryScraper {
   Future<List<ScrapedCandidate>> searchCandidates({required String title, required bool asShow, int? year}) async {
     final results = <ScrapedCandidate>[];
     for (final provider in _metadataProviders) {
-      results.addAll(
-        asShow ? await provider.searchShow(title, year: year) : await provider.searchMovie(title, year: year),
-      );
+      if (provider.source == 'bangumi' && _bangumiUnreachable && _hasNonBangumiProvider) continue;
+      try {
+        results.addAll(
+          asShow ? await provider.searchShow(title, year: year) : await provider.searchMovie(title, year: year),
+        );
+      } on ScrapeException catch (e) {
+        if (_shouldFallbackFrom(provider)) {
+          _bangumiUnreachable = true;
+          appLogger.w('Bangumi candidate search failed for "$title", skipping: ${e.message}');
+          continue;
+        }
+        rethrow;
+      }
     }
     return results;
   }
@@ -831,7 +963,25 @@ class LibraryScraper {
         );
   }
 
-  Future<int> _markRemainingPendingFilesUnmatched(LibraryItemRow item) async {
+  Future<Set<int>> _pendingVideoFileIds(LibraryItemRow item) async {
+    final leaves = await _leafIds(item);
+    if (leaves.isEmpty) return const {};
+    final files = _db.libraryFiles;
+    final rows =
+        await (_db.selectOnly(files)
+              ..addColumns([files.id])
+              ..where(
+                files.itemId.isIn(leaves) &
+                    files.role.equals(LibraryFileRoles.video) &
+                    files.matchLocked.equals(false) &
+                    files.matchState.equals(LibraryMatchStates.pending),
+              ))
+            .get();
+    return {for (final row in rows) row.read(files.id)!};
+  }
+
+  Future<int> _markRemainingPendingFilesUnmatched(LibraryItemRow item, {Set<int>? onlyFileIds}) async {
+    if (onlyFileIds != null && onlyFileIds.isEmpty) return 0;
     final leaves = await _leafIds(item);
     if (leaves.isEmpty) return 0;
     return (_db.update(_db.libraryFiles)..where(
@@ -839,7 +989,8 @@ class LibraryScraper {
               t.itemId.isIn(leaves) &
               t.role.equals(LibraryFileRoles.video) &
               t.matchLocked.equals(false) &
-              t.matchState.equals(LibraryMatchStates.pending),
+              t.matchState.equals(LibraryMatchStates.pending) &
+              (onlyFileIds == null ? const Constant(true) : t.id.isIn(onlyFileIds)),
         ))
         .write(const LibraryFilesCompanion(matchState: Value(LibraryMatchStates.unmatched)));
   }
@@ -885,30 +1036,45 @@ class LibraryScraper {
         ...?target.aliases?.split('\n').where((a) => a.trim().isNotEmpty),
         if (duplicate.title.toLowerCase() != target.title.toLowerCase()) duplicate.title,
       };
+      final Value<int?> mergedSourceAdded = switch ((target.sourceAddedAt, duplicate.sourceAddedAt)) {
+        (final int a, final int b) => Value(math.max(a, b)),
+        (null, final int b) => Value(b),
+        _ => const Value<int?>.absent(),
+      };
       await _repo.updateItem(
         target.id,
         LibraryItemsCompanion(
           aliases: Value(aliases.isEmpty ? null : aliases.join('\n')),
-          sourceAddedAt: target.sourceAddedAt == null ? Value(duplicate.sourceAddedAt) : const Value.absent(),
+          sourceAddedAt: mergedSourceAdded,
         ),
       );
       await _repo.deleteItem(duplicate.id);
     });
     await _repo.pruneEmptyTitles();
+    await _repo.refreshSourceAddedTimesForItems([target.id]);
     // What moved over was still unplaced; it belongs where the target is.
     await _repo.setLibraryType(target.id, target.libraryType);
     final merged = await (_db.select(_db.libraryItems)..where((t) => t.id.equals(target.id))).getSingle();
+    final candidatePendingFiles = merged.kind == LibraryKinds.show ? await _pendingVideoFileIds(merged) : const <int>{};
     var checkedShowSeasons = false;
     if (merged.kind == LibraryKinds.show) {
       final provider = _metadataProviders.where((p) => p.source == merged.metadataSource).firstOrNull;
       final id = provider?.source == 'tmdb' ? merged.tmdbId : merged.bangumiId;
-      if (provider != null && id != null) {
-        await _fillSeasons(merged, provider, id, merged.title, pendingOnly: true);
-        checkedShowSeasons = true;
+      if (provider != null && id != null && !(provider.source == 'bangumi' && _bangumiUnreachable && _hasNonBangumiProvider)) {
+        try {
+          await _fillSeasons(merged, provider, id, merged.title, pendingOnly: true);
+          checkedShowSeasons = true;
+        } on ScrapeException catch (e) {
+          if (!_shouldFallbackFrom(provider)) rethrow;
+          _bangumiUnreachable = true;
+          appLogger.w('Bangumi merge season lookup failed for "${merged.title}", skipping: ${e.message}');
+        }
       }
     }
     await _setFilesState(merged, LibraryMatchStates.matched);
-    if (checkedShowSeasons) await _markRemainingPendingFilesUnmatched(merged);
+    if (checkedShowSeasons) {
+      await _markRemainingPendingFilesUnmatched(merged, onlyFileIds: candidatePendingFiles);
+    }
     return ScrapeOutcome.merged;
   }
 

@@ -157,9 +157,27 @@ abstract final class MediaNameParser {
   );
   static final RegExp _brackets = RegExp(r'[\[【]([^\]】]*)[\]】]');
   static final RegExp _checksum = RegExp(r'^[0-9A-Fa-f]{8}$');
+  static final RegExp _nonFansubTag = RegExp(
+    r'https?:|www\.|\.(?:com|net|org|tv|cc|cn|me|vip|la|xyz|top|info)\b'
+    r'|电影|電影|影视|影視|影院|剧集|劇集|电视剧|電視劇|美剧|美劇|韩剧|韓劇|日剧|日劇|港剧|港劇'
+    r'|蓝光网|藍光網|bt之家|btbtt|dytt|ygdy|6v|piaohua|飘花|阳光|迅雷|网盘|網盤|夸克|阿里云|百度云|公众号|公眾號|首发|首發',
+    caseSensitive: false,
+  );
+  static final RegExp _fansubGroupHint = RegExp(
+    r'字幕|组|組|社|屋|学园|學園|家族|汉化|漢化|工作室|raws|subs?\b|vcb-studio|lolihouse|sakurato|lilith|ank|moe',
+    caseSensitive: false,
+  );
   static final RegExp _trailingGroup = RegExp(r'-\s*([A-Za-z0-9][A-Za-z0-9@.]{1,24})\s*$');
   static final RegExp _looseDash = RegExp(r'\s-\s*(\d{1,4})(?:[vV]\d)?(?=\s|$)');
   static final RegExp _looseTrailing = RegExp(r'(?:^|\s)(\d{1,4})(?:[vV]\d)?\s*$');
+
+  static bool _isAnimeFansub(String tag, List<String> bracketed, String restAfterLeading) {
+    if (_nonFansubTag.hasMatch(tag)) return false;
+    return _fansubGroupHint.hasMatch(tag) ||
+        bracketed.length >= 2 ||
+        restAfterLeading.contains('★') ||
+        _looseDash.hasMatch(restAfterLeading);
+  }
 
   static final RegExp _seasonFolder = RegExp(
     r'^\s*(?:Season|Series|S)[\s._-]*(\d{1,2})\s*$'
@@ -191,9 +209,10 @@ abstract final class MediaNameParser {
     if (leading != null) {
       final tag = leading.group(1)!.trim();
       if (tag.isNotEmpty && !_isDetailTag(tag) && int.tryParse(tag) == null) {
-        group = tag;
-        fansub = true;
+        final isPortal = _nonFansubTag.hasMatch(tag);
+        group = isPortal ? null : tag;
         name = name.substring(leading.end);
+        fansub = _isAnimeFansub(tag, bracketed, name);
       }
     }
 

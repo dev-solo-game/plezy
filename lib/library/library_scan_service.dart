@@ -26,6 +26,8 @@ typedef LibraryScrapeFunction =
       bool retryUnmatched,
       Set<String>? mountIds,
       bool refreshMatched,
+      bool allowKindChange,
+      int? refreshBeforeMs,
       bool Function()? isCancelled,
       void Function(int done, int total)? onProgress,
     });
@@ -40,12 +42,16 @@ class LibraryUpdate {
   final cancel = ScanCancelToken();
   final _finished = Completer<void>();
   final scrapingMounts = <String>{};
+  bool scanning = false;
   bool scraping = false;
   int? filesSeen;
   int scraped = 0;
   int scrapeTotal = 0;
   String? _error;
   bool _refreshWhenFinished = false;
+  bool _streamingScrapePaused = false;
+  bool _hasScrapeChanges = false;
+  bool _pendingLibraryRefresh = false;
   bool get isBackground => mode == LibraryUpdateMode.incremental;
 }
 
@@ -140,7 +146,7 @@ class LibraryScanService extends ChangeNotifier {
 
   void _libraryChanged() {
     if (_disposed) return;
-    _lastLiveRefresh = DateTime.now();
+    _lastLiveRefresh = clock.now();
     onLibraryChanged?.call();
     for (final listener in _libraryListeners.toList()) {
       listener();
@@ -158,6 +164,7 @@ class LibraryScanService extends ChangeNotifier {
   Future<void>? _scrapeRun;
   bool _scrapeAgain = false;
   bool _retryUnmatchedAgain = false;
+  bool _allowKindChangeAgain = false;
   bool _scrapeCancelled = false;
   bool _scrapeAfterUpdate = false;
   bool _retryUnmatchedAfterUpdate = false;
@@ -246,11 +253,64 @@ class LibraryScanService extends ChangeNotifier {
     }
     if (_disposed || _update != null || _running.isNotEmpty || mounts.isEmpty) return false;
     final job = _update = LibraryUpdate(mode, mounts.map((mount) => mount.id).toSet())
-      .._refreshWhenFinished = refreshWhenFinished;
+      .._refreshWhenFinished = refreshWhenFinished
+      ..scanning = true;
     _updateError = null;
+    if (refreshWhenFinished) _lastLiveRefresh = clock.now();
     notifyListeners();
+
+    final activeMounts = <String>{};
+    Future<void>? streamingScrape;
+    var pendingStreamingScrape = false;
+
+    void triggerStreamingScrape() {
+      if (mode != LibraryUpdateMode.full ||
+          _disposed ||
+          scrape == null ||
+          job.cancel.isCancelled ||
+          _scrapeAfterUpdate ||
+          job._streamingScrapePaused) {
+        return;
+      }
+      pendingStreamingScrape = true;
+      streamingScrape ??= () async {
+        try {
+          while (pendingStreamingScrape &&
+              !_disposed &&
+              !job.cancel.isCancelled &&
+              !_scrapeAfterUpdate &&
+              !job._streamingScrapePaused) {
+            pendingStreamingScrape = false;
+            _scrapeCancelled = false;
+            final targetMounts = Set.of(activeMounts);
+            if (targetMounts.isEmpty) break;
+            job.scraping = true;
+            if (!_disposed) notifyListeners();
+            final stopNote = await _runScrape(
+              mountIds: targetMounts,
+              refreshMatched: false,
+              allowKindChange: false,
+              cancel: job.cancel,
+              silent: job.isBackground,
+              streaming: true,
+            );
+            if (stopNote != null) {
+              // Pause streaming scrape on missing key / unreachable primary API;
+              // the post-scan pass reports the final status once.
+              job._streamingScrapePaused = true;
+            }
+          }
+        } finally {
+          job.scraping = false;
+          streamingScrape = null;
+          if (!_disposed) notifyListeners();
+        }
+      }();
+    }
+
     try {
       await _scrapeRun;
+      final updateStartedAt = clock.now().millisecondsSinceEpoch;
       for (final mount in mounts) {
         if (job.cancel.isCancelled || canRun?.call() == false) break;
         final current = await _mountManager.registry.get(mount.id);
@@ -258,9 +318,17 @@ class LibraryScanService extends ChangeNotifier {
         if (current == null || !_mountManager.isMountOnline(current.id)) continue;
         if (mode == LibraryUpdateMode.incremental && !supportsIncremental(current)) continue;
         if (canRun != null && current.secret(MountKeys.secretCookie) != mount.secret(MountKeys.secretCookie)) continue;
-        final result = await _scan(current, token: job.cancel, mode: mode);
+        activeMounts.add(current.id);
+        final result = await _scan(
+          current,
+          token: job.cancel,
+          mode: mode,
+          onPendingVideosAdded: mode == LibraryUpdateMode.full ? triggerStreamingScrape : null,
+        );
         if (result != null && !result.cancelled) job.scrapingMounts.add(current.id);
       }
+      job.scanning = false;
+      await streamingScrape;
       if (!job.cancel.isCancelled && !_scrapeAfterUpdate && job.scrapingMounts.isNotEmpty && scrape != null) {
         job.scraping = true;
         _scrapeCancelled = false;
@@ -268,6 +336,8 @@ class LibraryScanService extends ChangeNotifier {
         await _runScrape(
           mountIds: job.scrapingMounts,
           refreshMatched: mode == LibraryUpdateMode.full,
+          refreshBeforeMs: mode == LibraryUpdateMode.full ? updateStartedAt : null,
+          allowKindChange: true,
           cancel: job.cancel,
           silent: job.isBackground,
         );
@@ -277,12 +347,18 @@ class LibraryScanService extends ChangeNotifier {
       job._error ??= '$error';
       rethrow;
     } finally {
+      job.scanning = false;
+      await streamingScrape;
+      if (job._hasScrapeChanges && activeMounts.isNotEmpty) {
+        _emitCatalogChanged(activeMounts, allowTombstones: false);
+      }
+      job.scraping = false;
       _update = null;
       final error = job._error;
       if (error != null && !job.cancel.isCancelled) _updateError = (mode: mode, message: error);
       job._finished.complete();
       if (!_disposed) {
-        if (job._refreshWhenFinished) _libraryChanged();
+        if (job._refreshWhenFinished || job._pendingLibraryRefresh) _libraryChanged();
         if (_scrapeAfterUpdate) {
           final retry = _retryUnmatchedAfterUpdate;
           _scrapeAfterUpdate = false;
@@ -328,7 +404,11 @@ class LibraryScanService extends ChangeNotifier {
       }
     }
     _updateError = null;
-    final result = await _scan(mount, token: ScanCancelToken());
+    final result = await _scan(
+      mount,
+      token: ScanCancelToken(),
+      onPendingVideosAdded: () => unawaited(scrapeLibrary(allowKindChange: false)),
+    );
     if (result != null && !result.cancelled) unawaited(scrapeLibrary());
     return result;
   }
@@ -400,7 +480,12 @@ class LibraryScanService extends ChangeNotifier {
     return true;
   }
 
-  Future<ScanResult?> _scan(StorageMount mount, {required ScanCancelToken token, LibraryUpdateMode? mode}) async {
+  Future<ScanResult?> _scan(
+    StorageMount mount, {
+    required ScanCancelToken token,
+    LibraryUpdateMode? mode,
+    void Function()? onPendingVideosAdded,
+  }) async {
     final silent = mode == LibraryUpdateMode.incremental;
     final job = _update;
     _running[mount.id] = token;
@@ -441,6 +526,7 @@ class LibraryScanService extends ChangeNotifier {
               cancel: token,
               onProgress: onProgress,
               restart: mode == LibraryUpdateMode.full,
+              onPendingVideosAdded: onPendingVideosAdded,
             );
       _running.remove(mount.id);
       if (result.cancelled) {
@@ -501,7 +587,8 @@ class LibraryScanService extends ChangeNotifier {
       if (_running.containsKey(mount.id)) continue;
       moved += await _libraryScanner.refileFromNames(mount.id);
     }
-    if (moved > 0) _libraryChanged();
+    await repository.refreshAllLocalSourceAddedTimes();
+    _libraryChanged();
     return moved;
   }
 
@@ -531,7 +618,7 @@ class LibraryScanService extends ChangeNotifier {
   /// [retryUnmatched] also retries titles earlier runs could not match.
   /// [restart] stops a run that is going after its current title and starts
   /// over at once, for when the settings it was started with changed.
-  Future<void> scrapeLibrary({bool retryUnmatched = false, bool restart = false}) {
+  Future<void> scrapeLibrary({bool retryUnmatched = false, bool restart = false, bool allowKindChange = true}) {
     if (_disposed || scrape == null) return Future.value();
     if (_update != null) {
       _scrapeAfterUpdate = true;
@@ -543,18 +630,22 @@ class LibraryScanService extends ChangeNotifier {
     if (running != null) {
       _scrapeAgain = true;
       _retryUnmatchedAgain |= retryUnmatched;
+      _allowKindChangeAgain |= allowKindChange;
       if (restart) _scrapeCancelled = true;
       return running;
     }
     return _scrapeRun = () async {
       var retry = retryUnmatched;
+      var kindChange = allowKindChange;
       try {
         do {
           _scrapeAgain = false;
           _retryUnmatchedAgain = false;
+          _allowKindChangeAgain = false;
           _scrapeCancelled = false;
-          await _runScrape(retryUnmatched: retry);
+          await _runScrape(retryUnmatched: retry, allowKindChange: kindChange);
           retry = _retryUnmatchedAgain;
+          kindChange = _allowKindChangeAgain;
         } while (_scrapeAgain && !_disposed);
       } finally {
         _scrapeRun = null;
@@ -562,12 +653,15 @@ class LibraryScanService extends ChangeNotifier {
     }();
   }
 
-  Future<void> _runScrape({
+  Future<String?> _runScrape({
     bool retryUnmatched = false,
     Set<String>? mountIds,
     bool refreshMatched = false,
+    bool allowKindChange = true,
+    int? refreshBeforeMs,
     ScanCancelToken? cancel,
     bool silent = false,
+    bool streaming = false,
   }) async {
     final job = cancel == null ? null : _update;
     bool isCancelled() => _disposed || _scrapeCancelled || cancel?.isCancelled == true;
@@ -579,6 +673,8 @@ class LibraryScanService extends ChangeNotifier {
         retryUnmatched: retryUnmatched,
         mountIds: mountIds,
         refreshMatched: refreshMatched,
+        allowKindChange: allowKindChange,
+        refreshBeforeMs: refreshBeforeMs,
         isCancelled: isCancelled,
         onProgress: (done, total) {
           final progressChanged = job != null && (job.scraped != done || job.scrapeTotal != total);
@@ -591,9 +687,9 @@ class LibraryScanService extends ChangeNotifier {
             return;
           }
           _publishScrape(LibraryScrapeStatus(running: true, done: done, total: total, runs: _scrapeStatus.runs));
-          if (job?._refreshWhenFinished == true) return;
           final last = _lastLiveRefresh;
-          if (done > 0 && done < total && (last == null || DateTime.now().difference(last) >= _liveRefreshInterval)) {
+          final now = clock.now();
+          if (done > 0 && (streaming || done < total) && (last == null || now.difference(last) >= _liveRefreshInterval)) {
             _libraryChanged();
           }
         },
@@ -603,17 +699,45 @@ class LibraryScanService extends ChangeNotifier {
     } catch (e) {
       note = '$e';
     }
+    if (streaming) {
+      if (hasChanges && job != null) job._hasScrapeChanges = true;
+      if (!silent) {
+        _publishScrape(
+          LibraryScrapeStatus(note: isCancelled() ? null : note, runs: _scrapeStatus.runs + (hasChanges ? 1 : 0)),
+        );
+      }
+      if (hasChanges) {
+        final last = _lastLiveRefresh;
+        final now = clock.now();
+        if (last == null || now.difference(last) >= _liveRefreshInterval) {
+          _libraryChanged();
+        } else {
+          job?._pendingLibraryRefresh = true;
+        }
+      }
+      return note;
+    }
     if (job != null && !isCancelled()) job._error ??= note;
     if (!silent) {
       _publishScrape(LibraryScrapeStatus(note: isCancelled() ? null : note, runs: _scrapeStatus.runs + 1));
     }
     if (job?._refreshWhenFinished != true && hasChanges) _libraryChanged();
-    if (hasChanges) _emitCatalogChanged(mountIds, allowTombstones: false);
+    if (job != null) {
+      if (hasChanges) job._hasScrapeChanges = true;
+    } else if (hasChanges) {
+      _emitCatalogChanged(mountIds, allowTombstones: false);
+    }
+    return note;
   }
 
   /// Stops a running lookup after the title it is on.
   void cancelScrape() {
     if (_update case final job? when job.scraping) {
+      if (job.scanning) {
+        job._streamingScrapePaused = true;
+        _scrapeCancelled = true;
+        return;
+      }
       cancelUpdate(job);
       return;
     }

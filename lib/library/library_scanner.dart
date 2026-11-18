@@ -124,6 +124,7 @@ class LibraryScanner {
     ScanCancelToken? cancel,
     void Function(ScanProgress progress)? onProgress,
     bool restart = false,
+    void Function()? onPendingVideosAdded,
   }) async {
     final quark = driver is QuarkStorageDriver && driver.supportsIncremental ? driver : null;
     int? watermark;
@@ -174,7 +175,9 @@ class LibraryScanner {
           }
         }
         final files = entries.where((e) => !e.isDirectory && mount.isFileAllowed(e.path)).toList();
-        videos += await _recordDirectory(mount, directory.path, files, run.scanId);
+        final recorded = await _recordDirectory(mount, directory.path, files, run.scanId);
+        videos += recorded.videos;
+        if (recorded.addedPending) onPendingVideosAdded?.call();
         filesSeen += files.length;
         directoriesDone++;
         await _saveQueue(mount.id, queue);
@@ -313,14 +316,29 @@ class LibraryScanner {
         var videos = 0;
         var removed = 0;
         final files = _db.libraryFiles;
+        final items = _db.libraryItems;
+        final titleExpr = coalesce([items.showId, items.id]);
+        final affectedTitles = <int>{};
         for (final ids in movedOut.slices(100)) {
+          final affectedRows =
+              await (_db.selectOnly(files, distinct: true).join([innerJoin(items, items.id.equalsExp(files.itemId))])
+                    ..addColumns([titleExpr])
+                    ..where(files.mountId.equals(mount.id) & files.remoteId.isIn(ids) & files.role.equals(LibraryFileRoles.video)))
+                  .get();
+          for (final row in affectedRows) {
+            final id = row.read(titleExpr);
+            if (id != null) affectedTitles.add(id);
+          }
           removed += await (_db.delete(files)..where((t) => t.mountId.equals(mount.id) & t.remoteId.isIn(ids))).go();
         }
         for (final directory in listings.entries) {
           _checkIncrementalCancellation(cancel);
-          videos += await _recordDirectory(mount, directory.key, directory.value, state!.scanId);
+          videos += (await _recordDirectory(mount, directory.key, directory.value, state!.scanId)).videos;
         }
         if (removed > 0 || listings.isNotEmpty) await _repo.pruneEmptyTitles();
+        if (affectedTitles.isNotEmpty) {
+          await _repo.refreshSourceAddedTimesForItems(affectedTitles, recomputeFromFilesOnly: true);
+        }
         if (listings.isNotEmpty) {
           await _repo.initializeSourceAddedTimes(mount.id, scanId: state!.scanId);
         }
@@ -399,8 +417,28 @@ class LibraryScanner {
       for (final row in existingInDir)
         if (!remotePaths.contains(row.path)) row.id,
     ];
+    final removedLeaves = {
+      for (final row in existingInDir)
+        if (!remotePaths.contains(row.path) && row.role == LibraryFileRoles.video && row.itemId != null) row.itemId!,
+    };
 
     await _db.transaction(() async {
+      final affectedTitles = <int>{};
+      if (removedLeaves.isNotEmpty) {
+        final items = _db.libraryItems;
+        final titleExpr = coalesce([items.showId, items.id]);
+        for (final batch in removedLeaves.toList().slices(500)) {
+          final rows =
+              await (_db.selectOnly(items, distinct: true)
+                    ..addColumns([titleExpr])
+                    ..where(items.id.isIn(batch)))
+                  .get();
+          for (final row in rows) {
+            final id = row.read(titleExpr);
+            if (id != null) affectedTitles.add(id);
+          }
+        }
+      }
       for (final batch in removedIds.slices(100)) {
         await (_db.delete(_db.libraryFiles)..where((t) => t.id.isIn(batch))).go();
       }
@@ -408,6 +446,9 @@ class LibraryScanner {
         await _recordDirectory(mount, dir, files, scanId);
       }
       await _repo.pruneEmptyTitles();
+      if (affectedTitles.isNotEmpty) {
+        await _repo.refreshSourceAddedTimesForItems(affectedTitles, recomputeFromFilesOnly: true);
+      }
       if (files.isNotEmpty) {
         await _repo.initializeSourceAddedTimes(mount.id, scanId: scanId);
       }
@@ -497,8 +538,14 @@ class LibraryScanner {
 
   static bool _isSkippedFolder(String name) => name.startsWith('.') || _skippedFolders.contains(name.toLowerCase());
 
-  /// Records the files of one directory. Returns how many were videos.
-  Future<int> _recordDirectory(StorageMount mount, String directory, List<StorageEntry> files, int scanId) async {
+  /// Records the files of one directory. Returns the number of videos and whether
+  /// any video was newly filed as pending metadata lookup.
+  Future<({int videos, bool addedPending})> _recordDirectory(
+    StorageMount mount,
+    String directory,
+    List<StorageEntry> files,
+    int scanId,
+  ) async {
     final videos = <StorageEntry>[];
     final others = <(StorageEntry, String)>[];
     for (final file in files) {
@@ -511,7 +558,7 @@ class LibraryScanner {
         others.add((file, LibraryFileRoles.artwork));
       }
     }
-    if (videos.isEmpty && others.isEmpty) return 0;
+    if (videos.isEmpty && others.isEmpty) return (videos: 0, addedPending: false);
 
     final folders = [
       for (final segment in StoragePath.segments(directory).reversed.take(3)) MediaNameParser.parseFolder(segment),
@@ -519,8 +566,10 @@ class LibraryScanner {
     final parsed = {for (final video in videos) video.path: MediaNameParser.parseFile(video.name)};
     final numbered = parsed.values.where((p) => p.episode != null || p.looseEpisode != null).length;
 
+    var anyPendingAdded = false;
     await _db.transaction(() async {
       final videoIds = <String, int>{};
+      final touchedLeafIds = <int>{};
       for (final video in videos) {
         final name = parsed[video.path]!;
         final classified = MediaClassifier.classify(file: name, folders: folders, numberedSiblings: numbered);
@@ -539,7 +588,12 @@ class LibraryScanner {
         );
         videoIds[video.path] = id;
         if (previous == null || previous.remoteId != video.id || previous.path == video.path) {
-          await _file(id, previous, classified);
+          final filed = await _file(id, previous, classified);
+          if (filed.itemId case final itemId?) touchedLeafIds.add(itemId);
+          if (previous?.itemId case final prevItemId?) touchedLeafIds.add(prevItemId);
+          if (filed.addedPending) anyPendingAdded = true;
+        } else if (previous.itemId case final prevItemId?) {
+          touchedLeafIds.add(prevItemId);
         }
       }
 
@@ -570,13 +624,17 @@ class LibraryScanner {
           modifiedAt: file.modifiedAt?.millisecondsSinceEpoch,
         );
       }
+
+      if (touchedLeafIds.isNotEmpty) {
+        await _repo.refreshSourceAddedTimesForLeaves(touchedLeafIds);
+      }
     });
-    return videos.length;
+    return (videos: videos.length, addedPending: anyPendingAdded);
   }
 
   /// Bumped whenever parsing or classification changes in a way that files
   /// already in the library should be re-filed under.
-  static const int namingVersion = 2;
+  static const int namingVersion = 3;
 
   /// Re-files every video of [mountId] from the paths already in the
   /// database, without listing the mount: for when the naming rules changed.
@@ -603,13 +661,19 @@ class LibraryScanner {
           if (file.matchLocked) continue;
           final name = parsed[file.id]!;
           final classified = MediaClassifier.classify(file: name, folders: folders, numberedSiblings: numbered);
-          if (_keyOf(file.parsed) == classified.key) continue;
+          final encodedParsed = jsonEncode({...name.toJson(), 'key': classified.key});
+          if (_keyOf(file.parsed) == classified.key) {
+            if (file.parsed != encodedParsed || file.versionLabel != classified.versionLabel) {
+              await _repo.updateFile(
+                file.id,
+                LibraryFilesCompanion(parsed: Value(encodedParsed), versionLabel: Value(classified.versionLabel)),
+              );
+            }
+            continue;
+          }
           await _repo.updateFile(
             file.id,
-            LibraryFilesCompanion(
-              parsed: Value(jsonEncode({...name.toJson(), 'key': classified.key})),
-              versionLabel: Value(classified.versionLabel),
-            ),
+            LibraryFilesCompanion(parsed: Value(encodedParsed), versionLabel: Value(classified.versionLabel)),
           );
           await _file(file.id, file, classified);
           moved++;
@@ -618,8 +682,8 @@ class LibraryScanner {
     }
     if (moved > 0) {
       await _repo.pruneEmptyTitles();
-      await _repo.initializeSourceAddedTimes(mountId);
     }
+    await _repo.initializeSourceAddedTimes(mountId);
     return moved;
   }
 
@@ -650,10 +714,16 @@ class LibraryScanner {
   /// A video that is already filed is left alone unless its classification
   /// changed (renamed or moved) — and never when the user chose its match by
   /// hand.
-  Future<void> _file(int fileId, LibraryFileRow? previous, ClassifiedVideo classified) async {
+  Future<({int? itemId, bool addedPending})> _file(
+    int fileId,
+    LibraryFileRow? previous,
+    ClassifiedVideo classified,
+  ) async {
     if (previous != null) {
-      if (previous.matchLocked) return;
-      if (previous.itemId != null && _keyOf(previous.parsed) == classified.key) return;
+      if (previous.matchLocked) return (itemId: previous.itemId, addedPending: false);
+      if (previous.itemId != null && _keyOf(previous.parsed) == classified.key) {
+        return (itemId: previous.itemId, addedPending: false);
+      }
     }
 
     if (!classified.isKnown) {
@@ -661,7 +731,7 @@ class LibraryScanner {
         fileId,
         const LibraryFilesCompanion(itemId: Value(null), matchState: Value(LibraryMatchStates.unmatched)),
       );
-      return;
+      return (itemId: null, addedPending: false);
     }
 
     final itemId = classified.kind == LibraryKinds.movie ? await _movieFor(classified) : await _episodeFor(classified);
@@ -679,6 +749,7 @@ class LibraryScanner {
     if (oldItem != null && oldItem != itemId && await _repo.videoCount(oldItem) == 0) {
       await _repo.mergeUserState(oldItem, itemId);
     }
+    return (itemId: itemId, addedPending: true);
   }
 
   static String? _keyOf(String? parsedJson) {

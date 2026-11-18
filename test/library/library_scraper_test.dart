@@ -1,3 +1,4 @@
+import 'package:drift/drift.dart' show Value;
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:plezy/database/app_database.dart';
@@ -656,6 +657,134 @@ void main() {
     expect(queued, 0);
     expect(second.hasChanges, isFalse);
     expect(tmdb.calls, isEmpty);
+  });
+
+  test('Bangumi failure falls back to TMDB and circuit-breaks Bangumi for the run', () async {
+    driver.files
+      ..add('/Anime/[Group] Frieren - 01 [1080p].mkv')
+      ..add('/Anime/[Group] Dungeon Meshi - 01 [1080p].mkv')
+      ..add('/Anime/Spirited Away (2001).mkv');
+    await scan();
+    bangumi.failWith = const ScrapeException('Cannot reach api.bgm.tv');
+    tmdb.results['frieren'] = [tmdb.hit('209867', 'Frieren', year: 2023)];
+    tmdb.details['209867'] = const ScrapedTitle(
+      source: 'tmdb',
+      tmdbId: '209867',
+      title: '葬送的芙莉莲',
+      category: LibraryTypes.anime,
+    );
+    tmdb.results['dungeon meshi'] = [tmdb.hit('215149', 'Dungeon Meshi', year: 2024)];
+    tmdb.details['215149'] = const ScrapedTitle(
+      source: 'tmdb',
+      tmdbId: '215149',
+      title: '迷宫饭',
+      category: LibraryTypes.anime,
+    );
+    tmdb.results['spirited away'] = [tmdb.hit('129', 'Spirited Away', year: 2001)];
+    tmdb.details['129'] = const ScrapedTitle(
+      source: 'tmdb',
+      tmdbId: '129',
+      title: '千与千寻',
+      category: LibraryTypes.anime,
+    );
+
+    final summary = await scraper.scrapePending();
+    expect(summary.stoppedBy, isNull);
+    expect(summary.matched, 3);
+    expect(bangumi.calls, ['show:Frieren:'], reason: 'Bangumi is circuit-broken after first failure');
+
+    final candidates = await scraper.searchCandidates(title: 'Frieren', asShow: true);
+    expect(candidates.map((c) => (c.source, c.id)), [('tmdb', '209867')]);
+  });
+
+  test('allowKindChange: false defers kind flips without marking unmatched until final pass', () async {
+    driver.files.add('/Docs/Chernobyl.mkv');
+    await scan();
+    tmdb.details['87108'] = const ScrapedTitle(source: 'tmdb', tmdbId: '87108', title: '切尔诺贝利');
+    scraper = LibraryScraper(
+      db,
+      repo,
+      providers: [
+        _ShowOnly(tmdb, {'chernobyl': tmdb.hit('87108', 'Chernobyl')}),
+      ],
+    );
+
+    final streaming = await scraper.scrapePending(allowKindChange: false);
+    expect((streaming.matched, streaming.unmatched, streaming.skipped), (0, 0, 1));
+    final pendingMovie = (await items(LibraryKinds.movie)).single;
+    expect(pendingMovie.scrapedAt, isNull);
+    expect((await repo.versionsOf(pendingMovie.id)).single.matchState, LibraryMatchStates.pending);
+
+    final finalPass = await scraper.scrapePending(allowKindChange: true);
+    expect(finalPass.matched, 1);
+    expect(await items(LibraryKinds.movie), isEmpty);
+    expect((await items(LibraryKinds.show)).single.title, '切尔诺贝利');
+  });
+
+  test('refreshBeforeMs skips recently scraped items while still filling new pending episodes', () async {
+    driver.files
+      ..add('/Movies/Recent Movie (2020).mkv')
+      ..add('/Movies/Older Movie (2018).mkv')
+      ..add('/TV/Severance/Season 1/Severance.S01E01.mkv');
+    await scan();
+    tmdb.results['recent movie'] = [tmdb.hit('1', 'Recent Movie', year: 2020)];
+    tmdb.details['1'] = const ScrapedTitle(source: 'tmdb', tmdbId: '1', title: 'Recent Movie');
+    tmdb.results['older movie'] = [tmdb.hit('2', 'Older Movie', year: 2018)];
+    tmdb.details['2'] = const ScrapedTitle(source: 'tmdb', tmdbId: '2', title: 'Older Movie');
+    tmdb.results['severance'] = [tmdb.hit('95396', 'Severance')];
+    tmdb.details['95396'] = const ScrapedTitle(source: 'tmdb', tmdbId: '95396', title: 'Severance');
+    tmdb.seasons['95396/1'] = const ScrapedSeason(
+      number: 1,
+      episodes: [
+        ScrapedEpisode(number: 1, title: 'Pilot'),
+        ScrapedEpisode(number: 2, title: 'Half Loop'),
+      ],
+    );
+    await scraper.scrapePending();
+
+    final cutoff = DateTime.now().millisecondsSinceEpoch + 60000;
+    final movies = await items(LibraryKinds.movie);
+    final recentMovie = movies.firstWhere((m) => m.tmdbId == '1');
+    final olderMovie = movies.firstWhere((m) => m.tmdbId == '2');
+    await (db.update(db.libraryItems)..where((t) => t.id.equals(recentMovie.id))).write(
+      LibraryItemsCompanion(scrapedAt: Value(cutoff + 1000)),
+    );
+    await (db.update(db.libraryItems)..where((t) => t.id.equals(olderMovie.id))).write(
+      LibraryItemsCompanion(scrapedAt: Value(cutoff - 1000)),
+    );
+    final severance = (await items(LibraryKinds.show)).single;
+    await (db.update(db.libraryItems)..where((t) => t.id.equals(severance.id))).write(
+      LibraryItemsCompanion(scrapedAt: Value(cutoff + 1000)),
+    );
+    driver.files.add('/TV/Severance/Season 1/Severance.S01E02.mkv');
+    await scan();
+
+    tmdb.details['1'] = const ScrapedTitle(source: 'tmdb', tmdbId: '1', title: 'Should Not Refresh');
+    tmdb.details['2'] = const ScrapedTitle(source: 'tmdb', tmdbId: '2', title: 'Older Movie Refreshed');
+    tmdb.details['95396'] = const ScrapedTitle(source: 'tmdb', tmdbId: '95396', title: 'Should Not Refresh Show');
+    final summary = await scraper.scrapePending(
+      mountIds: {mount.id},
+      refreshMatched: true,
+      refreshBeforeMs: cutoff,
+    );
+    expect(summary.matched, 2);
+    final updatedMovies = {for (final m in await items(LibraryKinds.movie)) m.tmdbId: m.title};
+    expect(updatedMovies, {'1': 'Recent Movie', '2': 'Older Movie Refreshed'});
+    final show = (await items(LibraryKinds.show)).single;
+    expect(show.title, 'Severance');
+    expect((await repo.episodesOfShow(show.id)).map((e) => e.item.title), ['Pilot', 'Half Loop']);
+  });
+
+  test('portal-prefixed Chinese show does not query Bangumi', () async {
+    driver.files.add('/电视剧/[电影天堂www.dytt89.com]繁花.S01E01.mp4');
+    await scan();
+    tmdb.results['繁花'] = [tmdb.hit('12345', '繁花')];
+    tmdb.details['12345'] = const ScrapedTitle(source: 'tmdb', tmdbId: '12345', title: '繁花');
+
+    final summary = await scraper.scrapePending();
+    expect(summary.matched, 1);
+    expect(bangumi.calls, isEmpty);
+    expect(tmdb.calls, ['show:繁花:']);
   });
 }
 

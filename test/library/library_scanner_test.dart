@@ -6,6 +6,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:plezy/database/app_database.dart';
 import 'package:plezy/library/library_repository.dart';
 import 'package:plezy/library/library_scanner.dart';
+import 'package:plezy/library/local_library_client.dart';
+import 'package:plezy/storage/mount_manager.dart';
+import 'package:plezy/storage/mount_registry.dart';
 import 'package:plezy/storage/storage_driver.dart';
 import 'package:plezy/storage/storage_mount.dart';
 import 'package:plezy/storage/storage_path.dart';
@@ -96,7 +99,7 @@ void main() {
   Future<LibraryFileRow> fileAt(String path) async =>
       (await db.select(db.libraryFiles).get()).firstWhere((f) => f.path == path);
 
-  test('recently added uses the latest video in the initial scan and keeps it after adding episodes', () async {
+  test('recently added uses the latest video modifiedAt and updates when newer episodes arrive', () async {
     driver
       ..add('/Breaking Bad/Season 1/Breaking.Bad.S01E01.mkv', modifiedAt: 100)
       ..add('/Breaking Bad/Season 2/Breaking.Bad.S02E01.mkv', modifiedAt: 300)
@@ -111,16 +114,44 @@ void main() {
     Future<Iterable<(String, int?)>> recentShows() async => (await repo.recentlyAdded(
       libraryType: LibraryTypes.show,
     )).map((view) => (view.item.title, view.item.sourceAddedAt));
-    const expected = [('Breaking Bad', 300), ('Severance', 200), ('The Wire', 0)];
-    expect(await recentShows(), expected);
+    expect(await recentShows(), [('Breaking Bad', 300), ('Severance', 200), ('The Wire', 0)]);
 
     driver
       ..add('/Severance/Severance.S01E02.mkv', modifiedAt: 500)
       ..add('/The Wire/The.Wire.S01E02.mkv', modifiedAt: 600);
     await scanner.scan(mount(), driver, restart: true);
 
-    expect(await recentShows(), expected);
+    expect(await recentShows(), [('The Wire', 600), ('Severance', 500), ('Breaking Bad', 300)]);
     expect(await items(LibraryKinds.episode), hasLength(6));
+
+    final queried = await repo.queryTitles(
+      const LibraryQuery(libraryType: LibraryTypes.show, sort: LibrarySort.addedAt, descending: true),
+    );
+    expect(
+      queried.items.map((view) => (view.item.title, view.item.sourceAddedAt)),
+      [('The Wire', 600), ('Severance', 500), ('Breaking Bad', 300)],
+    );
+
+    driver
+      ..add('/The Wire/The.Wire.S01E03.mkv', modifiedAt: 6000)
+      ..add('/Zero/Zero.S01E01.mkv', modifiedAt: null);
+    await scanner.scan(mount(), driver, restart: true);
+    for (final show in await items(LibraryKinds.show)) {
+      await repo.setLibraryType(show.id, LibraryTypes.show);
+    }
+
+    final mounts = MountManager(MountRegistry(db));
+    final client = LocalLibraryClient(repository: repo, mounts: mounts);
+    addTearDown(() async {
+      client.close();
+      await mounts.dispose();
+    });
+    final hubs = await client.fetchGlobalHubs(includePlaybackHubs: false);
+    final recentItems = hubs.single.items;
+    expect(
+      recentItems.map((item) => (item.title, item.addedAt)),
+      [('The Wire', 6), ('Severance', 0), ('Breaking Bad', 0), ('Zero', null)],
+    );
   });
 
   group('auto classification', () {

@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 
 import 'package:clock/clock.dart';
+import 'package:collection/collection.dart';
 import 'package:drift/drift.dart';
 
 import '../database/app_database.dart';
@@ -277,7 +278,8 @@ class LibraryRepository {
 
   /// Finds a movie or show by the name a file gave it: its sort title or one
   /// of its aliases, on whichever shelf it ended up. A [year] only rules a
-  /// candidate out when both sides have one and they differ.
+  /// candidate out when both sides have one and they differ beyond scraped
+  /// one-year regional release drift.
   Future<LibraryItemRow?> findTitleByName({required String kind, required String name, int? year}) async {
     final items = _db.libraryItems;
     final key = sortTitleFor(name);
@@ -285,12 +287,27 @@ class LibraryRepository {
     Expression<bool> filter =
         items.kind.equals(kind) &
         (items.sortTitle.equals(key) | items.aliases.like(_likePattern(name.trim()), escapeChar: r'\'));
-    if (year != null) filter = filter & (items.year.isNull() | items.year.equals(year));
+    if (year != null) {
+      filter =
+          filter &
+          (items.year.isNull() |
+              items.year.equals(year) |
+              (items.metadataSource.isNotNull() & items.year.isBetweenValues(year - 1, year + 1)));
+    }
     final candidates =
         await (_db.select(items)
               ..where((_) => filter)
-              // An exact-year candidate beats one with no year.
-              ..orderBy([(t) => OrderingTerm(expression: t.year, mode: OrderingMode.desc, nulls: NullsOrder.last)]))
+              // An exact-year candidate beats a ±1 scraped drift, which beats no year.
+              ..orderBy([
+                if (year != null)
+                  (_) => OrderingTerm.asc(
+                    CustomExpression<int>(
+                      'CASE WHEN library_items.year = $year THEN 0 '
+                      'WHEN library_items.year IS NOT NULL THEN 1 ELSE 2 END',
+                    ),
+                  ),
+                (t) => OrderingTerm(expression: t.year, mode: OrderingMode.desc, nulls: NullsOrder.last),
+              ]))
             .get();
     for (final candidate in candidates) {
       if (candidate.sortTitle == key) return candidate;
@@ -380,7 +397,7 @@ class LibraryRepository {
       LibrarySort.year => items.year,
       LibrarySort.releaseDate => items.releaseDate,
       LibrarySort.rating => items.rating,
-      LibrarySort.addedAt => items.addedAt,
+      LibrarySort.addedAt => _effectiveSourceAddedAt,
       LibrarySort.lastPlayed => states.lastPlayedAt,
     };
 
@@ -390,6 +407,7 @@ class LibraryRepository {
               ..orderBy([
                 // Titles missing the sort key go last in either direction.
                 OrderingTerm(expression: key, mode: mode, nulls: NullsOrder.last),
+                if (query.sort == LibrarySort.addedAt) OrderingTerm(expression: items.addedAt, mode: mode),
                 OrderingTerm.asc(items.sortTitle),
                 OrderingTerm.asc(items.id),
               ])
@@ -559,6 +577,13 @@ class LibraryRepository {
     return rows.map(_toView).toList();
   }
 
+  static const CustomExpression<int> _effectiveSourceAddedAt = CustomExpression<int>(
+    'CASE WHEN library_items.source_added_at > 0 THEN library_items.source_added_at END',
+  );
+
+  static const String _fileSourceTimeExpr =
+      'CASE WHEN f.modified_at > 0 THEN f.modified_at WHEN f.source_created_at > 0 THEN f.source_created_at END';
+
   Future<List<LibraryItemView>> recentlyAdded({String? libraryType, int limit = 20}) async {
     final items = _db.libraryItems;
     Expression<bool> filter = items.kind.isIn([LibraryKinds.movie, LibraryKinds.show]) & _onAShelf & _visibilityFilter();
@@ -567,7 +592,8 @@ class LibraryRepository {
         await (_viewSelect()
               ..where(filter)
               ..orderBy([
-                OrderingTerm.desc(coalesce([items.sourceAddedAt, const Constant(0)])),
+                OrderingTerm(expression: _effectiveSourceAddedAt, mode: OrderingMode.desc, nulls: NullsOrder.last),
+                OrderingTerm.desc(items.addedAt),
                 OrderingTerm.desc(items.id),
               ])
               ..limit(limit))
@@ -575,29 +601,98 @@ class LibraryRepository {
     return rows.map(_toView).toList();
   }
 
-  /// Freezes the source time for each movie or show first filed in the library.
-  Future<void> initializeSourceAddedTimes(String mountId, {int? scanId}) async {
+  Future<void> _updateSourceAddedTimes(
+    String touchedTitlesSql,
+    List<Variable<Object>> variables, {
+    bool recomputeFromFilesOnly = false,
+  }) async {
+    final valueExpr = recomputeFromFilesOnly
+        ? 'source_times.source_time'
+        : 'CASE WHEN source_times.source_time > 0 THEN source_times.source_time '
+              'ELSE COALESCE(library_items.source_added_at, 0) END';
     await _db.customUpdate(
       '''
-      WITH source_times AS (
-        SELECT title.id, COALESCE(MAX(CASE
-          WHEN f.source_created_at > 0 THEN f.source_created_at
-          WHEN f.modified_at > 0 THEN f.modified_at
-        END), 0) AS source_time
-        FROM library_files f
-        JOIN library_items leaf ON leaf.id = f.item_id
-        JOIN library_items title ON title.id = COALESCE(leaf.show_id, leaf.id)
-        WHERE f.mount_id = ? AND f.role = 'video'
-          AND title.kind IN ('movie', 'show') AND title.source_added_at IS NULL
-          ${scanId == null ? '' : 'AND f.seen_in_scan = ?'}
-        GROUP BY title.id
+      WITH touched_titles AS (
+        $touchedTitlesSql
+      ),
+      source_times AS (
+        SELECT tt.id, COALESCE(MAX($_fileSourceTimeExpr), 0) AS source_time
+        FROM touched_titles tt
+        JOIN library_items leaf ON leaf.id = tt.id OR leaf.show_id = tt.id
+        JOIN library_files f ON f.item_id = leaf.id AND f.role = 'video'
+        GROUP BY tt.id
       )
-      UPDATE library_items SET source_added_at = source_times.source_time
-      FROM source_times WHERE library_items.id = source_times.id
+      UPDATE library_items
+      SET source_added_at = $valueExpr
+      FROM source_times
+      WHERE library_items.id = source_times.id
+        AND library_items.kind IN ('movie', 'show')
       ''',
-      variables: [Variable.withString(mountId), if (scanId != null) Variable.withInt(scanId)],
+      variables: variables,
       updates: {_db.libraryItems},
       updateKind: UpdateKind.update,
+    );
+  }
+
+  /// Updates each movie or show's `source_added_at` to the latest file
+  /// modification time (falling back to creation time) across all of its videos.
+  Future<void> initializeSourceAddedTimes(
+    String mountId, {
+    int? scanId,
+    bool recomputeFromFilesOnly = false,
+  }) async {
+    await _updateSourceAddedTimes(
+      '''
+      SELECT DISTINCT COALESCE(leaf.show_id, leaf.id) AS id
+      FROM library_files f
+      JOIN library_items leaf ON leaf.id = f.item_id
+      WHERE f.mount_id = ? AND f.role = 'video'
+        ${scanId == null ? '' : 'AND f.seen_in_scan = ?'}
+      ''',
+      [Variable.withString(mountId), if (scanId != null) Variable.withInt(scanId)],
+      recomputeFromFilesOnly: recomputeFromFilesOnly,
+    );
+  }
+
+  /// Recomputes `source_added_at` for titles owning any of [leafIds].
+  Future<void> refreshSourceAddedTimesForLeaves(Iterable<int> leafIds, {bool recomputeFromFilesOnly = false}) async {
+    final unique = leafIds.toSet().toList();
+    if (unique.isEmpty) return;
+    for (final batch in unique.slices(500)) {
+      final placeholders = List.filled(batch.length, '?').join(', ');
+      await _updateSourceAddedTimes(
+        'SELECT DISTINCT COALESCE(show_id, id) AS id FROM library_items WHERE id IN ($placeholders)',
+        [for (final id in batch) Variable.withInt(id)],
+        recomputeFromFilesOnly: recomputeFromFilesOnly,
+      );
+    }
+  }
+
+  /// Recomputes `source_added_at` directly for the movie or show rows in [itemIds].
+  Future<void> refreshSourceAddedTimesForItems(Iterable<int> itemIds, {bool recomputeFromFilesOnly = false}) async {
+    final unique = itemIds.toSet().toList();
+    if (unique.isEmpty) return;
+    for (final batch in unique.slices(500)) {
+      final placeholders = List.filled(batch.length, '?').join(', ');
+      await _updateSourceAddedTimes(
+        "SELECT id FROM library_items WHERE id IN ($placeholders) AND kind IN ('movie', 'show')",
+        [for (final id in batch) Variable.withInt(id)],
+        recomputeFromFilesOnly: recomputeFromFilesOnly,
+      );
+    }
+  }
+
+  /// Recomputes `source_added_at` across all local titles that currently have videos.
+  Future<void> refreshAllLocalSourceAddedTimes({bool recomputeFromFilesOnly = false}) {
+    return _updateSourceAddedTimes(
+      '''
+      SELECT DISTINCT COALESCE(leaf.show_id, leaf.id) AS id
+      FROM library_files f
+      JOIN library_items leaf ON leaf.id = f.item_id
+      WHERE f.role = 'video'
+      ''',
+      const [],
+      recomputeFromFilesOnly: recomputeFromFilesOnly,
     );
   }
 
@@ -1034,10 +1129,26 @@ class LibraryRepository {
   /// titles left with nothing to play. Returns how many files were removed.
   Future<int> removeFilesNotSeen(String mountId, int scanId) async {
     return _db.transaction(() async {
+      final files = _db.libraryFiles;
+      final items = _db.libraryItems;
+      final titleExpr = coalesce([items.showId, items.id]);
+      final affectedRows =
+          await (_db.selectOnly(files, distinct: true).join([innerJoin(items, items.id.equalsExp(files.itemId))])
+                ..addColumns([titleExpr])
+                ..where(
+                  files.mountId.equals(mountId) &
+                      files.seenInScan.isSmallerThanValue(scanId) &
+                      files.role.equals(LibraryFileRoles.video),
+                ))
+              .get();
+      final affectedTitles = [for (final row in affectedRows) ?row.read(titleExpr)];
       final removed = await (_db.delete(
-        _db.libraryFiles,
+        files,
       )..where((t) => t.mountId.equals(mountId) & t.seenInScan.isSmallerThanValue(scanId))).go();
-      if (removed > 0) await pruneEmptyTitles();
+      if (removed > 0) {
+        await pruneEmptyTitles();
+        await refreshSourceAddedTimesForItems(affectedTitles, recomputeFromFilesOnly: true);
+      }
       return removed;
     });
   }

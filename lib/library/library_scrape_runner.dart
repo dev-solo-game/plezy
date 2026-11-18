@@ -112,6 +112,8 @@ class LibraryScrapeRunner {
     bool retryUnmatched = false,
     Set<String>? mountIds,
     bool refreshMatched = false,
+    bool allowKindChange = true,
+    int? refreshBeforeMs,
     bool Function()? isCancelled,
     void Function(int done, int total)? onProgress,
   }) {
@@ -120,6 +122,8 @@ class LibraryScrapeRunner {
       final summary = await scraper.scrapePending(
         mountIds: mountIds,
         refreshMatched: refreshMatched,
+        allowKindChange: allowKindChange,
+        refreshBeforeMs: refreshBeforeMs,
         isCancelled: isCancelled,
         onProgress: onProgress,
       );

@@ -96,6 +96,8 @@ class LibraryStatusIndicator extends StatelessWidget {
       final label = mode == LibraryUpdateMode.incremental ? t.storage.incrementalUpdate : t.storage.fullUpdate;
       final progress = switch (job) {
         LibraryUpdate(cancel: final cancel) when cancel.isCancelled => t.storage.cancellingUpdate,
+        LibraryUpdate(scanning: true, scraping: true, :final scraped, :final scrapeTotal) when files != null =>
+          '${t.storage.scanning(files: files)} · ${scrapeTotal == 0 ? t.storage.scraping : t.storage.scrapingProgress(done: scraped, total: scrapeTotal)}',
         LibraryUpdate(scraping: true, :final scraped, :final scrapeTotal) =>
           scrapeTotal == 0 ? t.storage.scraping : t.storage.scrapingProgress(done: scraped, total: scrapeTotal),
         _ when files != null => t.storage.scanning(files: files),

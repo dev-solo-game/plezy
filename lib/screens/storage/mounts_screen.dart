@@ -409,14 +409,23 @@ class _ScanLine extends StatelessWidget {
       final String message;
       if (active && update.cancel.isCancelled) {
         message = t.storage.cancellingUpdate;
+      } else if (progress != null) {
+        final scanning = t.storage.scanning(files: progress.filesSeen);
+        final base = active ? '${t.storage.fullUpdate} · $scanning' : scanning;
+        if (active && update.scraping) {
+          final scrape = scans.scrapeStatus;
+          final scraping = scrape.total == 0
+              ? t.storage.scraping
+              : t.storage.scrapingProgress(done: scrape.done, total: scrape.total);
+          message = '$base · $scraping';
+        } else {
+          message = base;
+        }
       } else if (active && update.scraping && update.scrapingMounts.contains(mountId)) {
         final scrape = scans.scrapeStatus;
         message = scrape.total == 0
             ? t.storage.scraping
             : t.storage.scrapingProgress(done: scrape.done, total: scrape.total);
-      } else if (progress != null) {
-        final scanning = t.storage.scanning(files: progress.filesSeen);
-        message = active ? '${t.storage.fullUpdate} · $scanning' : scanning;
       } else {
         final label = t.storage.fullUpdate;
         message = update!.scrapingMounts.contains(mountId)

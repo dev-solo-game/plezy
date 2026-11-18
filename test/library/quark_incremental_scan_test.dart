@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:clock/clock.dart';
-import 'package:drift/drift.dart' show Value;
+import 'package:drift/drift.dart' hide isNull, isNotNull;
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:plezy/database/app_database.dart';
@@ -264,22 +264,30 @@ void main() {
     );
   });
 
-  test('recently added prefers the Quark creation time on both full and incremental scans', () async {
+  test('recently added prefers the Quark modification time and falls back to creation time', () async {
     search = [
       {..._file('old', 'Old Movie (2022).mkv', baseline), 'created_at': baseline - 1000},
     ];
-    seasonFiles = [...search];
+    final createdOnly = {
+      ..._file('created-only', 'Created Only (2024).mkv', 0)..remove('updated_at'),
+      'created_at': baseline - 200,
+    };
+    seasonFiles = [...search, createdOnly];
     await scanner.scan(mount, driver);
 
     final newMovie = {..._file('new', 'New Movie (2025).mkv', next), 'created_at': next - 500};
     search = [newMovie, ...search];
-    seasonFiles = [...search];
+    seasonFiles = [...search, createdOnly];
     await incremental();
 
     final titles = await db.select(db.libraryItems).get();
     expect(
       titles.map((item) => (item.title, item.sourceAddedAt)),
-      unorderedEquals([('Old Movie', baseline - 1000), ('New Movie', next - 500)]),
+      unorderedEquals([
+        ('Old Movie', baseline),
+        ('New Movie', next),
+        ('Created Only', baseline - 200),
+      ]),
     );
   });
 
@@ -349,16 +357,25 @@ void main() {
     final scraping = Completer<void>();
     final finishScraping = Completer<void>();
     var changes = 0;
+    final seenModes = <bool>[];
     final scans = LibraryScanService(
       repository: LibraryRepository(db),
       scanner: scanner,
       mounts: _MountManager(MountRegistry(db), driver),
       onLibraryChanged: () => changes++,
-      scrape: ({retryUnmatched = false, mountIds, refreshMatched = false, isCancelled, onProgress}) async {
+      scrape: ({
+        retryUnmatched = false,
+        mountIds,
+        refreshMatched = false,
+        allowKindChange = true,
+        refreshBeforeMs,
+        isCancelled,
+        onProgress,
+      }) async {
         expect(mountIds, {mount.id});
-        expect(refreshMatched, isTrue);
+        seenModes.add(refreshMatched);
         onProgress?.call(1, 1);
-        scraping.complete();
+        if (!scraping.isCompleted) scraping.complete();
         await finishScraping.future;
         return const LibraryScrapeOutcome(hasChanges: true);
       },
@@ -371,6 +388,7 @@ void main() {
     finishScraping.complete();
     expect(await fullScan, isTrue);
     expect(changes, 1);
+    expect(seenModes, [false, true]);
     expect(scans.update, isNull);
   });
 
@@ -378,17 +396,29 @@ void main() {
     final scrapes = Completer<void>();
     final finishScraping = Completer<void>();
     final cancelled = Completer<bool>();
+    final seenModes = <bool>[];
     final scans = LibraryScanService(
       repository: LibraryRepository(db),
       scanner: scanner,
       mounts: _MountManager(MountRegistry(db), driver),
-      scrape: ({retryUnmatched = false, mountIds, refreshMatched = false, isCancelled, onProgress}) async {
-        if (mountIds?.contains(mount.id) != true || !refreshMatched) {
-          return const LibraryScrapeOutcome(note: 'Incorrect scrape scope');
+      scrape: ({
+        retryUnmatched = false,
+        mountIds,
+        refreshMatched = false,
+        allowKindChange = true,
+        refreshBeforeMs,
+        isCancelled,
+        onProgress,
+      }) async {
+        expect(mountIds, {mount.id});
+        seenModes.add(refreshMatched);
+        if (!refreshMatched) {
+          expect(allowKindChange, isFalse);
+          return const LibraryScrapeOutcome();
         }
-        scrapes.complete();
+        if (!scrapes.isCompleted) scrapes.complete();
         await finishScraping.future;
-        cancelled.complete(isCancelled!());
+        if (!cancelled.isCompleted) cancelled.complete(isCancelled!());
         return const LibraryScrapeOutcome();
       },
     );
@@ -403,6 +433,7 @@ void main() {
     finishScraping.complete();
     expect(await running, isTrue);
     expect(await cancelled.future, isTrue);
+    expect(seenModes, [false, true]);
     expect(scans.update, isNull);
   });
 
@@ -415,11 +446,19 @@ void main() {
       repository: LibraryRepository(db),
       scanner: scanner,
       mounts: _MountManager(MountRegistry(db), driver),
-      scrape: ({retryUnmatched = false, mountIds, refreshMatched = false, isCancelled, onProgress}) async {
+      scrape: ({
+        retryUnmatched = false,
+        mountIds,
+        refreshMatched = false,
+        allowKindChange = true,
+        refreshBeforeMs,
+        isCancelled,
+        onProgress,
+      }) async {
         if (mountIds == null) {
-          restarted.complete(retryUnmatched);
+          if (!restarted.isCompleted) restarted.complete(retryUnmatched);
         } else {
-          started.complete();
+          if (!started.isCompleted) started.complete();
           await release.future;
           expect(isCancelled!(), isTrue);
         }
@@ -521,4 +560,127 @@ void main() {
       expect(scans.statusOf(mount.id).error, isNull);
     });
   });
+
+  test('full scan scrapes newly discovered directories and refreshes UI before scan finishes', () async {
+    var now = DateTime(2026, 11, 18, 12);
+    final folder2Entered = Completer<void>();
+    final releaseFolder2 = Completer<void>();
+    final firstScrapeDone = Completer<void>();
+    final gatedDriver = _GatedStreamingDriver(
+      onFolder2: () async {
+        if (!folder2Entered.isCompleted) folder2Entered.complete();
+        await releaseFolder2.future;
+      },
+    );
+    final repo = LibraryRepository(db);
+    var changes = 0;
+    final scans = LibraryScanService(
+      repository: repo,
+      scanner: LibraryScanner(db, repo),
+      mounts: _DriverMountManager(MountRegistry(db), gatedDriver),
+      onLibraryChanged: () => changes++,
+      scrape: ({
+        retryUnmatched = false,
+        mountIds,
+        refreshMatched = false,
+        allowKindChange = true,
+        refreshBeforeMs,
+        isCancelled,
+        onProgress,
+      }) async {
+        final pendingMovies = await (db.select(db.libraryItems)
+              ..where((t) => t.kind.equals(LibraryKinds.movie) & t.libraryType.equals(LibraryTypes.pending)))
+            .get();
+        if (pendingMovies.isEmpty) return const LibraryScrapeOutcome();
+        expect(refreshMatched, isFalse);
+        expect(allowKindChange, isFalse);
+        now = now.add(const Duration(seconds: 6));
+        for (final movie in pendingMovies) {
+          await repo.setLibraryType(movie.id, LibraryTypes.movie);
+          await repo.updateItem(
+            movie.id,
+            LibraryItemsCompanion(
+              metadataSource: const Value('tmdb'),
+              tmdbId: Value('${movie.id}'),
+              scrapedAt: Value(now.millisecondsSinceEpoch),
+            ),
+          );
+          await (db.update(db.libraryFiles)..where((t) => t.itemId.equals(movie.id))).write(
+            const LibraryFilesCompanion(matchState: Value(LibraryMatchStates.matched)),
+          );
+        }
+        onProgress?.call(pendingMovies.length, pendingMovies.length);
+        if (!firstScrapeDone.isCompleted) firstScrapeDone.complete();
+        return const LibraryScrapeOutcome(hasChanges: true);
+      },
+    );
+    addTearDown(scans.dispose);
+
+    await withClock(Clock(() => now), () async {
+      final fullScan = scans.scanAllMounts();
+      await Future.wait([folder2Entered.future, firstScrapeDone.future]).timeout(const Duration(seconds: 5));
+
+      expect(scans.update?.scanning, isTrue);
+      expect(changes, greaterThanOrEqualTo(1));
+      final shelved = await repo.queryTitles(const LibraryQuery(libraryType: LibraryTypes.movie));
+      expect(shelved.items.map((v) => v.item.title), ['Dune']);
+
+      releaseFolder2.complete();
+      expect(await fullScan, isTrue);
+      final allMovies = await repo.queryTitles(const LibraryQuery(libraryType: LibraryTypes.movie));
+      expect(allMovies.items.map((v) => v.item.title), unorderedEquals(['Dune', 'Arrival']));
+    });
+  });
+}
+
+class _DriverMountManager extends MountManager {
+  _DriverMountManager(super.registry, this.driver);
+
+  final StorageDriver driver;
+
+  @override
+  StorageDriver driverFor(StorageMount mount) => driver;
+}
+
+class _GatedStreamingDriver implements StorageDriver {
+  _GatedStreamingDriver({required this.onFolder2});
+
+  final Future<void> Function() onFolder2;
+
+  @override
+  StorageKind get kind => StorageKind.local;
+
+  @override
+  Future<void> check() async {}
+
+  @override
+  Future<List<StorageEntry>> list(String path, {StorageEntry? parent}) async {
+    switch (path) {
+      case '/':
+        return const [
+          StorageEntry(path: '/Folder2', name: 'Folder2', isDirectory: true),
+          StorageEntry(path: '/Folder1', name: 'Folder1', isDirectory: true),
+        ];
+      case '/Folder1':
+        return const [
+          StorageEntry(path: '/Folder1/Dune (2021).mkv', name: 'Dune (2021).mkv', isDirectory: false, size: 100),
+        ];
+      case '/Folder2':
+        await onFolder2();
+        return const [
+          StorageEntry(path: '/Folder2/Arrival (2016).mkv', name: 'Arrival (2016).mkv', isDirectory: false, size: 100),
+        ];
+      default:
+        return const [];
+    }
+  }
+
+  @override
+  Future<StorageEntry> stat(String path) => throw UnimplementedError();
+
+  @override
+  Stream<List<int>> openRead(StorageEntry entry, {int start = 0, int? end}) => throw UnimplementedError();
+
+  @override
+  Future<void> close() async {}
 }
