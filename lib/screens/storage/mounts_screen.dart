@@ -123,6 +123,11 @@ class MountsScreen extends StatelessWidget {
         title: Text(t.storage.title),
         actions: [
           IconButton(
+            tooltip: t.storage.fullUpdate,
+            icon: const AppIcon(Symbols.sync_rounded),
+            onPressed: () => unawaited(confirmRebuildFullLibraryScan(context, context.read<LibraryScanService>())),
+          ),
+          IconButton(
             tooltip: t.storage.scraperSettings,
             icon: const AppIcon(Symbols.travel_explore_rounded),
             onPressed: () =>

@@ -39,11 +39,14 @@ import 'package:plezy/providers/libraries_provider.dart';
 import 'package:plezy/providers/multi_server_provider.dart';
 import 'package:plezy/screens/discover_screen.dart';
 import 'package:plezy/screens/main_screen.dart';
+import 'package:plezy/services/companion_remote/lan_identity_store.dart';
 import 'package:plezy/services/data_aggregation_service.dart';
 import 'package:plezy/services/multi_server_manager.dart';
 import 'package:plezy/services/offline_watch_sync_service.dart';
 import 'package:plezy/services/settings_service.dart';
 import 'package:plezy/services/storage_service.dart';
+import 'package:plezy/session/app_session_controller.dart';
+import 'package:plezy/session/app_session_models.dart';
 import 'package:plezy/storage/mount_manager.dart';
 import 'package:plezy/storage/mount_registry.dart';
 import 'package:plezy/theme/mono_theme.dart';
@@ -78,12 +81,15 @@ void main() {
     TvDetectionService.debugSetAppleTVOverride(null);
   });
 
-  testWidgets('library update status leaves the home refresh available for Emby', (tester) async {
+  testWidgets('self-hosted toolbar refresh reloads page data directly without triggering local scans', (
+    tester,
+  ) async {
     late _LibraryUpdates scans;
     final client = await _pumpDiscoverShell(
       tester,
       isTv: false,
       backend: MediaBackend.emby,
+      loginMode: AppLoginMode.selfHosted,
       createScans: (db) => scans = _LibraryUpdates(LibraryRepository(db), db),
     );
     final libraryRequests = client.libraryRequests;
@@ -91,18 +97,38 @@ void main() {
     expect(refresh, findsOneWidget);
 
     await tester.tap(refresh);
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 350));
+
+    expect(client.libraryRequests, greaterThan(libraryRequests));
     expect(scans.forcedChecks, 0);
-    expect(find.text(t.storage.fullUpdate), findsOneWidget);
-    await tester.tap(find.text(t.storage.incrementalUpdate));
+    expect(scans.fullScans, 0);
+    expect(find.byType(SimpleDialog), findsNothing);
+    expect(find.byType(AlertDialog), findsNothing);
+  });
+
+  testWidgets('offline toolbar refresh triggers incremental check once and enforces shared cooldown', (tester) async {
+    late _LibraryUpdates scans;
+    final client = await _pumpDiscoverShell(
+      tester,
+      isTv: false,
+      backend: MediaBackend.emby,
+      loginMode: AppLoginMode.offline,
+      createScans: (db) => scans = _LibraryUpdates(LibraryRepository(db), db),
+    );
+    final libraryRequests = client.libraryRequests;
+    final refresh = find.byTooltip(t.common.refresh);
+    expect(refresh, findsOneWidget);
+
+    await tester.tap(refresh);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 350));
 
     expect(client.libraryRequests, greaterThan(libraryRequests));
     expect(scans.forcedChecks, 1);
+    expect(scans.fullScans, 0);
     expect(scans.incrementalCheck.isCompleted, isFalse);
     expect(find.textContaining(t.storage.incrementalUpdate), findsOneWidget);
-    expect(find.byTooltip(t.common.refresh), findsOneWidget);
     expect(find.byType(SimpleDialog), findsNothing);
     expect(find.byType(AlertDialog), findsNothing);
 
@@ -110,34 +136,14 @@ void main() {
     await tester.pump();
     expect(find.textContaining(t.storage.incrementalUpdate), findsNothing);
 
-    final requestsBeforeFull = client.libraryRequests;
+    // Second tap within cooldown refreshes page data without re-running scan.
+    final requestsBeforeSecond = client.libraryRequests;
     await tester.tap(refresh);
-    await tester.pumpAndSettle();
-    await tester.tap(find.text(t.storage.fullUpdate));
-    await tester.pumpAndSettle();
-    expect(find.text(t.storage.fullLibraryScanMessage), findsOneWidget);
-    expect(scans.fullScans, 0);
-    await tester.tap(find.text(t.common.cancel));
-    await tester.pumpAndSettle();
-    expect(scans.fullScans, 0);
-
-    await tester.tap(refresh);
-    await tester.pumpAndSettle();
-    await tester.tap(find.text(t.storage.fullUpdate));
-    await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(FilledButton, t.storage.fullUpdate));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 350));
-    expect(scans.fullScans, 1);
-    expect(client.libraryRequests, requestsBeforeFull);
-    expect(find.textContaining(t.storage.fullUpdate), findsOneWidget);
-    expect(find.textContaining(t.storage.scanning(files: 12)), findsOneWidget);
-    expect(refresh, findsOneWidget);
-
-    scans.fullScan.complete();
-    await tester.pump();
-    expect(find.text('${t.storage.fullUpdate} · ${t.common.error}'), findsOneWidget);
-    expect(refresh, findsOneWidget);
+    expect(client.libraryRequests, greaterThan(requestsBeforeSecond));
+    expect(scans.forcedChecks, 1);
+    expect(find.textContaining(t.storage.incrementalCooldown(seconds: 44).substring(0, 12)), findsOneWidget);
   });
 
   testWidgets('TV tab focus returns to discover browse rail instead of reload action', (tester) async {
@@ -1184,6 +1190,7 @@ Future<_FakeMediaServerClient> _pumpDiscoverShell(
   List<MediaItem> continueWatching = const [],
   _PlaybackRequests? downloads,
   MediaBackend backend = MediaBackend.plex,
+  AppLoginMode? loginMode,
   LibraryScanService Function(AppDatabase db)? createScans,
 }) async {
   TvDetectionService.debugSetAppleTVOverride(isTv);
@@ -1204,6 +1211,15 @@ Future<_FakeMediaServerClient> _pumpDiscoverShell(
 
   final db = AppDatabase.forTesting(NativeDatabase.memory());
   final scans = createScans?.call(db);
+  final sessionController = loginMode == null
+      ? null
+      : (AppSessionController(db: db, identityStore: LanIdentityStore(db))
+          ..debugSetStateForTesting(
+            mode: loginMode,
+            selfHostedSession: loginMode == AppLoginMode.selfHosted
+                ? SelfHostedSession(serverUrl: 'http://192.168.1.10:8080', username: 'u', accessToken: 'tok')
+                : null,
+          ));
   final offlineWatch = OfflineWatchSyncService(database: db, serverManager: manager);
   final storage = await StorageService.getInstance();
   final connectionRegistry = _FakeConnectionRegistry(db);
@@ -1231,6 +1247,7 @@ Future<_FakeMediaServerClient> _pumpDiscoverShell(
 
   addTearDown(() async {
     scans?.dispose();
+    sessionController?.dispose();
     offlineWatch.dispose();
     discoverProvider.dispose();
     activeProfileProvider.dispose();
@@ -1248,6 +1265,7 @@ Future<_FakeMediaServerClient> _pumpDiscoverShell(
         providers: [
           if (downloads != null) ChangeNotifierProvider<DownloadProvider>.value(value: downloads),
           if (scans != null) ChangeNotifierProvider<LibraryScanService>.value(value: scans),
+          if (sessionController != null) ChangeNotifierProvider<AppSessionController>.value(value: sessionController),
           ChangeNotifierProvider<OfflineWatchSyncService>.value(value: offlineWatch),
           ChangeNotifierProvider<MultiServerProvider>.value(value: multiServerProvider),
           ChangeNotifierProvider<HiddenLibrariesProvider>.value(value: hiddenLibrariesProvider),
@@ -1259,14 +1277,16 @@ Future<_FakeMediaServerClient> _pumpDiscoverShell(
         child: InputModeTracker(
           child: MaterialApp(
             theme: monoTheme(MonoPalette.dark),
-            home: MainScreenFocusScope(
-              focusSidebar: () {},
-              sideNavigationWidth: SideNavigationRailState.expandedWidth,
-              reservedSideNavigationWidth: SideNavigationRailState.tvCollapsedWidth,
-              foregroundLeft: 0,
-              foregroundWidth: 1280,
-              viewportWidth: 1280,
-              child: const DiscoverScreen(),
+            home: Scaffold(
+              body: MainScreenFocusScope(
+                focusSidebar: () {},
+                sideNavigationWidth: SideNavigationRailState.expandedWidth,
+                reservedSideNavigationWidth: SideNavigationRailState.tvCollapsedWidth,
+                foregroundLeft: 0,
+                foregroundWidth: 1280,
+                viewportWidth: 1280,
+                child: const DiscoverScreen(),
+              ),
             ),
           ),
         ),

@@ -949,19 +949,7 @@ class _RemoteControlScreenState extends State<RemoteControlScreen> {
               const SizedBox(height: 6),
               Text(t.companionRemote.qualityLabel, style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600)),
               const SizedBox(height: 8),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  for (final quality in snapshot.qualities)
-                    ChoiceChip(
-                      label: Text(quality.label),
-                      selected: quality.selected,
-                      onSelected: (_) =>
-                          provider.sendCommand(RemoteCommandType.selectQuality, data: {'qualityId': quality.id}),
-                    ),
-                ],
-              ),
+              _buildQualitySegmentedBar(context, provider, snapshot.qualities),
             ],
             const Divider(),
             const SizedBox(height: 6),
@@ -970,6 +958,7 @@ class _RemoteControlScreenState extends State<RemoteControlScreen> {
             SizedBox(
               width: double.infinity,
               child: SegmentedButton<int>(
+                showSelectedIcon: false,
                 segments: [
                   ButtonSegment(value: 0, label: Text(t.companionRemote.aspectContain)),
                   ButtonSegment(value: 1, label: Text(t.companionRemote.aspectCover)),
@@ -996,6 +985,46 @@ class _RemoteControlScreenState extends State<RemoteControlScreen> {
         ),
       ),
     );
+  }
+
+  Widget _buildQualitySegmentedBar(
+    BuildContext context,
+    CompanionRemoteProvider provider,
+    List<RemoteQualityOption> qualities,
+  ) {
+    final theme = Theme.of(context);
+    final selectedIds = {
+      for (final q in qualities)
+        if (q.selected) q.id,
+    };
+    final bar = SegmentedButton<String>(
+      showSelectedIcon: false,
+      emptySelectionAllowed: true,
+      style: SegmentedButton.styleFrom(
+        shape: const StadiumBorder(),
+        side: BorderSide.none,
+        backgroundColor: theme.colorScheme.surfaceContainerHighest,
+        selectedBackgroundColor: theme.colorScheme.onSurface,
+        selectedForegroundColor: theme.colorScheme.surface,
+      ),
+      segments: [
+        for (final quality in qualities)
+          ButtonSegment(
+            value: quality.id,
+            label: Text(quality.label, maxLines: 1, overflow: TextOverflow.ellipsis),
+          ),
+      ],
+      selected: selectedIds,
+      onSelectionChanged: (next) {
+        if (next.isEmpty) return;
+        provider.sendCommand(RemoteCommandType.selectQuality, data: {'qualityId': next.first});
+      },
+    );
+
+    if (qualities.length <= 4) {
+      return SizedBox(width: double.infinity, child: bar);
+    }
+    return SingleChildScrollView(scrollDirection: Axis.horizontal, child: bar);
   }
 
   Future<void> _pickTrackSheet(

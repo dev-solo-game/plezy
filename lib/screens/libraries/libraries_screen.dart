@@ -29,6 +29,7 @@ import '../../widgets/app_menu.dart';
 import '../../widgets/desktop_app_bar.dart';
 import '../../widgets/focusable_tab_chip.dart';
 import '../../widgets/library_management_sheet.dart';
+import '../../widgets/library_scan_controls.dart';
 import '../../widgets/library_status_indicator.dart';
 import '../../services/media_list_playback_launcher.dart';
 import '../../services/storage_service.dart';
@@ -620,9 +621,10 @@ class _LibrariesScreenState extends State<LibrariesScreen>
   void manualRefresh() {
     if (_selectedLibraryGlobalKey == null) {
       unawaited(context.read<LibrariesProvider>().refresh());
-      return;
+    } else {
+      _refreshSelectedLibraryTabs();
     }
-    _refreshSelectedLibraryTabs();
+    unawaited(triggerOfflineToolbarIncrementalRefresh(context));
   }
 
   void _refreshSelectedLibraryTabs() {

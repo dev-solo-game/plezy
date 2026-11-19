@@ -2619,6 +2619,9 @@ class Translations$storage$zh extends Translations$storage$en {
 	@override String get fullUpdateMessage => '从头扫描所选媒体源的挂载目录，并重新刮削元数据。';
 	@override String get fullLibraryScanMessage => '从头扫描所有已挂载的媒体源并重新刮削元数据，完成后刷新首页。';
 	@override String get fullUpdateWarning => '此操作可能耗时较长。媒体源中已找不到的文件会从媒体库移除。';
+	@override String incrementalCooldown({required Object seconds}) => '页面已刷新，目录增量检查冷却中（${seconds} 秒）';
+	@override String get rebuildFullScanMessage => '是否删除现有本地扫描条目与刮削数据，并重新全盘扫描所有挂载源？挂载配置与观看记录将会保留。';
+	@override String get rebuildFullScanWarning => '此操作将重建本地媒体库索引，耗时可能较长。';
 	@override String get cancelUpdateTitle => '停止当前更新？';
 	@override String get cancelUpdateMessage => '当前扫描或刮削将停止，已经保存的变更会保留。';
 	@override String updating({required Object mode}) => '正在${mode}';
@@ -6519,6 +6522,9 @@ extension on TranslationsZh {
 			'storage.fullUpdateMessage' => '从头扫描所选媒体源的挂载目录，并重新刮削元数据。',
 			'storage.fullLibraryScanMessage' => '从头扫描所有已挂载的媒体源并重新刮削元数据，完成后刷新首页。',
 			'storage.fullUpdateWarning' => '此操作可能耗时较长。媒体源中已找不到的文件会从媒体库移除。',
+			'storage.incrementalCooldown' => ({required Object seconds}) => '页面已刷新，目录增量检查冷却中（${seconds} 秒）',
+			'storage.rebuildFullScanMessage' => '是否删除现有本地扫描条目与刮削数据，并重新全盘扫描所有挂载源？挂载配置与观看记录将会保留。',
+			'storage.rebuildFullScanWarning' => '此操作将重建本地媒体库索引，耗时可能较长。',
 			'storage.cancelUpdateTitle' => '停止当前更新？',
 			'storage.cancelUpdateMessage' => '当前扫描或刮削将停止，已经保存的变更会保留。',
 			'storage.updating' => ({required Object mode}) => '正在${mode}',
@@ -6611,11 +6617,11 @@ extension on TranslationsZh {
 			'storage.offlineMountsHidden' => ({required Object count}) => '已隐藏 ${count} 个离线挂载源',
 			'storage.offlineMountsShown' => ({required Object count}) => '已显示 ${count} 个离线挂载源',
 			'storage.showOffline' => '显示全部',
+			_ => null,
+		} ?? switch (path) {
 			'storage.hideOffline' => '隐藏离线',
 			'storage.duplicateMount' => ({required Object name}) => '该媒体来源已存在（“${name}”），请直接编辑已有来源。',
 			'storage.addScanFolder' => '添加目录',
-			_ => null,
-		} ?? switch (path) {
 			'storage.allFolders' => '全部目录（扫描整盘）',
 			'streamQuality.preferred' => '首选画质',
 			'streamQuality.localPreference' => '本地媒体库画质',

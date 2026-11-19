@@ -48,7 +48,6 @@ import '../widgets/tv_spotlight_scaffold.dart';
 import '../mixins/refreshable.dart';
 import '../mixins/tab_visibility_aware.dart';
 import '../i18n/strings.g.dart';
-import '../library/library_scan_service.dart';
 import '../widgets/library_status_indicator.dart';
 import '../utils/app_logger.dart';
 import '../utils/dialogs.dart';
@@ -628,55 +627,9 @@ class _DiscoverScreenState extends State<DiscoverScreen>
   }
 
   @override
-  void manualRefresh() => unawaited(_chooseRefreshMode());
-
-  bool _refreshMenuOpen = false;
-
-  Future<void> _chooseRefreshMode() async {
-    if (_refreshMenuOpen) return;
-    final scans = context.read<LibraryScanService?>();
-    if (scans == null) return _refreshFromToolbar();
-
-    _refreshMenuOpen = true;
-    try {
-      final mode = await showOptionPickerDialog<LibraryUpdateMode>(
-        context,
-        title: t.common.refresh,
-        options: [
-          (icon: Symbols.refresh_rounded, label: t.storage.incrementalUpdate, value: LibraryUpdateMode.incremental),
-          (icon: Symbols.folder_rounded, label: t.storage.fullUpdate, value: LibraryUpdateMode.full),
-        ],
-      );
-      if (!mounted || mode == null) return;
-      if (mode == LibraryUpdateMode.incremental) {
-        unawaited(_refreshFromToolbar());
-        unawaited(_checkLibraryIncrementalUpdates(scans));
-      } else if (await showFullLibraryScanConfirmation(context, allSources: true) && mounted) {
-        unawaited(_scanAllLibrarySources(scans));
-      }
-    } finally {
-      _refreshMenuOpen = false;
-    }
-  }
-
-  Future<void> _scanAllLibrarySources(LibraryScanService scans) async {
-    try {
-      final started = await scans.scanAllMounts();
-      if (!started && mounted) showErrorSnackBar(context, t.storage.updateBusy);
-    } catch (error, stack) {
-      appLogger.w('Media library full scan failed', error: error, stackTrace: stack);
-      if (mounted && scans.updateError == null) {
-        showErrorSnackBar(context, t.storage.scanFailed(message: '$error'));
-      }
-    }
-  }
-
-  Future<void> _checkLibraryIncrementalUpdates(LibraryScanService scans) async {
-    try {
-      await scans.checkIncrementalUpdates(canRun: () => mounted, force: true);
-    } catch (error, stack) {
-      appLogger.w('Media library incremental update failed', error: error, stackTrace: stack);
-    }
+  void manualRefresh() {
+    unawaited(_refreshFromToolbar());
+    unawaited(triggerOfflineToolbarIncrementalRefresh(context));
   }
 
   Future<void> _refreshFromToolbar() async {

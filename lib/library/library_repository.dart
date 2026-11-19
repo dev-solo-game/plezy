@@ -511,6 +511,29 @@ class LibraryRepository {
     await (_db.delete(_db.libraryItems)..where((t) => t.id.equals(id))).go();
   }
 
+  /// Clears all scanned local library entries, files, metadata relations, and
+  /// incremental scan cursors while preserving mounts, settings, lists, and
+  /// cross-scan watch history (`work_watch_states`).
+  Future<void> clearScannedCatalog() async {
+    await _db.transaction(() async {
+      await _db.customStatement('PRAGMA defer_foreign_keys = ON');
+      for (final table in const [
+        'library_list_items',
+        'library_credits',
+        'library_people',
+        'library_item_genres',
+        'library_genres',
+        'library_work_bindings',
+        'library_user_states',
+        'library_files',
+        'library_items',
+        'library_scan_states',
+      ]) {
+        await _db.customStatement('DELETE FROM $table');
+      }
+    });
+  }
+
   Future<LibraryItemView?> getItem(int id) async {
     final row = await (_viewSelect()..where(_db.libraryItems.id.equals(id))).getSingleOrNull();
     return row == null ? null : _toView(row);

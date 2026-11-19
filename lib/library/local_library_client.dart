@@ -86,7 +86,7 @@ void configureLocalLibraryClientLabels(LocalLibraryClient local) {
 /// Every screen talks to a [MediaServerClient]; this one answers from the
 /// library database and the mounts instead of from HTTP. Items take the
 /// neutral MediaBrowser item shape, with library row ids as their ids.
-class LocalLibraryClient implements MediaServerClient {
+class LocalLibraryClient implements MediaServerClient, StreamQualityClient {
   LocalLibraryClient({
     required lib.LibraryRepository repository,
     required MountManager mounts,
@@ -1110,6 +1110,7 @@ class LocalLibraryClient implements MediaServerClient {
   /// Whether the selected file sits on a source that offers renditions
   /// of its own (a Quark mount). Local only: reads the library and the mount,
   /// never the network.
+  @override
   Future<bool> offersStreamQualities(MediaItem item, {String? mediaSourceId}) async {
     final picked = _pickVersion(await _versions(item.id), 0, mediaSourceId);
     if (picked == null) return false;
@@ -1119,6 +1120,7 @@ class LocalLibraryClient implements MediaServerClient {
 
   /// The renditions the selected file can play in, best first, asked of
   /// its source. Empty when the source serves none or cannot be reached.
+  @override
   Future<List<StreamQuality>> streamQualitiesOf(MediaItem item, {String? mediaSourceId}) async {
     final picked = _pickVersion(await _versions(item.id), 0, mediaSourceId);
     if (picked == null) return const [];

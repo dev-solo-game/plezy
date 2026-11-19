@@ -155,6 +155,10 @@ void main() {
     expect(provider.sent.last.type, RemoteCommandType.playEpisodeItem);
     expect(provider.sent.last.data, {'itemKey': '101'});
 
+    await tester.tap(find.text('1080p'));
+    expect(provider.sent.last.type, RemoteCommandType.selectQuality);
+    expect(provider.sent.last.data, {'qualityId': '1080p'});
+
     await tester.tap(find.text(t.companionRemote.aspectCover));
     expect(provider.sent.last.type, RemoteCommandType.setBoxFitMode);
     expect(provider.sent.last.data, {'mode': 1});

@@ -6570,6 +6570,15 @@ class Translations$storage$en {
 	/// en: 'This can take a while. Missing files will be removed from the media library.'
 	String get fullUpdateWarning => 'This can take a while. Missing files will be removed from the media library.';
 
+	/// en: 'Page refreshed; directory check on cooldown (${seconds}s)'
+	String incrementalCooldown({required Object seconds}) => 'Page refreshed; directory check on cooldown (${seconds}s)';
+
+	/// en: 'Clear scanned local library entries and metadata, then rescan all mounted sources from scratch? Your mount settings and watch history will be kept.'
+	String get rebuildFullScanMessage => 'Clear scanned local library entries and metadata, then rescan all mounted sources from scratch? Your mount settings and watch history will be kept.';
+
+	/// en: 'This will rebuild the entire local library index and may take a while.'
+	String get rebuildFullScanWarning => 'This will rebuild the entire local library index and may take a while.';
+
 	/// en: 'Stop the current update?'
 	String get cancelUpdateTitle => 'Stop the current update?';
 
@@ -12318,6 +12327,9 @@ extension on Translations {
 			'storage.fullUpdateMessage' => 'Scan the selected media source from the beginning and refresh metadata.',
 			'storage.fullLibraryScanMessage' => 'Scan all mounted media sources from the beginning, refresh metadata, and then refresh Home.',
 			'storage.fullUpdateWarning' => 'This can take a while. Missing files will be removed from the media library.',
+			'storage.incrementalCooldown' => ({required Object seconds}) => 'Page refreshed; directory check on cooldown (${seconds}s)',
+			'storage.rebuildFullScanMessage' => 'Clear scanned local library entries and metadata, then rescan all mounted sources from scratch? Your mount settings and watch history will be kept.',
+			'storage.rebuildFullScanWarning' => 'This will rebuild the entire local library index and may take a while.',
 			'storage.cancelUpdateTitle' => 'Stop the current update?',
 			'storage.cancelUpdateMessage' => 'The current scan or metadata lookup will stop. Changes already saved will be kept.',
 			'storage.updating' => ({required Object mode}) => 'Running ${mode}',
@@ -12402,11 +12414,11 @@ extension on Translations {
 			'storage.smbFallbackHost' => 'Fallback server (optional)',
 			'storage.includePaths' => 'Included folders (optional)',
 			'storage.includePathsHelp' => 'One path per line or comma-separated (e.g. /Movies). Leave empty to scan the whole mount.',
+			_ => null,
+		} ?? switch (path) {
 			'storage.excludePaths' => 'Excluded folders (optional)',
 			'storage.excludePathsHelp' => 'Ignore folders such as backups or recordings (e.g. /Photos).',
 			'storage.statusOnline' => 'Online',
-			_ => null,
-		} ?? switch (path) {
 			'storage.statusFallback' => 'Fallback online',
 			'storage.statusOffline' => 'Offline',
 			'storage.offlineMountsHidden' => ({required Object count}) => 'Hidden ${count} offline mount(s)',

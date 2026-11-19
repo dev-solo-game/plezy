@@ -122,15 +122,15 @@ extension _MediaDetailActionButtons on _MediaDetailScreenState {
 
     final primaryTrailer = _getPrimaryTrailer();
 
-    // Quality for sources that transcode renditions of their own (Quark):
-    // a global choice, shown beside Play for the title Play would start.
+    // Quality for sources that offer stream renditions (local Quark, self-hosted,
+    // or external server variants): a global choice shown beside Play.
     final qualityTarget = _playbackTargetItem(metadata);
     final qualityClient = widget.isOffline ? null : _getMediaClientForMetadata(context);
-    if (qualityTarget != null && qualityClient is LocalLibraryClient) {
+    if (qualityTarget != null && qualityClient != null && qualityClient is StreamQualityClient) {
       _resolveLocalPlaybackVersion(qualityClient, qualityTarget);
     }
     final resolvedFile = _localPlaybackVersion.value;
-    final localFile = qualityClient is LocalLibraryClient && resolvedFile?.key == qualityTarget?.globalKey
+    final localFile = qualityClient is StreamQualityClient && resolvedFile?.key == qualityTarget?.globalKey
         ? resolvedFile
         : null;
     final showQuality = localFile?.offers == true;
@@ -185,8 +185,8 @@ extension _MediaDetailActionButtons on _MediaDetailScreenState {
       final target = _playbackTargetItem(metadata);
       final client = qualityClient;
       final version = localFile?.version;
-      if (!_canUseDetail || target == null || client is! LocalLibraryClient || version == null) return;
-      await _pickStreamQuality(context, client, target, version);
+      if (!_canUseDetail || target == null || client is! StreamQualityClient || version == null) return;
+      await _pickStreamQuality(context, client as StreamQualityClient, target, version);
     }
 
     final isKeyboardMode = InputModeTracker.isKeyboardMode(context);
@@ -660,7 +660,7 @@ extension _MediaDetailActionButtons on _MediaDetailScreenState {
   }
 
   /// Resolve the same version the main Play action uses, without contacting the mount.
-  void _resolveLocalPlaybackVersion(LocalLibraryClient client, MediaItem target) {
+  void _resolveLocalPlaybackVersion(MediaServerClient client, MediaItem target) {
     final key = target.globalKey;
     if (_localPlaybackVersionKey == key) return;
     _localPlaybackVersionKey = key;
@@ -676,7 +676,7 @@ extension _MediaDetailActionButtons on _MediaDetailScreenState {
             ? versions.indexWhere((version) => version.id == sourceId)
             : selection?.index ?? 0;
         final version = index >= 0 ? versions[index] : null;
-        final offers = version != null && await client.offersStreamQualities(item, mediaSourceId: version.id);
+        final offers = version != null && await (client as StreamQualityClient).offersStreamQualities(item, mediaSourceId: version.id);
         if (!_canUseDetail || _localPlaybackVersionRequest != request) return;
         _localPlaybackVersion.value = (key: key, version: version, offers: offers);
       } catch (e) {
@@ -690,7 +690,7 @@ extension _MediaDetailActionButtons on _MediaDetailScreenState {
   /// under the current choice, by the same rule playback uses.
   Future<void> _pickStreamQuality(
     BuildContext context,
-    LocalLibraryClient client,
+    StreamQualityClient client,
     MediaItem target,
     MediaVersion source,
   ) async {

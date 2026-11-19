@@ -92,6 +92,7 @@ class LibraryScrapeStatus {
 /// through both traversal and metadata lookup.
 class LibraryScanService extends ChangeNotifier {
   static const automaticInterval = Duration(minutes: 1);
+  static const manualIncrementalCooldown = Duration(seconds: 45);
 
   LibraryScanService({
     required this.repository,
@@ -137,6 +138,7 @@ class LibraryScanService extends ChangeNotifier {
   /// told at most this often, so they fill in without reloading per title.
   static const Duration _liveRefreshInterval = Duration(seconds: 5);
   DateTime? _lastLiveRefresh;
+  DateTime? _lastManualIncrementalAt;
 
   /// Tells every view that the library changed outside a scan or lookup:
   /// a manual match, a removed mount.
@@ -240,6 +242,42 @@ class LibraryScanService extends ChangeNotifier {
   }
 
   Future<bool> updateMounts(List<StorageMount> mounts, LibraryUpdateMode mode) => _updateMounts(mounts, mode);
+
+  /// Triggers a manual incremental check from the toolbar refresh button with
+  /// a shared cross-screen [cooldown].
+  Future<({bool triggered, bool onCooldown, Duration? remaining})> triggerManualIncrementalRefresh({
+    required bool Function() canRun,
+    Duration cooldown = manualIncrementalCooldown,
+  }) async {
+    if (_disposed || !canRun()) {
+      return (triggered: false, onCooldown: false, remaining: null);
+    }
+    if (_checkingAutomatic || _update != null || _running.isNotEmpty) {
+      return (triggered: false, onCooldown: false, remaining: null);
+    }
+    final now = clock.now();
+    final last = _lastManualIncrementalAt;
+    if (last != null) {
+      final elapsed = now.difference(last);
+      if (!elapsed.isNegative && elapsed < cooldown) {
+        return (triggered: false, onCooldown: true, remaining: cooldown - elapsed);
+      }
+    }
+    _lastManualIncrementalAt = now;
+    unawaited(checkIncrementalUpdates(canRun: canRun, force: true));
+    return (triggered: true, onCooldown: false, remaining: null);
+  }
+
+  /// Clears scanned local library entries/metadata (preserving mounts and watch
+  /// history) and starts a full rescan across all mounted sources.
+  Future<bool> rebuildAllMounts() async {
+    if (_disposed || _update != null || _running.isNotEmpty) return false;
+    await repository.clearScannedCatalog();
+    if (_disposed) return false;
+    _lastManualIncrementalAt = null;
+    _libraryChanged();
+    return scanAllMounts();
+  }
 
   Future<bool> scanAllMounts() async {
     final mounts = await _mountManager.registry.list();

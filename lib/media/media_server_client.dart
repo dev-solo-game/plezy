@@ -27,6 +27,7 @@ import 'media_person.dart';
 import 'media_playlist.dart';
 import 'playback_report_metadata.dart';
 import 'server_capabilities.dart';
+import 'stream_quality.dart';
 
 /// Default number of items requested for horizontal hub previews.
 const int defaultHubPreviewLimit = 20;
@@ -81,6 +82,13 @@ enum HealthStatus { online, offline, authError, accessDenied }
 
 abstract interface class GracefullyCloseable {
   Future<void> closeGracefully({Duration drainTimeout});
+}
+
+/// Optional capability for backends that expose pre-built or server-managed
+/// stream renditions (e.g., Quark cloud-drive qualities or transcode variants).
+abstract interface class StreamQualityClient {
+  Future<bool> offersStreamQualities(MediaItem item, {String? mediaSourceId});
+  Future<List<StreamQuality>> streamQualitiesOf(MediaItem item, {String? mediaSourceId});
 }
 
 /// Per-leg outcome sink for hub fetches.

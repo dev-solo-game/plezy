@@ -68,7 +68,7 @@ void configureTtplayServerClientLabels(TtplayServerClient client) {
 }
 
 /// Primary [MediaServerClient] talking to the user's self-hosted `ttplay-server`.
-class TtplayServerClient implements MediaServerClient {
+class TtplayServerClient implements MediaServerClient, StreamQualityClient {
   TtplayServerClient({
     required this.api,
     required this.session,
@@ -1285,6 +1285,34 @@ class TtplayServerClient implements MediaServerClient {
 
   Future<Map<String, dynamic>> _fetchPlaybackInfo(String itemId, {String? fileId}) {
     return api.getJson('/api/v1/playback/info/$itemId', query: {if (fileId != null && fileId.isNotEmpty) 'file_id': fileId});
+  }
+
+  @override
+  Future<bool> offersStreamQualities(MediaItem item, {String? mediaSourceId}) async {
+    try {
+      final qualities = await streamQualitiesOf(item, mediaSourceId: mediaSourceId);
+      return qualities.isNotEmpty;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  @override
+  Future<List<StreamQuality>> streamQualitiesOf(MediaItem item, {String? mediaSourceId}) async {
+    final info = await _fetchPlaybackInfo(item.id, fileId: mediaSourceId);
+    final versions = ttplayMapList(info['versions']);
+    if (versions.isEmpty) return const [];
+    final picked = _pickPlaybackVersion(
+      versions,
+      selectedSourceId: mediaSourceId,
+      serverSelectedFileId: ttplayInt(info['selected_file_id']),
+    );
+    final variants = ttplayMapList(picked.version['variants']);
+    return [
+      for (final v in variants)
+        if (ttplayString(v['id']) case final vid? when vid != StreamQuality.original)
+          StreamQuality(id: vid, width: ttplayInt(v['width']), height: ttplayInt(v['height'])),
+    ];
   }
 
   ({Map<String, dynamic> version, int index}) _pickPlaybackVersion(

@@ -41,7 +41,7 @@ import 'ttplay_api_client.dart';
 
 /// [MediaServerClient] backing a single external Emby/Jellyfin server proxied
 /// through the user's self-hosted `ttplay-server` (`/api/v1/ext/{id}/*`).
-class TtplayExternalServerClient implements MediaServerClient {
+class TtplayExternalServerClient implements MediaServerClient, StreamQualityClient {
   TtplayExternalServerClient({required this.api, required this.server})
     : _serverId = ServerId('$serverIdPrefix${server.id}');
 
@@ -914,6 +914,34 @@ class TtplayExternalServerClient implements MediaServerClient {
       '$_extPrefix/playback/${Uri.encodeComponent(itemId)}',
       query: {if (sourceId != null && sourceId.isNotEmpty) 'source_id': sourceId},
     );
+  }
+
+  @override
+  Future<bool> offersStreamQualities(MediaItem item, {String? mediaSourceId}) async {
+    try {
+      final qualities = await streamQualitiesOf(item, mediaSourceId: mediaSourceId);
+      return qualities.isNotEmpty;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  @override
+  Future<List<StreamQuality>> streamQualitiesOf(MediaItem item, {String? mediaSourceId}) async {
+    final info = await _fetchExtPlaybackInfo(item.id, sourceId: mediaSourceId);
+    final versions = ttplayMapList(info['versions']);
+    if (versions.isEmpty) return const [];
+    final picked = _pickExtVersion(
+      versions,
+      requestedSourceId: mediaSourceId,
+      serverSourceId: ttplayString(info['selected_source_id']),
+    );
+    final variants = ttplayMapList(picked.version['variants']);
+    return [
+      for (final v in variants)
+        if (ttplayString(v['id']) case final vid? when vid != StreamQuality.original)
+          StreamQuality(id: vid, width: ttplayInt(v['width']), height: ttplayInt(v['height'])),
+    ];
   }
 
   ({Map<String, dynamic> version, int index}) _pickExtVersion(

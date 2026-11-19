@@ -1,3 +1,4 @@
+import 'package:drift/drift.dart' show Value;
 import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -68,7 +69,7 @@ void main() {
         config: {MountKeys.rootPath: '/movies'},
       ),
     );
-    final mounts = MountManager(registry);
+    final mounts = MountManager(registry, driverFactory: (mount, {bool useFallback = false}) => _ClosingRaceDriver());
     final repo = LibraryRepository(db);
     final scans = LibraryScanService(repository: repo, scanner: LibraryScanner(db, repo), mounts: mounts);
     addTearDown(() async {
@@ -155,6 +156,81 @@ void main() {
     expect(mounts.statusOf(savedMount.id), MountOnlineStatus.onlinePrimary);
 
     // Unmount MountsScreen and drain Drift's StreamQueryStore close timer before closing db.
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets('MountsScreen full rebuild clears scanned items while preserving mounts and watch states', (
+    tester,
+  ) async {
+    final db = AppDatabase.forTesting(NativeDatabase.memory());
+    final registry = MountRegistry(db);
+    await registry.upsert(
+      const StorageMount(
+        id: 'm1',
+        kind: StorageKind.local,
+        displayName: 'Local Movies',
+        config: {MountKeys.rootPath: '/nonexistent-rebuild-test'},
+      ),
+    );
+    await db.into(db.libraryItems).insert(
+      LibraryItemsCompanion.insert(
+        kind: 'movie',
+        libraryType: 'movie',
+        title: 'Old Movie',
+        sortTitle: 'old movie',
+        addedAt: 1,
+        updatedAt: 1,
+      ),
+    );
+    await db.into(db.workWatchStates).insert(
+      WorkWatchStatesCompanion.insert(
+        stateKey: 'local:movie:tmdb:1',
+        source: 'local',
+        kind: 'movie',
+        provider: 'tmdb',
+        externalId: '1',
+        watched: const Value(true),
+        updatedAt: 1,
+      ),
+    );
+
+    final mounts = MountManager(registry, driverFactory: (mount, {bool useFallback = false}) => _ClosingRaceDriver());
+    final repo = LibraryRepository(db);
+    final scans = LibraryScanService(repository: repo, scanner: LibraryScanner(db, repo), mounts: mounts);
+    addTearDown(() async {
+      scans.dispose();
+      await mounts.dispose();
+      await db.close();
+    });
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          Provider<MountManager>.value(value: mounts),
+          ChangeNotifierProvider<LibraryScanService>.value(value: scans),
+        ],
+        child: const InputModeTracker(child: MaterialApp(home: MountsScreen())),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip(t.storage.fullUpdate));
+    await tester.pumpAndSettle();
+    expect(find.text(t.storage.rebuildFullScanMessage), findsOneWidget);
+
+    await tester.tap(find.widgetWithText(FilledButton, t.storage.fullUpdate));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    // Scanned items were cleared, while mounts & work_watch_states remain intact.
+    final remainingItems = await db.select(db.libraryItems).get();
+    final remainingMounts = await registry.list();
+    final remainingWatchStates = await db.select(db.workWatchStates).get();
+    expect(remainingItems, isEmpty);
+    expect(remainingMounts, hasLength(1));
+    expect(remainingWatchStates, hasLength(1));
+
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pumpAndSettle();
   });
