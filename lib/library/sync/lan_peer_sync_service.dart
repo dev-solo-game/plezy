@@ -101,12 +101,6 @@ class LanPeerSyncService extends ChangeNotifier {
   final Map<String, DateTime> _dismissedIncomingRequestAt = {};
   Set<String> _promptedPeerIds = {};
   List<LanTrustedPeer> _trustedPeers = [];
-  ({
-    String nonce,
-    DateTime expiresAt,
-    void Function(({String serverUrl, SyncServerKind serverKind, String sessionId})) onHandoff,
-  })?
-  _qrLoginHandoff;
 
   bool _running = false;
   bool _disposed = false;
@@ -314,7 +308,6 @@ class LanPeerSyncService extends ChangeNotifier {
     _incomingRequests.clear();
     _outgoingPairTargets.clear();
     _dismissedIncomingRequestAt.clear();
-    _qrLoginHandoff = null;
     if (!_disposed) notifyListeners();
   }
 
@@ -580,11 +573,6 @@ class LanPeerSyncService extends ChangeNotifier {
         return;
       }
 
-      if (req.method == 'POST' && path == '/lan/v1/qr-auth/handoff') {
-        await _handleQrLoginHandoff(req);
-        return;
-      }
-
       if (path.startsWith('/lan/v1/sync/')) {
         await req.drain<void>();
         await _writeJson(req.response, HttpStatus.gone, {'error': 'lan_library_sync_retired'});
@@ -731,109 +719,6 @@ class LanPeerSyncService extends ChangeNotifier {
 
     await _writeJson(req.response, HttpStatus.ok, {'status': 'paired'});
     if (!_disposed) notifyListeners();
-  }
-
-  void registerQrLoginHandoff({
-    required String nonce,
-    required DateTime expiresAt,
-    required void Function(({String serverUrl, SyncServerKind serverKind, String sessionId}) payload) onHandoff,
-  }) {
-    _qrLoginHandoff = (nonce: nonce, expiresAt: expiresAt, onHandoff: onHandoff);
-  }
-
-  void clearQrLoginHandoff([String? nonce]) {
-    if (nonce == null || _qrLoginHandoff?.nonce == nonce) {
-      _qrLoginHandoff = null;
-    }
-  }
-
-  Future<List<String>> localEndpointsForQr() async {
-    final port = _httpServer?.port;
-    if (!_running || port == null || port <= 0) return const [];
-    final out = <String>[];
-    try {
-      final interfaces = await NetworkInterface.list(type: InternetAddressType.IPv4, includeLoopback: false);
-      for (final iface in interfaces) {
-        for (final addr in iface.addresses) {
-          final ip = addr.address.trim();
-          if (ip.isEmpty || ip.startsWith('169.254.')) continue;
-          final endpoint = '$ip:$port';
-          if (!out.contains(endpoint)) out.add(endpoint);
-        }
-      }
-    } catch (_) {}
-    final loopback = '127.0.0.1:$port';
-    if (!out.contains(loopback)) {
-      out.add(loopback);
-    }
-    return out;
-  }
-
-  Future<void> _handleQrLoginHandoff(HttpRequest req) async {
-    final body = await _readJsonBody(req);
-    final nonce = body['nonce'] as String? ?? '';
-    final serverUrl = (body['server_url'] as String? ?? '').trim();
-    final kindRaw = body['server_kind'] as String? ?? '';
-    final sessionId = body['session_id'] as String? ?? '';
-
-    final pending = _qrLoginHandoff;
-    if (pending == null ||
-        nonce.isEmpty ||
-        serverUrl.isEmpty ||
-        sessionId.isEmpty ||
-        clock.now().isAfter(pending.expiresAt) ||
-        !SyncCrypto.constantTimeEquals(nonce, pending.nonce)) {
-      await _writeJson(req.response, HttpStatus.forbidden, {'error': 'invalid_or_expired_qr_handoff'});
-      return;
-    }
-
-    _qrLoginHandoff = null;
-    final kind = kindRaw == SyncServerKind.official.name ? SyncServerKind.official : SyncServerKind.selfHosted;
-    await _writeJson(req.response, HttpStatus.ok, {'ok': true});
-    pending.onHandoff((serverUrl: serverUrl, serverKind: kind, sessionId: sessionId));
-  }
-
-  Future<void> sendQrLoginHandoff({
-    required List<String> hostPorts,
-    required String nonce,
-    required String serverUrl,
-    required SyncServerKind serverKind,
-    required String sessionId,
-  }) async {
-    final client = _httpClient ?? http.Client();
-    final ownsClient = _httpClient == null;
-    Object? lastError;
-    try {
-      for (final rawHostPort in hostPorts) {
-        final hp = rawHostPort.trim();
-        if (hp.isEmpty) continue;
-        try {
-          final resp = await client
-              .post(
-                Uri.parse('http://$hp/lan/v1/qr-auth/handoff'),
-                headers: const {'Content-Type': 'application/json; charset=utf-8'},
-                body: jsonEncode({
-                  'nonce': nonce,
-                  'server_url': serverUrl,
-                  'server_kind': serverKind.name,
-                  'session_id': sessionId,
-                }),
-              )
-              .timeout(const Duration(seconds: 3));
-          if (resp.statusCode == HttpStatus.ok) {
-            return;
-          }
-          lastError = HttpException('HTTP ${resp.statusCode}');
-        } catch (e) {
-          lastError = e;
-        }
-      }
-      throw lastError ?? const HttpException('No reachable LAN QR handoff endpoint');
-    } finally {
-      if (ownsClient) {
-        client.close();
-      }
-    }
   }
 
   LanTrustedPeer? _authenticateRequest(HttpRequest req) {

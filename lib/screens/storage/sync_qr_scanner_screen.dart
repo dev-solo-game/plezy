@@ -25,7 +25,6 @@ String formatSyncQrAuthError(Object error) {
         current: error.currentServer ?? '',
       ),
       SyncQrAuthErrorCode.expired => t.sync.qrErrExpired,
-      SyncQrAuthErrorCode.lanTargetUnreachable => t.sync.qrErrLanUnreachable,
     };
   }
   if (error is FormatException) return t.sync.qrErrInvalidUri;

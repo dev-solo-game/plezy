@@ -16,7 +16,6 @@ GENERATED_PATHS = (
     "lib/i18n/strings.g.dart",
     "lib/models/model.freezed.dart",
     "lib/models/model.g.dart",
-    "server/relay_protocol_gen.go",
 )
 
 
@@ -41,10 +40,8 @@ class CodegenCheckTest(unittest.TestCase):
 
         (repository / "scripts").mkdir()
         (repository / "scripts" / "checks").mkdir()
-        (repository / "scripts" / "codegen").mkdir()
         shutil.copy2(SCRIPT_DIR.parent / "codegen.sh", repository / "scripts" / "codegen.sh")
         shutil.copy2(SCRIPT_DIR / "check_codegen.py", repository / "scripts" / "checks" / "check_codegen.py")
-        (repository / "scripts" / "codegen" / "generate_relay_protocol.py").write_text("fixture\n", encoding="utf-8")
         (repository / "source.txt").write_text("version one\n", encoding="utf-8")
         for relative in GENERATED_PATHS:
             path = repository / relative
@@ -57,8 +54,7 @@ class CodegenCheckTest(unittest.TestCase):
             self.bin / "python3",
             """#!/usr/bin/env bash
 if [[ "$1" == *check_codegen.py ]]; then exec "$REAL_PYTHON" "$@"; fi
-mkdir -p server
-cp source.txt server/relay_protocol_gen.go
+exit 1
 """,
         )
         executable(
@@ -93,7 +89,7 @@ esac
 """,
         )
         subprocess.run(
-            ["git", "add", ".gitattributes", "scripts", "source.txt", "lib", "server"],
+            ["git", "add", ".gitattributes", "scripts", "source.txt", "lib"],
             cwd=repository,
             check=True,
         )
@@ -222,7 +218,7 @@ esac
         self.assertEqual(self.run_codegen("--check").returncode, 1)
         self.assertEqual(self.generated_state(), unstaged_state)
 
-        subprocess.run(["git", "add", "source.txt", "lib", "server/relay_protocol_gen.go"], cwd=self.root, check=True)
+        subprocess.run(["git", "add", "source.txt", "lib"], cwd=self.root, check=True)
         self.assertEqual(self.run_codegen("--check").returncode, 0)
 
         incorrect = self.root / "lib" / "models" / "model.g.dart"

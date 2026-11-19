@@ -52,7 +52,7 @@ void configureLocalLibraryClientLabels(LocalLibraryClient local) {
 /// Offers three explicit synchronization modes:
 /// 1) Local Mode (no sync server),
 /// 2) Official Sync Server (zero-URL configuration), or
-/// 3) Self-Hosted Sync Server (custom Go server URL + LAN QR handoff).
+/// 3) Self-Hosted Sync Server (custom Go server URL).
 class AuthScreen extends StatefulWidget {
   const AuthScreen({
     super.key,

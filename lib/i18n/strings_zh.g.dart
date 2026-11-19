@@ -2753,7 +2753,7 @@ class Translations$sync$zh extends Translations$sync$en {
 	@override String get modeOfficialTitle => '官方同步';
 	@override String get modeOfficialDesc => '免填服务器地址，使用官方云端端到端加密同步，支持多端自动同步与扫码登录。';
 	@override String get modeSelfHostedTitle => '自建同步';
-	@override String get modeSelfHostedDesc => '连接自己部署的 Go 同步服务器，自主掌控全部云端数据与 Web 管理面板，支持免输地址局域网扫码。';
+	@override String get modeSelfHostedDesc => '连接自己部署的 Go 同步服务器，自主掌控全部云端数据与 Web 管理面板，支持多端自动同步与扫码登录。';
 	@override String get officialBadge => '官方同步';
 	@override String get selfHostedBadge => '自建同步';
 	@override String get modeCloudTitle => '登录同步服务器';
@@ -2795,10 +2795,7 @@ class Translations$sync$zh extends Translations$sync$en {
 	@override String get qrGenerate => '生成登录二维码';
 	@override String get qrRefreshButton => '刷新二维码';
 	@override String get qrHint => '使用已登录同账号的手机或电脑确认授权，即可零密码安全移交加密主密钥。';
-	@override String get qrModeLanHint => '免输服务器地址：使用已登录「自建同步」或「官方同步」的手机客户端“设置 → 扫码登录 PC / 电视”直接扫码，自动下发服务器地址并加密登录。';
-	@override String get qrModeServerHint => '跨网络扫码：使用已登录同一同步服务器的手机端扫码，或在其他已登录客户端粘贴链接完成授权。';
-	@override String get qrUseLanZeroInput => '免输地址扫码 (同局域网)';
-	@override String get qrUseServerRelay => '当前服务器扫码 (跨网)';
+	@override String get qrModeServerHint => '使用已登录同一同步服务器的手机端扫码，或在其他已登录客户端粘贴配对链接，即可零密码安全移交加密主密钥。';
 	@override String get qrAuthorizeTitle => '授权 PC / 电视登录';
 	@override String get qrAuthorizeHint => '粘贴电视或电脑端展示的配对链接（ttplay://qr-auth?...）。';
 	@override String get qrAuthorizeButton => '确认授权给该设备';
@@ -2821,7 +2818,6 @@ class Translations$sync$zh extends Translations$sync$en {
 	@override String get qrErrInvalidUri => '无法识别该二维码，请确认扫描的是 TTPlay 同步登录二维码。';
 	@override String qrErrServerMismatch({required Object target, required Object current}) => '二维码所属服务器 (${target}) 与当前手机端登录服务器 (${current}) 不一致，请切换至对应服务器后重试。';
 	@override String get qrErrExpired => '二维码已过期，请在电脑或电视上刷新后重新扫描。';
-	@override String get qrErrLanUnreachable => '无法通过局域网直连到电视或电脑，请确认两台设备在同一局域网，或改用填写服务器地址扫码。';
 	@override String get syncNow => '立即同步';
 	@override String get syncing => '同步中…';
 	@override String get signOut => '退出同步账号';
@@ -6435,7 +6431,7 @@ extension on TranslationsZh {
 			'sync.modeOfficialTitle' => '官方同步',
 			'sync.modeOfficialDesc' => '免填服务器地址，使用官方云端端到端加密同步，支持多端自动同步与扫码登录。',
 			'sync.modeSelfHostedTitle' => '自建同步',
-			'sync.modeSelfHostedDesc' => '连接自己部署的 Go 同步服务器，自主掌控全部云端数据与 Web 管理面板，支持免输地址局域网扫码。',
+			'sync.modeSelfHostedDesc' => '连接自己部署的 Go 同步服务器，自主掌控全部云端数据与 Web 管理面板，支持多端自动同步与扫码登录。',
 			'sync.officialBadge' => '官方同步',
 			'sync.selfHostedBadge' => '自建同步',
 			'sync.modeCloudTitle' => '登录同步服务器',
@@ -6477,10 +6473,7 @@ extension on TranslationsZh {
 			'sync.qrGenerate' => '生成登录二维码',
 			'sync.qrRefreshButton' => '刷新二维码',
 			'sync.qrHint' => '使用已登录同账号的手机或电脑确认授权，即可零密码安全移交加密主密钥。',
-			'sync.qrModeLanHint' => '免输服务器地址：使用已登录「自建同步」或「官方同步」的手机客户端“设置 → 扫码登录 PC / 电视”直接扫码，自动下发服务器地址并加密登录。',
-			'sync.qrModeServerHint' => '跨网络扫码：使用已登录同一同步服务器的手机端扫码，或在其他已登录客户端粘贴链接完成授权。',
-			'sync.qrUseLanZeroInput' => '免输地址扫码 (同局域网)',
-			'sync.qrUseServerRelay' => '当前服务器扫码 (跨网)',
+			'sync.qrModeServerHint' => '使用已登录同一同步服务器的手机端扫码，或在其他已登录客户端粘贴配对链接，即可零密码安全移交加密主密钥。',
 			'sync.qrAuthorizeTitle' => '授权 PC / 电视登录',
 			'sync.qrAuthorizeHint' => '粘贴电视或电脑端展示的配对链接（ttplay://qr-auth?...）。',
 			'sync.qrAuthorizeButton' => '确认授权给该设备',
@@ -6503,7 +6496,6 @@ extension on TranslationsZh {
 			'sync.qrErrInvalidUri' => '无法识别该二维码，请确认扫描的是 TTPlay 同步登录二维码。',
 			'sync.qrErrServerMismatch' => ({required Object target, required Object current}) => '二维码所属服务器 (${target}) 与当前手机端登录服务器 (${current}) 不一致，请切换至对应服务器后重试。',
 			'sync.qrErrExpired' => '二维码已过期，请在电脑或电视上刷新后重新扫描。',
-			'sync.qrErrLanUnreachable' => '无法通过局域网直连到电视或电脑，请确认两台设备在同一局域网，或改用填写服务器地址扫码。',
 			'sync.syncNow' => '立即同步',
 			'sync.syncing' => '同步中…',
 			'sync.signOut' => '退出同步账号',

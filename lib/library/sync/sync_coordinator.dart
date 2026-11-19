@@ -22,7 +22,7 @@ import 'sync_models.dart';
 
 export 'sync_local_store.dart' show SyncMode, SyncServerKind, defaultOfficialSyncUrl, normalizeSyncServerUrl;
 
-enum SyncQrAuthErrorCode { notSignedIn, invalidQrUri, serverMismatch, expired, lanTargetUnreachable }
+enum SyncQrAuthErrorCode { notSignedIn, invalidQrUri, serverMismatch, expired }
 
 class SyncQrAuthException implements Exception {
   const SyncQrAuthException(this.code, {this.currentServer, this.targetServer});
@@ -350,68 +350,6 @@ class SyncAndScanCoordinator extends ChangeNotifier {
     return true;
   }
 
-  Future<({String qrUri, String nonce, int expiresAtMs})> startLanQrHandoffSession({
-    String? deviceName,
-    LocalMergePolicy mergePolicy = LocalMergePolicy.mergeLocal,
-    void Function()? onCompleted,
-    void Function(Object error)? onError,
-  }) async {
-    await initialize();
-    if (!lanService.isRunning) {
-      await lanService.start(runTombstoneGc: false);
-    }
-    final resolvedDeviceName = (deviceName != null && deviceName.trim().isNotEmpty)
-        ? deviceName.trim()
-        : await syncStore.getDeviceName();
-    final tvKeyPair = await SyncQrKeyPairFuture.generate();
-    final nonce = base64UrlEncode(SyncCrypto.randomBytes(16));
-    final expiresAt = clock.now().add(const Duration(minutes: 5));
-    final hosts = await lanService.localEndpointsForQr();
-    if (hosts.isEmpty) {
-      throw const SyncQrAuthException(SyncQrAuthErrorCode.lanTargetUnreachable);
-    }
-
-    lanService.registerQrLoginHandoff(
-      nonce: nonce,
-      expiresAt: expiresAt,
-      onHandoff: (payload) {
-        unawaited(() async {
-          try {
-            final ok = await pollQrSession(
-              serverUrl: payload.serverUrl,
-              sessionId: payload.sessionId,
-              keyPair: tvKeyPair,
-              serverKind: payload.serverKind,
-              mergePolicy: mergePolicy,
-            );
-            if (ok) {
-              onCompleted?.call();
-            } else {
-              onError?.call(const SyncQrAuthException(SyncQrAuthErrorCode.expired));
-            }
-          } catch (e) {
-            onError?.call(e);
-          }
-        }());
-      },
-    );
-
-    final uri = Uri(
-      scheme: 'ttplay',
-      host: 'qr-auth',
-      queryParameters: {
-        'mode': 'lan',
-        'hosts': hosts.join(','),
-        'nonce': nonce,
-        'pub_key': tvKeyPair.publicKeyBase64,
-        'device_name': resolvedDeviceName,
-      },
-    ).toString();
-    return (qrUri: uri, nonce: nonce, expiresAtMs: expiresAt.millisecondsSinceEpoch);
-  }
-
-  void cancelLanQrHandoffSession([String? nonce]) => lanService.clearQrLoginHandoff(nonce);
-
   Future<void> confirmQrUri(String rawInput) async {
     await initialize();
     final current = _session;
@@ -423,47 +361,6 @@ class SyncAndScanCoordinator extends ChangeNotifier {
     final uri = Uri.tryParse(trimmed);
     if (uri == null || (uri.scheme != 'ttplay' && uri.scheme != 'plezy') || uri.host != 'qr-auth') {
       throw const SyncQrAuthException(SyncQrAuthErrorCode.invalidQrUri);
-    }
-
-    final mode = (uri.queryParameters['mode'] ?? '').trim().toLowerCase();
-    if (mode == 'lan') {
-      final rawHosts = uri.queryParameters['hosts'] ?? '';
-      final hosts = [
-        for (final h in rawHosts.split(','))
-          if (h.trim().isNotEmpty) h.trim(),
-      ];
-      final nonce = uri.queryParameters['nonce'] ?? '';
-      final tvPubKey = uri.queryParameters['pub_key'] ?? '';
-      final rawDevice = (uri.queryParameters['device_name'] ?? '').trim();
-      if (hosts.isEmpty || nonce.isEmpty || tvPubKey.isEmpty) {
-        throw const SyncQrAuthException(SyncQrAuthErrorCode.invalidQrUri);
-      }
-
-      final created = await apiClient.createQrSession(
-        current.serverUrl,
-        tvPubKey: tvPubKey,
-        deviceName: rawDevice.isNotEmpty ? rawDevice : 'TTPlay TV',
-      );
-      final sealed = await SyncCrypto.sealMasterKeyForTv(masterKey: current.masterKey, tvPubKeyBase64: tvPubKey);
-      await apiClient.confirmQrSession(
-        current.serverUrl,
-        current.accessToken,
-        sessionId: created.sessionId,
-        sealedMasterKey: sealed,
-        deviceId: _deviceId!,
-      );
-      try {
-        await lanService.sendQrLoginHandoff(
-          hostPorts: hosts,
-          nonce: nonce,
-          serverUrl: current.serverUrl,
-          serverKind: current.serverKind,
-          sessionId: created.sessionId,
-        );
-      } catch (_) {
-        throw const SyncQrAuthException(SyncQrAuthErrorCode.lanTargetUnreachable);
-      }
-      return;
     }
 
     final sessionId = uri.queryParameters['session_id'] ?? '';

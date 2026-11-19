@@ -151,7 +151,7 @@ void main() {
     await tester.scrollUntilVisible(find.text(t.sync.qrLoginTitle), 200, scrollable: outerScrollable);
     expect(find.text(t.sync.qrLoginTitle), findsOneWidget);
 
-    // Switching to Self-Hosted shows saved Server URL and LAN/Server QR options.
+    // Switching to Self-Hosted shows saved Server URL and standard Server QR card (no LAN ChoiceChips).
     await tester.scrollUntilVisible(find.text(t.sync.modeSelfHostedTitle), -200, scrollable: outerScrollable);
     await tester.tap(find.text(t.sync.modeSelfHostedTitle));
     await tester.pumpAndSettle();
@@ -159,9 +159,11 @@ void main() {
     expect(find.text(t.sync.serverUrl), findsOneWidget);
     expect(find.text('https://my-nas.local:8088'), findsOneWidget);
     expect(find.text(t.sync.testConnection), findsOneWidget);
-    await tester.scrollUntilVisible(find.text(t.sync.qrUseLanZeroInput), 200, scrollable: outerScrollable);
-    expect(find.text(t.sync.qrUseLanZeroInput), findsOneWidget);
-    expect(find.text(t.sync.qrUseServerRelay), findsOneWidget);
+    expect(find.byType(ChoiceChip), findsNothing);
+    await tester.scrollUntilVisible(find.text(t.sync.qrGenerate), 200, scrollable: outerScrollable);
+    expect(find.text(t.sync.qrLoginTitle), findsOneWidget);
+    expect(find.text(t.sync.qrModeServerHint), findsOneWidget);
+    expect(find.text(t.sync.qrGenerate), findsOneWidget);
   });
 
   testWidgets('SyncQrScannerScreen authorizes valid QR via confirmQrSession and pops true', (tester) async {

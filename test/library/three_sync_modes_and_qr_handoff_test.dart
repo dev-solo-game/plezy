@@ -336,55 +336,61 @@ void main() {
     expect(await pc.repo.findByWorkKey('tmdb:movie:603'), isNotNull);
   });
 
-  test('4. Zero-URL LAN QR handoff signs fresh TV into Phone Self-Hosted server automatically', () async {
-    final selfUrl = await startSyncServer();
-    final phone = _ModeNode('Phone');
-    final tv = _ModeNode('LivingRoom-TV', autoStartLan: true);
-    addTearDown(phone.dispose);
-    addTearDown(tv.dispose);
+  test(
+    '4. Self-Hosted Sync Server QR login signs in TV, persists lastSelfHostedUrl, and rejects legacy mode=lan QR',
+    () async {
+      final selfUrl = await startSyncServer();
+      final phone = _ModeNode('Phone');
+      final tv = _ModeNode('LivingRoom-TV');
+      addTearDown(phone.dispose);
+      addTearDown(tv.dispose);
 
-    await phone.sync.register(
-      serverUrl: selfUrl,
-      username: 'qr_self',
-      password: 'pw',
-      kdfParams: fastKdf,
-      serverKind: SyncServerKind.selfHosted,
-    );
-    await _seedMovie(
-      phone,
-      mountId: 'm_qr_self',
-      tmdbId: '27205',
-      title: 'Inception',
-      filePath: '/Movies/Inception.mkv',
-      updatedAt: 3000,
-    );
-    await phone.sync.onCatalogChanged(allowTombstones: false);
-    while (phone.sync.isSyncing) {
-      await Future<void>.delayed(const Duration(milliseconds: 5));
-    }
-    await phone.sync.syncNow(allowBackgroundScan: false);
+      await phone.sync.register(
+        serverUrl: selfUrl,
+        username: 'qr_self',
+        password: 'pw',
+        kdfParams: fastKdf,
+        serverKind: SyncServerKind.selfHosted,
+      );
+      await _seedMovie(
+        phone,
+        mountId: 'm_qr_self',
+        tmdbId: '27205',
+        title: 'Inception',
+        filePath: '/Movies/Inception.mkv',
+        updatedAt: 3000,
+      );
+      await phone.sync.onCatalogChanged(allowTombstones: false);
+      while (phone.sync.isSyncing) {
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+      }
+      await phone.sync.syncNow(allowBackgroundScan: false);
 
-    final completed = Completer<void>();
-    final tvQr = await tv.sync.startLanQrHandoffSession(
-      onCompleted: () {
-        if (!completed.isCompleted) completed.complete();
-      },
-      onError: (e) {
-        if (!completed.isCompleted) completed.completeError(e);
-      },
-    );
-    final parsed = Uri.parse(tvQr.qrUri);
-    expect(parsed.queryParameters['mode'], 'lan');
-    expect(parsed.queryParameters['server'], isNull);
-    expect(parsed.queryParameters['hosts'], isNotEmpty);
+      await expectLater(
+        phone.sync.confirmQrUri('ttplay://qr-auth?mode=lan&hosts=127.0.0.1:48636&nonce=abc&pub_key=xyz'),
+        throwsA(isA<SyncQrAuthException>().having((e) => e.code, 'code', SyncQrAuthErrorCode.invalidQrUri)),
+      );
 
-    await phone.sync.confirmQrUri(tvQr.qrUri);
-    await completed.future.timeout(const Duration(seconds: 5));
+      final tvQr = await tv.sync.startQrSession(serverUrl: selfUrl, serverKind: SyncServerKind.selfHosted);
+      final parsed = Uri.parse(tvQr.qrUri);
+      expect(parsed.queryParameters['mode'], 'server');
+      expect(parsed.queryParameters['kind'], 'selfHosted');
+      expect(parsed.queryParameters['server'], SyncLocalStore.normalizeServerUrl(selfUrl));
 
-    expect(tv.sync.isSignedIn, isTrue);
-    expect(tv.sync.session?.serverKind, SyncServerKind.selfHosted);
-    expect(tv.sync.session?.serverUrl, SyncLocalStore.normalizeServerUrl(selfUrl));
-    expect(await tv.sync.syncStore.getLastSelfHostedUrl(), SyncLocalStore.normalizeServerUrl(selfUrl));
-    expect(await tv.repo.findByWorkKey('tmdb:movie:27205'), isNotNull);
-  });
+      await phone.sync.confirmQrUri(tvQr.qrUri);
+      final signedIn = await tv.sync.pollQrSession(
+        serverUrl: selfUrl,
+        sessionId: tvQr.sessionId,
+        keyPair: tvQr.keyPair,
+        serverKind: SyncServerKind.selfHosted,
+      );
+
+      expect(signedIn, isTrue);
+      expect(tv.sync.isSignedIn, isTrue);
+      expect(tv.sync.session?.serverKind, SyncServerKind.selfHosted);
+      expect(tv.sync.session?.serverUrl, SyncLocalStore.normalizeServerUrl(selfUrl));
+      expect(await tv.sync.syncStore.getLastSelfHostedUrl(), SyncLocalStore.normalizeServerUrl(selfUrl));
+      expect(await tv.repo.findByWorkKey('tmdb:movie:27205'), isNotNull);
+    },
+  );
 }

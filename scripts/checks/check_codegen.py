@@ -14,7 +14,6 @@ EXPLICIT_GENERATED = {
     "lib/data/ducet_order.dart",
     "lib/data/hid_key_labels.dart",
     "lib/data/iso_639_data.dart",
-    "server/relay_protocol_gen.go",
 }
 DEPENDENCY_STATE = ("package_config.json", "package_graph.json")
 

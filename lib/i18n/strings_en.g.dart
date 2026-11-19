@@ -6922,8 +6922,8 @@ class Translations$sync$en {
 	/// en: 'Self-Hosted Sync'
 	String get modeSelfHostedTitle => 'Self-Hosted Sync';
 
-	/// en: 'Connect to your own Go Sync Server with full data ownership, Web console & LAN QR handoff.'
-	String get modeSelfHostedDesc => 'Connect to your own Go Sync Server with full data ownership, Web console & LAN QR handoff.';
+	/// en: 'Connect to your own Go Sync Server with full data ownership, Web console, and QR login.'
+	String get modeSelfHostedDesc => 'Connect to your own Go Sync Server with full data ownership, Web console, and QR login.';
 
 	/// en: 'Official'
 	String get officialBadge => 'Official';
@@ -7048,17 +7048,8 @@ class Translations$sync$en {
 	/// en: 'Scan or paste the code on an already signed-in phone or PC to hand over your encryption key securely.'
 	String get qrHint => 'Scan or paste the code on an already signed-in phone or PC to hand over your encryption key securely.';
 
-	/// en: 'Zero-typing LAN QR: Scan with an already signed-in Phone app (Settings -> Scan QR for PC / TV) to receive your server URL & E2EE key automatically.'
-	String get qrModeLanHint => 'Zero-typing LAN QR: Scan with an already signed-in Phone app (Settings -> Scan QR for PC / TV) to receive your server URL & E2EE key automatically.';
-
-	/// en: 'Cross-network QR: Scan with a Phone or PC signed in to the same sync server.'
-	String get qrModeServerHint => 'Cross-network QR: Scan with a Phone or PC signed in to the same sync server.';
-
-	/// en: 'LAN Zero-Config QR'
-	String get qrUseLanZeroInput => 'LAN Zero-Config QR';
-
-	/// en: 'Server QR'
-	String get qrUseServerRelay => 'Server QR';
+	/// en: 'Scan with a Phone signed in to the same sync server, or paste the pairing URI in another signed-in client to authorize securely.'
+	String get qrModeServerHint => 'Scan with a Phone signed in to the same sync server, or paste the pairing URI in another signed-in client to authorize securely.';
 
 	/// en: 'Authorize TV Device'
 	String get qrAuthorizeTitle => 'Authorize TV Device';
@@ -7125,9 +7116,6 @@ class Translations$sync$en {
 
 	/// en: 'QR code expired. Refresh it on PC/TV and scan again.'
 	String get qrErrExpired => 'QR code expired. Refresh it on PC/TV and scan again.';
-
-	/// en: 'Cannot reach PC/TV over LAN. Ensure both devices are on the same network.'
-	String get qrErrLanUnreachable => 'Cannot reach PC/TV over LAN. Ensure both devices are on the same network.';
 
 	/// en: 'Sync Now'
 	String get syncNow => 'Sync Now';
@@ -11884,7 +11872,7 @@ extension on Translations {
 			'sync.modeOfficialTitle' => 'Official Sync',
 			'sync.modeOfficialDesc' => 'Zero-config E2EE sync via the official server with multi-device sync and QR login.',
 			'sync.modeSelfHostedTitle' => 'Self-Hosted Sync',
-			'sync.modeSelfHostedDesc' => 'Connect to your own Go Sync Server with full data ownership, Web console & LAN QR handoff.',
+			'sync.modeSelfHostedDesc' => 'Connect to your own Go Sync Server with full data ownership, Web console, and QR login.',
 			'sync.officialBadge' => 'Official',
 			'sync.selfHostedBadge' => 'Self-Hosted',
 			'sync.modeCloudTitle' => 'Sign In to Sync Server',
@@ -11926,10 +11914,7 @@ extension on Translations {
 			'sync.qrGenerate' => 'Show QR Code',
 			'sync.qrRefreshButton' => 'Refresh QR',
 			'sync.qrHint' => 'Scan or paste the code on an already signed-in phone or PC to hand over your encryption key securely.',
-			'sync.qrModeLanHint' => 'Zero-typing LAN QR: Scan with an already signed-in Phone app (Settings -> Scan QR for PC / TV) to receive your server URL & E2EE key automatically.',
-			'sync.qrModeServerHint' => 'Cross-network QR: Scan with a Phone or PC signed in to the same sync server.',
-			'sync.qrUseLanZeroInput' => 'LAN Zero-Config QR',
-			'sync.qrUseServerRelay' => 'Server QR',
+			'sync.qrModeServerHint' => 'Scan with a Phone signed in to the same sync server, or paste the pairing URI in another signed-in client to authorize securely.',
 			'sync.qrAuthorizeTitle' => 'Authorize TV Device',
 			'sync.qrAuthorizeHint' => 'Paste the pairing URI from your TV screen.',
 			'sync.qrAuthorizeButton' => 'Confirm Authorization',
@@ -11952,7 +11937,6 @@ extension on Translations {
 			'sync.qrErrInvalidUri' => 'Invalid QR code. Scan a TTPlay Sync sign-in QR code.',
 			'sync.qrErrServerMismatch' => ({required Object target, required Object current}) => 'QR code belongs to ${target}, which does not match your current server (${current}).',
 			'sync.qrErrExpired' => 'QR code expired. Refresh it on PC/TV and scan again.',
-			'sync.qrErrLanUnreachable' => 'Cannot reach PC/TV over LAN. Ensure both devices are on the same network.',
 			'sync.syncNow' => 'Sync Now',
 			'sync.syncing' => 'Syncing…',
 			'sync.signOut' => 'Sign Out',

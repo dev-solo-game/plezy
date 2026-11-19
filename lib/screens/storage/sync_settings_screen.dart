@@ -37,7 +37,6 @@ class _SyncSettingsScreenState extends State<SyncSettingsScreen> {
 
   SyncAndScanCoordinator? _coordinatorRef;
   late SyncServerKind _selectedKind;
-  bool _useLanQr = true;
 
   bool _busy = false;
   bool _probing = false;
@@ -50,7 +49,6 @@ class _SyncSettingsScreenState extends State<SyncSettingsScreen> {
   String? _qrUri;
   SyncQrKeyPair? _qrKeyPair;
   Timer? _qrPollTimer;
-  String? _activeLanNonce;
   LocalMergePolicy _pendingQrMergePolicy = LocalMergePolicy.mergeLocal;
 
   @override
@@ -83,13 +81,6 @@ class _SyncSettingsScreenState extends State<SyncSettingsScreen> {
     if (!mounted) return;
     if (savedUrl != null && savedUrl.isNotEmpty && _serverController.text.isEmpty) {
       _serverController.text = savedUrl;
-    }
-    if (!coordinator.isSignedIn &&
-        !PlatformDetector.isMobile(context) &&
-        _selectedKind == SyncServerKind.selfHosted &&
-        _useLanQr &&
-        coordinator.lanService.isRunning) {
-      await _startLanQrHandoff(promptMerge: false);
     }
   }
 
@@ -233,57 +224,6 @@ class _SyncSettingsScreenState extends State<SyncSettingsScreen> {
     }
   }
 
-  Future<void> _startQr() async {
-    if (_selectedKind == SyncServerKind.selfHosted && _useLanQr) {
-      await _startLanQrHandoff(promptMerge: true);
-    } else {
-      await _startServerQr();
-    }
-  }
-
-  Future<void> _startLanQrHandoff({required bool promptMerge}) async {
-    final coordinator = context.read<SyncAndScanCoordinator>();
-    if (_busy) return;
-    LocalMergePolicy mergePolicy = LocalMergePolicy.mergeLocal;
-    if (promptMerge) {
-      final chosen = await _promptMergePolicyIfNeeded(coordinator);
-      if (chosen == null || !mounted) return;
-      mergePolicy = chosen;
-    }
-
-    _cancelQr();
-    setState(() {
-      _busy = true;
-      _error = null;
-    });
-    try {
-      final res = await coordinator.startLanQrHandoffSession(
-        mergePolicy: mergePolicy,
-        onCompleted: () {
-          if (!mounted) return;
-          _cancelQr();
-          setState(() {});
-          if (widget.onboardingMode) {
-            Navigator.of(context).pop(true);
-          }
-        },
-        onError: (err) {
-          if (!mounted) return;
-          setState(() => _error = formatSyncQrAuthError(err));
-        },
-      );
-      if (!mounted) return;
-      setState(() {
-        _activeLanNonce = res.nonce;
-        _qrUri = res.qrUri;
-      });
-    } catch (e) {
-      if (mounted) setState(() => _error = formatSyncQrAuthError(e));
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
   Future<void> _startServerQr() async {
     final coordinator = context.read<SyncAndScanCoordinator>();
     final server = _effectiveServerUrl();
@@ -344,10 +284,6 @@ class _SyncSettingsScreenState extends State<SyncSettingsScreen> {
   void _cancelQr() {
     _qrPollTimer?.cancel();
     _qrPollTimer = null;
-    if (_activeLanNonce != null) {
-      _coordinatorRef?.cancelLanQrHandoffSession(_activeLanNonce);
-      _activeLanNonce = null;
-    }
     _qrSessionId = null;
     _qrUri = null;
     _qrKeyPair = null;
@@ -362,14 +298,6 @@ class _SyncSettingsScreenState extends State<SyncSettingsScreen> {
       _probeMessage = null;
       _probeSuccess = null;
     });
-    final coordinator = _coordinatorRef;
-    if (kind == SyncServerKind.selfHosted &&
-        _useLanQr &&
-        coordinator != null &&
-        !PlatformDetector.isMobile(context) &&
-        coordinator.lanService.isRunning) {
-      unawaited(_startLanQrHandoff(promptMerge: false));
-    }
   }
 
   Future<void> _confirmQr() async {
@@ -429,7 +357,7 @@ class _SyncSettingsScreenState extends State<SyncSettingsScreen> {
                 ),
                 const SizedBox(height: 12),
               ],
-              if (sess == null) ..._buildSignedOutCards(sync, theme) else ..._buildSignedInCards(sync, sess, theme),
+              if (sess == null) ..._buildSignedOutCards(theme) else ..._buildSignedInCards(sync, sess, theme),
             ],
           ),
         ),
@@ -437,7 +365,7 @@ class _SyncSettingsScreenState extends State<SyncSettingsScreen> {
     );
   }
 
-  List<Widget> _buildSignedOutCards(SyncAndScanCoordinator sync, ThemeData theme) {
+  List<Widget> _buildSignedOutCards(ThemeData theme) {
     final isSelfHosted = _selectedKind == SyncServerKind.selfHosted;
     final showCleartextWarning = isSelfHosted && _isPublicCleartextHttp(_serverController.text);
     final isMobile = PlatformDetector.isMobile(context);
@@ -605,41 +533,8 @@ class _SyncSettingsScreenState extends State<SyncSettingsScreen> {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Text(t.sync.qrLoginTitle, style: theme.textTheme.titleMedium),
-                if (isSelfHosted) ...[
-                  const SizedBox(height: 10),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      ChoiceChip(
-                        label: Text(t.sync.qrUseLanZeroInput),
-                        selected: _useLanQr,
-                        onSelected: (selected) {
-                          if (!selected || _useLanQr) return;
-                          _cancelQr();
-                          setState(() => _useLanQr = true);
-                          if (sync.lanService.isRunning) {
-                            unawaited(_startLanQrHandoff(promptMerge: false));
-                          }
-                        },
-                      ),
-                      ChoiceChip(
-                        label: Text(t.sync.qrUseServerRelay),
-                        selected: !_useLanQr,
-                        onSelected: (selected) {
-                          if (!selected || !_useLanQr) return;
-                          _cancelQr();
-                          setState(() => _useLanQr = false);
-                        },
-                      ),
-                    ],
-                  ),
-                ],
                 const SizedBox(height: 8),
-                Text(
-                  (isSelfHosted && _useLanQr) ? t.sync.qrModeLanHint : t.sync.qrModeServerHint,
-                  style: theme.textTheme.bodySmall,
-                ),
+                Text(t.sync.qrModeServerHint, style: theme.textTheme.bodySmall),
                 const SizedBox(height: 12),
                 if (_qrUri != null) ...[
                   Center(
@@ -658,7 +553,7 @@ class _SyncSettingsScreenState extends State<SyncSettingsScreen> {
                   ),
                 ],
                 OutlinedButton.icon(
-                  onPressed: _busy ? null : () => unawaited(_startQr()),
+                  onPressed: (_busy || _effectiveServerUrl().isEmpty) ? null : () => unawaited(_startServerQr()),
                   icon: const AppIcon(Symbols.qr_code_2_rounded),
                   label: Text(_qrUri == null ? t.sync.qrGenerate : t.sync.qrRefreshButton),
                 ),
