@@ -907,3 +907,186 @@ func TestMultiSourceBridgeStandaloneAndTmdbOutageFail(t *testing.T) {
 		t.Fatalf("expected ErrTmdbUpstream during outage, got %v", err)
 	}
 }
+
+func TestCjkAbbrevSkeletonAndSafetyGuards(t *testing.T) {
+	y2025 := 2025
+	y2023 := 2023
+	y2020 := 2020
+	y2016 := 2016
+	y2026 := 2026
+
+	positive := []struct {
+		query     string
+		itemYear  *int
+		candTitle string
+		candYear  *int
+	}{
+		{"我的sj大电影", &y2025, "我的世界大电影", &y2025},
+		{"流浪dq2", &y2023, "流浪地球2", &y2023},
+		{"爱x之城", &y2016, "爱乐之城", &y2016},
+	}
+	for _, tc := range positive {
+		s := matchCandidateScore(tc.query, tc.itemYear, metadata.Candidate{Title: tc.candTitle, Year: tc.candYear})
+		if s < acceptMatchScore {
+			t.Fatalf("expected %q vs %q (%v) to pass threshold %.2f, got %.2f", tc.query, tc.candTitle, tc.candYear, acceptMatchScore, s)
+		}
+	}
+
+	negative := []struct {
+		query     string
+		itemYear  *int
+		candTitle string
+		candYear  *int
+	}{
+		{"我的sj大电影", &y2025, "小马宝莉大电影", &y2025},
+		{"我的sj大电影", &y2025, "我的世界大电影", &y2020},
+		{"我的sj大电影", &y2025, "我的世界大电影2", &y2025},
+		{"我的a大电影", &y2025, "我的世界大电影", &y2025},
+		{"闪耀的品格", &y2026, "闪耀的女孩", &y2026},
+		{"我的ipad之旅", &y2025, "我的iphone之旅", &y2025},
+		{"V", &y2026, "V/H/S/MIXTAPE", &y2026},
+	}
+	for _, tc := range negative {
+		s := matchCandidateScore(tc.query, tc.itemYear, metadata.Candidate{Title: tc.candTitle, Year: tc.candYear})
+		if s >= acceptMatchScore {
+			t.Fatalf("safety violation: %q vs %q should NOT pass %.2f, got %.2f", tc.query, tc.candTitle, acceptMatchScore, s)
+		}
+	}
+
+	if !isGenericCategoryFolder("电影电视剧") || !isGenericCategoryFolder("Movies") {
+		t.Fatalf("expected generic category folders to be filtered")
+	}
+	if isGenericCategoryFolder("天道轮回 (2024)") || isGenericCategoryFolder("Frieren") {
+		t.Fatalf("valid title folder should NOT be treated as generic category")
+	}
+}
+
+func TestAutoAbbrevSkeletonDoubanBridgeWithoutCustomRules(t *testing.T) {
+	dir := t.TempDir()
+	mediaRoot := filepath.Join(dir, "media")
+	catDir := filepath.Join(mediaRoot, "电影电视剧")
+	if err := os.MkdirAll(catDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mp4Bytes := makeMinimalMp4(1920, 1080, 24000, 24000*30)
+	if err := os.WriteFile(filepath.Join(catDir, "我的sj大电影2025.mp4"), mp4Bytes, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var searchedCatFolder atomic.Bool
+	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		q := r.URL.Query().Get("query")
+		if q == "" {
+			q = r.URL.Query().Get("q")
+		}
+		if q == "电影电视剧" {
+			searchedCatFolder.Store(true)
+		}
+		switch r.URL.Path {
+		case "/3/search/movie":
+			if q == "我的世界大电影" {
+				_, _ = w.Write([]byte(`{"results":[{"id":950387,"title":"我的世界大电影","original_title":"A Minecraft Movie","release_date":"2025-04-04"}]}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"results":[]}`))
+		case "/3/search/tv":
+			_, _ = w.Write([]byte(`{"results":[]}`))
+		case "/3/movie/950387":
+			_, _ = w.Write([]byte(`{"id":950387,"title":"我的世界大电影","original_title":"A Minecraft Movie","release_date":"2025-04-04","vote_average":7.1}`))
+		case "/douban/search/subjects":
+			if q == "我的sj大电影" {
+				// Return multiple candidates, plus IMDb won't falsely hijack it
+				_, _ = w.Write([]byte(`{"subjects":{"items":[{"target_type":"movie","target":{"id":"26149750","title":"我的世界大电影","year":"2025"}},{"target_type":"movie","target":{"id":"26176481","title":"小马宝莉大电影","year":"2025"}}]}}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"subjects":{"items":[]}}`))
+		case "/douban/movie/26149750":
+			_, _ = w.Write([]byte(`{"id":"26149750","title":"我的世界大电影","year":"2025","intro":"方块世界大冒险"}`))
+		case "/imdb/search/titles":
+			if q == "我的sj大电影" {
+				// Single unrelated 2025 result must NOT falsely trigger Pass 3
+				_, _ = w.Write([]byte(`{"titles":[{"id":"tt35450649","type":"tvSeries","primaryTitle":"Melo Movie","startYear":2025}]}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"titles":[]}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer mock.Close()
+
+	dataDir := filepath.Join(dir, "data")
+	v, err := vault.Open(dataDir, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := db.Open(dataDir, v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	key := "mock_key"
+	tmdbBase := mock.URL + "/3"
+	doubanBase := mock.URL + "/douban"
+	imdbBase := mock.URL + "/imdb"
+	on := true
+	off := false
+	// Empty CustomRecognitionWords; IMDb intentionally precedes or follows Douban — test both:
+	// First verify IMDb does NOT match Melo Movie even when Douban is disabled!
+	if _, err := store.UpdateServerSettings(db.ServerSettingsUpdate{
+		TmdbAPIKey:     &key,
+		TmdbAPIBase:    &tmdbBase,
+		DoubanEnabled:  &off,
+		ImdbEnabled:    &on,
+		ImdbAPIBase:    &imdbBase,
+		BangumiEnabled: &off,
+		AniListEnabled: &off,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	hub := events.NewHub()
+	stMgr := storage.NewManager(nil, nil)
+	metaSvc := metadata.NewService(store)
+	scanner := NewScanner(store, stMgr, hub)
+	scraper := NewScraper(store, metaSvc, stMgr, hub)
+	mount, _ := store.CreateMount("Media", "local", map[string]any{"rootPath": mediaRoot}, nil, true)
+
+	ctx := context.Background()
+	if _, err := scanner.ScanMount(ctx, mount.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	sumImdbOnly, err := scraper.ScrapePending(ctx, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sumImdbOnly.Matched != 0 || sumImdbOnly.Unmatched != 1 {
+		t.Fatalf("expected IMDb unrelated 2025 Melo Movie NOT to false-match Pass 3, got %+v", sumImdbOnly)
+	}
+
+	// Now enable Douban and retry unmatched — must auto-match via abbrev skeleton & bridge to TMDB #950387!
+	if _, err := store.UpdateServerSettings(db.ServerSettingsUpdate{
+		DoubanEnabled: &on,
+		DoubanAPIBase: &doubanBase,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	sumRetry, err := scraper.ScrapePending(ctx, true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sumRetry.Matched != 1 || sumRetry.Unmatched != 0 {
+		t.Fatalf("expected automatic Douban->TMDB match for 我的sj大电影 without custom rules, got %+v", sumRetry)
+	}
+	if searchedCatFolder.Load() {
+		t.Fatalf("expected generic folder name 电影电视剧 NOT to be searched")
+	}
+	res, err := store.SearchAll("我的世界大电影", 10)
+	if err != nil || len(res.Movies) != 1 || res.Movies[0].TmdbID == nil || *res.Movies[0].TmdbID != "950387" ||
+		res.Movies[0].MetadataSource == nil || *res.Movies[0].MetadataSource != "tmdb" ||
+		res.Movies[0].DoubanID == nil || *res.Movies[0].DoubanID != "26149750" {
+		t.Fatalf("unexpected final matched movie: %+v err=%v", res.Movies, err)
+	}
+}

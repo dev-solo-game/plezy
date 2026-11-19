@@ -292,6 +292,16 @@ func (s *Service) scrapeDoubanWebImdb(ctx context.Context, cfg db.ServerSettings
 	return ""
 }
 
+// FetchDoubanWebImdbID best-effort scrapes the IMDb ID (tt...) from a Douban subject's
+// web page. Intended to be invoked only once for a confirmed winning candidate.
+func (s *Service) FetchDoubanWebImdbID(ctx context.Context, subjectID string) string {
+	cfg := s.store.GetServerSettings()
+	if cfg.DoubanAPIBase != db.DefaultDoubanAPIBase || strings.TrimSpace(subjectID) == "" {
+		return ""
+	}
+	return s.scrapeDoubanWebImdb(ctx, cfg, subjectID)
+}
+
 func (s *Service) fetchDoubanWork(ctx context.Context, cfg db.ServerSettings, kind, id string) (Work, error) {
 	paths := []string{"/movie/" + url.PathEscape(id), "/tv/" + url.PathEscape(id)}
 	if kind == "show" {
@@ -376,9 +386,6 @@ func (s *Service) fetchDoubanWork(ctx context.Context, cfg db.ServerSettings, ki
 		if rawImdb := jsonStr(raw, "imdb_id"); rawImdb != "" {
 			imdbID = reDoubanImdbID.FindString(rawImdb)
 		}
-	}
-	if imdbID == "" && cfg.DoubanAPIBase == db.DefaultDoubanAPIBase {
-		imdbID = s.scrapeDoubanWebImdb(ctx, cfg, subjectID)
 	}
 
 	var credits []Credit

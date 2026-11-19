@@ -178,7 +178,13 @@ func (s *Server) handleScrapeSearch(w http.ResponseWriter, r *http.Request, _ *d
 		wg.Add(1)
 		go func(idx int, prov string) {
 			defer wg.Done()
-			cands, err := s.Meta.Search(r.Context(), prov, kind, q, year, cfg.ScraperLang, refresh)
+			searchCtx := r.Context()
+			if prov != "tmdb" {
+				var cancel context.CancelFunc
+				searchCtx, cancel = context.WithTimeout(searchCtx, 8*time.Second)
+				defer cancel()
+			}
+			cands, err := s.Meta.Search(searchCtx, prov, kind, q, year, cfg.ScraperLang, refresh)
 			if err != nil {
 				errs[idx] = err
 				return

@@ -150,6 +150,11 @@ func (s *Service) fetchImdbWork(ctx context.Context, cfg db.ServerSettings, kind
 	workURL := strings.TrimRight(cfg.ImdbAPIBase, "/") + "/titles/" + url.PathEscape(normID)
 	raw, status, err := s.doUpstreamJSON(ctx, http.MethodGet, workURL, cfg.MetadataProxy, headers, nil, "IMDb")
 	if err != nil {
+		if cfg.ImdbAPIBase == db.DefaultImdbAPIBase {
+			if w, ok := s.fetchImdbWorkFromSuggestion(ctx, cfg, kind, normID, headers); ok {
+				return w, nil
+			}
+		}
 		return Work{}, err
 	}
 	if status == http.StatusNotFound || raw == nil {
@@ -229,4 +234,49 @@ func (s *Service) fetchImdbWork(ctx context.Context, cfg db.ServerSettings, kind
 		PosterPath:    nonEmptyStrPtr(poster),
 		Credits:       credits,
 	}, nil
+}
+
+func (s *Service) fetchImdbWorkFromSuggestion(ctx context.Context, cfg db.ServerSettings, kind, normID string, headers map[string]string) (Work, bool) {
+	suggURL := fmt.Sprintf("https://v3.sg.media-imdb.com/suggestion/t/%s.json", url.PathEscape(normID))
+	raw, status, err := s.doUpstreamJSON(ctx, http.MethodGet, suggURL, cfg.MetadataProxy, headers, nil, "IMDbSuggest")
+	if err != nil || status != http.StatusOK || raw == nil {
+		return Work{}, false
+	}
+	for _, row := range jsonObjs(raw, "d") {
+		if !strings.EqualFold(jsonStr(row, "id"), normID) {
+			continue
+		}
+		title := jsonStr(row, "l")
+		if title == "" {
+			continue
+		}
+		yr := jsonInt(row, "y")
+		var relDate *string
+		if yr != nil && *yr > 1900 {
+			sDate := fmt.Sprintf("%04d-01-01", *yr)
+			relDate = &sDate
+		}
+		var poster string
+		if img := jsonObj(row, "i"); img != nil {
+			poster = jsonStr(img, "imageUrl")
+		}
+		resolvedKind := kind
+		if qid := strings.ToLower(jsonStr(row, "qid")); strings.Contains(qid, "series") {
+			resolvedKind = "show"
+		} else if qid == "movie" {
+			resolvedKind = "movie"
+		}
+		return Work{
+			Source:      "imdb",
+			Kind:        resolvedKind,
+			ExternalID:  normID,
+			ImdbID:      &normID,
+			Title:       title,
+			Year:        yr,
+			ReleaseDate: relDate,
+			Summary:     nonEmptyStrPtr(jsonStr(row, "s")),
+			PosterPath:  nonEmptyStrPtr(poster),
+		}, true
+	}
+	return Work{}, false
 }

@@ -652,22 +652,13 @@ func (sc *Scraper) scrapeOne(ctx context.Context, item db.MediaItem, forceSearch
 			applog.Debugf("scraper", "  TMDB 直搜未命中 #%d %q，进入辅助源跨源反查: %v", item.ID, item.Title, auxProviders)
 		}
 		for _, auxProv := range auxProviders {
-			auxMatch, auxKind, aErr := sc.matchOnProvider(ctx, auxProv, item, rawTitles, nil, cfg.ScraperLang, forceSearch)
-			if aErr != nil {
-				applog.Warnf("scraper", "  辅助源查询出错 #%d [%s]: %s", item.ID, auxProv, applog.RedactURL(aErr.Error()))
+			auxMatch, auxKind, auxWork, ok := sc.lookupAuxCandidateWork(ctx, auxProv, item, rawTitles, cfg.ScraperLang, forceSearch)
+			if !ok {
 				continue
 			}
-			if auxMatch == nil {
-				continue
-			}
-			auxWorkKind := auxKind
+			auxWorkKind := auxWork.Kind
 			if auxWorkKind == "" {
-				auxWorkKind = item.Kind
-			}
-			auxWork, wErr := sc.meta.GetWork(ctx, auxProv, auxWorkKind, auxMatch.Candidate.ID, cfg.ScraperLang, forceSearch)
-			if wErr != nil {
-				applog.Warnf("scraper", "  辅助源拉取详情失败 #%d [%s:%s]: %s", item.ID, auxProv, auxMatch.Candidate.ID, applog.RedactURL(wErr.Error()))
-				continue
+				auxWorkKind = auxKind
 			}
 			if bestStandalone == nil {
 				wCopy := auxWork
@@ -767,12 +758,8 @@ func (sc *Scraper) scrapeOne(ctx context.Context, item db.MediaItem, forceSearch
 	} else {
 		// No TMDB Key configured; user explicitly relies on standalone auxiliary sources
 		for _, auxProv := range auxProviders {
-			auxMatch, auxKind, aErr := sc.matchOnProvider(ctx, auxProv, item, rawTitles, nil, cfg.ScraperLang, forceSearch)
-			if aErr != nil {
-				applog.Warnf("scraper", "  辅助源查询出错 #%d [%s]: %s", item.ID, auxProv, applog.RedactURL(aErr.Error()))
-				continue
-			}
-			if auxMatch == nil {
+			auxMatch, auxKind, auxWork, ok := sc.lookupAuxCandidateWork(ctx, auxProv, item, rawTitles, cfg.ScraperLang, forceSearch)
+			if !ok {
 				continue
 			}
 			if auxKind != "" && auxKind != item.Kind && sc.canChangeKind(item) {
@@ -783,7 +770,7 @@ func (sc *Scraper) scrapeOne(ctx context.Context, item db.MediaItem, forceSearch
 			if item.Kind == db.KindShow && auxMatch.ImpliedSeason >= 2 {
 				_ = sc.remapDefaultSeasonOne(item.ID, auxMatch.ImpliedSeason)
 			}
-			return sc.applyCandidateWithSupplement(ctx, item, auxProv, auxMatch.Candidate, cfg.ScraperLang, false, "", forceWorkRefresh, nil)
+			return sc.applyStandaloneWork(ctx, item, auxWork, cfg.ScraperLang, false, "", forceWorkRefresh)
 		}
 	}
 
@@ -791,6 +778,43 @@ func (sc *Scraper) scrapeOne(ctx context.Context, item db.MediaItem, forceSearch
 	_ = sc.setFilesMatchState(item.ID, item.Kind, db.MatchUnmatched, false)
 	applog.Warnf("scraper", "未能自动匹配 #%d [%s] title=%q year=%s file=%q -> 保持在待匹配中心", item.ID, item.Kind, item.Title, FormatIntPtr(item.Year), samplePath)
 	return "unmatched", nil
+}
+
+func (sc *Scraper) lookupAuxCandidateWork(
+	ctx context.Context,
+	auxProv string,
+	item db.MediaItem,
+	rawTitles []string,
+	lang string,
+	forceSearch bool,
+) (*bestMatchResult, string, metadata.Work, bool) {
+	auxCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+
+	auxMatch, auxKind, aErr := sc.matchOnProvider(auxCtx, auxProv, item, rawTitles, nil, lang, forceSearch)
+	if aErr != nil {
+		applog.Warnf("scraper", "  辅助源查询出错 #%d [%s]: %s", item.ID, auxProv, applog.RedactURL(aErr.Error()))
+		return nil, "", metadata.Work{}, false
+	}
+	if auxMatch == nil {
+		return nil, "", metadata.Work{}, false
+	}
+	auxWorkKind := auxKind
+	if auxWorkKind == "" {
+		auxWorkKind = item.Kind
+	}
+	auxWork, wErr := sc.meta.GetWork(auxCtx, auxProv, auxWorkKind, auxMatch.Candidate.ID, lang, forceSearch)
+	if wErr != nil {
+		applog.Warnf("scraper", "  辅助源拉取详情失败 #%d [%s:%s]: %s", item.ID, auxProv, auxMatch.Candidate.ID, applog.RedactURL(wErr.Error()))
+		return nil, "", metadata.Work{}, false
+	}
+	// Fetch Douban web HTML IMDb ID at most once for a confirmed winning Douban match.
+	if auxProv == "douban" && (auxWork.ImdbID == nil || *auxWork.ImdbID == "") {
+		if webImdb := sc.meta.FetchDoubanWebImdbID(auxCtx, auxWork.ExternalID); webImdb != "" {
+			auxWork.ImdbID = &webImdb
+		}
+	}
+	return auxMatch, auxWorkKind, auxWork, true
 }
 
 func (sc *Scraper) tryBridgeExternalIDToTMDB(
@@ -1838,14 +1862,15 @@ func (sc *Scraper) searchBestOnSingleProvider(
 		if targetYear != nil {
 			yearVal = *targetYear
 		}
+		supportsYearFilter := providerSupportsYearFilter(prov)
 		effectiveYear := yearVal
-		usedYearFilter := yearVal > 0
+		usedYearFilter := yearVal > 0 && supportsYearFilter
 		cands, err := sc.meta.Search(ctx, prov, kind, v.Query, yearVal, lang, forceRefresh)
 		if err != nil {
 			applog.Warnf("scraper", "  搜索出错 #%d [%s/%s] q=%q year=%d: %s", item.ID, prov, kind, v.Query, yearVal, applog.RedactURL(err.Error()))
 			return nil, err
 		}
-		if len(cands) == 0 && yearVal > 0 {
+		if len(cands) == 0 && usedYearFilter {
 			effectiveYear = 0
 			usedYearFilter = false
 			cands, err = sc.meta.Search(ctx, prov, kind, v.Query, 0, lang, forceRefresh)
@@ -2063,6 +2088,53 @@ func (sc *Scraper) verifyShowHasSeason(ctx context.Context, prov, showID string,
 	return true, seasonYear, nil
 }
 
+func providerSupportsYearFilter(prov string) bool {
+	return prov == "tmdb" || prov == "tvdb"
+}
+
+var genericCategoryFolders = map[string]bool{
+	"电影": true, "電影": true,
+	"电视剧": true, "電視劇": true,
+	"电影电视剧": true, "電影電視劇": true,
+	"剧集": true, "劇集": true,
+	"连续剧": true, "連續劇": true,
+	"动漫": true, "動漫": true,
+	"动画": true, "動畫": true,
+	"番剧": true, "番劇": true,
+	"国漫": true, "國漫": true,
+	"日漫": true, "美漫": true,
+	"综艺": true, "綜藝": true,
+	"纪录片": true, "紀錄片": true,
+	"影视": true, "影視": true,
+	"视频": true, "視頻": true,
+	"合集": true, "资源": true, "資源": true,
+	"下载": true, "下載": true,
+	"外语电影": true, "外語電影": true,
+	"华语电影": true, "華語電影": true,
+	"国产剧": true, "國產劇": true,
+	"美剧": true, "美劇": true,
+	"韩剧": true, "韓劇": true,
+	"日剧": true, "日劇": true,
+	"港剧": true, "港劇": true,
+	"台剧": true, "台劇": true,
+	"英剧": true, "英劇": true,
+	"短剧": true, "短劇": true,
+	"网剧": true, "網劇": true,
+	"movie": true, "movies": true, "film": true, "films": true,
+	"tv": true, "tv shows": true, "tv show": true, "shows": true, "series": true,
+	"anime": true, "documentary": true, "documentaries": true, "variety": true,
+	"video": true, "videos": true, "media": true, "download": true, "downloads": true,
+	"4k": true, "1080p": true, "remux": true, "hdr": true,
+}
+
+func isGenericCategoryFolder(name string) bool {
+	low := strings.ToLower(strings.TrimSpace(name))
+	if low == "" {
+		return true
+	}
+	return genericCategoryFolders[low]
+}
+
 func (sc *Scraper) folderTitleHint(item db.MediaItem) string {
 	v := sc.sampleVideoOf(item)
 	if v == nil {
@@ -2071,12 +2143,101 @@ func (sc *Scraper) folderTitleHint(item db.MediaItem) string {
 	segs := storage.PathSegments(storage.ParentPath(v.Path))
 	for i := len(segs) - 1; i >= 0 && i >= len(segs)-2; i-- {
 		pf := ParseFolderName(segs[i])
-		if pf.IsSeasonFolder || pf.Title == "" {
+		if pf.IsSeasonFolder || pf.Title == "" || isGenericCategoryFolder(pf.Title) {
 			continue
 		}
 		return pf.Title
 	}
 	return ""
+}
+
+func isASCIIAlphaLower(r rune) bool {
+	return r >= 'a' && r <= 'z'
+}
+
+// cjkAbbrevSkeletonSimilarity matches cloud-drive censorship abbreviations embedded inside
+// a Chinese title (e.g. "我的sj大电影" -> "我的世界大电影") while strictly refusing pure-CJK,
+// pure-ASCII, out-of-order anchors, or ASCII-gap false positives.
+func cjkAbbrevSkeletonSimilarity(wantedNorm, other string) float64 {
+	type abbrevSeg struct {
+		ascii bool
+		runes []rune
+	}
+	wRunes := []rune(wantedNorm)
+	oRunes := []rune(other)
+	if len(wRunes) == 0 || len(oRunes) == 0 {
+		return 0
+	}
+
+	var segs []abbrevSeg
+	cjkAnchors := 0
+	literalAnchors := 0
+	asciiSegs := 0
+
+	for i := 0; i < len(wRunes); {
+		isA := isASCIIAlphaLower(wRunes[i])
+		j := i + 1
+		for j < len(wRunes) && isASCIIAlphaLower(wRunes[j]) == isA {
+			j++
+		}
+		part := wRunes[i:j]
+		if isA {
+			if len(part) < 1 || len(part) > 6 {
+				return 0
+			}
+			asciiSegs++
+		} else {
+			for _, r := range part {
+				if isCJK(r) {
+					cjkAnchors++
+				}
+			}
+			literalAnchors += len(part)
+		}
+		segs = append(segs, abbrevSeg{ascii: isA, runes: part})
+		i = j
+	}
+
+	if asciiSegs == 0 || asciiSegs > 2 || cjkAnchors < 2 || literalAnchors < 3 {
+		return 0
+	}
+	if float64(literalAnchors)/float64(len(oRunes)) < 0.55 {
+		return 0
+	}
+
+	var matchAt func(si, oi int) bool
+	matchAt = func(si, oi int) bool {
+		if si == len(segs) {
+			return oi == len(oRunes)
+		}
+		s := segs[si]
+		if !s.ascii {
+			if oi+len(s.runes) > len(oRunes) {
+				return false
+			}
+			for k, r := range s.runes {
+				if oRunes[oi+k] != r {
+					return false
+				}
+			}
+			return matchAt(si+1, oi+len(s.runes))
+		}
+		maxGap := len(s.runes)
+		for g := 1; g <= maxGap && oi+g <= len(oRunes); g++ {
+			if !isCJK(oRunes[oi+g-1]) {
+				break
+			}
+			if matchAt(si+1, oi+g) {
+				return true
+			}
+		}
+		return false
+	}
+
+	if matchAt(0, 0) {
+		return 0.78
+	}
+	return 0
 }
 
 func titleSimilarity(wantedNorm string, names []string) (float64, string) {
@@ -2095,6 +2256,9 @@ func titleSimilarity(wantedNorm string, names []string) (float64, string) {
 			s = 1.0
 		} else {
 			s = diceSimilarity(wantedNorm, other)
+			if skel := cjkAbbrevSkeletonSimilarity(wantedNorm, other); skel > s {
+				s = skel
+			}
 		}
 		if s > bestSim {
 			bestSim = s
