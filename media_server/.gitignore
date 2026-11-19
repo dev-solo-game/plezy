@@ -1,0 +1,5 @@
+media_data/
+ttplay-server.exe
+web/node_modules/
+web/dist/
+web/*.tsbuildinfo

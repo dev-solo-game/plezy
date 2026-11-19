@@ -1,0 +1,160 @@
+package metadata
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"os"
+	"path/filepath"
+	"strings"
+)
+
+type CachedImage struct {
+	Data        []byte
+	ContentType string
+}
+
+// ResolveRemoteImageURL resolves a TMDB relative path (e.g. "/abc.jpg") or full
+// image URL (Bangumi / custom URL) and verifies the host is permitted.
+func (s *Service) ResolveRemoteImageURL(raw string, size string) (string, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return "", fmt.Errorf("%w: empty image source", ErrInvalidInput)
+	}
+	cfg := s.store.GetServerSettings()
+	if strings.HasPrefix(trimmed, "/") && !strings.HasPrefix(trimmed, "//") {
+		sz := strings.TrimSpace(size)
+		if sz == "" {
+			sz = "w500"
+		}
+		if !isSafeTmdbSize(sz) {
+			return "", fmt.Errorf("%w: invalid tmdb image size", ErrInvalidInput)
+		}
+		return strings.TrimRight(cfg.TmdbImageBase, "/") + "/" + sz + trimmed, nil
+	}
+	u, err := url.Parse(trimmed)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return "", fmt.Errorf("%w: invalid image url", ErrInvalidInput)
+	}
+	if !s.isAllowedImageHost(u.Hostname(), cfg.TmdbImageBase) {
+		return "", fmt.Errorf("%w: image host %q not in allowlist", ErrInvalidInput, u.Hostname())
+	}
+	return u.String(), nil
+}
+
+func isSafeTmdbSize(sz string) bool {
+	if sz == "original" {
+		return true
+	}
+	if len(sz) >= 2 && (sz[0] == 'w' || sz[0] == 'h') {
+		for _, ch := range sz[1:] {
+			if ch < '0' || ch > '9' {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
+func (s *Service) isAllowedImageHost(host, tmdbImageBase string) bool {
+	h := strings.ToLower(strings.TrimSpace(host))
+	allowed := []string{
+		"image.tmdb.org",
+		"lain.bgm.tv",
+		"bgm.tv",
+		"chii.in",
+	}
+	if u, err := url.Parse(tmdbImageBase); err == nil && u.Hostname() != "" {
+		allowed = append(allowed, strings.ToLower(u.Hostname()))
+	}
+	for _, cand := range allowed {
+		if h == cand || strings.HasSuffix(h, "."+cand) {
+			return true
+		}
+	}
+	return false
+}
+
+// FetchRemoteImage fetches and disk-caches a remote poster/backdrop/still/avatar image
+// through the configured metadata proxy.
+func (s *Service) FetchRemoteImage(ctx context.Context, src, size string) (CachedImage, error) {
+	targetURL, err := s.ResolveRemoteImageURL(src, size)
+	if err != nil {
+		return CachedImage{}, err
+	}
+	sum := sha256.Sum256([]byte(targetURL))
+	hashHex := hex.EncodeToString(sum[:])
+
+	cacheDir := filepath.Join(s.store.DataDir(), "artwork_cache", hashHex[:2])
+	dataPath := filepath.Join(cacheDir, hashHex)
+	metaPath := dataPath + ".ct"
+
+	if data, err := os.ReadFile(dataPath); err == nil && len(data) > 0 {
+		ct := "image/jpeg"
+		if rawCT, err := os.ReadFile(metaPath); err == nil && strings.TrimSpace(string(rawCT)) != "" {
+			ct = strings.TrimSpace(string(rawCT))
+		}
+		return CachedImage{Data: data, ContentType: ct}, nil
+	}
+
+	val, sfErr := s.flight.Do("img:"+hashHex, func() (any, error) {
+		if data, err := os.ReadFile(dataPath); err == nil && len(data) > 0 {
+			ct := "image/jpeg"
+			if rawCT, err := os.ReadFile(metaPath); err == nil && strings.TrimSpace(string(rawCT)) != "" {
+				ct = strings.TrimSpace(string(rawCT))
+			}
+			return CachedImage{Data: data, ContentType: ct}, nil
+		}
+		cfg := s.store.GetServerSettings()
+		cli, err := s.HTTPClientForProxy(cfg.MetadataProxy)
+		if err != nil {
+			return nil, err
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("User-Agent", "ttplay-media-server/1.0")
+		resp, err := cli.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("%w: fetch image failed: %v", ErrUpstream, err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode == http.StatusNotFound {
+			return nil, ErrNotFound
+		}
+		if resp.StatusCode >= 400 {
+			return nil, fmt.Errorf("%w: upstream image returned HTTP %d", ErrUpstream, resp.StatusCode)
+		}
+		data, err := io.ReadAll(io.LimitReader(resp.Body, 12*1024*1024))
+		if err != nil {
+			return nil, fmt.Errorf("%w: read image failed: %v", ErrUpstream, err)
+		}
+		ct := resp.Header.Get("Content-Type")
+		if ct == "" {
+			ct = http.DetectContentType(data)
+		}
+		if !strings.HasPrefix(strings.ToLower(ct), "image/") {
+			return nil, fmt.Errorf("%w: upstream did not return an image", ErrUpstream)
+		}
+		if err := os.MkdirAll(cacheDir, 0o755); err == nil {
+			_ = os.WriteFile(dataPath, data, 0o644)
+			_ = os.WriteFile(metaPath, []byte(ct), 0o644)
+		}
+		return CachedImage{Data: data, ContentType: ct}, nil
+	})
+	if sfErr != nil {
+		return CachedImage{}, sfErr
+	}
+	img, ok := val.(CachedImage)
+	if !ok {
+		return CachedImage{}, errors.New("unexpected image cache result")
+	}
+	return img, nil
+}
