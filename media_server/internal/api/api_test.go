@@ -15,6 +15,7 @@ import (
 	"strings"
 	"testing"
 
+	"plezy/media_server/internal/applog"
 	"plezy/media_server/internal/auth"
 	"plezy/media_server/internal/db"
 	"plezy/media_server/internal/events"
@@ -646,4 +647,225 @@ func TestExternalServerAPIEndToEnd(t *testing.T) {
 		t.Fatalf("delete external server failed: %v", err)
 	}
 	delResp.Body.Close()
+}
+
+func TestSystemLogsAPIs(t *testing.T) {
+	dataDir := t.TempDir()
+	logDir := filepath.Join(dataDir, "logs")
+	if err := applog.Init(logDir, "debug", false); err != nil {
+		t.Fatalf("init applog failed: %v", err)
+	}
+	t.Cleanup(func() { _ = applog.Close() })
+
+	v, err := vault.Open(dataDir, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := db.Open(dataDir, v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	authSvc := auth.NewService(store)
+	stMgr := storage.NewManager(nil, nil)
+	defer stMgr.CloseAll()
+	metaSvc := metadata.NewService(store)
+	hub := events.NewHub()
+	coord := library.NewCoordinator(store, stMgr, metaSvc, hub)
+	srv := NewServer(store, authSvc, stMgr, metaSvc, hub, coord)
+
+	ts := httptest.NewServer(srv.Mux)
+	defer ts.Close()
+
+	jar, _ := cookiejar.New(nil)
+	cli := &http.Client{Jar: jar}
+
+	setupBody, _ := json.Marshal(map[string]string{
+		"username":    "admin",
+		"password":    "strongpass123",
+		"server_name": "TTPlay LogTest",
+	})
+	resp, err := cli.Post(ts.URL+"/api/v1/auth/setup", "application/json", bytes.NewReader(setupBody))
+	if err != nil || resp.StatusCode != http.StatusOK {
+		t.Fatalf("setup failed: %v", err)
+	}
+	resp.Body.Close()
+
+	applog.Infof("scraper", "测试刮削日志条目 abc_marker")
+	applog.Warnf("metadata", "测试告警日志条目")
+
+	logsResp, err := cli.Get(ts.URL + "/api/v1/system/logs?component=scraper&q=abc_marker")
+	if err != nil || logsResp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /api/v1/system/logs failed: %v", err)
+	}
+	var payload struct {
+		Code        int            `json:"code"`
+		Entries     []applog.Entry `json:"entries"`
+		LatestSeq   uint64         `json:"latest_seq"`
+		LogFilePath string         `json:"log_file_path"`
+	}
+	if err := json.NewDecoder(logsResp.Body).Decode(&payload); err != nil {
+		logsResp.Body.Close()
+		t.Fatal(err)
+	}
+	logsResp.Body.Close()
+	if len(payload.Entries) != 1 || payload.Entries[0].Component != "scraper" || payload.LatestSeq == 0 {
+		t.Fatalf("unexpected logs payload: %+v", payload)
+	}
+
+	dlResp, err := cli.Get(ts.URL + "/api/v1/system/logs/download")
+	if err != nil || dlResp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /api/v1/system/logs/download failed: %v", err)
+	}
+	dlRaw, _ := io.ReadAll(dlResp.Body)
+	dlResp.Body.Close()
+	if !bytes.Contains(dlRaw, []byte("abc_marker")) {
+		t.Fatalf("expected downloaded log to contain marker, got: %s", string(dlRaw))
+	}
+
+	clrResp, err := cli.Post(ts.URL+"/api/v1/system/logs/clear", "application/json", bytes.NewReader([]byte(`{"truncate_file":true}`)))
+	if err != nil || clrResp.StatusCode != http.StatusOK {
+		t.Fatalf("POST /api/v1/system/logs/clear failed: %v", err)
+	}
+	clrResp.Body.Close()
+
+	afterResp, err := cli.Get(ts.URL + "/api/v1/system/logs?component=scraper&q=abc_marker")
+	if err != nil || afterResp.StatusCode != http.StatusOK {
+		t.Fatal(err)
+	}
+	var afterPayload struct {
+		Entries []applog.Entry `json:"entries"`
+	}
+	_ = json.NewDecoder(afterResp.Body).Decode(&afterPayload)
+	afterResp.Body.Close()
+	if len(afterPayload.Entries) != 0 {
+		t.Fatalf("expected old entries cleared, got %+v", afterPayload.Entries)
+	}
+}
+
+func TestProviderSettingsTestEndpointAndDirectIDSearch(t *testing.T) {
+	mockUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/3/find/tt9999999":
+			_, _ = w.Write([]byte(`{"tv_results":[{"id":230311,"name":"爱情有烟火","original_name":"爱情有烟火","first_air_date":"2026-02-01"}],"movie_results":[]}`))
+		case r.URL.Path == "/douban/search/subjects":
+			_, _ = w.Write([]byte(`{"subjects":{"items":[{"target_type":"movie","target":{"id":"1292052","title":"肖申克的救赎"}}]}}`))
+		case r.URL.Path == "/douban/tv/36283066":
+			if r.Header.Get("Cookie") != "secret_cookie_val" {
+				w.WriteHeader(http.StatusForbidden)
+				return
+			}
+			_, _ = w.Write([]byte(`{"id":"36283066","title":"爱情有烟火","year":"2026","imdb":"tt9999999","intro":"爱情有烟火豆瓣简介"}`))
+		case r.URL.Path == "/tvdb/login":
+			_, _ = w.Write([]byte(`{"data":{"token":"tvdb-tok-ok"}}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer mockUpstream.Close()
+
+	dataDir := t.TempDir()
+	v, err := vault.Open(dataDir, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := db.Open(dataDir, v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	authSvc := auth.NewService(store)
+	stMgr := storage.NewManager(nil, nil)
+	defer stMgr.CloseAll()
+	metaSvc := metadata.NewService(store)
+	hub := events.NewHub()
+	coord := library.NewCoordinator(store, stMgr, metaSvc, hub)
+	srv := NewServer(store, authSvc, stMgr, metaSvc, hub, coord)
+
+	ts := httptest.NewServer(srv.Mux)
+	defer ts.Close()
+
+	jar, _ := cookiejar.New(nil)
+	cli := &http.Client{Jar: jar}
+
+	setupBody, _ := json.Marshal(map[string]any{
+		"username":     "admin",
+		"password":     "strongpass123",
+		"server_name":  "TTPlay ModuleTest",
+		"tmdb_api_key": "tmdb-key-abc",
+	})
+	resp, err := cli.Post(ts.URL+"/api/v1/auth/setup", "application/json", bytes.NewReader(setupBody))
+	if err != nil || resp.StatusCode != http.StatusOK {
+		t.Fatalf("setup failed: %v", err)
+	}
+	resp.Body.Close()
+
+	// 1. Update provider settings including vault-encrypted secrets
+	updBody, _ := json.Marshal(map[string]any{
+		"tmdb_api_base":            mockUpstream.URL + "/3",
+		"douban_enabled":           true,
+		"douban_api_base":          mockUpstream.URL + "/douban",
+		"douban_cookie":            "secret_cookie_val",
+		"bangumi_token":            "secret_bgm_tok",
+		"tvdb_enabled":             true,
+		"tvdb_api_base":            mockUpstream.URL + "/tvdb",
+		"tvdb_api_key":             "secret_tvdb_key",
+		"tvdb_pin":                 "998877",
+		"allow_fallback_metadata":  true,
+		"custom_recognition_words": "我的sj大电影 => 我的世界大电影",
+	})
+	updReq, _ := http.NewRequest(http.MethodPut, ts.URL+"/api/v1/settings", bytes.NewReader(updBody))
+	updReq.Header.Set("Content-Type", "application/json")
+	updResp, err := cli.Do(updReq)
+	if err != nil || updResp.StatusCode != http.StatusOK {
+		t.Fatalf("PUT /api/v1/settings failed: status=%v err=%v", updResp, err)
+	}
+	updRaw, _ := io.ReadAll(updResp.Body)
+	updResp.Body.Close()
+	updStr := string(updRaw)
+	for _, secret := range []string{"secret_cookie_val", "secret_bgm_tok", "secret_tvdb_key", "998877"} {
+		if strings.Contains(updStr, secret) {
+			t.Fatalf("settings API response leaked secret %q: %s", secret, updStr)
+		}
+	}
+	var settingsObj struct {
+		Settings db.ServerSettings `json:"settings"`
+	}
+	if err := json.Unmarshal(updRaw, &settingsObj); err != nil {
+		t.Fatal(err)
+	}
+	if !settingsObj.Settings.DoubanCookieSet || !settingsObj.Settings.BangumiTokenSet ||
+		!settingsObj.Settings.TvdbAPIKeySet || !settingsObj.Settings.TvdbPinSet {
+		t.Fatalf("expected all secret *_set flags true, got %+v", settingsObj.Settings)
+	}
+
+	// 2. Test provider endpoint (Douban & TheTvDb)
+	for _, prov := range []string{"douban", "tvdb"} {
+		tBody, _ := json.Marshal(map[string]string{"provider": prov})
+		tResp, err := cli.Post(ts.URL+"/api/v1/settings/test-provider", "application/json", bytes.NewReader(tBody))
+		if err != nil || tResp.StatusCode != http.StatusOK {
+			t.Fatalf("test-provider %s failed: status=%v err=%v", prov, tResp, err)
+		}
+		tResp.Body.Close()
+	}
+
+	// 3. Direct external ID search returns bridged TMDB candidate + Douban native candidate
+	sResp, err := cli.Get(ts.URL + "/api/v1/scrape/search?q=" + url.QueryEscape("douban:36283066") + "&kind=show")
+	if err != nil || sResp.StatusCode != http.StatusOK {
+		t.Fatalf("direct ID scrape search failed: status=%v err=%v", sResp, err)
+	}
+	var sObj struct {
+		Results []metadata.Candidate `json:"results"`
+	}
+	if err := json.NewDecoder(sResp.Body).Decode(&sObj); err != nil {
+		sResp.Body.Close()
+		t.Fatal(err)
+	}
+	sResp.Body.Close()
+	if len(sObj.Results) != 2 || sObj.Results[0].Source != "tmdb" || sObj.Results[0].ID != "230311" || sObj.Results[1].Source != "douban" || sObj.Results[1].ID != "36283066" {
+		t.Fatalf("expected bridged tmdb:230311 then douban:36283066, got %+v", sObj.Results)
+	}
 }

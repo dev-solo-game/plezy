@@ -65,6 +65,28 @@ type ServerSettings struct {
 	MetadataProxy           string  `json:"metadata_proxy"`
 	BangumiEnabled          bool    `json:"bangumi_enabled"`
 	BangumiAPIBase          string  `json:"bangumi_api_base"`
+	BangumiTokenSet         bool    `json:"bangumi_token_set"`
+	BangumiTokenMasked      string  `json:"bangumi_token_masked"`
+	BangumiToken            string  `json:"-"`
+	DoubanEnabled           bool    `json:"douban_enabled"`
+	DoubanAPIBase           string  `json:"douban_api_base"`
+	DoubanCookieSet         bool    `json:"douban_cookie_set"`
+	DoubanCookieMasked      string  `json:"douban_cookie_masked"`
+	DoubanCookie            string  `json:"-"`
+	AniListEnabled          bool    `json:"anilist_enabled"`
+	AniListAPIBase          string  `json:"anilist_api_base"`
+	ImdbEnabled             bool    `json:"imdb_enabled"`
+	ImdbAPIBase             string  `json:"imdb_api_base"`
+	TvdbEnabled             bool    `json:"tvdb_enabled"`
+	TvdbAPIBase             string  `json:"tvdb_api_base"`
+	TvdbAPIKeySet           bool    `json:"tvdb_api_key_set"`
+	TvdbAPIKeyMasked        string  `json:"tvdb_api_key_masked"`
+	TvdbAPIKey              string  `json:"-"`
+	TvdbPinSet              bool    `json:"tvdb_pin_set"`
+	TvdbPinMasked           string  `json:"tvdb_pin_masked"`
+	TvdbPin                 string  `json:"-"`
+	AllowFallbackMetadata   bool    `json:"allow_fallback_metadata"`
+	CustomRecognitionWords  string  `json:"custom_recognition_words"`
 	ProxyImages             bool    `json:"proxy_images"`
 	ScraperLang             string  `json:"scraper_lang"`
 	PreferNfo               bool    `json:"prefer_nfo"`
@@ -84,6 +106,24 @@ type ServerSettingsUpdate struct {
 	MetadataProxy           *string  `json:"metadata_proxy,omitempty"`
 	BangumiEnabled          *bool    `json:"bangumi_enabled,omitempty"`
 	BangumiAPIBase          *string  `json:"bangumi_api_base,omitempty"`
+	BangumiToken            *string  `json:"bangumi_token,omitempty"`
+	ClearBangumiToken       bool     `json:"clear_bangumi_token,omitempty"`
+	DoubanEnabled           *bool    `json:"douban_enabled,omitempty"`
+	DoubanAPIBase           *string  `json:"douban_api_base,omitempty"`
+	DoubanCookie            *string  `json:"douban_cookie,omitempty"`
+	ClearDoubanCookie       bool     `json:"clear_douban_cookie,omitempty"`
+	AniListEnabled          *bool    `json:"anilist_enabled,omitempty"`
+	AniListAPIBase          *string  `json:"anilist_api_base,omitempty"`
+	ImdbEnabled             *bool    `json:"imdb_enabled,omitempty"`
+	ImdbAPIBase             *string  `json:"imdb_api_base,omitempty"`
+	TvdbEnabled             *bool    `json:"tvdb_enabled,omitempty"`
+	TvdbAPIBase             *string  `json:"tvdb_api_base,omitempty"`
+	TvdbAPIKey              *string  `json:"tvdb_api_key,omitempty"`
+	ClearTvdbAPIKey         bool     `json:"clear_tvdb_api_key,omitempty"`
+	TvdbPin                 *string  `json:"tvdb_pin,omitempty"`
+	ClearTvdbPin            bool     `json:"clear_tvdb_pin,omitempty"`
+	AllowFallbackMetadata   *bool    `json:"allow_fallback_metadata,omitempty"`
+	CustomRecognitionWords  *string  `json:"custom_recognition_words,omitempty"`
 	ProxyImages             *bool    `json:"proxy_images,omitempty"`
 	ScraperLang             *string  `json:"scraper_lang,omitempty"`
 	PreferNfo               *bool    `json:"prefer_nfo,omitempty"`
@@ -150,6 +190,8 @@ type MediaItem struct {
 	ImdbID         *string     `json:"imdb_id,omitempty"`
 	TvdbID         *string     `json:"tvdb_id,omitempty"`
 	BangumiID      *string     `json:"bangumi_id,omitempty"`
+	DoubanID       *string     `json:"douban_id,omitempty"`
+	AniListID      *string     `json:"anilist_id,omitempty"`
 	MetadataSource *string     `json:"metadata_source,omitempty"`
 	Locked         bool        `json:"locked"`
 	AddedAt        int64       `json:"added_at"`

@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"plezy/media_server/internal/applog"
 	"plezy/media_server/internal/db"
 	"plezy/media_server/internal/events"
 	"plezy/media_server/internal/storage"
@@ -232,8 +233,12 @@ func (s *Scanner) ScanMount(ctx context.Context, mountID string, fullRestart boo
 		Secrets: m.Secrets,
 	})
 	if err != nil {
+		applog.Errorf("scanner", "初始化挂载驱动失败 [%s] (%s): %v", m.Name, m.Kind, err)
 		return ScanResult{}, err
 	}
+
+	startedAt := time.Now()
+	applog.Infof("scanner", "开始扫描挂载源 [%s] (%s) full=%v", m.Name, m.Kind, fullRestart)
 
 	inc, isInc := drv.(storage.IncrementalSource)
 	if !fullRestart && isInc && inc.SupportsIncremental() {
@@ -241,19 +246,31 @@ func (s *Scanner) ScanMount(ctx context.Context, mountID string, fullRestart boo
 		if _, ok := parseQuarkWatermark(st.QuarkCheckpoint, inc.RootFolderID()); ok {
 			res, incErr := s.scanQuarkIncremental(scanCtx, m, drv, inc, st)
 			if incErr == nil {
+				applog.Infof("scanner", "增量扫描完成 [%s] 耗时=%dms 新增/更新视频=%d 移除=%d", m.Name, time.Since(startedAt).Milliseconds(), res.Videos, res.Removed)
 				return res, nil
 			}
 			if errors.Is(incErr, context.Canceled) {
+				applog.Warnf("scanner", "增量扫描已取消 [%s]", m.Name)
 				return ScanResult{Cancelled: true}, nil
 			}
 			// Fall back to full scan if incremental search asks for full scan
 			if !strings.Contains(incErr.Error(), "full scan required") {
+				applog.Errorf("scanner", "增量扫描失败 [%s]: %v", m.Name, incErr)
 				return ScanResult{}, incErr
 			}
+			applog.Infof("scanner", "夸克增量需要回退到全量扫描 [%s]: %v", m.Name, incErr)
 		}
 	}
 
-	return s.scanFull(scanCtx, m, drv, inc, isInc, fullRestart)
+	res, scanErr := s.scanFull(scanCtx, m, drv, inc, isInc, fullRestart)
+	if scanErr != nil {
+		applog.Errorf("scanner", "扫描异常结束 [%s] 耗时=%dms: %v", m.Name, time.Since(startedAt).Milliseconds(), scanErr)
+	} else if res.Cancelled {
+		applog.Warnf("scanner", "扫描被取消 [%s] 耗时=%dms", m.Name, time.Since(startedAt).Milliseconds())
+	} else {
+		applog.Infof("scanner", "扫描完成 [%s] 耗时=%dms 视频=%d 移除=%d pending=%v", m.Name, time.Since(startedAt).Milliseconds(), res.Videos, res.Removed, res.AddedPending)
+	}
+	return res, scanErr
 }
 
 func parseQuarkWatermark(cp *string, rootID string) (int64, bool) {
@@ -918,6 +935,7 @@ func (s *Scanner) fileVideoTx(
 			return 0, false, err
 		}
 		_, err = tx.Exec(`UPDATE media_files SET item_id = ?, match_state = 'unmatched' WHERE id = ?`, itemID, fileID)
+		applog.Warnf("scanner", "无法解析文件名，归入待匹配 #%d title=%q path=%q", itemID, title, rawPath)
 		return itemID, false, err
 	}
 

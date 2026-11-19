@@ -5,9 +5,11 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"plezy/media_server/internal/db"
+	"plezy/media_server/internal/library"
 	"plezy/media_server/internal/metadata"
 )
 
@@ -90,10 +92,55 @@ func (s *Server) handleScrapeSearch(w http.ResponseWriter, r *http.Request, _ *d
 	kind := strings.TrimSpace(r.URL.Query().Get("kind"))
 	provider := strings.TrimSpace(r.URL.Query().Get("provider"))
 	year, _ := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("year")))
+	refresh := r.URL.Query().Get("refresh") == "1" || strings.EqualFold(r.URL.Query().Get("refresh"), "true")
 	if kind == "" {
 		kind = "movie"
 	}
 	cfg := s.Store.GetServerSettings()
+
+	// Direct external ID or URL lookup (e.g. tt1234567, douban:36283066, tmdb:230311, bgm:400602)
+	if directProv, directID, kindHint, ok := library.ParseManualDirectID(q); ok {
+		effKind := kind
+		if kindHint != "" {
+			effKind = kindHint
+		}
+		work, err := s.Meta.GetWork(r.Context(), directProv, effKind, directID, cfg.ScraperLang, refresh)
+		if err != nil && kindHint == "" {
+			altKind := "show"
+			if effKind == "show" {
+				altKind = "movie"
+			}
+			if w2, err2 := s.Meta.GetWork(r.Context(), directProv, altKind, directID, cfg.ScraperLang, refresh); err2 == nil {
+				work = w2
+				err = nil
+				effKind = altKind
+			}
+		}
+		if err != nil {
+			writeMappedError(w, r, err)
+			return
+		}
+
+		results := make([]metadata.Candidate, 0, 2)
+		if directProv != "tmdb" && cfg.TmdbAPIKey != "" {
+			if work.TmdbID != nil && *work.TmdbID != "" {
+				if tw, tErr := s.Meta.GetWork(r.Context(), "tmdb", effKind, *work.TmdbID, cfg.ScraperLang, refresh); tErr == nil {
+					results = append(results, candidateFromWork(tw))
+				}
+			} else if work.ImdbID != nil && *work.ImdbID != "" {
+				if c, _, fErr := s.Meta.FindByExternalID(r.Context(), "imdb_id", *work.ImdbID, effKind, cfg.ScraperLang, refresh); fErr == nil && c != nil {
+					results = append(results, *c)
+				}
+			} else if work.TvdbID != nil && *work.TvdbID != "" {
+				if c, _, fErr := s.Meta.FindByExternalID(r.Context(), "tvdb_id", *work.TvdbID, effKind, cfg.ScraperLang, refresh); fErr == nil && c != nil {
+					results = append(results, *c)
+				}
+			}
+		}
+		results = append(results, candidateFromWork(work))
+		writeJSON(w, r, http.StatusOK, map[string]any{"code": 0, "results": results})
+		return
+	}
 
 	var providers []string
 	if provider != "" {
@@ -102,26 +149,71 @@ func (s *Server) handleScrapeSearch(w http.ResponseWriter, r *http.Request, _ *d
 		if cfg.TmdbAPIKey != "" {
 			providers = append(providers, "tmdb")
 		}
+		if cfg.DoubanEnabled {
+			providers = append(providers, "douban")
+		}
 		if cfg.BangumiEnabled {
 			providers = append(providers, "bangumi")
 		}
+		if cfg.AniListEnabled {
+			providers = append(providers, "anilist")
+		}
+		if cfg.ImdbEnabled {
+			providers = append(providers, "imdb")
+		}
+		if cfg.TvdbEnabled && cfg.TvdbAPIKey != "" {
+			providers = append(providers, "tvdb")
+		}
 	}
+
+	if len(providers) == 0 {
+		writeJSON(w, r, http.StatusOK, map[string]any{"code": 0, "results": []metadata.Candidate{}})
+		return
+	}
+
+	perProv := make([][]metadata.Candidate, len(providers))
+	errs := make([]error, len(providers))
+	var wg sync.WaitGroup
+	for i, p := range providers {
+		wg.Add(1)
+		go func(idx int, prov string) {
+			defer wg.Done()
+			cands, err := s.Meta.Search(r.Context(), prov, kind, q, year, cfg.ScraperLang, refresh)
+			if err != nil {
+				errs[idx] = err
+				return
+			}
+			perProv[idx] = cands
+		}(i, p)
+	}
+	wg.Wait()
 
 	results := make([]metadata.Candidate, 0)
 	var lastErr error
-	for _, p := range providers {
-		cands, err := s.Meta.Search(r.Context(), p, kind, q, year, cfg.ScraperLang, false)
-		if err != nil {
-			lastErr = err
+	for i := range providers {
+		if errs[i] != nil {
+			lastErr = errs[i]
 			continue
 		}
-		results = append(results, cands...)
+		results = append(results, perProv[i]...)
 	}
 	if len(results) == 0 && lastErr != nil {
 		writeMappedError(w, r, lastErr)
 		return
 	}
 	writeJSON(w, r, http.StatusOK, map[string]any{"code": 0, "results": results})
+}
+
+func candidateFromWork(w metadata.Work) metadata.Candidate {
+	return metadata.Candidate{
+		Source:        w.Source,
+		ID:            w.ExternalID,
+		Title:         w.Title,
+		OriginalTitle: w.OriginalTitle,
+		Year:          w.Year,
+		Summary:       w.Summary,
+		PosterPath:    w.PosterPath,
+	}
 }
 
 func (s *Server) handleManualMatch(w http.ResponseWriter, r *http.Request, _ *db.AdminAccount, _ *db.SessionRecord) {
@@ -193,12 +285,7 @@ func (s *Server) handleRefreshItem(w http.ResponseWriter, r *http.Request, _ *db
 		return
 	}
 	cfg := s.Store.GetServerSettings()
-	var prov, extID string
-	if item.TmdbID != nil && *item.TmdbID != "" {
-		prov, extID = "tmdb", *item.TmdbID
-	} else if item.BangumiID != nil && *item.BangumiID != "" {
-		prov, extID = "bangumi", *item.BangumiID
-	}
+	prov, extID := resolveItemProviderID(item)
 	if prov != "" && extID != "" {
 		_, _ = s.Meta.GetWork(r.Context(), prov, item.Kind, extID, cfg.ScraperLang, true)
 		refreshed, err := s.Coordinator.Scraper.ApplyManualMatch(r.Context(), itemID, prov, extID, item.Kind == db.KindShow, item.LibraryType)
@@ -216,4 +303,54 @@ func (s *Server) handleRefreshItem(w http.ResponseWriter, r *http.Request, _ *db
 	_, _ = s.Coordinator.Scraper.ScrapePending(ctx, true, false)
 	latest, _ := s.Store.GetMediaItem(itemID)
 	writeJSON(w, r, http.StatusOK, map[string]any{"code": 0, "item": latest})
+}
+
+func resolveItemProviderID(item db.MediaItem) (string, string) {
+	if item.MetadataSource != nil {
+		switch *item.MetadataSource {
+		case "tmdb":
+			if item.TmdbID != nil && *item.TmdbID != "" {
+				return "tmdb", *item.TmdbID
+			}
+		case "bangumi":
+			if item.BangumiID != nil && *item.BangumiID != "" {
+				return "bangumi", *item.BangumiID
+			}
+		case "douban":
+			if item.DoubanID != nil && *item.DoubanID != "" {
+				return "douban", *item.DoubanID
+			}
+		case "anilist":
+			if item.AniListID != nil && *item.AniListID != "" {
+				return "anilist", *item.AniListID
+			}
+		case "imdb":
+			if item.ImdbID != nil && *item.ImdbID != "" {
+				return "imdb", *item.ImdbID
+			}
+		case "tvdb":
+			if item.TvdbID != nil && *item.TvdbID != "" {
+				return "tvdb", *item.TvdbID
+			}
+		}
+	}
+	if item.TmdbID != nil && *item.TmdbID != "" {
+		return "tmdb", *item.TmdbID
+	}
+	if item.BangumiID != nil && *item.BangumiID != "" {
+		return "bangumi", *item.BangumiID
+	}
+	if item.DoubanID != nil && *item.DoubanID != "" {
+		return "douban", *item.DoubanID
+	}
+	if item.AniListID != nil && *item.AniListID != "" {
+		return "anilist", *item.AniListID
+	}
+	if item.ImdbID != nil && *item.ImdbID != "" {
+		return "imdb", *item.ImdbID
+	}
+	if item.TvdbID != nil && *item.TvdbID != "" {
+		return "tvdb", *item.TvdbID
+	}
+	return "", ""
 }

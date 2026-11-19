@@ -52,7 +52,7 @@ const mediaItemBaseSelect = `
 		mi.summary, mi.tagline, mi.content_rating, mi.studio, mi.rating, mi.runtime_ms,
 		mi.season_number, mi.episode_number, mi.absolute_number,
 		mi.poster_source, mi.backdrop_source, mi.logo_source,
-		mi.tmdb_id, mi.imdb_id, mi.tvdb_id, mi.bangumi_id, mi.metadata_source,
+		mi.tmdb_id, mi.imdb_id, mi.tvdb_id, mi.bangumi_id, mi.douban_id, mi.anilist_id, mi.metadata_source,
 		mi.locked, mi.added_at, mi.source_added_at, mi.updated_at, mi.scraped_at,
 		ws.last_file_id, ws.position_ms, ws.duration_ms, ws.watched, ws.play_count,
 		ws.last_played_at, ws.favorite, ws.hidden_from_continue, ws.updated_at,
@@ -105,7 +105,7 @@ const mediaItemBaseSelect = `
 func scanMediaItem(scanner interface{ Scan(dest ...any) error }) (MediaItem, error) {
 	var item MediaItem
 	var workKey, origTitle, aliases, relDate, summary, tagline, contentRating, studio sql.NullString
-	var poster, backdrop, logo, tmdbID, imdbID, tvdbID, bangumiID, metaSource sql.NullString
+	var poster, backdrop, logo, tmdbID, imdbID, tvdbID, bangumiID, doubanID, anilistID, metaSource sql.NullString
 	var parentID, showID, year, runtimeMs, seasonNum, epNum, absNum, srcAdded, scrapedAt sql.NullInt64
 	var rating sql.NullFloat64
 	var lockedInt int
@@ -123,7 +123,7 @@ func scanMediaItem(scanner interface{ Scan(dest ...any) error }) (MediaItem, err
 		&summary, &tagline, &contentRating, &studio, &rating, &runtimeMs,
 		&seasonNum, &epNum, &absNum,
 		&poster, &backdrop, &logo,
-		&tmdbID, &imdbID, &tvdbID, &bangumiID, &metaSource,
+		&tmdbID, &imdbID, &tvdbID, &bangumiID, &doubanID, &anilistID, &metaSource,
 		&lockedInt, &item.AddedAt, &srcAdded, &item.UpdatedAt, &scrapedAt,
 		&wsLastFile, &wsPos, &wsDur, &wsWatched, &wsPlayCount,
 		&wsLastPlayed, &wsFav, &wsHidden, &wsUpdated,
@@ -156,6 +156,8 @@ func scanMediaItem(scanner interface{ Scan(dest ...any) error }) (MediaItem, err
 	item.ImdbID = nullStrPtr(imdbID)
 	item.TvdbID = nullStrPtr(tvdbID)
 	item.BangumiID = nullStrPtr(bangumiID)
+	item.DoubanID = nullStrPtr(doubanID)
+	item.AniListID = nullStrPtr(anilistID)
 	item.MetadataSource = nullStrPtr(metaSource)
 	item.Locked = lockedInt != 0
 	item.SourceAddedAt = nullInt64Ptr(srcAdded)

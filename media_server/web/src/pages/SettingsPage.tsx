@@ -1,12 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Database, Loader2, LogOut, Palette, PlayCircle, Shield, Sparkles, Trash2, Wifi } from 'lucide-react';
+import { ChevronDown, ChevronUp, Database, Loader2, LogOut, Palette, PlayCircle, Shield, SlidersHorizontal, Sparkles, Trash2, Wifi } from 'lucide-react';
 import { api, formatBytes } from '../api/client';
 import type { SettingsBundle } from '../api/prefetch';
 import { getCached, useSWRQuery } from '../api/queryCache';
 import { CustomSelect, RadioCardGroup } from '../components/CustomSelect';
 import { CardListSkeleton } from '../components/Skeletons';
 import { useApp } from '../contexts/AppContext';
-import type { AccentTheme, ServerSettings } from '../types';
+import type { AccentTheme, MetadataProvider, ServerSettings, ServerSettingsUpdate } from '../types';
 
 export const SettingsPage: React.FC = () => {
   const { accentTheme, setAccentTheme, setServerNameLocal, refreshAuth, toast } = useApp();
@@ -48,6 +48,20 @@ export const SettingsPage: React.FC = () => {
   const [proxyUrl, setProxyUrl] = useState(initSt?.metadata_proxy || '');
   const [bangumiEnabled, setBangumiEnabled] = useState(initSt?.bangumi_enabled ?? true);
   const [bangumiBase, setBangumiBase] = useState(initSt?.bangumi_api_base || '');
+  const [bangumiTokenInput, setBangumiTokenInput] = useState('');
+  const [doubanEnabled, setDoubanEnabled] = useState(initSt?.douban_enabled ?? true);
+  const [doubanBase, setDoubanBase] = useState(initSt?.douban_api_base || '');
+  const [doubanCookieInput, setDoubanCookieInput] = useState('');
+  const [anilistEnabled, setAniListEnabled] = useState(initSt?.anilist_enabled ?? true);
+  const [anilistBase, setAniListBase] = useState(initSt?.anilist_api_base || '');
+  const [imdbEnabled, setImdbEnabled] = useState(initSt?.imdb_enabled ?? true);
+  const [imdbBase, setImdbBase] = useState(initSt?.imdb_api_base || '');
+  const [tvdbEnabled, setTvdbEnabled] = useState(initSt?.tvdb_enabled ?? false);
+  const [tvdbBase, setTvdbBase] = useState(initSt?.tvdb_api_base || '');
+  const [tvdbKeyInput, setTvdbKeyInput] = useState('');
+  const [tvdbPinInput, setTvdbPinInput] = useState('');
+  const [allowFallbackMetadata, setAllowFallbackMetadata] = useState(initSt?.allow_fallback_metadata ?? true);
+  const [customRecognitionWords, setCustomRecognitionWords] = useState(initSt?.custom_recognition_words || '');
   const [proxyImages, setProxyImages] = useState(initSt?.proxy_images ?? true);
   const [scraperLang, setScraperLang] = useState(initSt?.scraper_lang || 'zh-CN');
   const [preferNfo, setPreferNfo] = useState(initSt?.prefer_nfo ?? true);
@@ -56,6 +70,8 @@ export const SettingsPage: React.FC = () => {
   const [webPreferCloud, setWebPreferCloud] = useState(initSt?.web_prefer_cloud_transcode ?? true);
   const [watchedThreshold, setWatchedThreshold] = useState(initSt?.watched_threshold ?? 0.9);
   const [testingTmdb, setTestingTmdb] = useState(false);
+  const [testingProvider, setTestingProvider] = useState<MetadataProvider | ''>('');
+  const [expandedModules, setExpandedModules] = useState<Record<string, boolean>>({});
 
   // Account security states
   const [newUsername, setNewUsername] = useState('');
@@ -69,6 +85,16 @@ export const SettingsPage: React.FC = () => {
     setProxyUrl(st.metadata_proxy);
     setBangumiEnabled(st.bangumi_enabled);
     setBangumiBase(st.bangumi_api_base);
+    setDoubanEnabled(st.douban_enabled);
+    setDoubanBase(st.douban_api_base);
+    setAniListEnabled(st.anilist_enabled);
+    setAniListBase(st.anilist_api_base);
+    setImdbEnabled(st.imdb_enabled);
+    setImdbBase(st.imdb_api_base);
+    setTvdbEnabled(st.tvdb_enabled);
+    setTvdbBase(st.tvdb_api_base);
+    setAllowFallbackMetadata(st.allow_fallback_metadata);
+    setCustomRecognitionWords(st.custom_recognition_words || '');
     setProxyImages(st.proxy_images);
     setScraperLang(st.scraper_lang || 'zh-CN');
     setPreferNfo(st.prefer_nfo);
@@ -102,6 +128,20 @@ export const SettingsPage: React.FC = () => {
         metadata_proxy: proxyUrl.trim(),
         bangumi_enabled: bangumiEnabled,
         bangumi_api_base: bangumiBase.trim(),
+        ...(bangumiTokenInput.trim() ? { bangumi_token: bangumiTokenInput.trim() } : {}),
+        douban_enabled: doubanEnabled,
+        douban_api_base: doubanBase.trim(),
+        ...(doubanCookieInput.trim() ? { douban_cookie: doubanCookieInput.trim() } : {}),
+        anilist_enabled: anilistEnabled,
+        anilist_api_base: anilistBase.trim(),
+        imdb_enabled: imdbEnabled,
+        imdb_api_base: imdbBase.trim(),
+        tvdb_enabled: tvdbEnabled,
+        tvdb_api_base: tvdbBase.trim(),
+        ...(tvdbKeyInput.trim() ? { tvdb_api_key: tvdbKeyInput.trim() } : {}),
+        ...(tvdbPinInput.trim() ? { tvdb_pin: tvdbPinInput.trim() } : {}),
+        allow_fallback_metadata: allowFallbackMetadata,
+        custom_recognition_words: customRecognitionWords,
         proxy_images: proxyImages,
         scraper_lang: scraperLang,
         prefer_nfo: preferNfo,
@@ -115,6 +155,10 @@ export const SettingsPage: React.FC = () => {
         prev ? { ...prev, settings: res.settings, cache_stats: res.cache_stats } : prev
       );
       setTmdbKeyInput('');
+      setBangumiTokenInput('');
+      setDoubanCookieInput('');
+      setTvdbKeyInput('');
+      setTvdbPinInput('');
       setServerNameLocal(res.settings.server_name);
       toast('系统配置已保存', 'success');
     } catch (err) {
@@ -124,11 +168,14 @@ export const SettingsPage: React.FC = () => {
     }
   };
 
-  const handleClearTmdbKey = async () => {
+  const handleClearSecret = async (
+    payload: ServerSettingsUpdate,
+    label: string
+  ) => {
     try {
-      const res = await api.updateSettings({ clear_tmdb_api_key: true });
+      const res = await api.updateSettings(payload);
       mutate((prev) => (prev ? { ...prev, settings: res.settings } : prev));
-      toast('已清除 TMDB API Key', 'success');
+      toast(`已清除 ${label}`, 'success');
     } catch (err) {
       toast((err as Error).message, 'error');
     }
@@ -147,6 +194,36 @@ export const SettingsPage: React.FC = () => {
       toast(`TMDB 连接失败: ${(err as Error).message}`, 'error');
     } finally {
       setTestingTmdb(false);
+    }
+  };
+
+  const handleTestProvider = async (prov: MetadataProvider) => {
+    setTestingProvider(prov);
+    try {
+      const overrides: Record<string, string | undefined> = {
+        metadata_proxy: proxyUrl.trim(),
+      };
+      if (prov === 'douban') {
+        overrides.api_base = doubanBase.trim() || undefined;
+        overrides.cookie = doubanCookieInput.trim() || undefined;
+      } else if (prov === 'bangumi') {
+        overrides.api_base = bangumiBase.trim() || undefined;
+        overrides.token = bangumiTokenInput.trim() || undefined;
+      } else if (prov === 'anilist') {
+        overrides.api_base = anilistBase.trim() || undefined;
+      } else if (prov === 'imdb') {
+        overrides.api_base = imdbBase.trim() || undefined;
+      } else if (prov === 'tvdb') {
+        overrides.api_base = tvdbBase.trim() || undefined;
+        overrides.api_key = tvdbKeyInput.trim() || undefined;
+        overrides.pin = tvdbPinInput.trim() || undefined;
+      }
+      const res = await api.testProvider({ provider: prov, ...overrides });
+      toast(`${res.message || `${prov.toUpperCase()} 连接正常`}（延迟 ${res.latency_ms} ms）`, 'success');
+    } catch (err) {
+      toast(`连接测试失败: ${(err as Error).message}`, 'error');
+    } finally {
+      setTestingProvider('');
     }
   };
 
@@ -238,8 +315,13 @@ export const SettingsPage: React.FC = () => {
       {tab === 'scraper' && (
         <form onSubmit={handleSaveSettings} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           <div className="card-box" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-            <div className="flex-row" style={{ justifyContent: 'space-between' }}>
-              <strong>TMDB 与 网络代理</strong>
+            <div className="flex-row" style={{ justifyContent: 'space-between', flexWrap: 'wrap', gap: 10 }}>
+              <div>
+                <strong>核心模块 · TMDB 与全局刮削策略</strong>
+                <div className="muted-sm" style={{ marginTop: 2 }}>
+                  正常情况一律优先采用 TMDB；若 TMDB 网络不通将直接判定刮削失败，绝不会误降级为辅助源
+                </div>
+              </div>
               <button type="button" className="btn btn-sm" onClick={() => void handleTestTmdb()} disabled={testingTmdb}>
                 {testingTmdb ? <Loader2 size={14} className="spin" /> : <Wifi size={14} />}
                 测试 TMDB 连通性
@@ -263,7 +345,11 @@ export const SettingsPage: React.FC = () => {
                   onChange={(e) => setTmdbKeyInput(e.target.value)}
                 />
                 {settings.tmdb_api_key_set && (
-                  <button type="button" className="btn btn-danger btn-sm" onClick={() => void handleClearTmdbKey()}>
+                  <button
+                    type="button"
+                    className="btn btn-danger btn-sm"
+                    onClick={() => void handleClearSecret({ clear_tmdb_api_key: true }, 'TMDB API Key')}
+                  >
                     清除 Key
                   </button>
                 )}
@@ -305,26 +391,260 @@ export const SettingsPage: React.FC = () => {
 
             <div className="divider" />
 
-            <div className="grid-2">
-              <div className="field">
-                <label>Bangumi API Base URL（用于动漫自动兜底）</label>
-                <input className="input" value={bangumiBase} onChange={(e) => setBangumiBase(e.target.value)} />
-              </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, justifyContent: 'center' }}>
-                <label className="flex-row" style={{ cursor: 'pointer', fontSize: 13 }}>
-                  <input type="checkbox" checked={bangumiEnabled} onChange={(e) => setBangumiEnabled(e.target.checked)} />
-                  启用 Bangumi 番剧刮削源
-                </label>
-                <label className="flex-row" style={{ cursor: 'pointer', fontSize: 13 }}>
-                  <input type="checkbox" checked={preferNfo} onChange={(e) => setPreferNfo(e.target.checked)} />
-                  优先读取同目录 NFO 元数据与本地海报
-                </label>
-                <label className="flex-row" style={{ cursor: 'pointer', fontSize: 13 }}>
-                  <input type="checkbox" checked={proxyImages} onChange={(e) => setProxyImages(e.target.checked)} />
-                  开启服务端远程海报代理与磁盘缓存
-                </label>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <label className="flex-row" style={{ cursor: 'pointer', fontSize: 13 }}>
+                <input type="checkbox" checked={preferNfo} onChange={(e) => setPreferNfo(e.target.checked)} />
+                优先读取同目录 NFO 元数据与本地海报
+              </label>
+              <label className="flex-row" style={{ cursor: 'pointer', fontSize: 13 }}>
+                <input type="checkbox" checked={proxyImages} onChange={(e) => setProxyImages(e.target.checked)} />
+                开启服务端远程海报代理与磁盘缓存（支持 TMDB / 豆瓣 / Bangumi / AniList / IMDb / TheTvDb）
+              </label>
+              <label className="flex-row" style={{ cursor: 'pointer', fontSize: 13 }}>
+                <input
+                  type="checkbox"
+                  checked={allowFallbackMetadata}
+                  onChange={(e) => setAllowFallbackMetadata(e.target.checked)}
+                />
+                TMDB 确实未收录时允许辅助源独立入库（仅在 TMDB 正常响应但查无结果且跨源桥接仍无命中时生效）
+              </label>
+            </div>
+          </div>
+
+          <div className="card-box" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div>
+              <strong>媒体模块 · 辅助识别与兜底源</strong>
+              <div className="muted-sm" style={{ marginTop: 2 }}>
+                按需启用媒体识别、跨源反查（确认中文正式名、Aliases 别名或 IMDb/TVDB ID 后优先回填 TMDB）和独立兜底源；TMDB 核心模块始终启用
               </div>
             </div>
+
+            <div className="module-grid">
+              {[
+                {
+                  id: 'douban' as MetadataProvider,
+                  name: '豆瓣 (Douban)',
+                  desc: '电影、电视剧和动漫中文译名、曾用名 (aka) 与 IMDb 编号反查源；国产剧及短剧强烈建议开启。',
+                  enabled: doubanEnabled,
+                  onToggle: setDoubanEnabled,
+                  badge: settings.douban_cookie_set ? '已配 Cookie' : '免 Key 开箱即用',
+                  badgeKind: 'success',
+                  baseLabel: '豆瓣 API Base URL',
+                  baseValue: doubanBase,
+                  onBaseChange: setDoubanBase,
+                  secretLabel: '豆瓣 Cookie（可选，防限流）',
+                  secretSet: settings.douban_cookie_set,
+                  secretMasked: settings.douban_cookie_masked,
+                  secretValue: doubanCookieInput,
+                  onSecretChange: setDoubanCookieInput,
+                  onSecretClear: () => handleClearSecret({ clear_douban_cookie: true }, '豆瓣 Cookie'),
+                },
+                {
+                  id: 'bangumi' as MetadataProvider,
+                  name: 'Bangumi',
+                  desc: '媒体识别、别名对齐和番剧分集使用的 Bangumi 动画数据源。',
+                  enabled: bangumiEnabled,
+                  onToggle: setBangumiEnabled,
+                  badge: settings.bangumi_token_set ? '已配 Token' : '免 Key 开箱即用',
+                  badgeKind: 'success',
+                  baseLabel: 'Bangumi API Base URL',
+                  baseValue: bangumiBase,
+                  onBaseChange: setBangumiBase,
+                  secretLabel: 'Access Token（可选，解锁受限条目）',
+                  secretSet: settings.bangumi_token_set,
+                  secretMasked: settings.bangumi_token_masked,
+                  secretValue: bangumiTokenInput,
+                  onSecretChange: setBangumiTokenInput,
+                  onSecretClear: () => handleClearSecret({ clear_bangumi_token: true }, 'Bangumi Token'),
+                },
+                {
+                  id: 'anilist' as MetadataProvider,
+                  name: 'AniList',
+                  desc: '媒体识别和搜索使用的 AniList GraphQL 动画数据源，罗马音/英日别名最全面。',
+                  enabled: anilistEnabled,
+                  onToggle: setAniListEnabled,
+                  badge: '免 Key 开箱即用',
+                  badgeKind: 'success',
+                  baseLabel: 'AniList GraphQL Endpoint',
+                  baseValue: anilistBase,
+                  onBaseChange: setAniListBase,
+                },
+                {
+                  id: 'imdb' as MetadataProvider,
+                  name: 'IMDb',
+                  desc: '电影和电视剧编号 (tt...) 识别、搜索并桥接至 TMDB 使用的全球数据源。',
+                  enabled: imdbEnabled,
+                  onToggle: setImdbEnabled,
+                  badge: '免 Key 开箱即用',
+                  badgeKind: 'success',
+                  baseLabel: 'IMDb API Base URL',
+                  baseValue: imdbBase,
+                  onBaseChange: setImdbBase,
+                },
+                {
+                  id: 'tvdb' as MetadataProvider,
+                  name: 'TheTvDb',
+                  desc: '电视剧与特别篇识别、外键互转使用的 TheTvDb v4 数据源（需配置 API Key）。',
+                  enabled: tvdbEnabled,
+                  onToggle: setTvdbEnabled,
+                  badge: settings.tvdb_api_key_set ? `已配 Key (${settings.tvdb_api_key_masked})` : '需配置 API Key',
+                  badgeKind: settings.tvdb_api_key_set ? 'success' : 'accent',
+                  baseLabel: 'TheTvDb v4 Base URL',
+                  baseValue: tvdbBase,
+                  onBaseChange: setTvdbBase,
+                  secretLabel: 'TheTvDb API Key',
+                  secretSet: settings.tvdb_api_key_set,
+                  secretMasked: settings.tvdb_api_key_masked,
+                  secretValue: tvdbKeyInput,
+                  onSecretChange: setTvdbKeyInput,
+                  onSecretClear: () => handleClearSecret({ clear_tvdb_api_key: true }, 'TheTvDb API Key'),
+                  extraLabel: 'Subscriber PIN（可选）',
+                  extraSet: settings.tvdb_pin_set,
+                  extraMasked: settings.tvdb_pin_masked,
+                  extraValue: tvdbPinInput,
+                  onExtraChange: setTvdbPinInput,
+                  onExtraClear: () => handleClearSecret({ clear_tvdb_pin: true }, 'TheTvDb PIN'),
+                },
+              ].map((mod) => {
+                const isExpanded = Boolean(expandedModules[mod.id]);
+                const isTesting = testingProvider === mod.id;
+                return (
+                  <div key={mod.id} className={`module-card ${mod.enabled ? 'active' : ''}`}>
+                    <div className="module-card-head">
+                      <div className="module-card-main">
+                        <label className="toggle-switch" aria-label={`切换 ${mod.name}`}>
+                          <input
+                            type="checkbox"
+                            checked={mod.enabled}
+                            onChange={(e) => mod.onToggle(e.target.checked)}
+                          />
+                          <span className="toggle-track">
+                            <span className="toggle-thumb" />
+                          </span>
+                        </label>
+                        <div style={{ minWidth: 0 }}>
+                          <div className="module-card-title">
+                            <span>{mod.name}</span>
+                            <span className={`tag ${mod.badgeKind}`}>{mod.badge}</span>
+                          </div>
+                          <div className="module-card-desc">{mod.desc}</div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="module-card-actions">
+                      <button
+                        type="button"
+                        className="btn btn-sm"
+                        disabled={isTesting}
+                        onClick={() => void handleTestProvider(mod.id)}
+                      >
+                        {isTesting ? <Loader2 size={13} className="spin" /> : <Wifi size={13} />}
+                        测试连通
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-sm"
+                        onClick={() =>
+                          setExpandedModules((prev) => ({ ...prev, [mod.id]: !prev[mod.id] }))
+                        }
+                      >
+                        <SlidersHorizontal size={13} />
+                        配置
+                        {isExpanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+                      </button>
+                    </div>
+
+                    {isExpanded && (
+                      <div className="module-config-drawer">
+                        <div className="field">
+                          <label>{mod.baseLabel}</label>
+                          <input
+                            className="input"
+                            value={mod.baseValue}
+                            onChange={(e) => mod.onBaseChange(e.target.value)}
+                          />
+                        </div>
+                        {mod.secretLabel && mod.onSecretChange && (
+                          <div className="field">
+                            <label>
+                              {mod.secretLabel}{' '}
+                              {mod.secretSet && <span className="tag success">已设置：{mod.secretMasked}</span>}
+                            </label>
+                            <div className="flex-row">
+                              <input
+                                className="input"
+                                style={{ flex: 1 }}
+                                type="password"
+                                placeholder={mod.secretSet ? '留空保留现有凭据，输入则覆盖' : '可选填入'}
+                                value={mod.secretValue}
+                                onChange={(e) => mod.onSecretChange?.(e.target.value)}
+                              />
+                              {mod.secretSet && mod.onSecretClear && (
+                                <button
+                                  type="button"
+                                  className="btn btn-danger btn-sm"
+                                  onClick={() => void mod.onSecretClear?.()}
+                                >
+                                  清除
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                        {mod.extraLabel && mod.onExtraChange && (
+                          <div className="field">
+                            <label>
+                              {mod.extraLabel}{' '}
+                              {mod.extraSet && <span className="tag success">已设置：{mod.extraMasked}</span>}
+                            </label>
+                            <div className="flex-row">
+                              <input
+                                className="input"
+                                style={{ flex: 1 }}
+                                type="password"
+                                placeholder={mod.extraSet ? '留空保留现有 PIN' : '没有 PIN 可留空'}
+                                value={mod.extraValue}
+                                onChange={(e) => mod.onExtraChange?.(e.target.value)}
+                              />
+                              {mod.extraSet && mod.onExtraClear && (
+                                <button
+                                  type="button"
+                                  className="btn btn-danger btn-sm"
+                                  onClick={() => void mod.onExtraClear?.()}
+                                >
+                                  清除
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="card-box" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <div>
+              <strong>自定义识别词（片名预处理与网盘防和谐还原）</strong>
+              <div className="muted-sm" style={{ marginTop: 2 }}>
+                每行一条规则，刮削搜索前自动替换或剥离干扰词：支持 <code>原词 =&gt; 替换词</code>、
+                <code>re:正则表达式 =&gt; 替换词</code> 或直接写需剔除的广告词（<code>#</code> 开头为注释）
+              </div>
+            </div>
+            <textarea
+              className="input mono"
+              rows={5}
+              style={{ resize: 'vertical', lineHeight: 1.55 }}
+              placeholder={
+                '# 示例规则：\n我的sj大电影 => 我的世界大电影\n[夸克4K臻享]\nre:^\\[.*?推广.*?\\]\\s* => '
+              }
+              value={customRecognitionWords}
+              onChange={(e) => setCustomRecognitionWords(e.target.value)}
+            />
           </div>
 
           {cacheStats && (

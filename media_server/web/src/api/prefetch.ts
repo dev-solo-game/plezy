@@ -136,3 +136,7 @@ export function prefetchExtItemDetail(serverId: string, itemId: string): void {
   if (!serverId || !itemId) return;
   prefetchQuery(`ext:${serverId}:item:${itemId}`, () => api.extGetItemDetail(serverId, itemId), 15000);
 }
+
+export function prefetchSystemLogs(): void {
+  prefetchQuery('system:logs:tail', () => api.getSystemLogs({ limit: 300, level: 'DEBUG' }), 5000);
+}

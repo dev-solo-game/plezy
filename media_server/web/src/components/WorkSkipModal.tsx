@@ -4,6 +4,7 @@ import { api } from '../api/client';
 import { useApp } from '../contexts/AppContext';
 import type { WorkPrefs } from '../types';
 import { CustomSelect } from './CustomSelect';
+import { ModalBackdrop } from './ModalBackdrop';
 
 interface WorkSkipModalProps {
   workKey: string;
@@ -48,8 +49,8 @@ export const WorkSkipModal: React.FC<WorkSkipModalProps> = ({ workKey, initialPr
   };
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <form className="modal-panel" style={{ maxWidth: 520 }} onClick={(e) => e.stopPropagation()} onSubmit={handleSubmit}>
+    <ModalBackdrop onClose={onClose}>
+      <form className="modal-panel" style={{ maxWidth: 520 }} onSubmit={handleSubmit}>
         <div className="modal-header">
           <h3>片头 / 片尾跳过与播放偏好</h3>
           <button type="button" className="btn btn-icon btn-sm" onClick={onClose}>
@@ -142,6 +143,6 @@ export const WorkSkipModal: React.FC<WorkSkipModalProps> = ({ workKey, initialPr
           </button>
         </div>
       </form>
-    </div>
+    </ModalBackdrop>
   );
 };

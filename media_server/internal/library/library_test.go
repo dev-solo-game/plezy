@@ -3,10 +3,13 @@ package library
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync/atomic"
 	"testing"
 
 	"plezy/media_server/internal/db"
@@ -223,10 +226,14 @@ func TestEndToEndScanProbeScrapeAndManualMatch(t *testing.T) {
 	key := "mock_key"
 	apiBase := tmdbMock.URL + "/3"
 	bgmBase := tmdbMock.URL
+	auxOff := false
 	if _, err := store.UpdateServerSettings(db.ServerSettingsUpdate{
 		TmdbAPIKey:     &key,
 		TmdbAPIBase:    &apiBase,
 		BangumiAPIBase: &bgmBase,
+		DoubanEnabled:  &auxOff,
+		AniListEnabled: &auxOff,
+		ImdbEnabled:    &auxOff,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -290,5 +297,613 @@ func TestEndToEndScanProbeScrapeAndManualMatch(t *testing.T) {
 	snap := coord.TaskStatus()
 	if snap.UnmatchedCount != 0 {
 		t.Fatalf("expected 0 unmatched after manual match, got %d", snap.UnmatchedCount)
+	}
+}
+
+func TestRetryUnmatchedBypassesSearchCacheAndSeasonSuffix(t *testing.T) {
+	dir := t.TempDir()
+	mediaRoot := filepath.Join(dir, "media")
+	if err := os.MkdirAll(filepath.Join(mediaRoot, "电影"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(mediaRoot, "电视剧", "剑来 第一季 (2024)", "Season 1"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mp4Bytes := makeMinimalMp4(1920, 1080, 24000, 24000*30)
+	if err := os.WriteFile(filepath.Join(mediaRoot, "电影", "重试测试电影 (2025).mp4"), mp4Bytes, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(mediaRoot, "电视剧", "剑来 第一季 (2024)", "Season 1", "剑来 第一季 - S01E01 - 第 1 集.mp4"), mp4Bytes, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var allowMatches atomic.Bool
+	tmdbMock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/3/search/movie":
+			if allowMatches.Load() && r.URL.Query().Get("query") == "重试测试电影" {
+				_, _ = w.Write([]byte(`{"results":[{"id":8801,"title":"重试测试电影","release_date":"2025-01-01"}]}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"results":[]}`))
+		case "/3/search/tv":
+			if allowMatches.Load() && r.URL.Query().Get("query") == "剑来" {
+				_, _ = w.Write([]byte(`{"results":[{"id":259537,"name":"剑来","original_name":"剑来","first_air_date":"2024-08-15"}]}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"results":[]}`))
+		case "/3/movie/8801":
+			_, _ = w.Write([]byte(`{"id":8801,"title":"重试测试电影","release_date":"2025-01-01","vote_average":7.9}`))
+		case "/3/tv/259537":
+			_, _ = w.Write([]byte(`{"id":259537,"name":"剑来","original_name":"剑来","first_air_date":"2024-08-15","vote_average":8.6}`))
+		case "/3/tv/259537/season/1":
+			_, _ = w.Write([]byte(`{"id":1,"season_number":1,"name":"第 1 季","episodes":[{"episode_number":1,"name":"第一集"}]}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer tmdbMock.Close()
+
+	dataDir := filepath.Join(dir, "data")
+	v, err := vault.Open(dataDir, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := db.Open(dataDir, v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	key := "mock_key"
+	apiBase := tmdbMock.URL + "/3"
+	bgmDisabled := false
+	if _, err := store.UpdateServerSettings(db.ServerSettingsUpdate{
+		TmdbAPIKey:     &key,
+		TmdbAPIBase:    &apiBase,
+		BangumiEnabled: &bgmDisabled,
+		DoubanEnabled:  &bgmDisabled,
+		AniListEnabled: &bgmDisabled,
+		ImdbEnabled:    &bgmDisabled,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	mount, err := store.CreateMount("Test Mount", "local", map[string]any{"rootPath": mediaRoot}, nil, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	hub := events.NewHub()
+	stMgr := storage.NewManager(nil, nil)
+	metaSvc := metadata.NewService(store)
+	scanner := NewScanner(store, stMgr, hub)
+	scraper := NewScraper(store, metaSvc, stMgr, hub)
+
+	ctx := context.Background()
+	if _, err := scanner.ScanMount(ctx, mount.ID, true); err != nil {
+		t.Fatal(err)
+	}
+
+	// Pass 1: upstream returns empty results -> populates meta_search_cache with []
+	sum1, err := scraper.ScrapePending(ctx, false, false)
+	if err != nil {
+		t.Fatalf("pass 1 scrape failed: %v", err)
+	}
+	if sum1.Matched != 0 || sum1.Unmatched != 2 {
+		t.Fatalf("expected 0 matched & 2 unmatched on pass 1, got %+v", sum1)
+	}
+	if stats := metaSvc.CacheStats(); stats.Searches == 0 {
+		t.Fatalf("expected empty search results to be cached in meta_search_cache")
+	}
+
+	// Upstream starts returning results now.
+	allowMatches.Store(true)
+
+	// Pass 2: normal scrape (retryUnmatched=false) should do nothing because items were already marked scraped_at
+	sum2, err := scraper.ScrapePending(ctx, false, false)
+	if err != nil || sum2.Matched != 0 || sum2.Unmatched != 0 {
+		t.Fatalf("expected empty queue on normal scrape pass, got %+v err=%v", sum2, err)
+	}
+
+	// Pass 3: retryUnmatched=true MUST bypass meta_search_cache & use season-stripped fallback for "剑来 第一季"
+	sum3, err := scraper.ScrapePending(ctx, true, false)
+	if err != nil {
+		t.Fatalf("retryUnmatched scrape failed: %v", err)
+	}
+	if sum3.Matched != 2 || sum3.Unmatched != 0 {
+		t.Fatalf("expected both unmatched items to match on retry, got %+v", sum3)
+	}
+	if _, totalUnm, err := store.QueryUnmatched(10, 0); err != nil || totalUnm != 0 {
+		t.Fatalf("expected 0 remaining unmatched, got total=%d err=%v", totalUnm, err)
+	}
+}
+
+func TestSeasonAndSequelTitleParsers(t *testing.T) {
+	seasonCases := []struct {
+		in         string
+		wantBase   string
+		wantSeason int
+	}{
+		{"剑来 第一季", "剑来", 1},
+		{"庆余年 第二季", "庆余年", 2},
+		{"Frieren Season 2", "Frieren", 2},
+		{"Dark S03", "Dark", 3},
+		{"普通剧名", "", 0},
+	}
+	for _, tc := range seasonCases {
+		gotBase, gotSeason := parseTrailingSeasonTitle(tc.in)
+		if gotBase != tc.wantBase || gotSeason != tc.wantSeason {
+			t.Fatalf("parseTrailingSeasonTitle(%q) = (%q, %d), want (%q, %d)", tc.in, gotBase, gotSeason, tc.wantBase, tc.wantSeason)
+		}
+	}
+
+	sequelCases := []struct {
+		in         string
+		wantBase   string
+		wantSequel int
+	}{
+		{"问心2", "问心", 2},
+		{"庆余年 2", "庆余年", 2},
+		{"猎罪图鉴Ⅱ", "猎罪图鉴", 2},
+		{"Fargo II", "Fargo", 2},
+		{"请回答1988", "", 0},
+		{"2046", "", 0},
+		{"V2", "", 0},
+	}
+	for _, tc := range sequelCases {
+		gotBase, gotSeq := parseTrailingSequelNumber(tc.in)
+		if gotBase != tc.wantBase || gotSeq != tc.wantSequel {
+			t.Fatalf("parseTrailingSequelNumber(%q) = (%q, %d), want (%q, %d)", tc.in, gotBase, gotSeq, tc.wantBase, tc.wantSequel)
+		}
+	}
+}
+
+func TestAdvancedMatchingAliasesUniqueAndSequelToSeason(t *testing.T) {
+	dir := t.TempDir()
+	mediaRoot := filepath.Join(dir, "media")
+	dirs := []string{
+		filepath.Join(mediaRoot, "电视剧", "爱情有烟火 (2026)", "Season 1"),
+		filepath.Join(mediaRoot, "电视剧", "我们住在一起 (2026)", "Season 1"),
+		filepath.Join(mediaRoot, "电视剧", "改名独苗剧 (2026)", "Season 1"),
+		filepath.Join(mediaRoot, "电视剧", "问心2 (2026)", "Season 1"),
+		filepath.Join(mediaRoot, "电影", "V (2026)"),
+	}
+	for _, d := range dirs {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	mp4Bytes := makeMinimalMp4(1920, 1080, 24000, 24000*30)
+	files := []string{
+		filepath.Join(mediaRoot, "电视剧", "爱情有烟火 (2026)", "Season 1", "爱情有烟火 - S01E01.mp4"),
+		filepath.Join(mediaRoot, "电视剧", "我们住在一起 (2026)", "Season 1", "我们住在一起 - S01E31.mp4"),
+		filepath.Join(mediaRoot, "电视剧", "改名独苗剧 (2026)", "Season 1", "改名独苗剧 - S01E01.mp4"),
+		filepath.Join(mediaRoot, "电视剧", "问心2 (2026)", "Season 1", "问心2 - S01E01.mp4"),
+		filepath.Join(mediaRoot, "电影", "V (2026)", "V (2026) - 1080p.mp4"),
+	}
+	for _, f := range files {
+		if err := os.WriteFile(f, mp4Bytes, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	tmdbMock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/3/search/tv":
+			q := r.URL.Query().Get("query")
+			yr := r.URL.Query().Get("first_air_date_year")
+			switch q {
+			case "爱情有烟火", "我们住在一起":
+				_, _ = w.Write([]byte(`{"results":[{"id":230311,"name":"爱情有烟火","original_name":"爱情有烟火","first_air_date":"2026-02-01"}]}`))
+			case "改名独苗剧":
+				if yr == "2026" {
+					_, _ = w.Write([]byte(`{"results":[{"id":7701,"name":"正式剧名","original_name":"正式剧名","first_air_date":"2026-06-01"}]}`))
+					return
+				}
+				_, _ = w.Write([]byte(`{"results":[]}`))
+			case "问心":
+				_, _ = w.Write([]byte(`{"results":[{"id":233076,"name":"问心","original_name":"问心","first_air_date":"2023-10-07"}]}`))
+			default:
+				_, _ = w.Write([]byte(`{"results":[]}`))
+			}
+		case "/3/search/movie":
+			if r.URL.Query().Get("query") == "V" {
+				_, _ = w.Write([]byte(`{"results":[{"id":1742441,"title":"V/H/S/MIXTAPE","original_title":"V/H/S/MIXTAPE","release_date":"2026-01-01"}]}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"results":[]}`))
+		case "/3/tv/230311":
+			_, _ = w.Write([]byte(`{
+				"id": 230311,
+				"name": "爱情有烟火",
+				"original_name": "爱情有烟火",
+				"first_air_date": "2026-02-01",
+				"alternative_titles": {"results": [{"title": "我们住在一起"}]}
+			}`))
+		case "/3/tv/230311/season/1":
+			_, _ = w.Write([]byte(`{
+				"season_number": 1,
+				"name": "第 1 季",
+				"air_date": "2026-02-01",
+				"episodes": [
+					{"episode_number": 1, "name": "初遇"},
+					{"episode_number": 31, "name": "第31集真实标题"}
+				]
+			}`))
+		case "/3/tv/7701":
+			_, _ = w.Write([]byte(`{"id":7701,"name":"正式剧名","original_name":"正式剧名","first_air_date":"2026-06-01"}`))
+		case "/3/tv/7701/season/1":
+			_, _ = w.Write([]byte(`{"season_number":1,"name":"第 1 季","air_date":"2026-06-01","episodes":[{"episode_number":1,"name":"开播"}]}`))
+		case "/3/tv/233076":
+			_, _ = w.Write([]byte(`{"id":233076,"name":"问心","original_name":"问心","first_air_date":"2023-10-07"}`))
+		case "/3/tv/233076/season/2":
+			_, _ = w.Write([]byte(`{
+				"season_number": 2,
+				"name": "第 2 季",
+				"air_date": "2026-05-01",
+				"episodes": [{"episode_number": 1, "name": "重逢"}]
+			}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer tmdbMock.Close()
+
+	dataDir := filepath.Join(dir, "data")
+	v, err := vault.Open(dataDir, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := db.Open(dataDir, v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	key := "mock_key"
+	apiBase := tmdbMock.URL + "/3"
+	bgmDisabled := false
+	if _, err := store.UpdateServerSettings(db.ServerSettingsUpdate{
+		TmdbAPIKey:     &key,
+		TmdbAPIBase:    &apiBase,
+		BangumiEnabled: &bgmDisabled,
+		DoubanEnabled:  &bgmDisabled,
+		AniListEnabled: &bgmDisabled,
+		ImdbEnabled:    &bgmDisabled,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	mount, err := store.CreateMount("Test Mount", "local", map[string]any{"rootPath": mediaRoot}, nil, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	hub := events.NewHub()
+	stMgr := storage.NewManager(nil, nil)
+	metaSvc := metadata.NewService(store)
+	scanner := NewScanner(store, stMgr, hub)
+	scraper := NewScraper(store, metaSvc, stMgr, hub)
+
+	ctx := context.Background()
+	if _, err := scanner.ScanMount(ctx, mount.ID, true); err != nil {
+		t.Fatal(err)
+	}
+
+	sum, err := scraper.ScrapePending(ctx, false, false)
+	if err != nil {
+		t.Fatalf("scrape failed: %v", err)
+	}
+	if sum.Matched != 3 || sum.Merged != 1 || sum.Unmatched != 1 {
+		t.Fatalf("expected 3 matched, 1 merged, 1 unmatched, got %+v", sum)
+	}
+
+	// 1. Verify "V (2026)" stayed unmatched
+	unm, totalUnm, err := store.QueryUnmatched(10, 0)
+	if err != nil || totalUnm != 1 || unm[0].Item.Title != "V" {
+		t.Fatalf("expected V to remain unmatched, got total=%d items=%+v err=%v", totalUnm, unm, err)
+	}
+
+	// 2. Verify "我们住在一起" merged into "爱情有烟火", filled E31, and preserved alias searchability
+	searchRes, err := store.SearchAll("我们住在一起", 10)
+	if err != nil || len(searchRes.Shows) != 1 || searchRes.Shows[0].Title != "爱情有烟火" {
+		t.Fatalf("expected search for merged alias to find 爱情有烟火, got %+v err=%v", searchRes.Shows, err)
+	}
+	loveShowID := searchRes.Shows[0].ID
+	loveEps, err := store.GetEpisodesByShow(loveShowID, nil)
+	if err != nil || len(loveEps) != 2 {
+		t.Fatalf("expected 2 merged episodes under 爱情有烟火, got %+v err=%v", loveEps, err)
+	}
+	foundE31 := false
+	for _, ep := range loveEps {
+		if ep.EpisodeNumber != nil && *ep.EpisodeNumber == 31 && ep.Title == "第31集真实标题" {
+			foundE31 = true
+		}
+	}
+	if !foundE31 {
+		t.Fatalf("expected episode 31 to have scraped title '第31集真实标题', got %+v", loveEps)
+	}
+
+	// 3. Verify "改名独苗剧" matched to "正式剧名" via safe same-year unique fallback
+	uniqueRes, err := store.SearchAll("正式剧名", 10)
+	if err != nil || len(uniqueRes.Shows) != 1 {
+		t.Fatalf("expected unique candidate fallback show 正式剧名, got %+v err=%v", uniqueRes.Shows, err)
+	}
+
+	// 4. Verify "问心2" remapped Season 1 -> Season 2 and matched #233076 "问心" with Season 2 episode title "重逢"
+	wxRes, err := store.SearchAll("问心", 10)
+	if err != nil || len(wxRes.Shows) != 1 || wxRes.Shows[0].TmdbID == nil || *wxRes.Shows[0].TmdbID != "233076" {
+		t.Fatalf("expected 问心 show matched via sequel-to-season, got %+v err=%v", wxRes.Shows, err)
+	}
+	wxSeason2 := 2
+	wxEps, err := store.GetEpisodesByShow(wxRes.Shows[0].ID, &wxSeason2)
+	if err != nil || len(wxEps) != 1 || wxEps[0].Title != "重逢" {
+		t.Fatalf("expected Season 2 episode '重逢' under 问心, got %+v err=%v", wxEps, err)
+	}
+}
+
+func TestCustomRecognitionWordsAndManualDirectIDs(t *testing.T) {
+	rules := `
+# 屏蔽网盘和谐词和广告
+我的sj大电影 => 我的世界大电影
+[夸克4K臻享]
+re:^【.*?】\s* =>
+`
+	if got := ApplyCustomRecognitionWords("我的sj大电影", rules); got != "我的世界大电影" {
+		t.Fatalf("custom literal replace failed: got %q", got)
+	}
+	if got := ApplyCustomRecognitionWords("【限时分享】流浪地球2 [夸克4K臻享]", rules); got != "流浪地球2" {
+		t.Fatalf("custom strip & regex failed: got %q", got)
+	}
+
+	emb := ExtractEmbeddedExternalIDs("/电影/Inception [tt1375666] {tmdb-27205}/Inception.mp4")
+	if emb.ImdbID != "tt1375666" || emb.TmdbID != "27205" {
+		t.Fatalf("unexpected embedded IDs: %+v", emb)
+	}
+
+	cases := []struct {
+		in       string
+		wantProv string
+		wantID   string
+		wantKind string
+	}{
+		{"tt1375666", "imdb", "tt1375666", ""},
+		{"douban:36283066", "douban", "36283066", ""},
+		{"tmdb:tv:230311", "tmdb", "230311", "show"},
+		{"bgm:400602", "bangumi", "400602", ""},
+		{"https://movie.douban.com/subject/36283066/", "douban", "36283066", ""},
+		{"https://www.themoviedb.org/movie/27205", "tmdb", "27205", "movie"},
+		{"https://anilist.co/anime/154587", "anilist", "154587", "show"},
+	}
+	for _, tc := range cases {
+		p, id, k, ok := ParseManualDirectID(tc.in)
+		if !ok || p != tc.wantProv || id != tc.wantID || k != tc.wantKind {
+			t.Fatalf("ParseManualDirectID(%q) = (%q, %q, %q, %v), want (%q, %q, %q, true)",
+				tc.in, p, id, k, ok, tc.wantProv, tc.wantID, tc.wantKind)
+		}
+	}
+}
+
+func TestMultiSourceBridgeStandaloneAndTmdbOutageFail(t *testing.T) {
+	dir := t.TempDir()
+	mediaRoot := filepath.Join(dir, "media")
+	dirs := []string{
+		filepath.Join(mediaRoot, "电视剧", "我们住在一起 (2026)", "Season 1"),
+		filepath.Join(mediaRoot, "电视剧", "AliasFallback (2025)", "Season 1"),
+		filepath.Join(mediaRoot, "电影"),
+	}
+	for _, d := range dirs {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	mp4Bytes := makeMinimalMp4(1920, 1080, 24000, 24000*30)
+	files := []string{
+		filepath.Join(mediaRoot, "电视剧", "我们住在一起 (2026)", "Season 1", "我们住在一起 - S01E01.mp4"),
+		filepath.Join(mediaRoot, "电视剧", "AliasFallback (2025)", "Season 1", "AliasFallback - S01E01.mp4"),
+		filepath.Join(mediaRoot, "电影", "我的sj大电影 (2025).mp4"),
+		filepath.Join(mediaRoot, "电影", "独立网大短剧 (2026).mp4"),
+	}
+	for _, f := range files {
+		if err := os.WriteFile(f, mp4Bytes, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var tmdbDown atomic.Bool
+	var doubanHits atomic.Int32
+
+	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/3/") && tmdbDown.Load() {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		// TMDB: "我们住在一起" returns empty directly; "AliasFallback" returns empty directly; "Canonical Show" matches via Bridge 2C;
+		// "我的世界大电影" matches via custom recognition word; "独立网大短剧" is completely absent in TMDB.
+		case r.URL.Path == "/3/search/tv":
+			q := r.URL.Query().Get("query")
+			if q == "Canonical Show" {
+				_, _ = w.Write([]byte(`{"results":[{"id":55001,"name":"规范英文剧名","original_name":"Canonical Show","first_air_date":"2025-05-01"}]}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"results":[]}`))
+		case r.URL.Path == "/3/search/movie":
+			q := r.URL.Query().Get("query")
+			if q == "我的世界大电影" {
+				_, _ = w.Write([]byte(`{"results":[{"id":950387,"title":"我的世界大电影","original_title":"A Minecraft Movie","release_date":"2025-04-04"}]}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"results":[]}`))
+		case r.URL.Path == "/3/find/tt2800001":
+			_, _ = w.Write([]byte(`{"tv_results":[{"id":230311,"name":"爱情有烟火","original_name":"爱情有烟火","first_air_date":"2026-02-01"}],"movie_results":[]}`))
+		case r.URL.Path == "/3/tv/230311":
+			_, _ = w.Write([]byte(`{"id":230311,"name":"爱情有烟火","original_name":"爱情有烟火","first_air_date":"2026-02-01"}`))
+		case r.URL.Path == "/3/tv/230311/season/1":
+			_, _ = w.Write([]byte(`{"season_number":1,"name":"第 1 季","air_date":"2026-02-01","episodes":[{"episode_number":1,"name":"初遇烟火"}]}`))
+		case r.URL.Path == "/3/tv/55001":
+			_, _ = w.Write([]byte(`{"id":55001,"name":"规范英文剧名","original_name":"Canonical Show","first_air_date":"2025-05-01"}`))
+		case r.URL.Path == "/3/tv/55001/season/1":
+			_, _ = w.Write([]byte(`{"season_number":1,"name":"第 1 季","air_date":"2025-05-01","episodes":[{"episode_number":1,"name":"桥接单集标题"}]}`))
+		case r.URL.Path == "/3/movie/950387":
+			_, _ = w.Write([]byte(`{"id":950387,"title":"我的世界大电影","original_title":"A Minecraft Movie","release_date":"2025-04-04"}`))
+
+		// Douban endpoints
+		case r.URL.Path == "/douban/search/subjects":
+			doubanHits.Add(1)
+			q := r.URL.Query().Get("q")
+			switch q {
+			case "我们住在一起":
+				_, _ = w.Write([]byte(`{"subjects":{"items":[{"target_type":"tv","target":{"id":"36283066","title":"爱情有烟火","year":"2026"}}]}}`))
+			case "AliasFallback":
+				_, _ = w.Write([]byte(`{"subjects":{"items":[{"target_type":"tv","target":{"id":"39000001","title":"AliasFallback","year":"2025"}}]}}`))
+			case "独立网大短剧":
+				_, _ = w.Write([]byte(`{"subjects":{"items":[{"target_type":"movie","target":{"id":"39000002","title":"独立网大短剧","year":"2026"}}]}}`))
+			default:
+				_, _ = w.Write([]byte(`{"subjects":{"items":[]}}`))
+			}
+		case r.URL.Path == "/douban/tv/36283066":
+			_, _ = w.Write([]byte(`{"id":"36283066","title":"爱情有烟火","aka":["我们住在一起"],"year":"2026","intro":"豆瓣补充简介","imdb":"tt2800001","pic":{"large":"https://img9.doubanio.com/a.jpg"}}`))
+		case r.URL.Path == "/douban/tv/39000001":
+			_, _ = w.Write([]byte(`{"id":"39000001","title":"AliasFallback","original_title":"Canonical Show","year":"2025","intro":"无IMDb但带原名"}`))
+		case r.URL.Path == "/douban/movie/39000002":
+			_, _ = w.Write([]byte(`{"id":"39000002","title":"独立网大短剧","year":"2026","intro":"TMDB未收录的短剧","rating":{"value":7.2},"pic":{"large":"https://img9.doubanio.com/short.jpg"}}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer mock.Close()
+
+	dataDir := filepath.Join(dir, "data")
+	v, err := vault.Open(dataDir, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := db.Open(dataDir, v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	key := "mock_key"
+	apiBase := mock.URL + "/3"
+	doubanBase := mock.URL + "/douban"
+	disabled := false
+	enabled := true
+	rules := "我的sj大电影 => 我的世界大电影"
+	if _, err := store.UpdateServerSettings(db.ServerSettingsUpdate{
+		TmdbAPIKey:             &key,
+		TmdbAPIBase:            &apiBase,
+		DoubanEnabled:          &enabled,
+		DoubanAPIBase:          &doubanBase,
+		BangumiEnabled:         &disabled,
+		AniListEnabled:         &disabled,
+		ImdbEnabled:            &disabled,
+		AllowFallbackMetadata:  &enabled,
+		CustomRecognitionWords: &rules,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	mount, err := store.CreateMount("Test Mount", "local", map[string]any{"rootPath": mediaRoot}, nil, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	hub := events.NewHub()
+	stMgr := storage.NewManager(nil, nil)
+	metaSvc := metadata.NewService(store)
+	scanner := NewScanner(store, stMgr, hub)
+	scraper := NewScraper(store, metaSvc, stMgr, hub)
+
+	ctx := context.Background()
+	if _, err := scanner.ScanMount(ctx, mount.ID, true); err != nil {
+		t.Fatal(err)
+	}
+
+	sum, err := scraper.ScrapePending(ctx, false, false)
+	if err != nil {
+		t.Fatalf("scrape failed: %v", err)
+	}
+	if sum.Matched != 4 || sum.Unmatched != 0 {
+		t.Fatalf("expected 4 matched (TMDB direct + bridge 2B + bridge 2C + standalone fallback), got %+v", sum)
+	}
+
+	// Verify Bridge 2B (Douban imdb -> TMDB /find): metadata_source=tmdb, tmdb_id=230311, douban_id=36283066, supplemented summary & episode
+	s1, err := store.SearchAll("我们住在一起", 10)
+	if err != nil || len(s1.Shows) != 1 {
+		t.Fatalf("expected show searchable by local alias 我们住在一起, got %+v err=%v", s1.Shows, err)
+	}
+	sh1 := s1.Shows[0]
+	if sh1.MetadataSource == nil || *sh1.MetadataSource != "tmdb" ||
+		sh1.TmdbID == nil || *sh1.TmdbID != "230311" ||
+		sh1.DoubanID == nil || *sh1.DoubanID != "36283066" ||
+		sh1.Summary == nil || *sh1.Summary != "豆瓣补充简介" {
+		t.Fatalf("unexpected bridged show fields: %+v", sh1)
+	}
+	eps1, _ := store.GetEpisodesByShow(sh1.ID, nil)
+	if len(eps1) != 1 || eps1[0].Title != "初遇烟火" {
+		t.Fatalf("expected TMDB episode title after bridge, got %+v", eps1)
+	}
+
+	// Verify Bridge 2C (Douban canonical original_title -> TMDB search)
+	s2, err := store.SearchAll("规范英文剧名", 10)
+	if err != nil || len(s2.Shows) != 1 || s2.Shows[0].TmdbID == nil || *s2.Shows[0].TmdbID != "55001" {
+		t.Fatalf("expected show bridged via canonical original_title, got %+v err=%v", s2.Shows, err)
+	}
+
+	// Verify Custom Recognition Word ("我的sj大电影" -> TMDB #950387)
+	mCustom, err := store.SearchAll("我的世界大电影", 10)
+	if err != nil || len(mCustom.Movies) != 1 || mCustom.Movies[0].TmdbID == nil || *mCustom.Movies[0].TmdbID != "950387" {
+		t.Fatalf("expected custom recognition word movie match, got %+v err=%v", mCustom.Movies, err)
+	}
+
+	// Verify Tier 3 Standalone Douban fallback ("独立网大短剧")
+	mStandalone, err := store.SearchAll("独立网大短剧", 10)
+	if err != nil || len(mStandalone.Movies) != 1 || mStandalone.Movies[0].MetadataSource == nil || *mStandalone.Movies[0].MetadataSource != "douban" {
+		t.Fatalf("expected standalone douban fallback movie, got %+v err=%v", mStandalone.Movies, err)
+	}
+
+	// Now verify strict TMDB outage behavior:
+	// Add a new movie matching a Douban title, turn TMDB HTTP 500 ON, and assert:
+	// 1. Scraper aborts/skips (NOT matched, NOT unmatched)
+	// 2. Douban receives ZERO calls during TMDB outage!
+	if err := os.WriteFile(filepath.Join(mediaRoot, "电影", "断网验证电影 (2026).mp4"), mp4Bytes, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := scanner.ScanMount(ctx, mount.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	doubanBefore := doubanHits.Load()
+	tmdbDown.Store(true)
+	sumOutage, err := scraper.ScrapePending(ctx, false, false)
+	if err != nil {
+		t.Fatalf("ScrapePending outage error: %v", err)
+	}
+	if sumOutage.Matched != 0 || sumOutage.Skipped != 1 || sumOutage.Unmatched != 0 {
+		t.Fatalf("expected outage scrape to skip/fail immediately, got %+v", sumOutage)
+	}
+	if doubanHits.Load() != doubanBefore {
+		t.Fatalf("expected 0 Douban calls during TMDB outage, went from %d to %d", doubanBefore, doubanHits.Load())
+	}
+	unmAfter, totalUnm, _ := store.QueryUnmatched(10, 0)
+	var outageItem *db.MediaItem
+	for i := range unmAfter {
+		if unmAfter[i].Item.Title == "断网验证电影" {
+			outageItem = &unmAfter[i].Item
+			break
+		}
+	}
+	if totalUnm == 0 || outageItem == nil || outageItem.ScrapedAt != nil || outageItem.MetadataSource != nil {
+		t.Fatalf("expected failed TMDB item to remain unscraped pending without fallback, got total=%d item=%+v", totalUnm, outageItem)
+	}
+
+	// Also verify error wrapped check compiles/behaves cleanly via Direct service call
+	if _, err := metaSvc.Search(ctx, "tmdb", "movie", "anything", 2026, "zh-CN", true); !errors.Is(err, metadata.ErrTmdbUpstream) {
+		t.Fatalf("expected ErrTmdbUpstream during outage, got %v", err)
 	}
 }

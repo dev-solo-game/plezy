@@ -18,6 +18,7 @@ import { MountsManagePage } from './pages/MountsManagePage';
 import { PersonPage } from './pages/PersonPage';
 import { PlayerPage } from './pages/PlayerPage';
 import { SearchPage } from './pages/SearchPage';
+import { ServerLogsPage } from './pages/ServerLogsPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { SetupPage } from './pages/SetupPage';
 import { UnmatchedPage } from './pages/UnmatchedPage';
@@ -77,6 +78,7 @@ const AppRoutes: React.FC = () => {
               <Route path="/ext/:serverId/item/:itemId" element={<ExternalItemDetailPage />} />
               <Route path="/manage/unmatched" element={<UnmatchedPage />} />
               <Route path="/manage/metadata" element={<MetadataManagePage />} />
+              <Route path="/manage/logs" element={<ServerLogsPage />} />
               <Route path="/settings" element={<SettingsPage />} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>

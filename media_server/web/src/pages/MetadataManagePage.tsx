@@ -15,6 +15,7 @@ import {
 import { api, formatBytes } from '../api/client';
 import { useSWRQuery } from '../api/queryCache';
 import { CustomSelect } from '../components/CustomSelect';
+import { ModalBackdrop } from '../components/ModalBackdrop';
 import { CardListSkeleton, TableSkeleton } from '../components/Skeletons';
 import { useApp } from '../contexts/AppContext';
 import type { ImageCacheSummary, InspectTableInfo, InspectTablePage } from '../types';
@@ -444,8 +445,8 @@ export const MetadataManagePage: React.FC = () => {
 
       {/* JSON Preview Modal */}
       {jsonPreview && (
-        <div className="modal-backdrop sub-modal" onClick={() => setJsonPreview(null)}>
-          <div className="modal-panel" style={{ maxWidth: 820 }} onClick={(e) => e.stopPropagation()}>
+        <ModalBackdrop subModal onClose={() => setJsonPreview(null)}>
+          <div className="modal-panel" style={{ maxWidth: 820 }}>
             <div className="modal-header">
               <div className="flex-row">
                 <h3>字段内容预览</h3>
@@ -490,7 +491,7 @@ export const MetadataManagePage: React.FC = () => {
               </pre>
             </div>
           </div>
-        </div>
+        </ModalBackdrop>
       )}
     </div>
   );

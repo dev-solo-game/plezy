@@ -19,12 +19,14 @@ import type {
   LibraryFacets,
   MediaItem,
   MediaList,
+  MetadataProvider,
   MountBrowseEntry,
   MountKind,
   MountRecord,
   Person,
   PlaybackInfo,
   ScrapeCandidate,
+  ServerLogsResponse,
   ServerSettings,
   ServerSettingsUpdate,
   SessionRecord,
@@ -151,6 +153,25 @@ export function extServerKindLabel(kind?: string): string {
   }
 }
 
+export function providerLabel(source?: string): string {
+  switch ((source || '').toLowerCase()) {
+    case 'tmdb':
+      return 'TMDB';
+    case 'douban':
+      return '豆瓣';
+    case 'bangumi':
+      return 'Bangumi';
+    case 'anilist':
+      return 'AniList';
+    case 'imdb':
+      return 'IMDb';
+    case 'tvdb':
+      return 'TheTvDb';
+    default:
+      return (source || '-').toUpperCase();
+  }
+}
+
 export const api = {
   bootstrap: () => req<BootstrapInfo>('/api/v1/public/bootstrap'),
 
@@ -188,6 +209,20 @@ export const api = {
 
   testTmdb: (body: { tmdb_api_key?: string; tmdb_api_base?: string; metadata_proxy?: string }) =>
     req<{ ok: boolean; latency_ms: number }>('/api/v1/settings/test-tmdb', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  testProvider: (body: {
+    provider: MetadataProvider;
+    api_key?: string;
+    pin?: string;
+    token?: string;
+    cookie?: string;
+    api_base?: string;
+    metadata_proxy?: string;
+  }) =>
+    req<{ ok: boolean; latency_ms: number; message?: string }>('/api/v1/settings/test-provider', {
       method: 'POST',
       body: JSON.stringify(body),
     }),
@@ -313,16 +348,17 @@ export const api = {
   listUnmatched: (limit = 50, offset = 0) =>
     req<{ items: UnmatchedEntry[]; total: number }>(`/api/v1/library/unmatched?limit=${limit}&offset=${offset}`),
 
-  scrapeSearch: (q: string, kind: 'movie' | 'show', provider: '' | 'tmdb' | 'bangumi', year?: number) => {
+  scrapeSearch: (q: string, kind: 'movie' | 'show', provider: '' | MetadataProvider, year?: number, refresh = true) => {
     const p = new URLSearchParams({ q, kind });
     if (provider) p.set('provider', provider);
     if (year) p.set('year', String(year));
+    if (refresh) p.set('refresh', '1');
     return req<{ results: ScrapeCandidate[] }>(`/api/v1/scrape/search?${p.toString()}`);
   },
 
   manualMatch: (
     itemId: number,
-    body: { provider: 'tmdb' | 'bangumi'; external_id: string; as_show: boolean; library_type?: string }
+    body: { provider: MetadataProvider | string; external_id: string; as_show: boolean; library_type?: string }
   ) => req<{ item: MediaItem }>(`/api/v1/items/${itemId}/match`, { method: 'POST', body: JSON.stringify(body) }),
 
   unmatchItem: (itemId: number) => req<{ status: string }>(`/api/v1/items/${itemId}/unmatch`, { method: 'POST' }),
@@ -543,4 +579,29 @@ export const api = {
         sourceId ? `?source_id=${encodeURIComponent(sourceId)}` : ''
       }`
     ),
+
+  getSystemLogs: (params?: {
+    after_seq?: number;
+    limit?: number;
+    level?: string;
+    component?: string;
+    q?: string;
+  }) => {
+    const p = new URLSearchParams();
+    if (params?.after_seq) p.set('after_seq', String(params.after_seq));
+    if (params?.limit) p.set('limit', String(params.limit));
+    if (params?.level) p.set('level', params.level);
+    if (params?.component) p.set('component', params.component);
+    if (params?.q) p.set('q', params.q);
+    const qs = p.toString();
+    return req<ServerLogsResponse>(`/api/v1/system/logs${qs ? `?${qs}` : ''}`);
+  },
+
+  clearSystemLogs: (truncateFile = false) =>
+    req<{ ok: boolean }>('/api/v1/system/logs/clear', {
+      method: 'POST',
+      body: JSON.stringify({ truncate_file: truncateFile }),
+    }),
+
+  systemLogsDownloadUrl: () => '/api/v1/system/logs/download',
 };

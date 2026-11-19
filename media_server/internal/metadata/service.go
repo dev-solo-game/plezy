@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"plezy/media_server/internal/applog"
 	"plezy/media_server/internal/db"
 )
 
@@ -25,6 +26,7 @@ var (
 	ErrDisabled      = errors.New("metadata provider is disabled")
 	ErrNotFound      = errors.New("metadata not found")
 	ErrUpstream      = errors.New("metadata upstream request failed")
+	ErrTmdbUpstream  = errors.New("tmdb upstream unreachable")
 	ErrInvalidInput  = errors.New("invalid metadata query parameters")
 )
 
@@ -107,6 +109,8 @@ type Work struct {
 	ImdbID          *string  `json:"imdb_id,omitempty"`
 	TvdbID          *string  `json:"tvdb_id,omitempty"`
 	BangumiID       *string  `json:"bangumi_id,omitempty"`
+	DoubanID        *string  `json:"douban_id,omitempty"`
+	AniListID       *string  `json:"anilist_id,omitempty"`
 	Title           string   `json:"title"`
 	OriginalTitle   *string  `json:"original_title,omitempty"`
 	Aliases         []string `json:"aliases,omitempty"`
@@ -143,6 +147,7 @@ type Season struct {
 	Number     int       `json:"number"`
 	Title      *string   `json:"title,omitempty"`
 	Summary    *string   `json:"summary,omitempty"`
+	AirDate    *string   `json:"air_date,omitempty"`
 	PosterPath *string   `json:"poster_path,omitempty"`
 	Episodes   []Episode `json:"episodes"`
 }
@@ -180,11 +185,15 @@ func IsBangumiNoiseTag(raw string) bool {
 }
 
 type Service struct {
-	store       *db.Store
-	flight      *sfGroup
-	httpMu      sync.Mutex
-	httpClients map[string]*http.Client
-	nowFn       func() int64
+	store        *db.Store
+	flight       *sfGroup
+	httpMu       sync.Mutex
+	httpClients  map[string]*http.Client
+	nowFn        func() int64
+	tvdbMu       sync.Mutex
+	tvdbToken    string
+	tvdbTokenKey string
+	tvdbTokenExp time.Time
 }
 
 func NewService(store *db.Store) *Service {
@@ -264,6 +273,7 @@ func (s *Service) ClearCache(scope string) (int64, CacheStats, error) {
 		n, _ := res.RowsAffected()
 		deleted += n
 	}
+	applog.Infof("metadata", "已清理元数据缓存 scope=%s 删除=%d 条", norm, deleted)
 	return deleted, s.CacheStats(), nil
 }
 
@@ -288,15 +298,106 @@ func (s *Service) TestTmdbConnection(ctx context.Context, overrideKey, overrideB
 	start := time.Now()
 	_, status, err := s.tmdbRequest(ctx, apiBase, key, proxy, "/configuration", nil)
 	if err != nil {
+		applog.Warnf("metadata", "TMDB 连通性测试失败 base=%s: %v", apiBase, err)
 		return 0, err
 	}
 	if status == http.StatusNotFound {
-		return 0, fmt.Errorf("%w: TMDB API not found at %s", ErrUpstream, apiBase)
+		applog.Warnf("metadata", "TMDB 连通性测试返回 404: base=%s", apiBase)
+		return 0, fmt.Errorf("%w: %w: TMDB API not found at %s", ErrTmdbUpstream, ErrUpstream, apiBase)
 	}
-	return time.Since(start).Milliseconds(), nil
+	ms := time.Since(start).Milliseconds()
+	applog.Infof("metadata", "TMDB 连通性测试成功 base=%s 延迟=%dms", apiBase, ms)
+	return ms, nil
 }
 
-func (s *Service) doUpstreamJSON(
+type ProviderTestOverrides struct {
+	APIKey        *string `json:"api_key,omitempty"`
+	Pin           *string `json:"pin,omitempty"`
+	Token         *string `json:"token,omitempty"`
+	Cookie        *string `json:"cookie,omitempty"`
+	APIBase       *string `json:"api_base,omitempty"`
+	MetadataProxy *string `json:"metadata_proxy,omitempty"`
+}
+
+func (s *Service) TestProviderConnection(ctx context.Context, provider string, ov ProviderTestOverrides) (int64, string, error) {
+	prov := strings.ToLower(strings.TrimSpace(provider))
+	cfg := s.store.GetServerSettings()
+	if ov.MetadataProxy != nil {
+		cfg.MetadataProxy = strings.TrimSpace(*ov.MetadataProxy)
+	}
+	start := time.Now()
+	switch prov {
+	case "tmdb":
+		ms, err := s.TestTmdbConnection(ctx, ov.APIKey, ov.APIBase, ov.MetadataProxy)
+		if err != nil {
+			return 0, "", err
+		}
+		return ms, "TMDB 连接正常", nil
+	case "douban":
+		if ov.APIBase != nil && strings.TrimSpace(*ov.APIBase) != "" {
+			cfg.DoubanAPIBase = db.NormalizeBaseURL(*ov.APIBase, db.DefaultDoubanAPIBase)
+		}
+		if ov.Cookie != nil && strings.TrimSpace(*ov.Cookie) != "" {
+			cfg.DoubanCookie = strings.TrimSpace(*ov.Cookie)
+		}
+		cands, err := s.fetchDoubanSearch(ctx, cfg, "movie", "肖申克的救赎")
+		if err != nil {
+			return 0, "", err
+		}
+		return time.Since(start).Milliseconds(), fmt.Sprintf("豆瓣连通正常，返回 %d 条测试结果", len(cands)), nil
+	case "bangumi":
+		if ov.APIBase != nil && strings.TrimSpace(*ov.APIBase) != "" {
+			cfg.BangumiAPIBase = db.NormalizeBangumiBase(*ov.APIBase)
+		}
+		if ov.Token != nil && strings.TrimSpace(*ov.Token) != "" {
+			cfg.BangumiToken = strings.TrimSpace(*ov.Token)
+		}
+		cands, err := s.fetchBangumiSearch(ctx, cfg, "芙莉莲")
+		if err != nil {
+			return 0, "", err
+		}
+		return time.Since(start).Milliseconds(), fmt.Sprintf("Bangumi 连通正常，返回 %d 条测试结果", len(cands)), nil
+	case "anilist":
+		if ov.APIBase != nil && strings.TrimSpace(*ov.APIBase) != "" {
+			cfg.AniListAPIBase = db.NormalizeBaseURL(*ov.APIBase, db.DefaultAniListAPIBase)
+		}
+		cands, err := s.fetchAniListSearch(ctx, cfg, "show", "Frieren")
+		if err != nil {
+			return 0, "", err
+		}
+		return time.Since(start).Milliseconds(), fmt.Sprintf("AniList GraphQL 连通正常，返回 %d 条测试结果", len(cands)), nil
+	case "imdb":
+		if ov.APIBase != nil && strings.TrimSpace(*ov.APIBase) != "" {
+			cfg.ImdbAPIBase = db.NormalizeBaseURL(*ov.APIBase, db.DefaultImdbAPIBase)
+		}
+		cands, err := s.fetchImdbSearch(ctx, cfg, "movie", "Inception")
+		if err != nil {
+			return 0, "", err
+		}
+		return time.Since(start).Milliseconds(), fmt.Sprintf("IMDb 数据源连通正常，返回 %d 条测试结果", len(cands)), nil
+	case "tvdb":
+		if ov.APIBase != nil && strings.TrimSpace(*ov.APIBase) != "" {
+			cfg.TvdbAPIBase = db.NormalizeBaseURL(*ov.APIBase, db.DefaultTvdbAPIBase)
+		}
+		if ov.APIKey != nil && strings.TrimSpace(*ov.APIKey) != "" {
+			cfg.TvdbAPIKey = strings.TrimSpace(*ov.APIKey)
+		}
+		if ov.Pin != nil && strings.TrimSpace(*ov.Pin) != "" {
+			cfg.TvdbPin = strings.TrimSpace(*ov.Pin)
+		}
+		if cfg.TvdbAPIKey == "" {
+			return 0, "", fmt.Errorf("%w: thetvdb api key is not configured", ErrNotConfigured)
+		}
+		if _, err := s.tvdbLoginToken(ctx, cfg, true); err != nil {
+			return 0, "", err
+		}
+		return time.Since(start).Milliseconds(), "TheTvDb 登录鉴权正常", nil
+	default:
+		return 0, "", fmt.Errorf("%w: unsupported provider %q", ErrInvalidInput, provider)
+	}
+}
+
+func (s *Service) doUpstreamBytes(
 	ctx context.Context,
 	method string,
 	rawURL string,
@@ -304,7 +405,7 @@ func (s *Service) doUpstreamJSON(
 	headers map[string]string,
 	reqBody any,
 	service string,
-) (map[string]any, int, error) {
+) ([]byte, int, error) {
 	cli, err := s.HTTPClientForProxy(proxyRaw)
 	if err != nil {
 		return nil, 0, err
@@ -321,29 +422,39 @@ func (s *Service) doUpstreamJSON(
 	if err != nil {
 		return nil, 0, fmt.Errorf("%w: %v", ErrUpstream, err)
 	}
-	req.Header.Set("Accept", "application/json")
+	if _, hasAccept := headers["Accept"]; !hasAccept {
+		req.Header.Set("Accept", "application/json")
+	}
 	if reqBody != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
 	for k, v := range headers {
 		req.Header.Set(k, v)
 	}
+	start := time.Now()
 	resp, err := cli.Do(req)
 	if err != nil {
-		return nil, 0, fmt.Errorf("%w: %s request failed: %v", ErrUpstream, service, err)
+		redacted := applog.RedactURL(err.Error())
+		applog.Warnf("metadata", "%s HTTP 请求失败 (%dms): %s -> %s", service, time.Since(start).Milliseconds(), applog.RedactURL(rawURL), redacted)
+		return nil, 0, fmt.Errorf("%w: %s request failed: %s", ErrUpstream, service, redacted)
 	}
 	defer resp.Body.Close()
+	elapsedMs := time.Since(start).Milliseconds()
 
 	if resp.StatusCode == http.StatusNotFound {
+		applog.Debugf("metadata", "HTTP %s %s -> 404 (%dms)", method, applog.RedactURL(rawURL), elapsedMs)
 		return nil, http.StatusNotFound, nil
 	}
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		applog.Warnf("metadata", "%s 鉴权失败 HTTP %d (%dms): %s", service, resp.StatusCode, elapsedMs, applog.RedactURL(rawURL))
 		return nil, resp.StatusCode, fmt.Errorf("%w: %s rejected credentials (HTTP %d)", ErrUpstream, service, resp.StatusCode)
 	}
 	if resp.StatusCode == http.StatusTooManyRequests {
+		applog.Warnf("metadata", "%s 触发限流 HTTP 429 (%dms): %s", service, elapsedMs, applog.RedactURL(rawURL))
 		return nil, resp.StatusCode, fmt.Errorf("%w: %s is rate limiting (HTTP 429)", ErrUpstream, service)
 	}
 	if resp.StatusCode >= 400 {
+		applog.Warnf("metadata", "%s 返回异常状态 HTTP %d (%dms): %s", service, resp.StatusCode, elapsedMs, applog.RedactURL(rawURL))
 		return nil, resp.StatusCode, fmt.Errorf("%w: %s returned HTTP %d", ErrUpstream, service, resp.StatusCode)
 	}
 
@@ -351,13 +462,54 @@ func (s *Service) doUpstreamJSON(
 	if err != nil {
 		return nil, resp.StatusCode, fmt.Errorf("%w: read %s response failed: %v", ErrUpstream, service, err)
 	}
+	applog.Debugf("metadata", "HTTP %s %s -> %d (%dms)", method, applog.RedactURL(rawURL), resp.StatusCode, elapsedMs)
+	return rawBytes, resp.StatusCode, nil
+}
+
+func (s *Service) doUpstreamJSON(
+	ctx context.Context,
+	method string,
+	rawURL string,
+	proxyRaw string,
+	headers map[string]string,
+	reqBody any,
+	service string,
+) (map[string]any, int, error) {
+	rawBytes, status, err := s.doUpstreamBytes(ctx, method, rawURL, proxyRaw, headers, reqBody, service)
+	if err != nil || status == http.StatusNotFound {
+		return nil, status, err
+	}
 	dec := json.NewDecoder(bytes.NewReader(rawBytes))
 	dec.UseNumber()
 	var parsed map[string]any
 	if err := dec.Decode(&parsed); err != nil {
-		return nil, resp.StatusCode, fmt.Errorf("%w: invalid %s JSON: %v", ErrUpstream, service, err)
+		applog.Warnf("metadata", "%s 响应 JSON 解析失败: %v", service, err)
+		return nil, status, fmt.Errorf("%w: invalid %s JSON: %v", ErrUpstream, service, err)
 	}
-	return parsed, resp.StatusCode, nil
+	return parsed, status, nil
+}
+
+func (s *Service) doUpstreamJSONAny(
+	ctx context.Context,
+	method string,
+	rawURL string,
+	proxyRaw string,
+	headers map[string]string,
+	reqBody any,
+	service string,
+) (any, int, error) {
+	rawBytes, status, err := s.doUpstreamBytes(ctx, method, rawURL, proxyRaw, headers, reqBody, service)
+	if err != nil || status == http.StatusNotFound {
+		return nil, status, err
+	}
+	dec := json.NewDecoder(bytes.NewReader(rawBytes))
+	dec.UseNumber()
+	var parsed any
+	if err := dec.Decode(&parsed); err != nil {
+		applog.Warnf("metadata", "%s 响应 JSON 解析失败: %v", service, err)
+		return nil, status, fmt.Errorf("%w: invalid %s JSON: %v", ErrUpstream, service, err)
+	}
+	return parsed, status, nil
 }
 
 func (s *Service) tmdbRequest(
@@ -370,7 +522,7 @@ func (s *Service) tmdbRequest(
 	}
 	u, err := url.Parse(apiBase)
 	if err != nil {
-		return nil, 0, fmt.Errorf("%w: invalid TMDB API base: %v", ErrUpstream, err)
+		return nil, 0, fmt.Errorf("%w: %w: invalid TMDB API base: %v", ErrTmdbUpstream, ErrUpstream, err)
 	}
 	u.Path = strings.TrimRight(u.Path, "/") + apiPath
 	q := url.Values{}
@@ -388,12 +540,16 @@ func (s *Service) tmdbRequest(
 	if usesBearer {
 		headers["Authorization"] = "Bearer " + apiKey
 	}
-	return s.doUpstreamJSON(ctx, http.MethodGet, u.String(), proxyRaw, headers, nil, "TMDB")
+	parsed, status, err := s.doUpstreamJSON(ctx, http.MethodGet, u.String(), proxyRaw, headers, nil, "TMDB")
+	if err != nil {
+		return nil, status, fmt.Errorf("%w: %w", ErrTmdbUpstream, err)
+	}
+	return parsed, status, nil
 }
 
 func (s *Service) bangumiRequest(
 	ctx context.Context,
-	apiBase, proxyRaw, method, apiPath string,
+	apiBase, token, proxyRaw, method, apiPath string,
 	query url.Values,
 	body any,
 ) (map[string]any, int, error) {
@@ -407,6 +563,9 @@ func (s *Service) bangumiRequest(
 	}
 	headers := map[string]string{
 		"User-Agent": "ttplay-media-server/1.0 (anime metadata lookup)",
+	}
+	if strings.TrimSpace(token) != "" {
+		headers["Authorization"] = "Bearer " + strings.TrimSpace(token)
 	}
 	return s.doUpstreamJSON(ctx, method, u.String(), proxyRaw, headers, body, "Bangumi")
 }
@@ -445,27 +604,202 @@ func searchCacheKey(provider, kind, query string, year int, lang string) string 
 	return hex.EncodeToString(sum[:])[:32]
 }
 
-func (s *Service) Search(ctx context.Context, provider, kind, query string, year int, lang string, refresh bool) ([]Candidate, error) {
-	prov := strings.ToLower(strings.TrimSpace(provider))
-	k := strings.ToLower(strings.TrimSpace(kind))
-	q := strings.TrimSpace(query)
-	if (prov != "tmdb" && prov != "bangumi") || (k != "movie" && k != "show") || q == "" {
-		return nil, fmt.Errorf("%w: invalid search parameters", ErrInvalidInput)
+func checkProviderAccess(prov string, cfg db.ServerSettings) error {
+	switch prov {
+	case "tmdb":
+		if cfg.TmdbAPIKey == "" {
+			return ErrNotConfigured
+		}
+		return nil
+	case "bangumi":
+		if !cfg.BangumiEnabled {
+			return ErrDisabled
+		}
+		return nil
+	case "douban":
+		if !cfg.DoubanEnabled {
+			return ErrDisabled
+		}
+		return nil
+	case "anilist":
+		if !cfg.AniListEnabled {
+			return ErrDisabled
+		}
+		return nil
+	case "imdb":
+		if !cfg.ImdbEnabled {
+			return ErrDisabled
+		}
+		return nil
+	case "tvdb":
+		if !cfg.TvdbEnabled {
+			return ErrDisabled
+		}
+		if cfg.TvdbAPIKey == "" {
+			return fmt.Errorf("%w: thetvdb api key is not configured", ErrNotConfigured)
+		}
+		return nil
+	default:
+		return fmt.Errorf("%w: unsupported provider %q", ErrInvalidInput, prov)
+	}
+}
+
+func effectiveLangForProvider(prov, lang string) string {
+	switch prov {
+	case "tmdb", "tvdb":
+		return normalizeLang(lang)
+	default:
+		return "default"
+	}
+}
+
+type findExternalEnvelope struct {
+	Movie []Candidate `json:"movie,omitempty"`
+	Show  []Candidate `json:"show,omitempty"`
+}
+
+// FindByExternalID queries TMDB /find/{external_id} using an IMDb ("imdb_id")
+// or TheTVDB ("tvdb_id") identifier to bridge external sources back to TMDB.
+func (s *Service) FindByExternalID(ctx context.Context, externalSource, externalID, preferredKind, lang string, refresh bool) (*Candidate, string, error) {
+	src := strings.ToLower(strings.TrimSpace(externalSource))
+	extID := strings.TrimSpace(externalID)
+	if (src != "imdb_id" && src != "tvdb_id") || extID == "" {
+		return nil, "", fmt.Errorf("%w: invalid external_id lookup", ErrInvalidInput)
 	}
 	cfg := s.store.GetServerSettings()
+	if cfg.TmdbAPIKey == "" {
+		return nil, "", ErrNotConfigured
+	}
 	if lang == "" {
 		lang = cfg.ScraperLang
 	}
 	effectiveLang := normalizeLang(lang)
-	if prov == "bangumi" {
-		effectiveLang = "default"
+	now := s.nowFn()
+	ck := searchCacheKey("tmdb_find", src, extID, 0, effectiveLang)
+
+	pickEnvelope := func(env findExternalEnvelope) (*Candidate, string) {
+		pref := strings.ToLower(strings.TrimSpace(preferredKind))
+		if pref == "show" {
+			if len(env.Show) > 0 {
+				c := env.Show[0]
+				return &c, "show"
+			}
+			if len(env.Movie) > 0 {
+				c := env.Movie[0]
+				return &c, "movie"
+			}
+		} else {
+			if len(env.Movie) > 0 {
+				c := env.Movie[0]
+				return &c, "movie"
+			}
+			if len(env.Show) > 0 {
+				c := env.Show[0]
+				return &c, "show"
+			}
+		}
+		return nil, ""
 	}
-	if prov == "tmdb" && cfg.TmdbAPIKey == "" {
-		return nil, ErrNotConfigured
+
+	var payloadJSON string
+	var expiresAt int64
+	if !refresh {
+		err := s.store.DB().QueryRow(
+			`SELECT payload_json, expires_at FROM meta_search_cache WHERE cache_key = ?`, ck,
+		).Scan(&payloadJSON, &expiresAt)
+		if err == nil && payloadJSON != "" && expiresAt > now {
+			var cached findExternalEnvelope
+			if json.Unmarshal([]byte(payloadJSON), &cached) == nil {
+				c, k := pickEnvelope(cached)
+				applog.Debugf("metadata", "外键反查缓存命中 [tmdb_find/%s=%s] -> found=%v", src, extID, c != nil)
+				return c, k, nil
+			}
+		}
 	}
-	if prov == "bangumi" && !cfg.BangumiEnabled {
-		return nil, ErrDisabled
+
+	val, sfErr := s.flight.Do("find:"+ck, func() (any, error) {
+		start := time.Now()
+		freshCfg := s.store.GetServerSettings()
+		if freshCfg.TmdbAPIKey == "" {
+			return nil, ErrNotConfigured
+		}
+		q := url.Values{}
+		q.Set("external_source", src)
+		q.Set("language", effectiveLang)
+		apiPath := "/find/" + url.PathEscape(extID)
+		raw, status, err := s.tmdbRequest(ctx, freshCfg.TmdbAPIBase, freshCfg.TmdbAPIKey, freshCfg.MetadataProxy, apiPath, q)
+		if err != nil {
+			applog.Warnf("metadata", "TMDB 外键反查失败 [%s=%s] (%dms): %s", src, extID, time.Since(start).Milliseconds(), applog.RedactURL(err.Error()))
+			return nil, err
+		}
+		var env findExternalEnvelope
+		if status != http.StatusNotFound && raw != nil {
+			for _, row := range jsonObjs(raw, "movie_results") {
+				id := jsonStr(row, "id")
+				title := jsonStr(row, "title")
+				if id == "" || title == "" {
+					continue
+				}
+				env.Movie = append(env.Movie, Candidate{
+					Source:        "tmdb",
+					ID:            id,
+					Title:         title,
+					OriginalTitle: nonEmptyStrPtr(jsonStr(row, "original_title")),
+					Year:          yearPtrOfDate(jsonStr(row, "release_date")),
+					Summary:       nonEmptyStrPtr(jsonStr(row, "overview")),
+					PosterPath:    nonEmptyStrPtr(jsonStr(row, "poster_path")),
+				})
+			}
+			for _, row := range jsonObjs(raw, "tv_results") {
+				id := jsonStr(row, "id")
+				title := jsonStr(row, "name")
+				if id == "" || title == "" {
+					continue
+				}
+				env.Show = append(env.Show, Candidate{
+					Source:        "tmdb",
+					ID:            id,
+					Title:         title,
+					OriginalTitle: nonEmptyStrPtr(jsonStr(row, "original_name")),
+					Year:          yearPtrOfDate(jsonStr(row, "first_air_date")),
+					Summary:       nonEmptyStrPtr(jsonStr(row, "overview")),
+					PosterPath:    nonEmptyStrPtr(jsonStr(row, "poster_path")),
+				})
+			}
+		}
+		applog.Infof("metadata", "TMDB 外键反查 [%s=%s] -> movie=%d tv=%d (%dms)", src, extID, len(env.Movie), len(env.Show), time.Since(start).Milliseconds())
+		b, _ := json.Marshal(env)
+		writeNow := s.nowFn()
+		_, _ = s.store.DB().Exec(`
+			INSERT OR REPLACE INTO meta_search_cache(cache_key, provider, kind, query, year, lang, payload_json, fetched_at, expires_at)
+			VALUES (?, 'tmdb_find', ?, ?, 0, ?, ?, ?, ?)`,
+			ck, src, extID, effectiveLang, string(b), writeNow, writeNow+metaSearchTTLMs,
+		)
+		return env, nil
+	})
+	if sfErr != nil {
+		return nil, "", sfErr
 	}
+	env, _ := val.(findExternalEnvelope)
+	c, k := pickEnvelope(env)
+	return c, k, nil
+}
+
+func (s *Service) Search(ctx context.Context, provider, kind, query string, year int, lang string, refresh bool) ([]Candidate, error) {
+	prov := strings.ToLower(strings.TrimSpace(provider))
+	k := strings.ToLower(strings.TrimSpace(kind))
+	q := strings.TrimSpace(query)
+	if (k != "movie" && k != "show") || q == "" {
+		return nil, fmt.Errorf("%w: invalid search parameters", ErrInvalidInput)
+	}
+	cfg := s.store.GetServerSettings()
+	if err := checkProviderAccess(prov, cfg); err != nil {
+		return nil, err
+	}
+	if lang == "" {
+		lang = cfg.ScraperLang
+	}
+	effectiveLang := effectiveLangForProvider(prov, lang)
 
 	now := s.nowFn()
 	ck := searchCacheKey(prov, k, q, year, effectiveLang)
@@ -483,26 +817,41 @@ func (s *Service) Search(ctx context.Context, provider, kind, query string, year
 			stale = cached
 			hasStale = true
 			if !refresh && expiresAt > now {
+				applog.Debugf("metadata", "搜索缓存命中 [%s/%s] q=%q year=%d -> %d 条候选", prov, k, q, year, len(cached))
 				return cached, nil
 			}
 		}
 	}
 
 	val, sfErr := s.flight.Do("search:"+ck, func() (any, error) {
+		start := time.Now()
 		freshCfg := s.store.GetServerSettings()
 		var fetched []Candidate
 		var fErr error
-		if prov == "tmdb" {
+		switch prov {
+		case "tmdb":
 			fetched, fErr = s.fetchTmdbSearch(ctx, freshCfg, k, q, year, effectiveLang)
-		} else {
+		case "bangumi":
 			fetched, fErr = s.fetchBangumiSearch(ctx, freshCfg, q)
+		case "douban":
+			fetched, fErr = s.fetchDoubanSearch(ctx, freshCfg, k, q)
+		case "anilist":
+			fetched, fErr = s.fetchAniListSearch(ctx, freshCfg, k, q)
+		case "imdb":
+			fetched, fErr = s.fetchImdbSearch(ctx, freshCfg, k, q)
+		case "tvdb":
+			fetched, fErr = s.fetchTvdbSearch(ctx, freshCfg, k, q, year, effectiveLang)
+		default:
+			fErr = fmt.Errorf("%w: unsupported provider %q", ErrInvalidInput, prov)
 		}
 		if fErr != nil {
+			applog.Errorf("metadata", "上游搜索失败 [%s/%s] q=%q year=%d (%dms): %s", prov, k, q, year, time.Since(start).Milliseconds(), applog.RedactURL(fErr.Error()))
 			return nil, fErr
 		}
 		if fetched == nil {
 			fetched = []Candidate{}
 		}
+		applog.Infof("metadata", "上游搜索 [%s/%s] q=%q year=%d lang=%s refresh=%v -> %d 条候选 (%dms)", prov, k, q, year, effectiveLang, refresh, len(fetched), time.Since(start).Milliseconds())
 		raw, _ := json.Marshal(fetched)
 		writeNow := s.nowFn()
 		_, _ = s.store.DB().Exec(`
@@ -513,7 +862,7 @@ func (s *Service) Search(ctx context.Context, provider, kind, query string, year
 		return fetched, nil
 	})
 	if sfErr != nil {
-		if hasStale && errors.Is(sfErr, ErrUpstream) {
+		if prov != "tmdb" && !refresh && hasStale && errors.Is(sfErr, ErrUpstream) {
 			return stale, nil
 		}
 		return nil, sfErr
@@ -526,23 +875,17 @@ func (s *Service) GetWork(ctx context.Context, provider, kind, externalID, lang 
 	prov := strings.ToLower(strings.TrimSpace(provider))
 	k := strings.ToLower(strings.TrimSpace(kind))
 	id := strings.TrimSpace(externalID)
-	if (prov != "tmdb" && prov != "bangumi") || (k != "movie" && k != "show") || id == "" {
+	if (k != "movie" && k != "show") || id == "" {
 		return Work{}, fmt.Errorf("%w: invalid work parameters", ErrInvalidInput)
 	}
 	cfg := s.store.GetServerSettings()
+	if err := checkProviderAccess(prov, cfg); err != nil {
+		return Work{}, err
+	}
 	if lang == "" {
 		lang = cfg.ScraperLang
 	}
-	effectiveLang := normalizeLang(lang)
-	if prov == "bangumi" {
-		effectiveLang = "default"
-	}
-	if prov == "tmdb" && cfg.TmdbAPIKey == "" {
-		return Work{}, ErrNotConfigured
-	}
-	if prov == "bangumi" && !cfg.BangumiEnabled {
-		return Work{}, ErrDisabled
-	}
+	effectiveLang := effectiveLangForProvider(prov, lang)
 
 	now := s.nowFn()
 	var stale Work
@@ -563,6 +906,7 @@ func (s *Service) GetWork(ctx context.Context, provider, kind, externalID, lang 
 			stale = cached
 			hasStale = true
 			if !refresh && expiresAt > now {
+				applog.Debugf("metadata", "作品详情缓存命中 [%s/%s:%s] %q", prov, k, id, cached.Title)
 				return cached, nil
 			}
 		}
@@ -570,17 +914,31 @@ func (s *Service) GetWork(ctx context.Context, provider, kind, externalID, lang 
 
 	flightKey := fmt.Sprintf("work:%s:%s:%s:%s", prov, k, id, effectiveLang)
 	val, sfErr := s.flight.Do(flightKey, func() (any, error) {
+		start := time.Now()
 		freshCfg := s.store.GetServerSettings()
 		var fetched Work
 		var fErr error
-		if prov == "tmdb" {
+		switch prov {
+		case "tmdb":
 			fetched, fErr = s.fetchTmdbWork(ctx, freshCfg, k, id, effectiveLang)
-		} else {
+		case "bangumi":
 			fetched, fErr = s.fetchBangumiWork(ctx, freshCfg, k, id)
+		case "douban":
+			fetched, fErr = s.fetchDoubanWork(ctx, freshCfg, k, id)
+		case "anilist":
+			fetched, fErr = s.fetchAniListWork(ctx, freshCfg, k, id)
+		case "imdb":
+			fetched, fErr = s.fetchImdbWork(ctx, freshCfg, k, id)
+		case "tvdb":
+			fetched, fErr = s.fetchTvdbWork(ctx, freshCfg, k, id, effectiveLang)
+		default:
+			fErr = fmt.Errorf("%w: unsupported provider %q", ErrInvalidInput, prov)
 		}
 		if fErr != nil {
+			applog.Errorf("metadata", "拉取作品详情失败 [%s/%s:%s] (%dms): %s", prov, k, id, time.Since(start).Milliseconds(), applog.RedactURL(fErr.Error()))
 			return nil, fErr
 		}
+		applog.Infof("metadata", "拉取作品详情 [%s/%s:%s] title=%q (%dms)", prov, k, id, fetched.Title, time.Since(start).Milliseconds())
 		writeNow := s.nowFn()
 		relDate := ""
 		if fetched.ReleaseDate != nil {
@@ -599,7 +957,7 @@ func (s *Service) GetWork(ctx context.Context, provider, kind, externalID, lang 
 		return fetched, nil
 	})
 	if sfErr != nil {
-		if hasStale && errors.Is(sfErr, ErrUpstream) {
+		if prov != "tmdb" && !refresh && hasStale && errors.Is(sfErr, ErrUpstream) {
 			return stale, nil
 		}
 		return Work{}, sfErr
@@ -611,26 +969,23 @@ func (s *Service) GetWork(ctx context.Context, provider, kind, externalID, lang 
 func (s *Service) GetSeason(ctx context.Context, provider, externalID string, seasonNumber int, lang string, refresh bool) (Season, error) {
 	prov := strings.ToLower(strings.TrimSpace(provider))
 	id := strings.TrimSpace(externalID)
-	if (prov != "tmdb" && prov != "bangumi") || id == "" || seasonNumber < 0 {
+	if id == "" || seasonNumber < 0 {
 		return Season{}, fmt.Errorf("%w: invalid season parameters", ErrInvalidInput)
+	}
+	if prov == "douban" || prov == "anilist" || prov == "imdb" {
+		return Season{}, ErrNotFound
 	}
 	if prov == "bangumi" && seasonNumber != 1 {
 		return Season{}, ErrNotFound
 	}
 	cfg := s.store.GetServerSettings()
+	if err := checkProviderAccess(prov, cfg); err != nil {
+		return Season{}, err
+	}
 	if lang == "" {
 		lang = cfg.ScraperLang
 	}
-	effectiveLang := normalizeLang(lang)
-	if prov == "bangumi" {
-		effectiveLang = "default"
-	}
-	if prov == "tmdb" && cfg.TmdbAPIKey == "" {
-		return Season{}, ErrNotConfigured
-	}
-	if prov == "bangumi" && !cfg.BangumiEnabled {
-		return Season{}, ErrDisabled
-	}
+	effectiveLang := effectiveLangForProvider(prov, lang)
 
 	now := s.nowFn()
 	var stale Season
@@ -658,10 +1013,15 @@ func (s *Service) GetSeason(ctx context.Context, provider, externalID string, se
 		freshCfg := s.store.GetServerSettings()
 		var fetched Season
 		var fErr error
-		if prov == "tmdb" {
+		switch prov {
+		case "tmdb":
 			fetched, fErr = s.fetchTmdbSeason(ctx, freshCfg, id, seasonNumber, effectiveLang)
-		} else {
+		case "bangumi":
 			fetched, fErr = s.fetchBangumiSeason(ctx, freshCfg, id)
+		case "tvdb":
+			fetched, fErr = s.fetchTvdbSeason(ctx, freshCfg, id, seasonNumber, effectiveLang)
+		default:
+			fErr = ErrNotFound
 		}
 		if fErr != nil {
 			return nil, fErr
@@ -686,7 +1046,7 @@ func (s *Service) GetSeason(ctx context.Context, provider, externalID string, se
 		return fetched, nil
 	})
 	if sfErr != nil {
-		if hasStale && errors.Is(sfErr, ErrUpstream) {
+		if prov != "tmdb" && !refresh && hasStale && errors.Is(sfErr, ErrUpstream) {
 			return stale, nil
 		}
 		return Season{}, sfErr
@@ -847,7 +1207,7 @@ func (s *Service) fetchTmdbSearch(ctx context.Context, cfg db.ServerSettings, ki
 		return nil, err
 	}
 	if status == http.StatusNotFound || raw == nil {
-		return nil, fmt.Errorf("%w: TMDB API not found at %s", ErrUpstream, cfg.TmdbAPIBase)
+		return nil, fmt.Errorf("%w: %w: TMDB API not found at %s", ErrTmdbUpstream, ErrUpstream, cfg.TmdbAPIBase)
 	}
 	out := make([]Candidate, 0)
 	for _, row := range jsonObjs(raw, "results") {
@@ -1051,6 +1411,7 @@ func (s *Service) fetchTmdbSeason(ctx context.Context, cfg db.ServerSettings, sh
 		Number:     seasonNumber,
 		Title:      nonEmptyStrPtr(jsonStr(raw, "name")),
 		Summary:    nonEmptyStrPtr(jsonStr(raw, "overview")),
+		AirDate:    nonEmptyStrPtr(jsonStr(raw, "air_date")),
 		PosterPath: nonEmptyStrPtr(jsonStr(raw, "poster_path")),
 		Episodes:   episodes,
 	}, nil
@@ -1283,7 +1644,7 @@ func (s *Service) fetchBangumiSearch(ctx context.Context, cfg db.ServerSettings,
 			"type": []int{2},
 		},
 	}
-	raw, status, err := s.bangumiRequest(ctx, cfg.BangumiAPIBase, cfg.MetadataProxy, http.MethodPost, "/v0/search/subjects", q, reqBody)
+	raw, status, err := s.bangumiRequest(ctx, cfg.BangumiAPIBase, cfg.BangumiToken, cfg.MetadataProxy, http.MethodPost, "/v0/search/subjects", q, reqBody)
 	if err != nil {
 		return nil, err
 	}
@@ -1316,7 +1677,7 @@ func (s *Service) fetchBangumiSearch(ctx context.Context, cfg db.ServerSettings,
 }
 
 func (s *Service) fetchBangumiWork(ctx context.Context, cfg db.ServerSettings, kind, id string) (Work, error) {
-	raw, status, err := s.bangumiRequest(ctx, cfg.BangumiAPIBase, cfg.MetadataProxy, http.MethodGet, "/v0/subjects/"+url.PathEscape(id), nil, nil)
+	raw, status, err := s.bangumiRequest(ctx, cfg.BangumiAPIBase, cfg.BangumiToken, cfg.MetadataProxy, http.MethodGet, "/v0/subjects/"+url.PathEscape(id), nil, nil)
 	if err != nil {
 		return Work{}, err
 	}
@@ -1402,7 +1763,7 @@ func (s *Service) fetchBangumiSeason(ctx context.Context, cfg db.ServerSettings,
 		q.Set("limit", strconv.Itoa(pageSize))
 		q.Set("offset", strconv.Itoa(offset))
 
-		raw, status, err := s.bangumiRequest(ctx, cfg.BangumiAPIBase, cfg.MetadataProxy, http.MethodGet, "/v0/episodes", q, nil)
+		raw, status, err := s.bangumiRequest(ctx, cfg.BangumiAPIBase, cfg.BangumiToken, cfg.MetadataProxy, http.MethodGet, "/v0/episodes", q, nil)
 		if err != nil {
 			return Season{}, err
 		}

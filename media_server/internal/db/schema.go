@@ -162,6 +162,8 @@ func (s *Store) initSchema() error {
 			imdb_id         TEXT,
 			tvdb_id         TEXT,
 			bangumi_id      TEXT,
+			douban_id       TEXT,
+			anilist_id      TEXT,
 			metadata_source TEXT,
 			locked          INTEGER NOT NULL DEFAULT 0,
 			added_at        INTEGER NOT NULL,
@@ -380,6 +382,51 @@ func (s *Store) initSchema() error {
 		if _, err := s.db.Exec(stmt); err != nil {
 			return fmt.Errorf("init schema: %w", err)
 		}
+	}
+	if err := s.ensureColumn("media_items", "douban_id", "TEXT"); err != nil {
+		return err
+	}
+	if err := s.ensureColumn("media_items", "anilist_id", "TEXT"); err != nil {
+		return err
+	}
+	postIdxStmts := []string{
+		`CREATE INDEX IF NOT EXISTS idx_media_items_douban ON media_items(kind, douban_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_media_items_anilist ON media_items(kind, anilist_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_media_items_imdb ON media_items(kind, imdb_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_media_items_tvdb ON media_items(kind, tvdb_id)`,
+	}
+	for _, stmt := range postIdxStmts {
+		if _, err := s.db.Exec(stmt); err != nil {
+			return fmt.Errorf("init schema index: %w", err)
+		}
+	}
+	return nil
+}
+
+func (s *Store) ensureColumn(table, column, colDef string) error {
+	rows, err := s.db.Query(fmt.Sprintf(`PRAGMA table_info(%s)`, table))
+	if err != nil {
+		return fmt.Errorf("inspect columns of %s: %w", table, err)
+	}
+	defer rows.Close()
+
+	var (
+		cid       int
+		name      string
+		colType   string
+		notNull   int
+		dfltValue sql.NullString
+		pk        int
+	)
+	for rows.Next() {
+		if scanErr := rows.Scan(&cid, &name, &colType, &notNull, &dfltValue, &pk); scanErr == nil {
+			if strings.EqualFold(strings.TrimSpace(name), column) {
+				return nil
+			}
+		}
+	}
+	if _, err := s.db.Exec(fmt.Sprintf(`ALTER TABLE %s ADD COLUMN %s %s`, table, column, colDef)); err != nil {
+		return fmt.Errorf("add column %s.%s: %w", table, column, err)
 	}
 	return nil
 }

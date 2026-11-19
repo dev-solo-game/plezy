@@ -3,6 +3,7 @@ import QRCode from 'qrcode';
 import { Loader2, RefreshCw, Smartphone, X } from 'lucide-react';
 import { api } from '../api/client';
 import { useApp } from '../contexts/AppContext';
+import { ModalBackdrop } from './ModalBackdrop';
 
 interface QuarkQrModalProps {
   mode: 'pc' | 'web';
@@ -87,11 +88,10 @@ export const QuarkQrModal: React.FC<QuarkQrModalProps> = ({ mode, onClose, onSuc
   }, [status, sessionId, onSuccess, onClose, toast]);
 
   return (
-    <div className="modal-backdrop sub-modal" onClick={onClose}>
+    <ModalBackdrop subModal onClose={onClose}>
       <div
         className="modal-panel"
         style={{ maxWidth: 400 }}
-        onClick={(e) => e.stopPropagation()}
       >
         <div className="modal-header">
           <div className="flex-row" style={{ gap: 8 }}>
@@ -140,6 +140,6 @@ export const QuarkQrModal: React.FC<QuarkQrModalProps> = ({ mode, onClose, onSuc
           </button>
         </div>
       </div>
-    </div>
+    </ModalBackdrop>
   );
 };

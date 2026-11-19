@@ -9,6 +9,7 @@ import type {
   ExternalServerTestResult,
 } from '../types';
 import { RadioCardGroup } from './CustomSelect';
+import { ModalBackdrop } from './ModalBackdrop';
 
 interface ExternalServerEditorModalProps {
   server?: ExternalServerRecord | null;
@@ -155,11 +156,10 @@ export const ExternalServerEditorModal: React.FC<ExternalServerEditorModalProps>
   };
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
+    <ModalBackdrop onClose={onClose}>
       <form
         className="modal-panel"
         style={{ maxWidth: 640 }}
-        onClick={(e) => e.stopPropagation()}
         onSubmit={(e) => void handleSave(e)}
       >
         <div className="modal-header">
@@ -359,6 +359,6 @@ export const ExternalServerEditorModal: React.FC<ExternalServerEditorModalProps>
           </button>
         </div>
       </form>
-    </div>
+    </ModalBackdrop>
   );
 };

@@ -10,6 +10,7 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 
+	"plezy/media_server/internal/applog"
 	"plezy/media_server/internal/db"
 	"plezy/media_server/internal/events"
 	"plezy/media_server/internal/metadata"
@@ -131,7 +132,7 @@ func (c *Coordinator) scrapeWorkerLoop() {
 				c.pendingRefresh = false
 				c.scrapeFlagMu.Unlock()
 
-				_, _ = c.Scraper.ScrapePending(c.ctx, retry, refresh)
+				sum, _ := c.Scraper.ScrapePending(c.ctx, retry, refresh)
 
 				c.scrapeFlagMu.Lock()
 				moreFlags := c.pendingRetry || c.pendingRefresh
@@ -142,8 +143,8 @@ func (c *Coordinator) scrapeWorkerLoop() {
 				if c.ctx.Err() != nil {
 					return
 				}
-				// Stop hot-looping if scrape paused because of missing TMDB key
-				if st := c.Scraper.CurrentStatus(); st.Status == "warning" && !moreFlags {
+				// Stop hot-looping if scrape paused or items failed on upstream error
+				if st := c.Scraper.CurrentStatus(); (st.Status == "warning" || sum.Skipped > 0) && !moreFlags {
 					break
 				}
 			}
@@ -183,6 +184,7 @@ func (c *Coordinator) TriggerMountScanAsync(mountID string, full bool) {
 	if c.ctx == nil {
 		return
 	}
+	applog.Infof("scanner", "提交异步扫描任务 mount_id=%s full=%v", mountID, full)
 	c.wg.Add(1)
 	go func() {
 		defer c.wg.Done()
@@ -201,11 +203,13 @@ func (c *Coordinator) TriggerScanAllAsync(full bool) {
 	if c.ctx == nil {
 		return
 	}
+	applog.Infof("scanner", "提交全库扫描任务 full=%v", full)
 	c.wg.Add(1)
 	go func() {
 		defer c.wg.Done()
 		mounts, err := c.Store.ListMounts()
 		if err != nil {
+			applog.Errorf("scanner", "读取挂载源列表失败: %v", err)
 			return
 		}
 		anyAdded := false
@@ -232,6 +236,7 @@ func (c *Coordinator) TriggerScrapeAsync(retryUnmatched, refreshAll bool) {
 	if c.ctx == nil {
 		return
 	}
+	applog.Infof("scraper", "收到异步刮削请求: retry_unmatched=%v refresh_all=%v", retryUnmatched, refreshAll)
 	c.scrapeFlagMu.Lock()
 	if retryUnmatched {
 		c.pendingRetry = true

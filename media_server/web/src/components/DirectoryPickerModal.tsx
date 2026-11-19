@@ -3,6 +3,7 @@ import { ArrowLeft, Check, ChevronRight, Folder, Loader2, Plus, X } from 'lucide
 import { api } from '../api/client';
 import { useApp } from '../contexts/AppContext';
 import type { MountKind } from '../types';
+import { ModalBackdrop } from './ModalBackdrop';
 
 interface RemotePreviewSpec {
   id?: string;
@@ -113,8 +114,8 @@ export const DirectoryPickerModal: React.FC<DirectoryPickerModalProps> = ({
     title || (selectMode === 'multi' ? '浏览并勾选需要添加的目录' : '选择目标目录');
 
   return (
-    <div className="modal-backdrop sub-modal" onClick={onClose}>
-      <div className="modal-panel" style={{ maxWidth: 660 }} onClick={(e) => e.stopPropagation()}>
+    <ModalBackdrop subModal onClose={onClose}>
+      <div className="modal-panel" style={{ maxWidth: 660 }}>
         <div className="modal-header">
           <h3>{headerTitle}</h3>
           <button type="button" className="btn btn-icon btn-sm" onClick={onClose}>
@@ -309,6 +310,6 @@ export const DirectoryPickerModal: React.FC<DirectoryPickerModalProps> = ({
           )}
         </div>
       </div>
-    </div>
+    </ModalBackdrop>
   );
 };

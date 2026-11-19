@@ -3,6 +3,7 @@ import { Loader2, Plus, X } from 'lucide-react';
 import { api } from '../api/client';
 import { useApp } from '../contexts/AppContext';
 import type { MediaList } from '../types';
+import { ModalBackdrop } from './ModalBackdrop';
 
 interface ListPickerModalProps {
   itemId: number;
@@ -59,8 +60,8 @@ export const ListPickerModal: React.FC<ListPickerModalProps> = ({ itemId, onClos
   };
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal-panel" style={{ maxWidth: 460 }} onClick={(e) => e.stopPropagation()}>
+    <ModalBackdrop onClose={onClose}>
+      <div className="modal-panel" style={{ maxWidth: 460 }}>
         <div className="modal-header">
           <h3>添加到播单</h3>
           <button type="button" className="btn btn-icon btn-sm" onClick={onClose}>
@@ -107,6 +108,6 @@ export const ListPickerModal: React.FC<ListPickerModalProps> = ({ itemId, onClos
           )}
         </div>
       </div>
-    </div>
+    </ModalBackdrop>
   );
 };

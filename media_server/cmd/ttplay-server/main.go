@@ -9,12 +9,14 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
 	"plezy/media_server/internal/api"
+	"plezy/media_server/internal/applog"
 	"plezy/media_server/internal/auth"
 	"plezy/media_server/internal/db"
 	"plezy/media_server/internal/events"
@@ -22,6 +24,7 @@ import (
 	"plezy/media_server/internal/metadata"
 	"plezy/media_server/internal/storage"
 	"plezy/media_server/internal/vault"
+	"plezy/media_server/web"
 )
 
 func splitCSV(raw string) []string {
@@ -46,7 +49,13 @@ func main() {
 	metadataProxy := flag.String("metadata-proxy", os.Getenv("MEDIA_METADATA_PROXY"), "HTTP/SOCKS5 proxy for TMDB/Bangumi and artwork proxy")
 	bangumiEnabled := flag.String("bangumi-enabled", os.Getenv("MEDIA_BANGUMI_ENABLED"), "Default bangumi_enabled ('true' or 'false')")
 	webDir := flag.String("web-dir", os.Getenv("MEDIA_WEB_DIR"), "Optional path to web static directory (defaults to ./web/dist or ./web next to executable)")
+	logLevel := flag.String("log-level", envOr("MEDIA_LOG_LEVEL", "debug"), "Server log level (debug, info, warn, error)")
 	flag.Parse()
+
+	if err := applog.Init(filepath.Join(*dataDir, "logs"), *logLevel, true); err != nil {
+		log.Printf("init logger warning: %v", err)
+	}
+	defer func() { _ = applog.Close() }()
 
 	v, err := vault.Open(*dataDir, os.Getenv("MEDIA_MASTER_KEY"))
 	if err != nil {
@@ -112,16 +121,32 @@ func main() {
 	fmt.Printf("LISTENING http://%s\n", ln.Addr().String())
 	_ = os.Stdout.Sync()
 
+	cfg := store.GetServerSettings()
+	logPath, _ := applog.FileInfo()
+	_, resolvedWebPath := web.ResolveDiskFS(*webDir)
+	if resolvedWebPath == "" {
+		resolvedWebPath = "(未找到 web/dist 或 web 目录)"
+	}
+	proxyDesc := "(直连)"
+	if strings.TrimSpace(cfg.MetadataProxy) != "" {
+		proxyDesc = applog.RedactURL(cfg.MetadataProxy)
+	}
+	applog.Infof("system", "服务启动完成: listen=http://%s data_dir=%s log_file=%s level=%s", ln.Addr().String(), *dataDir, logPath, *logLevel)
+	applog.Infof("system", "环境参数: web_dir=%s tmdb_key=%v tmdb_base=%s bangumi=%v proxy=%s", resolvedWebPath, strings.TrimSpace(cfg.TmdbAPIKey) != "", cfg.TmdbAPIBase, cfg.BangumiEnabled, proxyDesc)
+
 	go func() {
 		<-ctx.Done()
+		applog.Infof("system", "收到退出信号，正在优雅关闭服务...")
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = httpSrv.Shutdown(shutdownCtx)
 	}()
 
 	if err := httpSrv.Serve(ln); err != nil && err != http.ErrServerClosed {
+		applog.Errorf("system", "HTTP 服务异常退出: %v", err)
 		log.Fatalf("serve error: %v", err)
 	}
+	applog.Infof("system", "服务已关闭")
 }
 
 func envOr(k, fallback string) string {

@@ -180,6 +180,8 @@ func ReadTitleNFO(content, expectedRoot string) *metadata.Work {
 		ImdbID:          nonEmptyPtr(ids["imdb"]),
 		TvdbID:          nonEmptyPtr(ids["tvdb"]),
 		BangumiID:       nonEmptyPtr(ids["bangumi"]),
+		DoubanID:        nonEmptyPtr(ids["douban"]),
+		AniListID:       nonEmptyPtr(ids["anilist"]),
 		CollectionTitle: nonEmptyPtr(collTitle),
 	}
 }

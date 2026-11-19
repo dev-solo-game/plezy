@@ -1,6 +1,7 @@
 export type ShelfKey = 'movie' | 'show' | 'anime' | 'variety' | 'documentary' | 'pending' | 'all';
 export type MountKind = 'local' | 'smb' | 'webdav' | 'quark';
 export type AccentTheme = 'glacier' | 'neutral' | 'ember' | 'plum';
+export type MetadataProvider = 'tmdb' | 'douban' | 'bangumi' | 'anilist' | 'imdb' | 'tvdb';
 
 export interface BootstrapInfo {
   initialized: boolean;
@@ -36,6 +37,24 @@ export interface ServerSettings {
   metadata_proxy: string;
   bangumi_enabled: boolean;
   bangumi_api_base: string;
+  bangumi_token_set: boolean;
+  bangumi_token_masked: string;
+  douban_enabled: boolean;
+  douban_api_base: string;
+  douban_cookie_set: boolean;
+  douban_cookie_masked: string;
+  anilist_enabled: boolean;
+  anilist_api_base: string;
+  imdb_enabled: boolean;
+  imdb_api_base: string;
+  tvdb_enabled: boolean;
+  tvdb_api_base: string;
+  tvdb_api_key_set: boolean;
+  tvdb_api_key_masked: string;
+  tvdb_pin_set: boolean;
+  tvdb_pin_masked: string;
+  allow_fallback_metadata: boolean;
+  custom_recognition_words: string;
   proxy_images: boolean;
   scraper_lang: string;
   prefer_nfo: boolean;
@@ -55,6 +74,24 @@ export interface ServerSettingsUpdate {
   metadata_proxy?: string;
   bangumi_enabled?: boolean;
   bangumi_api_base?: string;
+  bangumi_token?: string;
+  clear_bangumi_token?: boolean;
+  douban_enabled?: boolean;
+  douban_api_base?: string;
+  douban_cookie?: string;
+  clear_douban_cookie?: boolean;
+  anilist_enabled?: boolean;
+  anilist_api_base?: string;
+  imdb_enabled?: boolean;
+  imdb_api_base?: string;
+  tvdb_enabled?: boolean;
+  tvdb_api_base?: string;
+  tvdb_api_key?: string;
+  clear_tvdb_api_key?: boolean;
+  tvdb_pin?: string;
+  clear_tvdb_pin?: boolean;
+  allow_fallback_metadata?: boolean;
+  custom_recognition_words?: string;
   proxy_images?: boolean;
   scraper_lang?: string;
   prefer_nfo?: boolean;
@@ -225,6 +262,8 @@ export interface MediaItem {
   imdb_id?: string;
   tvdb_id?: string;
   bangumi_id?: string;
+  douban_id?: string;
+  anilist_id?: string;
   metadata_source?: string;
   locked: boolean;
   added_at: number;
@@ -329,7 +368,7 @@ export interface UnmatchedEntry {
 }
 
 export interface ScrapeCandidate {
-  source: 'tmdb' | 'bangumi';
+  source: MetadataProvider | string;
   id: string;
   title: string;
   original_title?: string;
@@ -629,4 +668,19 @@ export interface ExtPlaybackInfo {
   versions: ExtPlaybackVersion[];
   subtitles: ExtPlaybackSubtitle[];
   external_players: Record<string, string>;
+}
+
+export interface ServerLogEntry {
+  seq: number;
+  time_ms: number;
+  level: 'DEBUG' | 'INFO' | 'WARN' | 'ERROR' | string;
+  component: string;
+  message: string;
+}
+
+export interface ServerLogsResponse {
+  entries: ServerLogEntry[];
+  latest_seq: number;
+  log_file_path: string;
+  file_size_bytes: number;
 }

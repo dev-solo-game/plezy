@@ -3,6 +3,7 @@ import { AlertTriangle, Edit3, HardDrive, Loader2, Plus, Power, RefreshCw, Spark
 import { api, formatBytes, mountKindLabel } from '../api/client';
 import { useSWRQuery } from '../api/queryCache';
 import { MountEditorModal } from '../components/MountEditorModal';
+import { ModalBackdrop } from '../components/ModalBackdrop';
 import { CardListSkeleton } from '../components/Skeletons';
 import { useApp } from '../contexts/AppContext';
 import type { MountRecord } from '../types';
@@ -209,8 +210,8 @@ export const MountsManagePage: React.FC = () => {
       )}
 
       {fullScanMount && (
-        <div className="modal-backdrop" onClick={() => !submittingFullScan && setFullScanMount(null)}>
-          <div className="modal-panel" style={{ maxWidth: 480 }} onClick={(e) => e.stopPropagation()}>
+        <ModalBackdrop onClose={() => !submittingFullScan && setFullScanMount(null)}>
+          <div className="modal-panel" style={{ maxWidth: 480 }}>
             <div className="modal-header">
               <div className="flex-row" style={{ gap: 10 }}>
                 <AlertTriangle size={18} style={{ color: 'var(--warning)' }} />
@@ -306,7 +307,7 @@ export const MountsManagePage: React.FC = () => {
               </button>
             </div>
           </div>
-        </div>
+        </ModalBackdrop>
       )}
     </div>
   );

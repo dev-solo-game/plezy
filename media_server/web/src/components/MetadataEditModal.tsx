@@ -4,6 +4,7 @@ import { api } from '../api/client';
 import { useApp } from '../contexts/AppContext';
 import type { MediaItem } from '../types';
 import { CustomSelect } from './CustomSelect';
+import { ModalBackdrop } from './ModalBackdrop';
 
 interface MetadataEditModalProps {
   item: MediaItem;
@@ -54,8 +55,8 @@ export const MetadataEditModal: React.FC<MetadataEditModalProps> = ({ item, onCl
   };
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <form className="modal-panel" onClick={(e) => e.stopPropagation()} onSubmit={handleSubmit}>
+    <ModalBackdrop onClose={onClose}>
+      <form className="modal-panel" onSubmit={handleSubmit}>
         <div className="modal-header">
           <h3>编辑元数据</h3>
           <button type="button" className="btn btn-icon btn-sm" onClick={onClose}>
@@ -139,6 +140,6 @@ export const MetadataEditModal: React.FC<MetadataEditModalProps> = ({ item, onCl
           </button>
         </div>
       </form>
-    </div>
+    </ModalBackdrop>
   );
 };

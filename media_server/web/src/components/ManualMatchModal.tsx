@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
 import { Check, Loader2, Search, X } from 'lucide-react';
-import { api, artworkUrl } from '../api/client';
+import { api, artworkUrl, providerLabel } from '../api/client';
 import { useApp } from '../contexts/AppContext';
-import type { ScrapeCandidate } from '../types';
+import type { MetadataProvider, ScrapeCandidate } from '../types';
 import { CustomSelect } from './CustomSelect';
+import { ModalBackdrop } from './ModalBackdrop';
 
 interface ManualMatchModalProps {
   itemId: number;
@@ -27,7 +28,7 @@ export const ManualMatchModal: React.FC<ManualMatchModalProps> = ({
   const { toast } = useApp();
   const [query, setQuery] = useState(initialTitle);
   const [kind, setKind] = useState<'movie' | 'show'>(initialKind);
-  const [provider, setProvider] = useState<'' | 'tmdb' | 'bangumi'>('');
+  const [provider, setProvider] = useState<'' | MetadataProvider>('');
   const [year, setYear] = useState(initialYear ? String(initialYear) : '');
   const [targetShelf, setTargetShelf] = useState(initialShelf === 'pending' ? '' : initialShelf);
   const [results, setResults] = useState<ScrapeCandidate[]>([]);
@@ -40,7 +41,7 @@ export const ManualMatchModal: React.FC<ManualMatchModalProps> = ({
     setSearching(true);
     try {
       const yr = Number(year) || undefined;
-      const res = await api.scrapeSearch(query.trim(), kind, provider, yr);
+      const res = await api.scrapeSearch(query.trim(), kind, provider, yr, true);
       setResults(res.results || []);
     } catch (err) {
       toast((err as Error).message, 'error');
@@ -69,8 +70,8 @@ export const ManualMatchModal: React.FC<ManualMatchModalProps> = ({
   };
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal-panel" style={{ maxWidth: 780 }} onClick={(e) => e.stopPropagation()}>
+    <ModalBackdrop onClose={onClose}>
+      <div className="modal-panel" style={{ maxWidth: 780 }}>
         <div className="modal-header">
           <h3>手工搜索匹配元数据</h3>
           <button type="button" className="btn btn-icon btn-sm" onClick={onClose}>
@@ -84,7 +85,7 @@ export const ManualMatchModal: React.FC<ManualMatchModalProps> = ({
               <input
                 className="input"
                 style={{ flex: 1 }}
-                placeholder="输入电影/剧集/番剧名称"
+                placeholder="输入片名，或直接输入 tt1234567 / douban:36283066 / tmdb:230311 / 豆瓣或TMDB链接"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
               />
@@ -121,12 +122,16 @@ export const ManualMatchModal: React.FC<ManualMatchModalProps> = ({
                 <CustomSelect
                   compact
                   value={provider}
-                  onChange={(v) => setProvider(v as '' | 'tmdb' | 'bangumi')}
-                  style={{ width: 136 }}
+                  onChange={(v) => setProvider(v as '' | MetadataProvider)}
+                  style={{ width: 152 }}
                   options={[
-                    { value: '', label: '全部刮削源' },
+                    { value: '', label: '全部已启用源' },
                     { value: 'tmdb', label: 'TMDB' },
+                    { value: 'douban', label: '豆瓣' },
                     { value: 'bangumi', label: 'Bangumi' },
+                    { value: 'anilist', label: 'AniList' },
+                    { value: 'imdb', label: 'IMDb' },
+                    { value: 'tvdb', label: 'TheTvDb' },
                   ]}
                 />
               </div>
@@ -182,7 +187,7 @@ export const ManualMatchModal: React.FC<ManualMatchModalProps> = ({
                     <div className="flex-row">
                       <strong>{c.title}</strong>
                       {c.year && <span className="tag">{c.year}</span>}
-                      <span className="tag accent">{c.source.toUpperCase()} #{c.id}</span>
+                      <span className="tag accent">{providerLabel(c.source)} #{c.id}</span>
                     </div>
                     {c.original_title && c.original_title !== c.title && (
                       <div className="muted-sm" style={{ marginTop: 2 }}>
@@ -218,12 +223,12 @@ export const ManualMatchModal: React.FC<ManualMatchModalProps> = ({
             })}
             {!searching && results.length === 0 && (
               <div className="muted-sm" style={{ textAlign: 'center', padding: '26px 0' }}>
-                点击“搜索”从 TMDB 或 Bangumi 查找正确条目
+                点击“搜索”从已启用数据源按片名或外部 ID（如 tt... / douban:... / tmdb:...）精确查找条目
               </div>
             )}
           </div>
         </div>
       </div>
-    </div>
+    </ModalBackdrop>
   );
 };

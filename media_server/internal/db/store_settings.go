@@ -11,14 +11,18 @@ import (
 )
 
 const (
-	DefaultServerName        = "TTPlay 媒体库"
-	DefaultTmdbAPIBase       = "https://api.tmdb.org/3"
-	DefaultTmdbImageBase     = "https://image.tmdb.org/t/p"
-	DefaultBangumiAPIBase    = "https://api.bgm.tv"
-	DefaultScraperLang       = "zh-CN"
-	DefaultWatchedThreshold  = 0.9
-	DefaultScanIntervalMin   = 60
-	DefaultAccentTheme       = "glacier"
+	DefaultServerName       = "TTPlay 媒体库"
+	DefaultTmdbAPIBase      = "https://api.tmdb.org/3"
+	DefaultTmdbImageBase    = "https://image.tmdb.org/t/p"
+	DefaultBangumiAPIBase   = "https://api.bgm.tv"
+	DefaultDoubanAPIBase    = "https://m.douban.com/rexxar/api/v2"
+	DefaultAniListAPIBase   = "https://graphql.anilist.co"
+	DefaultImdbAPIBase      = "https://api.imdbapi.dev"
+	DefaultTvdbAPIBase      = "https://api4.thetvdb.com/v4"
+	DefaultScraperLang      = "zh-CN"
+	DefaultWatchedThreshold = 0.9
+	DefaultScanIntervalMin  = 60
+	DefaultAccentTheme      = "glacier"
 )
 
 var schemeRegex = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9+.-]*://`)
@@ -42,10 +46,10 @@ func NormalizeTmdbBase(raw, fallback, defaultPath string) string {
 	return text
 }
 
-func NormalizeBangumiBase(raw string) string {
+func NormalizeBaseURL(raw, fallback string) string {
 	text := strings.TrimSpace(raw)
 	if text == "" {
-		return DefaultBangumiAPIBase
+		return fallback
 	}
 	if !schemeRegex.MatchString(text) {
 		text = "https://" + text
@@ -53,9 +57,13 @@ func NormalizeBangumiBase(raw string) string {
 	text = strings.TrimRight(text, "/")
 	u, err := url.Parse(text)
 	if err != nil || u.Host == "" {
-		return DefaultBangumiAPIBase
+		return fallback
 	}
 	return text
+}
+
+func NormalizeBangumiBase(raw string) string {
+	return NormalizeBaseURL(raw, DefaultBangumiAPIBase)
 }
 
 func ParseProxyURL(raw string) (*url.URL, error) {
@@ -119,15 +127,54 @@ func (s *Store) SetSettingBool(key string, val bool) error {
 	return s.SetSetting(key, str)
 }
 
-func (s *Store) GetServerSettings() ServerSettings {
-	tmdbKey := ""
-	if enc := s.GetSetting("tmdb_api_key_enc", ""); enc != "" {
+func (s *Store) getSecretSetting(encKey, legacyPlainKey string) string {
+	if enc := s.GetSetting(encKey, ""); enc != "" {
 		if plain, err := s.vault.Open(enc); err == nil {
-			tmdbKey = strings.TrimSpace(plain)
+			return strings.TrimSpace(plain)
 		}
-	} else {
-		tmdbKey = strings.TrimSpace(s.GetSetting("tmdb_api_key", ""))
 	}
+	if legacyPlainKey != "" {
+		return strings.TrimSpace(s.GetSetting(legacyPlainKey, ""))
+	}
+	return ""
+}
+
+func (s *Store) setSecretSetting(encKey, legacyPlainKey string, val *string, clear bool) error {
+	if clear {
+		if err := s.SetSetting(encKey, ""); err != nil {
+			return err
+		}
+		if legacyPlainKey != "" {
+			_ = s.SetSetting(legacyPlainKey, "")
+		}
+		return nil
+	}
+	if val == nil {
+		return nil
+	}
+	secret := strings.TrimSpace(*val)
+	if secret == "" {
+		return nil
+	}
+	sealed, err := s.vault.Seal(secret)
+	if err != nil {
+		return err
+	}
+	if err := s.SetSetting(encKey, sealed); err != nil {
+		return err
+	}
+	if legacyPlainKey != "" {
+		_ = s.SetSetting(legacyPlainKey, "")
+	}
+	return nil
+}
+
+func (s *Store) GetServerSettings() ServerSettings {
+	tmdbKey := s.getSecretSetting("tmdb_api_key_enc", "tmdb_api_key")
+	bangumiToken := s.getSecretSetting("bangumi_token_enc", "")
+	doubanCookie := s.getSecretSetting("douban_cookie_enc", "")
+	tvdbKey := s.getSecretSetting("tvdb_api_key_enc", "")
+	tvdbPin := s.getSecretSetting("tvdb_pin_enc", "")
 
 	threshold := DefaultWatchedThreshold
 	if raw := strings.TrimSpace(s.GetSetting("watched_threshold", "")); raw != "" {
@@ -170,6 +217,28 @@ func (s *Store) GetServerSettings() ServerSettings {
 		MetadataProxy:           strings.TrimSpace(s.GetSetting("metadata_proxy", "")),
 		BangumiEnabled:          s.GetSettingBool("bangumi_enabled", true),
 		BangumiAPIBase:          NormalizeBangumiBase(s.GetSetting("bangumi_api_base", DefaultBangumiAPIBase)),
+		BangumiTokenSet:         bangumiToken != "",
+		BangumiTokenMasked:      MaskSecret(bangumiToken),
+		BangumiToken:            bangumiToken,
+		DoubanEnabled:           s.GetSettingBool("douban_enabled", true),
+		DoubanAPIBase:           NormalizeBaseURL(s.GetSetting("douban_api_base", DefaultDoubanAPIBase), DefaultDoubanAPIBase),
+		DoubanCookieSet:         doubanCookie != "",
+		DoubanCookieMasked:      MaskSecret(doubanCookie),
+		DoubanCookie:            doubanCookie,
+		AniListEnabled:          s.GetSettingBool("anilist_enabled", true),
+		AniListAPIBase:          NormalizeBaseURL(s.GetSetting("anilist_api_base", DefaultAniListAPIBase), DefaultAniListAPIBase),
+		ImdbEnabled:             s.GetSettingBool("imdb_enabled", true),
+		ImdbAPIBase:             NormalizeBaseURL(s.GetSetting("imdb_api_base", DefaultImdbAPIBase), DefaultImdbAPIBase),
+		TvdbEnabled:             s.GetSettingBool("tvdb_enabled", false),
+		TvdbAPIBase:             NormalizeBaseURL(s.GetSetting("tvdb_api_base", DefaultTvdbAPIBase), DefaultTvdbAPIBase),
+		TvdbAPIKeySet:           tvdbKey != "",
+		TvdbAPIKeyMasked:        MaskSecret(tvdbKey),
+		TvdbAPIKey:              tvdbKey,
+		TvdbPinSet:              tvdbPin != "",
+		TvdbPinMasked:           MaskSecret(tvdbPin),
+		TvdbPin:                 tvdbPin,
+		AllowFallbackMetadata:   s.GetSettingBool("allow_fallback_metadata", true),
+		CustomRecognitionWords:  s.GetSetting("custom_recognition_words", ""),
 		ProxyImages:             s.GetSettingBool("proxy_images", true),
 		ScraperLang:             lang,
 		PreferNfo:               s.GetSettingBool("prefer_nfo", true),
@@ -191,21 +260,8 @@ func (s *Store) UpdateServerSettings(req ServerSettingsUpdate) (ServerSettings, 
 			return ServerSettings{}, err
 		}
 	}
-	if req.ClearTmdbAPIKey {
-		_ = s.SetSetting("tmdb_api_key_enc", "")
-		_ = s.SetSetting("tmdb_api_key", "")
-	} else if req.TmdbAPIKey != nil {
-		key := strings.TrimSpace(*req.TmdbAPIKey)
-		if key != "" {
-			sealed, err := s.vault.Seal(key)
-			if err != nil {
-				return ServerSettings{}, err
-			}
-			if err := s.SetSetting("tmdb_api_key_enc", sealed); err != nil {
-				return ServerSettings{}, err
-			}
-			_ = s.SetSetting("tmdb_api_key", "")
-		}
+	if err := s.setSecretSetting("tmdb_api_key_enc", "tmdb_api_key", req.TmdbAPIKey, req.ClearTmdbAPIKey); err != nil {
+		return ServerSettings{}, err
 	}
 	if req.TmdbAPIBase != nil {
 		if err := s.SetSetting("tmdb_api_base", NormalizeTmdbBase(*req.TmdbAPIBase, DefaultTmdbAPIBase, "/3")); err != nil {
@@ -235,6 +291,68 @@ func (s *Store) UpdateServerSettings(req ServerSettingsUpdate) (ServerSettings, 
 	}
 	if req.BangumiAPIBase != nil {
 		if err := s.SetSetting("bangumi_api_base", NormalizeBangumiBase(*req.BangumiAPIBase)); err != nil {
+			return ServerSettings{}, err
+		}
+	}
+	if err := s.setSecretSetting("bangumi_token_enc", "", req.BangumiToken, req.ClearBangumiToken); err != nil {
+		return ServerSettings{}, err
+	}
+	if req.DoubanEnabled != nil {
+		if err := s.SetSettingBool("douban_enabled", *req.DoubanEnabled); err != nil {
+			return ServerSettings{}, err
+		}
+	}
+	if req.DoubanAPIBase != nil {
+		if err := s.SetSetting("douban_api_base", NormalizeBaseURL(*req.DoubanAPIBase, DefaultDoubanAPIBase)); err != nil {
+			return ServerSettings{}, err
+		}
+	}
+	if err := s.setSecretSetting("douban_cookie_enc", "", req.DoubanCookie, req.ClearDoubanCookie); err != nil {
+		return ServerSettings{}, err
+	}
+	if req.AniListEnabled != nil {
+		if err := s.SetSettingBool("anilist_enabled", *req.AniListEnabled); err != nil {
+			return ServerSettings{}, err
+		}
+	}
+	if req.AniListAPIBase != nil {
+		if err := s.SetSetting("anilist_api_base", NormalizeBaseURL(*req.AniListAPIBase, DefaultAniListAPIBase)); err != nil {
+			return ServerSettings{}, err
+		}
+	}
+	if req.ImdbEnabled != nil {
+		if err := s.SetSettingBool("imdb_enabled", *req.ImdbEnabled); err != nil {
+			return ServerSettings{}, err
+		}
+	}
+	if req.ImdbAPIBase != nil {
+		if err := s.SetSetting("imdb_api_base", NormalizeBaseURL(*req.ImdbAPIBase, DefaultImdbAPIBase)); err != nil {
+			return ServerSettings{}, err
+		}
+	}
+	if req.TvdbEnabled != nil {
+		if err := s.SetSettingBool("tvdb_enabled", *req.TvdbEnabled); err != nil {
+			return ServerSettings{}, err
+		}
+	}
+	if req.TvdbAPIBase != nil {
+		if err := s.SetSetting("tvdb_api_base", NormalizeBaseURL(*req.TvdbAPIBase, DefaultTvdbAPIBase)); err != nil {
+			return ServerSettings{}, err
+		}
+	}
+	if err := s.setSecretSetting("tvdb_api_key_enc", "", req.TvdbAPIKey, req.ClearTvdbAPIKey); err != nil {
+		return ServerSettings{}, err
+	}
+	if err := s.setSecretSetting("tvdb_pin_enc", "", req.TvdbPin, req.ClearTvdbPin); err != nil {
+		return ServerSettings{}, err
+	}
+	if req.AllowFallbackMetadata != nil {
+		if err := s.SetSettingBool("allow_fallback_metadata", *req.AllowFallbackMetadata); err != nil {
+			return ServerSettings{}, err
+		}
+	}
+	if req.CustomRecognitionWords != nil {
+		if err := s.SetSetting("custom_recognition_words", *req.CustomRecognitionWords); err != nil {
 			return ServerSettings{}, err
 		}
 	}

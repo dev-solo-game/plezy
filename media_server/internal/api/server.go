@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"plezy/media_server/internal/applog"
 	"plezy/media_server/internal/auth"
 	"plezy/media_server/internal/db"
 	"plezy/media_server/internal/events"
@@ -103,8 +104,12 @@ func (s *Server) buildMux() http.Handler {
 	mux.HandleFunc("GET /api/v1/settings", s.requireAuth(s.handleGetSettings))
 	mux.HandleFunc("PUT /api/v1/settings", s.requireAuth(s.handleUpdateSettings))
 	mux.HandleFunc("POST /api/v1/settings/test-tmdb", s.requireAuth(s.handleTestTmdb))
+	mux.HandleFunc("POST /api/v1/settings/test-provider", s.requireAuth(s.handleTestProvider))
 	mux.HandleFunc("POST /api/v1/settings/clear-cache", s.requireAuth(s.handleClearMetaCache))
 	mux.HandleFunc("GET /api/v1/system/overview", s.requireAuth(s.handleSystemOverview))
+	mux.HandleFunc("GET /api/v1/system/logs", s.requireAuth(s.handleGetSystemLogs))
+	mux.HandleFunc("POST /api/v1/system/logs/clear", s.requireAuth(s.handleClearSystemLogs))
+	mux.HandleFunc("GET /api/v1/system/logs/download", s.requireAuth(s.handleDownloadSystemLogs))
 	mux.HandleFunc("GET /api/v1/metadata/tables", s.requireAuth(s.handleListMetadataTables))
 	mux.HandleFunc("GET /api/v1/metadata/tables/{table}", s.requireAuth(s.handleQueryMetadataTable))
 	mux.HandleFunc("DELETE /api/v1/metadata/tables/{table}/row", s.requireAuth(s.handleDeleteMetadataCacheRow))
@@ -195,7 +200,91 @@ func (s *Server) buildMux() http.Handler {
 	// Embedded SPA static files
 	mux.HandleFunc("GET /", s.handleSPA)
 
-	return mux
+	return s.withRequestLogging(mux)
+}
+
+type loggingResponseWriter struct {
+	http.ResponseWriter
+	status      int
+	wroteHeader bool
+}
+
+func (rw *loggingResponseWriter) WriteHeader(code int) {
+	if !rw.wroteHeader {
+		rw.status = code
+		rw.wroteHeader = true
+	}
+	rw.ResponseWriter.WriteHeader(code)
+}
+
+func (rw *loggingResponseWriter) Write(p []byte) (int, error) {
+	if !rw.wroteHeader {
+		rw.status = http.StatusOK
+		rw.wroteHeader = true
+	}
+	return rw.ResponseWriter.Write(p)
+}
+
+func (rw *loggingResponseWriter) Flush() {
+	if f, ok := rw.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+func (rw *loggingResponseWriter) Unwrap() http.ResponseWriter {
+	return rw.ResponseWriter
+}
+
+func (s *Server) withRequestLogging(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		lw := &loggingResponseWriter{ResponseWriter: w, status: http.StatusOK}
+		start := time.Now()
+		next.ServeHTTP(lw, r)
+		elapsedMs := time.Since(start).Milliseconds()
+
+		p := r.URL.Path
+		st := lw.status
+
+		if !strings.HasPrefix(p, "/api/") {
+			if st >= http.StatusInternalServerError {
+				applog.Errorf("api", "%s %s -> %d (%dms)", r.Method, p, st, elapsedMs)
+			}
+			return
+		}
+
+		if st < http.StatusBadRequest {
+			switch {
+			case p == "/healthz",
+				p == "/api/v1/events",
+				p == "/api/v1/tasks/status",
+				p == "/api/v1/playback/progress",
+				strings.HasPrefix(p, "/api/v1/system/logs"),
+				strings.HasPrefix(p, "/api/v1/ext/"),
+				strings.HasPrefix(p, "/api/v1/stream/"),
+				strings.HasPrefix(p, "/api/v1/artwork/"):
+				return
+			}
+			if r.Method != http.MethodPost && r.Method != http.MethodPut && r.Method != http.MethodDelete {
+				return
+			}
+		}
+
+		target := p
+		if r.URL.RawQuery != "" {
+			target += "?" + applog.RedactURL(r.URL.RawQuery)
+		}
+
+		switch {
+		case st >= http.StatusInternalServerError:
+			applog.Errorf("api", "%s %s -> %d (%dms)", r.Method, target, st, elapsedMs)
+		case st == http.StatusUnauthorized && p == "/api/v1/auth/me":
+			applog.Debugf("api", "%s %s -> %d (%dms)", r.Method, target, st, elapsedMs)
+		case st >= http.StatusBadRequest:
+			applog.Warnf("api", "%s %s -> %d (%dms)", r.Method, target, st, elapsedMs)
+		default:
+			applog.Infof("api", "%s %s -> %d (%dms)", r.Method, target, st, elapsedMs)
+		}
+	})
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {

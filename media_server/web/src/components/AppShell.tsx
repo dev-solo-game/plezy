@@ -20,6 +20,7 @@ import {
   PanelLeftOpen,
   Plus,
   RefreshCw,
+  ScrollText,
   Search,
   Server,
   Settings,
@@ -39,6 +40,7 @@ import {
   prefetchMounts,
   prefetchSettings,
   prefetchShelf,
+  prefetchSystemLogs,
   prefetchUnmatched,
 } from '../api/prefetch';
 import { useApp } from '../contexts/AppContext';
@@ -240,6 +242,10 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
                 <Database size={18} />
                 <span className="nav-text">元数据管理</span>
               </NavLink>
+              <NavLink to="/manage/logs" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} onMouseEnter={prefetchSystemLogs} onFocus={prefetchSystemLogs}>
+                <ScrollText size={18} />
+                <span className="nav-text">运行日志</span>
+              </NavLink>
             </nav>
           </div>
         </div>
@@ -310,9 +316,14 @@ export const AppShell: React.FC<{ children: React.ReactNode }> = ({ children }) 
                         scrapeProgress.title ? ` · ${scrapeProgress.title}` : ''
                       }`
                     : scrapeStatus === 'warning'
-                    ? '刮削暂停 · 未配置 Key'
+                    ? scrapeProgress?.message?.includes('Key')
+                      ? '刮削暂停 · 未配置 Key'
+                      : '刮削告警 · 查看详情'
                     : (scrapeStatus === 'completed' || scrapeStatus === 'done') && scrapeProgress
-                    ? `刮削完成 · 已入库 ${(scrapeProgress.matched || 0) + (scrapeProgress.merged || 0)}`
+                    ? (scrapeProgress.matched || 0) + (scrapeProgress.merged || 0) === 0 &&
+                      (scrapeProgress.unmatched || 0) > 0
+                      ? `刮削完成 · 未匹配 ${scrapeProgress.unmatched}`
+                      : `刮削完成 · 已入库 ${(scrapeProgress.matched || 0) + (scrapeProgress.merged || 0)}`
                     : `待刮削 ${pendingScrapeCount} 项`}
                 </span>
                 {scrapeStatus === 'running' && (

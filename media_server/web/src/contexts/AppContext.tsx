@@ -213,6 +213,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             setScrapeProgress(null);
           } else if (p.status === 'completed' || p.status === 'done') {
             setScrapeProgress(p);
+            scheduleLibraryRefresh();
             void refreshTaskStatus();
             scrapeClearTimerRef.current = window.setTimeout(() => {
               scrapeClearTimerRef.current = null;
@@ -220,6 +221,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             }, 4000);
           } else if (p.status === 'warning') {
             setScrapeProgress(p);
+            scheduleLibraryRefresh();
             void refreshTaskStatus();
           } else {
             setScrapeProgress(p);

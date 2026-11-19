@@ -18,6 +18,7 @@ import {
 import { api, formatBytes } from '../api/client';
 import { useApp } from '../contexts/AppContext';
 import type { MountKind, MountRecord } from '../types';
+import { ModalBackdrop } from './ModalBackdrop';
 import { RadioCardGroup } from './CustomSelect';
 import { DirectoryPickerModal } from './DirectoryPickerModal';
 import { QuarkQrModal } from './QuarkQrModal';
@@ -235,8 +236,8 @@ export const MountEditorModal: React.FC<MountEditorModalProps> = ({ mount, onClo
 
   return (
     <>
-      <div className="modal-backdrop" onClick={onClose}>
-        <form className="modal-panel" style={{ maxWidth: 720 }} onClick={(e) => e.stopPropagation()} onSubmit={handleSave}>
+      <ModalBackdrop onClose={onClose}>
+        <form className="modal-panel" style={{ maxWidth: 720 }} onSubmit={handleSave}>
           <div className="modal-header">
             <h3>{isEdit ? `编辑挂载源：${mount?.name}` : '添加存储挂载源'}</h3>
             <button type="button" className="btn btn-icon btn-sm" onClick={onClose}>
@@ -645,7 +646,7 @@ export const MountEditorModal: React.FC<MountEditorModalProps> = ({ mount, onClo
             </button>
           </div>
         </form>
-      </div>
+      </ModalBackdrop>
 
       {/* Independent Quark QR Login Modal */}
       {showQrModal && (

@@ -69,6 +69,11 @@ func (s *Service) isAllowedImageHost(host, tmdbImageBase string) bool {
 		"lain.bgm.tv",
 		"bgm.tv",
 		"chii.in",
+		"doubanio.com",
+		"anilist.co",
+		"media-amazon.com",
+		"imdb.com",
+		"thetvdb.com",
 	}
 	if u, err := url.Parse(tmdbImageBase); err == nil && u.Hostname() != "" {
 		allowed = append(allowed, strings.ToLower(u.Hostname()))
@@ -121,6 +126,13 @@ func (s *Service) FetchRemoteImage(ctx context.Context, src, size string) (Cache
 			return nil, err
 		}
 		req.Header.Set("User-Agent", "ttplay-media-server/1.0")
+		if parsedImgURL, pErr := url.Parse(targetURL); pErr == nil {
+			h := strings.ToLower(parsedImgURL.Hostname())
+			if h == "doubanio.com" || strings.HasSuffix(h, ".doubanio.com") {
+				req.Header.Set("Referer", "https://movie.douban.com/")
+				req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+			}
+		}
 		resp, err := cli.Do(req)
 		if err != nil {
 			return nil, fmt.Errorf("%w: fetch image failed: %v", ErrUpstream, err)
