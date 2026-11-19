@@ -279,7 +279,7 @@ const mediaFileSelectCols = `
 	LEFT JOIN mounts m ON m.id = mf.mount_id`
 
 func (s *Store) GetMediaItem(id int64) (MediaItem, error) {
-	row := s.db.QueryRow(mediaItemBaseSelect+` WHERE mi.id = ?`, id)
+	row := s.ReadDB().QueryRow(mediaItemBaseSelect+` WHERE mi.id = ?`, id)
 	item, err := scanMediaItem(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return MediaItem{}, ErrNotFound
@@ -288,7 +288,7 @@ func (s *Store) GetMediaItem(id int64) (MediaItem, error) {
 }
 
 func (s *Store) GetMediaFile(id int64) (MediaFile, error) {
-	row := s.db.QueryRow(mediaFileSelectCols+` WHERE mf.id = ?`, id)
+	row := s.ReadDB().QueryRow(mediaFileSelectCols+` WHERE mf.id = ?`, id)
 	f, err := scanMediaFile(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return MediaFile{}, ErrNotFound
@@ -297,7 +297,7 @@ func (s *Store) GetMediaFile(id int64) (MediaFile, error) {
 }
 
 func (s *Store) GetFilesForItem(itemID int64) ([]MediaFile, error) {
-	rows, err := s.db.Query(mediaFileSelectCols+`
+	rows, err := s.ReadDB().Query(mediaFileSelectCols+`
 		WHERE mf.item_id = ? AND mf.role = 'video'
 		ORDER BY CASE COALESCE(m.kind, '')
 			WHEN 'local' THEN 0
@@ -324,7 +324,7 @@ func (s *Store) GetFilesForItem(itemID int64) ([]MediaFile, error) {
 }
 
 func (s *Store) GetSubtitlesForItem(itemID int64) ([]MediaFile, error) {
-	rows, err := s.db.Query(mediaFileSelectCols+`
+	rows, err := s.ReadDB().Query(mediaFileSelectCols+`
 		WHERE mf.role = 'subtitle' AND mf.owner_file_id IN (
 			SELECT vf.id FROM media_files vf WHERE vf.item_id = ? AND vf.role = 'video'
 		)
@@ -425,7 +425,7 @@ func (s *Store) QueryLibrary(q LibraryQuery) (LibraryPage, error) {
 	}
 
 	var total int
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM media_items mi LEFT JOIN watch_states ws ON ws.item_id = mi.id`+whereClause, args...).Scan(&total); err != nil {
+	if err := s.ReadDB().QueryRow(`SELECT COUNT(*) FROM media_items mi LEFT JOIN watch_states ws ON ws.item_id = mi.id`+whereClause, args...).Scan(&total); err != nil {
 		return LibraryPage{}, err
 	}
 
@@ -463,7 +463,7 @@ func (s *Store) QueryLibrary(q LibraryQuery) (LibraryPage, error) {
 
 	querySQL := mediaItemBaseSelect + whereClause + ` ORDER BY ` + orderBy + ` LIMIT ? OFFSET ?`
 	queryArgs := append(append([]any{}, args...), limit, offset)
-	rows, err := s.db.Query(querySQL, queryArgs...)
+	rows, err := s.ReadDB().Query(querySQL, queryArgs...)
 	if err != nil {
 		return LibraryPage{}, err
 	}
@@ -500,7 +500,7 @@ func (s *Store) GetLibraryFacets(libraryType string) (LibraryFacets, error) {
 		args = append(args, libraryType)
 	}
 
-	gRows, err := s.db.Query(`
+	gRows, err := s.ReadDB().Query(`
 		SELECT g.id, g.name, COUNT(DISTINCT mi.id) AS cnt
 		FROM genres g
 		JOIN item_genres ig ON ig.genre_id = g.id
@@ -521,7 +521,7 @@ func (s *Store) GetLibraryFacets(libraryType string) (LibraryFacets, error) {
 	}
 	gRows.Close()
 
-	yRows, err := s.db.Query(`
+	yRows, err := s.ReadDB().Query(`
 		SELECT DISTINCT mi.year
 		FROM media_items mi
 		WHERE mi.kind IN ('movie', 'show') AND mi.year IS NOT NULL AND `+shelfFilter+`
@@ -539,7 +539,7 @@ func (s *Store) GetLibraryFacets(libraryType string) (LibraryFacets, error) {
 	}
 	yRows.Close()
 
-	mRows, err := s.db.Query(`SELECT id, name, kind FROM mounts ORDER BY created_at ASC`)
+	mRows, err := s.ReadDB().Query(`SELECT id, name, kind FROM mounts ORDER BY created_at ASC`)
 	if err == nil {
 		for mRows.Next() {
 			var mo MountOption
@@ -550,7 +550,7 @@ func (s *Store) GetLibraryFacets(libraryType string) (LibraryFacets, error) {
 		mRows.Close()
 	}
 
-	lRows, err := s.db.Query(`
+	lRows, err := s.ReadDB().Query(`
 		SELECT DISTINCT CASE
 			WHEN UPPER(SUBSTR(mi.sort_title, 1, 1)) BETWEEN 'A' AND 'Z' THEN UPPER(SUBSTR(mi.sort_title, 1, 1))
 			ELSE '#'
@@ -583,7 +583,7 @@ func (s *Store) GetHomeData() (HomePayload, error) {
 	}
 
 	// Counts per shelf
-	cRows, err := s.db.Query(`
+	cRows, err := s.ReadDB().Query(`
 		SELECT library_type, COUNT(*)
 		FROM media_items
 		WHERE kind IN ('movie', 'show')
@@ -601,10 +601,10 @@ func (s *Store) GetHomeData() (HomePayload, error) {
 	}
 	cRows.Close()
 	out.UnmatchedCount = out.Counts[ShelfPending]
-	_ = s.db.QueryRow(`SELECT COUNT(*) FROM mounts`).Scan(&out.MountCount)
+	_ = s.ReadDB().QueryRow(`SELECT COUNT(*) FROM mounts`).Scan(&out.MountCount)
 
 	// Hero: latest matched items with backdrop
-	hRows, err := s.db.Query(mediaItemBaseSelect + `
+	hRows, err := s.ReadDB().Query(mediaItemBaseSelect + `
 		WHERE mi.kind IN ('movie', 'show')
 		  AND mi.library_type != 'pending'
 		  AND COALESCE(mi.backdrop_source, '') != ''
@@ -621,7 +621,7 @@ func (s *Store) GetHomeData() (HomePayload, error) {
 	}
 
 	// Continue watching: in-progress movies and episodes, plus next-up episodes for recently watched shows.
-	cwRows, err := s.db.Query(mediaItemBaseSelect + `
+	cwRows, err := s.ReadDB().Query(mediaItemBaseSelect + `
 		LEFT JOIN watch_states sws ON sws.item_id = mi.show_id
 		WHERE mi.kind IN ('movie', 'episode')
 		  AND ws.position_ms > 0
@@ -645,7 +645,7 @@ func (s *Store) GetHomeData() (HomePayload, error) {
 	}
 
 	// Also surface next-up episode for shows recently finished an episode
-	nextUpRows, err := s.db.Query(`
+	nextUpRows, err := s.ReadDB().Query(`
 		SELECT mi.show_id, MAX(COALESCE(ws.last_played_at, ws.updated_at)) AS lp
 		FROM media_items mi
 		JOIN watch_states ws ON ws.item_id = mi.id
@@ -713,7 +713,7 @@ func (s *Store) GetHomeData() (HomePayload, error) {
 
 func (s *Store) FindOnDeckEpisode(showID int64) (*MediaItem, error) {
 	// 1. Most recently partially watched episode
-	row := s.db.QueryRow(mediaItemBaseSelect+`
+	row := s.ReadDB().QueryRow(mediaItemBaseSelect+`
 		WHERE mi.kind = 'episode' AND mi.show_id = ?
 		  AND COALESCE(ws.position_ms, 0) > 0 AND COALESCE(ws.watched, 0) = 0
 		ORDER BY COALESCE(ws.last_played_at, ws.updated_at) DESC
@@ -723,7 +723,7 @@ func (s *Store) FindOnDeckEpisode(showID int64) (*MediaItem, error) {
 	}
 
 	// 2. First unwatched regular (season > 0) episode
-	row = s.db.QueryRow(mediaItemBaseSelect+`
+	row = s.ReadDB().QueryRow(mediaItemBaseSelect+`
 		WHERE mi.kind = 'episode' AND mi.show_id = ?
 		  AND COALESCE(ws.watched, 0) = 0
 		ORDER BY CASE WHEN COALESCE(mi.season_number, 1) > 0 THEN 0 ELSE 1 END,
@@ -734,7 +734,7 @@ func (s *Store) FindOnDeckEpisode(showID int64) (*MediaItem, error) {
 	}
 
 	// 3. Fallback to first episode
-	row = s.db.QueryRow(mediaItemBaseSelect+`
+	row = s.ReadDB().QueryRow(mediaItemBaseSelect+`
 		WHERE mi.kind = 'episode' AND mi.show_id = ?
 		ORDER BY CASE WHEN COALESCE(mi.season_number, 1) > 0 THEN 0 ELSE 1 END,
 			COALESCE(mi.season_number, 1) ASC, COALESCE(mi.episode_number, 0) ASC, mi.id ASC
@@ -783,7 +783,7 @@ func (s *Store) GetItemDetail(id int64) (ItemDetail, error) {
 	}
 
 	if item.Kind == KindShow {
-		sRows, err := s.db.Query(mediaItemBaseSelect+`
+		sRows, err := s.ReadDB().Query(mediaItemBaseSelect+`
 			WHERE mi.kind = 'season' AND mi.parent_id = ?
 			ORDER BY CASE WHEN COALESCE(mi.season_number, 1) > 0 THEN 0 ELSE 1 END, COALESCE(mi.season_number, 0) ASC`,
 			item.ID,
@@ -831,7 +831,7 @@ func (s *Store) GetItemDetail(id int64) (ItemDetail, error) {
 	if item.ShowID != nil {
 		metaTargetID = *item.ShowID
 	}
-	gRows, err := s.db.Query(`
+	gRows, err := s.ReadDB().Query(`
 		SELECT g.id, g.name FROM genres g
 		JOIN item_genres ig ON ig.genre_id = g.id
 		WHERE ig.item_id = ? ORDER BY g.name ASC`, metaTargetID)
@@ -845,7 +845,7 @@ func (s *Store) GetItemDetail(id int64) (ItemDetail, error) {
 		gRows.Close()
 	}
 
-	cRows, err := s.db.Query(`
+	cRows, err := s.ReadDB().Query(`
 		SELECT p.id, p.name, p.provider, p.external_id, p.photo_source, p.biography, p.birthday, p.department, p.place_of_birth,
 			ic.job, ic.character, ic.sort_order
 		FROM item_credits ic
@@ -875,7 +875,7 @@ func (s *Store) GetItemDetail(id int64) (ItemDetail, error) {
 	}
 
 	// Collections containing this item (or its root show)
-	lRows, err := s.db.Query(`
+	lRows, err := s.ReadDB().Query(`
 		SELECT l.id, l.kind, l.title, l.summary, l.poster_source, l.tmdb_id, l.created_at, l.updated_at,
 			(SELECT COUNT(*) FROM list_items li2 WHERE li2.list_id = l.id)
 		FROM lists l
@@ -900,7 +900,7 @@ func (s *Store) GetItemDetail(id int64) (ItemDetail, error) {
 
 	// Similar items by shared genre on the same shelf
 	if len(detail.Genres) > 0 {
-		simRows, err := s.db.Query(mediaItemBaseSelect+`
+		simRows, err := s.ReadDB().Query(mediaItemBaseSelect+`
 			WHERE mi.id != ? AND mi.kind IN ('movie', 'show') AND mi.library_type = ?
 			  AND EXISTS (
 				SELECT 1 FROM item_genres ig1
@@ -945,7 +945,7 @@ func (s *Store) GetEpisodesByShow(showID int64, seasonNumber *int) ([]MediaItem,
 	query += ` ORDER BY CASE WHEN COALESCE(mi.season_number, 1) > 0 THEN 0 ELSE 1 END,
 		COALESCE(mi.season_number, 1) ASC, COALESCE(mi.episode_number, 0) ASC, mi.id ASC`
 
-	rows, err := s.db.Query(query, args...)
+	rows, err := s.ReadDB().Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -969,11 +969,11 @@ func (s *Store) QueryUnmatched(limit, offset int) ([]UnmatchedEntry, int, error)
 		offset = 0
 	}
 	var total int
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM media_items WHERE kind IN ('movie', 'show') AND library_type = 'pending'`).Scan(&total); err != nil {
+	if err := s.ReadDB().QueryRow(`SELECT COUNT(*) FROM media_items WHERE kind IN ('movie', 'show') AND library_type = 'pending'`).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 
-	rows, err := s.db.Query(mediaItemBaseSelect+`
+	rows, err := s.ReadDB().Query(mediaItemBaseSelect+`
 		WHERE mi.kind IN ('movie', 'show') AND mi.library_type = 'pending'
 		ORDER BY mi.added_at DESC
 		LIMIT ? OFFSET ?`, limit, offset)
@@ -997,18 +997,18 @@ func (s *Store) QueryUnmatched(limit, offset int) ([]UnmatchedEntry, int, error)
 		var sample MediaFile
 		var fileCount int
 		if item.Kind == KindShow {
-			_ = s.db.QueryRow(`
+			_ = s.ReadDB().QueryRow(`
 				SELECT COUNT(*) FROM media_files mf
 				JOIN media_items ep ON ep.id = mf.item_id
 				WHERE ep.show_id = ? AND mf.role = 'video'`, item.ID).Scan(&fileCount)
-			row := s.db.QueryRow(mediaFileSelectCols+`
+			row := s.ReadDB().QueryRow(mediaFileSelectCols+`
 				JOIN media_items ep ON ep.id = mf.item_id
 				WHERE ep.show_id = ? AND mf.role = 'video'
 				ORDER BY mf.id ASC LIMIT 1`, item.ID)
 			sample, _ = scanMediaFile(row)
 		} else {
-			_ = s.db.QueryRow(`SELECT COUNT(*) FROM media_files WHERE item_id = ? AND role = 'video'`, item.ID).Scan(&fileCount)
-			row := s.db.QueryRow(mediaFileSelectCols+` WHERE mf.item_id = ? AND mf.role = 'video' ORDER BY mf.id ASC LIMIT 1`, item.ID)
+			_ = s.ReadDB().QueryRow(`SELECT COUNT(*) FROM media_files WHERE item_id = ? AND role = 'video'`, item.ID).Scan(&fileCount)
+			row := s.ReadDB().QueryRow(mediaFileSelectCols+` WHERE mf.item_id = ? AND mf.role = 'video' ORDER BY mf.id ASC LIMIT 1`, item.ID)
 			sample, _ = scanMediaFile(row)
 		}
 		out = append(out, UnmatchedEntry{
@@ -1045,7 +1045,7 @@ func (s *Store) SearchAll(query string, limit int) (SearchResults, error) {
 	}
 	pat := likeEscapePattern(q)
 
-	mRows, err := s.db.Query(mediaItemBaseSelect+`
+	mRows, err := s.ReadDB().Query(mediaItemBaseSelect+`
 		WHERE mi.kind = 'movie' AND (
 			mi.title LIKE ? ESCAPE '\' OR COALESCE(mi.original_title,'') LIKE ? ESCAPE '\' OR COALESCE(mi.aliases,'') LIKE ? ESCAPE '\'
 		)
@@ -1059,7 +1059,7 @@ func (s *Store) SearchAll(query string, limit int) (SearchResults, error) {
 		mRows.Close()
 	}
 
-	sRows, err := s.db.Query(mediaItemBaseSelect+`
+	sRows, err := s.ReadDB().Query(mediaItemBaseSelect+`
 		WHERE mi.kind = 'show' AND (
 			mi.title LIKE ? ESCAPE '\' OR COALESCE(mi.original_title,'') LIKE ? ESCAPE '\' OR COALESCE(mi.aliases,'') LIKE ? ESCAPE '\'
 		)
@@ -1073,7 +1073,7 @@ func (s *Store) SearchAll(query string, limit int) (SearchResults, error) {
 		sRows.Close()
 	}
 
-	eRows, err := s.db.Query(mediaItemBaseSelect+`
+	eRows, err := s.ReadDB().Query(mediaItemBaseSelect+`
 		WHERE mi.kind = 'episode' AND (
 			mi.title LIKE ? ESCAPE '\' OR COALESCE(mi.summary,'') LIKE ? ESCAPE '\'
 		)
@@ -1087,7 +1087,7 @@ func (s *Store) SearchAll(query string, limit int) (SearchResults, error) {
 		eRows.Close()
 	}
 
-	pRows, err := s.db.Query(`
+	pRows, err := s.ReadDB().Query(`
 		SELECT id, name, provider, external_id, photo_source, biography, birthday, department, place_of_birth
 		FROM people
 		WHERE name LIKE ? ESCAPE '\'
@@ -1121,7 +1121,7 @@ type PersonDetail struct {
 func (s *Store) GetPersonDetail(personID int64) (PersonDetail, error) {
 	var p Person
 	var ext, photo, bio, bday, dept, pob sql.NullString
-	err := s.db.QueryRow(`
+	err := s.ReadDB().QueryRow(`
 		SELECT id, name, provider, external_id, photo_source, biography, birthday, department, place_of_birth
 		FROM people WHERE id = ?`, personID,
 	).Scan(&p.ID, &p.Name, &p.Provider, &ext, &photo, &bio, &bday, &dept, &pob)
@@ -1139,7 +1139,7 @@ func (s *Store) GetPersonDetail(personID int64) (PersonDetail, error) {
 	p.PlaceOfBirth = nullStrPtr(pob)
 
 	items := make([]MediaItem, 0)
-	rows, err := s.db.Query(mediaItemBaseSelect+`
+	rows, err := s.ReadDB().Query(mediaItemBaseSelect+`
 		WHERE mi.kind IN ('movie', 'show')
 		  AND EXISTS (SELECT 1 FROM item_credits ic WHERE ic.item_id = mi.id AND ic.person_id = ?)
 		ORDER BY COALESCE(mi.year, 0) DESC, mi.sort_title ASC`, personID)
@@ -1158,7 +1158,7 @@ func (s *Store) GetWorkPrefs(workKey string) (WorkPrefs, error) {
 	var wp WorkPrefs
 	var introEn, credEn int
 	var audioLang, subLang sql.NullString
-	err := s.db.QueryRow(`
+	err := s.ReadDB().QueryRow(`
 		SELECT work_key, intro_enabled, intro_start_ms, intro_end_ms,
 			credits_enabled, credits_from_end_ms, keep_easter_egg_ms,
 			preferred_audio_lang, preferred_sub_lang, playback_speed, updated_at
@@ -1195,7 +1195,7 @@ func (s *Store) ListMediaLists(kind string) ([]MediaList, error) {
 		args = append(args, kind)
 	}
 	query += ` ORDER BY l.updated_at DESC, l.id DESC`
-	rows, err := s.db.Query(query, args...)
+	rows, err := s.ReadDB().Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -1219,7 +1219,7 @@ func (s *Store) ListMediaLists(kind string) ([]MediaList, error) {
 func (s *Store) GetMediaListDetail(listID int64) (MediaList, error) {
 	var lst MediaList
 	var sum, poster, tid sql.NullString
-	err := s.db.QueryRow(`
+	err := s.ReadDB().QueryRow(`
 		SELECT l.id, l.kind, l.title, l.summary, l.poster_source, l.tmdb_id, l.created_at, l.updated_at,
 			(SELECT COUNT(*) FROM list_items li WHERE li.list_id = l.id)
 		FROM lists l WHERE l.id = ?`, listID,
@@ -1235,7 +1235,7 @@ func (s *Store) GetMediaListDetail(listID int64) (MediaList, error) {
 	lst.TmdbID = nullStrPtr(tid)
 	lst.Items = make([]MediaItem, 0)
 
-	rows, err := s.db.Query(mediaItemBaseSelect+`
+	rows, err := s.ReadDB().Query(mediaItemBaseSelect+`
 		JOIN list_items li ON li.item_id = mi.id
 		WHERE li.list_id = ?
 		ORDER BY li.sort_order ASC, mi.year ASC, mi.sort_title ASC`, listID)
@@ -1252,23 +1252,23 @@ func (s *Store) GetMediaListDetail(listID int64) (MediaList, error) {
 
 func (s *Store) GetSystemOverview() SystemOverview {
 	var ov SystemOverview
-	_ = s.db.QueryRow(`SELECT COUNT(*) FROM media_items WHERE kind = 'movie'`).Scan(&ov.Movies)
-	_ = s.db.QueryRow(`SELECT COUNT(*) FROM media_items WHERE kind = 'show'`).Scan(&ov.Shows)
-	_ = s.db.QueryRow(`SELECT COUNT(*) FROM media_items WHERE kind = 'episode'`).Scan(&ov.Episodes)
-	_ = s.db.QueryRow(`SELECT COUNT(*) FROM media_files`).Scan(&ov.Files)
-	_ = s.db.QueryRow(`SELECT COUNT(*) FROM lists WHERE kind = 'collection'`).Scan(&ov.Collections)
-	_ = s.db.QueryRow(`SELECT COUNT(*) FROM lists WHERE kind = 'playlist'`).Scan(&ov.Playlists)
-	_ = s.db.QueryRow(`SELECT COUNT(*) FROM media_items WHERE kind IN ('movie', 'show') AND library_type = 'pending'`).Scan(&ov.Unmatched)
-	_ = s.db.QueryRow(`SELECT COUNT(*) FROM mounts`).Scan(&ov.Mounts)
-	_ = s.db.QueryRow(`SELECT COUNT(*) FROM people`).Scan(&ov.People)
-	_ = s.db.QueryRow(`SELECT COUNT(*) FROM genres`).Scan(&ov.Genres)
-	_ = s.db.QueryRow(`SELECT page_count * page_size FROM pragma_page_count(), pragma_page_size()`).Scan(&ov.DBBytes)
+	_ = s.ReadDB().QueryRow(`SELECT COUNT(*) FROM media_items WHERE kind = 'movie'`).Scan(&ov.Movies)
+	_ = s.ReadDB().QueryRow(`SELECT COUNT(*) FROM media_items WHERE kind = 'show'`).Scan(&ov.Shows)
+	_ = s.ReadDB().QueryRow(`SELECT COUNT(*) FROM media_items WHERE kind = 'episode'`).Scan(&ov.Episodes)
+	_ = s.ReadDB().QueryRow(`SELECT COUNT(*) FROM media_files`).Scan(&ov.Files)
+	_ = s.ReadDB().QueryRow(`SELECT COUNT(*) FROM lists WHERE kind = 'collection'`).Scan(&ov.Collections)
+	_ = s.ReadDB().QueryRow(`SELECT COUNT(*) FROM lists WHERE kind = 'playlist'`).Scan(&ov.Playlists)
+	_ = s.ReadDB().QueryRow(`SELECT COUNT(*) FROM media_items WHERE kind IN ('movie', 'show') AND library_type = 'pending'`).Scan(&ov.Unmatched)
+	_ = s.ReadDB().QueryRow(`SELECT COUNT(*) FROM mounts`).Scan(&ov.Mounts)
+	_ = s.ReadDB().QueryRow(`SELECT COUNT(*) FROM people`).Scan(&ov.People)
+	_ = s.ReadDB().QueryRow(`SELECT COUNT(*) FROM genres`).Scan(&ov.Genres)
+	_ = s.ReadDB().QueryRow(`SELECT page_count * page_size FROM pragma_page_count(), pragma_page_size()`).Scan(&ov.DBBytes)
 	return ov
 }
 
 // LookupFileByMountPath checks if a mount+path exists and returns its id/item_id/match_state.
 func (s *Store) ListFilesByMount(mountID string) ([]MediaFile, error) {
-	rows, err := s.db.Query(mediaFileSelectCols+` WHERE mf.mount_id = ? ORDER BY mf.path ASC`, mountID)
+	rows, err := s.ReadDB().Query(mediaFileSelectCols+` WHERE mf.mount_id = ? ORDER BY mf.path ASC`, mountID)
 	if err != nil {
 		return nil, err
 	}

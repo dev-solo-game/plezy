@@ -9,6 +9,39 @@ const MAX_CACHE_ENTRIES = 160;
 const cache = new Map<string, CacheEntry>();
 const inFlight = new Map<string, Promise<unknown>>();
 
+// Keys persisted to localStorage so a cold page load can paint the last known
+// data immediately (stale-while-revalidate) instead of a skeleton. Cleared on
+// logout via clearQueryCache().
+const PERSISTED_KEYS = new Set(['home']);
+const STORAGE_PREFIX = 'ttplay:qc:v1:';
+
+function persist(key: string, entry: CacheEntry): void {
+  if (!PERSISTED_KEYS.has(key)) return;
+  try {
+    window.localStorage.setItem(STORAGE_PREFIX + key, JSON.stringify(entry));
+  } catch {
+    // quota exceeded or storage unavailable; persistence is best-effort
+  }
+}
+
+function hydrate(): void {
+  if (typeof window === 'undefined') return;
+  for (const key of PERSISTED_KEYS) {
+    try {
+      const raw = window.localStorage.getItem(STORAGE_PREFIX + key);
+      if (!raw) continue;
+      const entry = JSON.parse(raw) as CacheEntry;
+      if (entry && typeof entry.fetchedAt === 'number' && entry.data !== undefined) {
+        cache.set(key, entry);
+      }
+    } catch {
+      // ignore corrupt entries
+    }
+  }
+}
+
+hydrate();
+
 export function getCached<T>(key: string): T | undefined {
   const entry = cache.get(key);
   if (!entry) return undefined;
@@ -28,7 +61,9 @@ export function setCached<T>(key: string, data: T): void {
   if (cache.has(key)) {
     cache.delete(key);
   }
-  cache.set(key, { data, fetchedAt: Date.now() });
+  const entry = { data, fetchedAt: Date.now() };
+  cache.set(key, entry);
+  persist(key, entry);
   while (cache.size > MAX_CACHE_ENTRIES) {
     const oldest = cache.keys().next().value;
     if (oldest === undefined) break;
@@ -39,6 +74,13 @@ export function setCached<T>(key: string, data: T): void {
 export function clearQueryCache(): void {
   cache.clear();
   inFlight.clear();
+  for (const key of PERSISTED_KEYS) {
+    try {
+      window.localStorage.removeItem(STORAGE_PREFIX + key);
+    } catch {
+      // ignore
+    }
+  }
 }
 
 export async function fetchWithCache<T>(key: string, fetcher: () => Promise<T>): Promise<T> {

@@ -110,7 +110,7 @@ func (s *Store) settingsKV() map[string]string {
 		return s.settingsCache
 	}
 	loaded := make(map[string]string)
-	rows, err := s.db.Query(`SELECT key, value FROM server_settings`)
+	rows, err := s.ReadDB().Query(`SELECT key, value FROM server_settings`)
 	if err != nil {
 		// Do not cache a failed load; next call retries.
 		return loaded

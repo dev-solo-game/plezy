@@ -251,7 +251,7 @@ const mountSelectCols = `
 	LEFT JOIN mount_scan_states st ON st.mount_id = m.id`
 
 func (s *Store) GetMount(id string) (MountRecord, error) {
-	row := s.db.QueryRow(mountSelectCols+` WHERE m.id = ?`, id)
+	row := s.ReadDB().QueryRow(mountSelectCols+` WHERE m.id = ?`, id)
 	m, err := s.scanMountRow(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return MountRecord{}, ErrNotFound
@@ -260,7 +260,7 @@ func (s *Store) GetMount(id string) (MountRecord, error) {
 }
 
 func (s *Store) ListMounts() ([]MountRecord, error) {
-	rows, err := s.db.Query(mountSelectCols + ` ORDER BY m.created_at ASC`)
+	rows, err := s.ReadDB().Query(mountSelectCols + ` ORDER BY m.created_at ASC`)
 	if err != nil {
 		return nil, err
 	}

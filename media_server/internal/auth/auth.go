@@ -98,7 +98,7 @@ func (s *Service) IsInitialized() bool {
 		return true
 	}
 	var cnt int
-	err := s.store.DB().QueryRow(`SELECT COUNT(*) FROM admin_account WHERE id = 1`).Scan(&cnt)
+	err := s.store.ReadDB().QueryRow(`SELECT COUNT(*) FROM admin_account WHERE id = 1`).Scan(&cnt)
 	return err == nil && cnt > 0
 }
 
@@ -123,7 +123,7 @@ func (s *Service) GetAdmin() (*db.AdminAccount, error) {
 
 func (s *Service) loadAdmin() (*db.AdminAccount, error) {
 	var acc db.AdminAccount
-	err := s.store.DB().QueryRow(`
+	err := s.store.ReadDB().QueryRow(`
 		SELECT username, password_salt, password_hash, created_at, updated_at
 		FROM admin_account WHERE id = 1`,
 	).Scan(&acc.Username, &acc.PasswordSalt, &acc.PasswordHash, &acc.CreatedAt, &acc.UpdatedAt)
@@ -298,7 +298,7 @@ func (s *Service) Authenticate(token string) (*db.AdminAccount, *db.SessionRecor
 	s.cacheMu.Unlock()
 
 	var sess db.SessionRecord
-	err = s.store.DB().QueryRow(`
+	err = s.store.ReadDB().QueryRow(`
 		SELECT token_id, token_hash, device_name, platform, ip, created_at, last_used_at, expires_at
 		FROM sessions WHERE token_hash = ?`, th,
 	).Scan(&sess.TokenID, &sess.TokenHash, &sess.DeviceName, &sess.Platform, &sess.IP, &sess.CreatedAt, &sess.LastUsedAt, &sess.ExpiresAt)

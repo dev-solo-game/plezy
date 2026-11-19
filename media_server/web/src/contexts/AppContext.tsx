@@ -1,7 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { api } from '../api/client';
 import { prefetchHome } from '../api/prefetch';
-import { clearQueryCache } from '../api/queryCache';
+import { getCached, clearQueryCache } from '../api/queryCache';
 import type { AccentTheme, BootstrapInfo, ExternalServerRecord, ScanProgressEvent, ScrapeProgressEvent } from '../types';
 
 export interface ToastMessage {
@@ -74,9 +74,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setLibraryVersion((v) => v + 1);
   }, []);
 
+  // Library change events arrive in bursts during scans/scrapes; coalesce them so
+  // visible pages refetch at most every few seconds.
   const scheduleLibraryRefresh = useCallback(() => {
     const now = Date.now();
-    if (now - lastLibRefreshAtRef.current > 1500 && libRefreshTimerRef.current === null) {
+    if (now - lastLibRefreshAtRef.current > 4000 && libRefreshTimerRef.current === null) {
       lastLibRefreshAtRef.current = now;
       setLibraryVersion((v) => v + 1);
       return;
@@ -86,7 +88,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       libRefreshTimerRef.current = null;
       lastLibRefreshAtRef.current = Date.now();
       setLibraryVersion((v) => v + 1);
-    }, 1200);
+    }, 3000);
   }, []);
 
   const dismissScrapeBanner = useCallback(() => {
@@ -131,19 +133,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const refreshAuth = useCallback(async () => {
     setLoading(true);
     try {
+      // bootstrap and me are independent: run them in parallel instead of as a
+      // two-step waterfall. If we were logged in last time (persisted home
+      // exists), start /home immediately too so it is ready when auth settles.
+      if (getCached('home') !== undefined) {
+        prefetchHome();
+      }
+      const mePromise = api.me().then(
+        (me) => me.username,
+        () => null
+      );
       const boot = await api.bootstrap();
       setBootstrap(boot);
       setAccentTheme(boot.accent_theme || 'glacier');
-      if (boot.initialized) {
-        try {
-          const me = await api.me();
-          setUsername(me.username);
-        } catch {
-          setUsername(null);
-        }
-      } else {
-        setUsername(null);
+      const user = boot.initialized ? await mePromise : null;
+      if (!user) {
+        // Logged out / session expired: drop cached and persisted library data.
+        clearQueryCache();
       }
+      setUsername(user);
     } finally {
       setLoading(false);
     }
@@ -155,7 +163,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   useEffect(() => {
     if (!username) {
-      clearQueryCache();
       setActiveScans([]);
       setScrapeProgress(null);
       setPendingScrapeCount(0);

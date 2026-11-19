@@ -16,6 +16,7 @@ import (
 
 type Store struct {
 	db          *sql.DB
+	rdb         *sql.DB
 	dbPath      string
 	dataDir     string
 	vault       *vault.Vault
@@ -52,17 +53,52 @@ func Open(dataDir string, v *vault.Vault) (*Store, error) {
 		_ = sqlDB.Close()
 		return nil, err
 	}
+
+	// Separate read-only pool. The writer connection above stays single (SQLite
+	// allows one writer), but in WAL mode readers never block on it, so home /
+	// browse / auth / artwork reads no longer queue behind scanner transactions
+	// and scraper writes.
+	readDB, err := sql.Open("sqlite", dbPath+"?_pragma=busy_timeout(5000)&_pragma=query_only(1)")
+	if err != nil {
+		_ = sqlDB.Close()
+		return nil, fmt.Errorf("open sqlite read pool: %w", err)
+	}
+	readDB.SetMaxOpenConns(readPoolSize)
+	readDB.SetMaxIdleConns(readPoolSize)
+	readDB.SetConnMaxIdleTime(5 * time.Minute)
+	if err := readDB.Ping(); err != nil {
+		_ = readDB.Close()
+		_ = sqlDB.Close()
+		return nil, fmt.Errorf("open sqlite read pool: %w", err)
+	}
+	s.rdb = readDB
 	return s, nil
 }
 
+// readPoolSize bounds concurrent read connections.
+const readPoolSize = 6
+
 func (s *Store) Close() error {
+	if s.rdb != nil {
+		_ = s.rdb.Close()
+	}
 	if s.db != nil {
 		return s.db.Close()
 	}
 	return nil
 }
 
+// DB returns the single writer connection. Use it for writes and for reads that
+// must observe an in-progress write sequence.
 func (s *Store) DB() *sql.DB {
+	return s.db
+}
+
+// ReadDB returns the read-only connection pool for independent queries.
+func (s *Store) ReadDB() *sql.DB {
+	if s.rdb != nil {
+		return s.rdb
+	}
 	return s.db
 }
 

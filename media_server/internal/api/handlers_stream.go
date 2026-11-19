@@ -499,6 +499,13 @@ func (s *Server) handleLocalArtwork(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unsupported image format", http.StatusForbidden)
 		return
 	}
+	if data, ok := s.readLocalArtworkCache(mountID, norm); ok {
+		w.Header().Set("Content-Type", stream.ContentTypeForExt(ext))
+		w.Header().Set("Cache-Control", "public, max-age=86400")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(data)
+		return
+	}
 	m, err := s.Store.GetMount(mountID)
 	if err != nil {
 		http.Error(w, "mount not found", http.StatusNotFound)
@@ -522,6 +529,9 @@ func (s *Server) handleLocalArtwork(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, "failed to read artwork", http.StatusBadGateway)
 		return
+	}
+	if m.Kind != "local" && len(data) > 0 {
+		s.writeLocalArtworkCache(mountID, norm, data)
 	}
 	w.Header().Set("Content-Type", stream.ContentTypeForExt(ext))
 	w.Header().Set("Cache-Control", "public, max-age=86400")

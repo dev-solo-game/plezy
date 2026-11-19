@@ -44,6 +44,7 @@ type Server struct {
 	bgPeople  map[int64]bool
 	pubRateMu sync.Mutex
 	pubRate   map[string]*ipRateBucket
+	home      homeCache
 }
 
 func (s *Server) SetWebDir(dir string) {
@@ -82,6 +83,7 @@ func NewServer(
 		pubRate:     make(map[string]*ipRateBucket),
 	}
 	s.Mux = s.buildMux()
+	s.watchHubForInvalidation()
 	return s
 }
 
@@ -213,7 +215,7 @@ func (s *Server) buildMux() http.Handler {
 	// Embedded SPA static files
 	mux.HandleFunc("GET /", s.handleSPA)
 
-	return s.withRequestLogging(mux)
+	return s.withRequestLogging(s.withDataInvalidation(mux))
 }
 
 type loggingResponseWriter struct {
@@ -489,7 +491,15 @@ func writeJSON(w http.ResponseWriter, r *http.Request, status int, v any) {
 		http.Error(w, `{"code":500,"message":"marshal error"}`, http.StatusInternalServerError)
 		return
 	}
+	writeRawJSON(w, r, status, raw)
+}
+
+// writeRawJSON writes pre-serialized JSON, gzip-compressing larger payloads.
+func writeRawJSON(w http.ResponseWriter, r *http.Request, status int, raw []byte) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	if len(raw) > 512 {
+		w.Header().Add("Vary", "Accept-Encoding")
+	}
 	if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") && len(raw) > 512 {
 		w.Header().Set("Content-Encoding", "gzip")
 		w.WriteHeader(status)

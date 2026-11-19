@@ -171,7 +171,7 @@ func (c *Coordinator) WaitOrRunScrapeSync(ctx context.Context, retryUnmatched, r
 
 func (c *Coordinator) TaskStatus() TaskStatusSnapshot {
 	var unmatched int64
-	_ = c.Store.DB().QueryRow(`SELECT COUNT(*) FROM media_items WHERE library_type = 'pending' AND kind IN ('movie','show')`).Scan(&unmatched)
+	_ = c.Store.ReadDB().QueryRow(`SELECT COUNT(*) FROM media_items WHERE library_type = 'pending' AND kind IN ('movie','show')`).Scan(&unmatched)
 	return TaskStatusSnapshot{
 		Scans:          c.Scanner.ActiveScans(),
 		Scrape:         c.Scraper.CurrentStatus(),

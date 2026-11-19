@@ -69,7 +69,7 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
   return data as T;
 }
 
-export function artworkUrl(source?: string | null, size: 'w185' | 'w500' | 'w780' | 'original' = 'w500'): string {
+export function artworkUrl(source?: string | null, size: 'w185' | 'w500' | 'w780' | 'w1280' | 'original' = 'w500'): string {
   if (!source) return '';
   if (source.startsWith('mount:')) {
     const rest = source.slice('mount:'.length);

@@ -108,11 +108,11 @@ export const HomePage: React.FC = () => {
 
       {activeHero && (
         <section className="hero-banner">
-          {artworkUrl(activeHero.backdrop_source || activeHero.poster_source, 'original') && (
+          {artworkUrl(activeHero.backdrop_source || activeHero.poster_source, 'w1280') && (
             <img
               className="hero-bg"
               decoding="async"
-              src={artworkUrl(activeHero.backdrop_source || activeHero.poster_source, 'original')}
+              src={artworkUrl(activeHero.backdrop_source || activeHero.poster_source, 'w1280')}
               alt={activeHero.title}
             />
           )}

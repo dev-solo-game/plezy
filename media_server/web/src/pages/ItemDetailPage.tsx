@@ -78,7 +78,7 @@ export const ItemDetailPage: React.FC = () => {
   const activeFile: MediaFile | undefined =
     detail.files?.find((f) => f.id === selectedFileId) || detail.files?.[0];
 
-  const backdrop = artworkUrl(item.backdrop_source || item.show_backdrop || item.poster_source, 'original');
+  const backdrop = artworkUrl(item.backdrop_source || item.show_backdrop || item.poster_source, 'w1280');
   const poster = artworkUrl(item.poster_source || item.show_poster, 'w500');
   const isFav = Boolean(item.watch_state?.favorite);
   const isWatched = Boolean(item.watch_state?.watched);

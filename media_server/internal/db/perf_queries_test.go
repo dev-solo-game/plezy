@@ -106,6 +106,35 @@ func TestMediaItemAggregatesAcrossEpisodes(t *testing.T) {
 	}
 }
 
+func TestReadPoolIsReadOnlyAndSeesCommittedWrites(t *testing.T) {
+	s := openTestStore(t)
+	if s.ReadDB() == s.DB() {
+		t.Fatal("expected a separate read pool")
+	}
+	if _, err := s.ReadDB().Exec(`INSERT INTO server_settings(key, value) VALUES ('x', 'y')`); err == nil {
+		t.Fatal("read pool must reject writes (query_only)")
+	}
+	if err := s.SetSetting("probe", "v1"); err != nil {
+		t.Fatal(err)
+	}
+	var v string
+	if err := s.ReadDB().QueryRow(`SELECT value FROM server_settings WHERE key = 'probe'`).Scan(&v); err != nil || v != "v1" {
+		t.Fatalf("read pool did not see committed write: v=%q err=%v", v, err)
+	}
+	// While the writer holds an open transaction, reads must not block.
+	tx, err := s.DB().Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.Exec(`UPDATE server_settings SET value = 'v2' WHERE key = 'probe'`); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReadDB().QueryRow(`SELECT value FROM server_settings WHERE key = 'probe'`).Scan(&v); err != nil || v != "v1" {
+		t.Fatalf("expected snapshot read during open write tx: v=%q err=%v", v, err)
+	}
+}
+
 func TestServerSettingsCacheInvalidation(t *testing.T) {
 	s := openTestStore(t)
 	if got := s.GetServerSettings().ServerName; got != DefaultServerName {

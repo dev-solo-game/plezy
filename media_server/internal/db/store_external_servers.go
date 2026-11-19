@@ -28,7 +28,7 @@ func ValidExternalAuthMode(mode string) bool {
 }
 
 func (s *Store) ListExternalServers() ([]ExternalServerRecord, error) {
-	rows, err := s.db.Query(`
+	rows, err := s.ReadDB().Query(`
 		SELECT id, name, kind, base_url, auth_mode, username, user_id, device_id,
 		       server_id, server_version, allow_insecure_tls, encrypted_secrets,
 		       enabled, created_at, updated_at
@@ -56,7 +56,7 @@ func (s *Store) GetExternalServer(id string) (ExternalServerRecord, error) {
 	if id == "" {
 		return ExternalServerRecord{}, ErrNotFound
 	}
-	row := s.db.QueryRow(`
+	row := s.ReadDB().QueryRow(`
 		SELECT id, name, kind, base_url, auth_mode, username, user_id, device_id,
 		       server_id, server_version, allow_insecure_tls, encrypted_secrets,
 		       enabled, created_at, updated_at

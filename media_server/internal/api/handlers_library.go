@@ -11,12 +11,24 @@ import (
 )
 
 func (s *Server) handleHome(w http.ResponseWriter, r *http.Request, _ *db.AdminAccount, _ *db.SessionRecord) {
-	home, err := s.Store.GetHomeData()
+	body, etag, err := s.home.get(func() (any, error) {
+		home, err := s.Store.GetHomeData()
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"code": 0, "home": home}, nil
+	})
 	if err != nil {
 		writeMappedError(w, r, err)
 		return
 	}
-	writeJSON(w, r, http.StatusOK, map[string]any{"code": 0, "home": home})
+	w.Header().Set("ETag", etag)
+	w.Header().Set("Cache-Control", "private, no-cache")
+	if etagMatches(r.Header.Get("If-None-Match"), etag) {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+	writeRawJSON(w, r, http.StatusOK, body)
 }
 
 func (s *Server) handleLibraryItems(w http.ResponseWriter, r *http.Request, _ *db.AdminAccount, _ *db.SessionRecord) {
