@@ -14,7 +14,14 @@ import 'scrapers/scraped_metadata.dart';
 typedef MountTextReader = Future<String?> Function(String mountId, String path);
 
 class ScrapeSummary {
-  const ScrapeSummary({this.matched = 0, this.unmatched = 0, this.merged = 0, this.skipped = 0, this.stoppedBy});
+  const ScrapeSummary({
+    this.matched = 0,
+    this.unmatched = 0,
+    this.merged = 0,
+    this.skipped = 0,
+    this.stoppedBy,
+    this.stoppedByMissingKey = false,
+  });
 
   final int matched;
   final int unmatched;
@@ -29,6 +36,9 @@ class ScrapeSummary {
   /// Set when scraping stopped early: a missing or rejected API key, or the
   /// network being down. The titles not reached stay queued.
   final String? stoppedBy;
+
+  /// True when scraping stopped specifically because TMDB credentials are not configured.
+  final bool stoppedByMissingKey;
 
   bool get hasChanges => matched > 0 || unmatched > 0 || merged > 0;
 }
@@ -248,6 +258,7 @@ class LibraryScraper {
           merged: merged,
           skipped: skipped,
           stoppedBy: e.message,
+          stoppedByMissingKey: e.isMissingKey,
         );
       }
     }
@@ -813,7 +824,13 @@ class LibraryScraper {
       final episodes = await _repo.children(seasonRow.id);
       if (pendingOnly && episodes.every((episode) => episode.item.scrapedAt != null)) continue;
       if (missingSummaryOnly &&
-          episodes.every((episode) => episode.item.summary != null && episode.item.summary!.isNotEmpty)) {
+          episodes.every(
+            (episode) =>
+                episode.item.summary != null &&
+                episode.item.summary!.isNotEmpty &&
+                episode.item.metadataSource != null &&
+                episode.item.title != 'Episode ${episode.item.episodeNumber}',
+          )) {
         continue;
       }
 
@@ -828,14 +845,18 @@ class LibraryScraper {
       await _repo.updateItem(
         seasonRow.id,
         LibraryItemsCompanion(
-          title: season.title == null ? const Value.absent() : Value(season.title!),
+          title: (season.title == null || (missingSummaryOnly && seasonRow.title != 'Season $number'))
+              ? const Value.absent()
+              : Value(season.title!),
           summary: (seasonRow.summary != null && seasonRow.summary!.isNotEmpty && missingSummaryOnly)
               ? const Value.absent()
               : Value(season.summary),
           posterSource: (seasonRow.posterSource != null && missingSummaryOnly)
               ? const Value.absent()
               : Value(season.posterSource),
-          metadataSource: missingSummaryOnly ? const Value.absent() : Value(provider.source),
+          metadataSource: (missingSummaryOnly && seasonRow.metadataSource != null)
+              ? const Value.absent()
+              : Value(provider.source),
           scrapedAt: missingSummaryOnly ? const Value.absent() : Value(_now()),
           updatedAt: preserveUpdatedAt ? Value(seasonRow.updatedAt) : const Value.absent(),
         ),
@@ -844,7 +865,11 @@ class LibraryScraper {
       final byNumber = {for (final episode in season.episodes) episode.number: episode};
       for (final episodeView in episodes) {
         if (pendingOnly && episodeView.item.scrapedAt != null) continue;
-        if (missingSummaryOnly && episodeView.item.summary != null && episodeView.item.summary!.isNotEmpty) {
+        if (missingSummaryOnly &&
+            episodeView.item.summary != null &&
+            episodeView.item.summary!.isNotEmpty &&
+            episodeView.item.metadataSource != null &&
+            episodeView.item.title != 'Episode ${episodeView.item.episodeNumber}') {
           continue;
         }
         final scraped = byNumber[episodeView.item.episodeNumber];
@@ -870,13 +895,13 @@ class LibraryScraper {
     bool missingSummaryOnly = false,
     bool preserveUpdatedAt = false,
   }) async {
+    final hasGenericTitle = episode.title.isEmpty || episode.title == 'Episode ${episode.episodeNumber}';
+    final keepExistingTitle = missingSummaryOnly && !hasGenericTitle && episode.metadataSource != null;
     await _repo.updateItem(
       episode.id,
       LibraryItemsCompanion(
-        title: (scraped.title == null || (missingSummaryOnly && episode.title.isNotEmpty))
-            ? const Value.absent()
-            : Value(scraped.title!),
-        sortTitle: (scraped.title == null || (missingSummaryOnly && episode.title.isNotEmpty))
+        title: (scraped.title == null || keepExistingTitle) ? const Value.absent() : Value(scraped.title!),
+        sortTitle: (scraped.title == null || keepExistingTitle)
             ? const Value.absent()
             : Value(LibraryRepository.sortTitleFor(scraped.title!)),
         summary:
@@ -891,7 +916,7 @@ class LibraryScraper {
         posterSource: (missingSummaryOnly && episode.posterSource != null)
             ? const Value.absent()
             : Value(scraped.stillSource),
-        metadataSource: missingSummaryOnly ? const Value.absent() : Value(source),
+        metadataSource: (missingSummaryOnly && episode.metadataSource != null) ? const Value.absent() : Value(source),
         scrapedAt: missingSummaryOnly ? const Value.absent() : Value(_now()),
         updatedAt: preserveUpdatedAt ? Value(episode.updatedAt) : const Value.absent(),
       ),
@@ -899,10 +924,10 @@ class LibraryScraper {
     );
   }
 
-  /// Lazily fills heavy detail fields (`summary`, `tagline`, `credits`, and
-  /// episode overviews) by external ID (`tmdbId` / `bangumiId`) without
-  /// searching, modifying `locked`/`workKey`, or bumping `updatedAt` so local
-  /// hydration never causes dirty sync outbox churn.
+  /// Lazily fills heavy detail fields (`summary`, `tagline`, `credits`,
+  /// artwork paths, and episode metadata) by external ID (`tmdbId` / `bangumiId`)
+  /// without searching, modifying `locked`/`workKey`, or bumping `updatedAt` so
+  /// local hydration never causes dirty sync outbox churn.
   Future<bool> hydrateWorkDetailsById(int itemId) async {
     final initial = (await _repo.getItem(itemId))?.item;
     if (initial == null) return false;
@@ -914,10 +939,23 @@ class LibraryScraper {
 
     final needsSummary = root.summary == null || root.summary!.isEmpty;
     final needsCredits = (await _repo.creditsOf(root.id)).isEmpty;
+    final needsWorkMeta =
+        needsSummary ||
+        needsCredits ||
+        root.backdropSource == null ||
+        root.backdropSource!.isEmpty ||
+        root.logoSource == null ||
+        root.logoSource!.isEmpty;
     final needsEpisodes =
         root.kind == LibraryKinds.show &&
-        (await _repo.episodesOfShow(root.id)).any((e) => e.item.summary == null || e.item.summary!.isEmpty);
-    if (!needsSummary && !needsCredits && !needsEpisodes) return false;
+        (await _repo.episodesOfShow(root.id)).any(
+          (e) =>
+              e.item.summary == null ||
+              e.item.summary!.isEmpty ||
+              e.item.metadataSource == null ||
+              e.item.title == 'Episode ${e.item.episodeNumber}',
+        );
+    if (!needsWorkMeta && !needsEpisodes) return false;
 
     MetadataProvider? provider;
     String? extId;
@@ -933,16 +971,59 @@ class LibraryScraper {
 
     var hydrated = false;
     try {
-      if (needsSummary || needsCredits) {
+      if (needsWorkMeta) {
         final details = root.kind == LibraryKinds.movie ? await provider.movie(extId) : await provider.show(extId);
         final nextSummary = (root.summary == null || root.summary!.isEmpty) ? details.summary : null;
         final nextTagline = (root.tagline == null || root.tagline!.isEmpty) ? details.tagline : null;
-        if (nextSummary != null || nextTagline != null) {
+        final nextOrigTitle = (root.originalTitle == null || root.originalTitle!.isEmpty)
+            ? details.originalTitle
+            : null;
+        final nextAliases = (root.aliases == null || root.aliases!.isEmpty) && details.aliases.isNotEmpty
+            ? details.aliases.join('\n')
+            : null;
+        final nextReleaseDate = (root.releaseDate == null || root.releaseDate!.isEmpty) ? details.releaseDate : null;
+        final nextContentRating = (root.contentRating == null || root.contentRating!.isEmpty)
+            ? details.contentRating
+            : null;
+        final nextStudio = (root.studio == null || root.studio!.isEmpty) ? details.studio : null;
+        final nextRuntimeMs = root.runtimeMs == null ? details.runtimeMs : null;
+        final nextPoster = (root.posterSource == null || root.posterSource!.isEmpty) ? details.posterSource : null;
+        final nextBackdrop = (root.backdropSource == null || root.backdropSource!.isEmpty)
+            ? details.backdropSource
+            : null;
+        final nextLogo = (root.logoSource == null || root.logoSource!.isEmpty) ? details.logoSource : null;
+        final nextImdb = (root.imdbId == null || root.imdbId!.isEmpty) ? details.imdbId : null;
+        final nextTvdb = (root.tvdbId == null || root.tvdbId!.isEmpty) ? details.tvdbId : null;
+
+        if (nextSummary != null ||
+            nextTagline != null ||
+            nextOrigTitle != null ||
+            nextAliases != null ||
+            nextReleaseDate != null ||
+            nextContentRating != null ||
+            nextStudio != null ||
+            nextRuntimeMs != null ||
+            nextPoster != null ||
+            nextBackdrop != null ||
+            nextLogo != null ||
+            nextImdb != null ||
+            nextTvdb != null) {
           await _repo.updateItem(
             root.id,
             LibraryItemsCompanion(
               summary: nextSummary != null ? Value(nextSummary) : const Value.absent(),
               tagline: nextTagline != null ? Value(nextTagline) : const Value.absent(),
+              originalTitle: nextOrigTitle != null ? Value(nextOrigTitle) : const Value.absent(),
+              aliases: nextAliases != null ? Value(nextAliases) : const Value.absent(),
+              releaseDate: nextReleaseDate != null ? Value(nextReleaseDate) : const Value.absent(),
+              contentRating: nextContentRating != null ? Value(nextContentRating) : const Value.absent(),
+              studio: nextStudio != null ? Value(nextStudio) : const Value.absent(),
+              runtimeMs: nextRuntimeMs != null ? Value(nextRuntimeMs) : const Value.absent(),
+              posterSource: nextPoster != null ? Value(nextPoster) : const Value.absent(),
+              backdropSource: nextBackdrop != null ? Value(nextBackdrop) : const Value.absent(),
+              logoSource: nextLogo != null ? Value(nextLogo) : const Value.absent(),
+              imdbId: nextImdb != null ? Value(nextImdb) : const Value.absent(),
+              tvdbId: nextTvdb != null ? Value(nextTvdb) : const Value.absent(),
               updatedAt: Value(root.updatedAt),
             ),
             preserveUpdatedAt: true,

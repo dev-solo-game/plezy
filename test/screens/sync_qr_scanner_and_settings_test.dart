@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:drift/drift.dart' show Value;
 import 'package:drift/native.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -17,9 +18,12 @@ import 'package:plezy/screens/storage/sync_settings_screen.dart';
 import 'package:plezy/services/credential_vault.dart';
 import 'package:plezy/storage/mount_manager.dart';
 import 'package:plezy/storage/mount_registry.dart';
+import 'package:plezy/storage/storage_mount.dart';
+import 'package:plezy/utils/device_identity.dart';
 import 'package:provider/provider.dart';
 
 import '../test_helpers/prefs.dart';
+import '../test_helpers/pump.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -28,7 +32,15 @@ void main() {
     resetSharedPreferencesForTest();
     CredentialVault.resetKeyForTesting();
     LocaleSettings.setLocaleSync(AppLocale.en);
+    DeviceIdentityService.debugOverride(const DeviceIdentity(platform: 'Windows', deviceName: 'Test PC'));
+    addTearDown(() => DeviceIdentityService.debugOverride(null));
   });
+
+  void useLargeSurface(WidgetTester tester) {
+    tester.view.physicalSize = const Size(1280, 1600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+  }
 
   Future<({AppDatabase db, MountManager manager, SyncAndScanCoordinator sync})> createSync({
     SyncApiClient? apiClient,
@@ -252,5 +264,286 @@ void main() {
       Uint8List.fromList(List<int>.filled(32, 9)),
     );
     expect(poppedResult, isTrue);
+  });
+
+  testWidgets('SyncSettingsScreen generates QR without prompting merge even with local shared mount', (tester) async {
+    useLargeSurface(tester);
+    final mockClient = MockClient((req) async {
+      if (req.url.path == '/api/v1/auth/qr/create') {
+        return http.Response(
+          jsonEncode({'code': 0, 'session_id': 'qr-sess-1', 'expires_at_ms': 9999999999999}),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+      if (req.url.path == '/api/v1/auth/qr/poll') {
+        return http.Response(
+          jsonEncode({'code': 0, 'status': 'pending', 'expires_at_ms': 9999999999999}),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+      return http.Response('{}', 404);
+    });
+    final apiClient = SyncApiClient(httpClient: mockClient);
+    addTearDown(apiClient.close);
+
+    final h = await createSync(apiClient: apiClient);
+    addTearDown(() async {
+      h.sync.dispose();
+      await h.manager.dispose();
+      await h.db.close();
+    });
+
+    await h.manager.registry.upsert(
+      const StorageMount(
+        id: 'm-local-shared',
+        kind: StorageKind.webdav,
+        displayName: 'Local NAS',
+        config: {MountKeys.baseUrl: 'http://192.168.1.99/dav'},
+      ),
+    );
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<SyncAndScanCoordinator>.value(
+        value: h.sync,
+        child: TranslationProvider(
+          child: MaterialApp(
+            theme: ThemeData(platform: TargetPlatform.windows),
+            home: const SyncSettingsScreen(),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text(t.sync.qrGenerate));
+    await pumpUntil(tester, () => find.text(t.sync.qrRefreshButton).evaluate().isNotEmpty);
+    await tester.pumpAndSettle();
+
+    expect(find.text(t.sync.mergeDiffTitle), findsNothing);
+    expect(find.text(t.sync.qrRefreshButton), findsOneWidget);
+    expect(h.sync.isSignedIn, isFalse);
+  });
+
+  testWidgets('SyncSettingsScreen shows login failure without pre-auth merge popup', (tester) async {
+    useLargeSurface(tester);
+    final mockClient = MockClient((req) async {
+      if (req.url.path == '/api/v1/auth/kdf') {
+        return http.Response(
+          jsonEncode({'code': 404, 'message': 'user not found'}),
+          404,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+      return http.Response('{}', 404);
+    });
+    final apiClient = SyncApiClient(httpClient: mockClient);
+    addTearDown(apiClient.close);
+
+    final h = await createSync(apiClient: apiClient);
+    addTearDown(() async {
+      h.sync.dispose();
+      await h.manager.dispose();
+      await h.db.close();
+    });
+
+    await h.manager.registry.upsert(
+      const StorageMount(
+        id: 'm-local-shared',
+        kind: StorageKind.webdav,
+        displayName: 'Local NAS',
+        config: {MountKeys.baseUrl: 'http://192.168.1.99/dav'},
+      ),
+    );
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<SyncAndScanCoordinator>.value(
+        value: h.sync,
+        child: TranslationProvider(child: const MaterialApp(home: SyncSettingsScreen())),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final fields = find.byType(TextField);
+    await tester.enterText(fields.at(0), 'alice');
+    await tester.enterText(fields.at(1), 'wrong-pass');
+    await tester.tap(find.text(t.sync.login));
+    await tester.pumpAndSettle();
+
+    expect(find.text(t.sync.mergeDiffTitle), findsNothing);
+    expect(find.textContaining('user not found'), findsOneWidget);
+    expect(h.sync.isSignedIn, isFalse);
+  });
+
+  testWidgets('SyncSettingsScreen authenticates first, displays diff dialog, and revokes token on Cancel', (
+    tester,
+  ) async {
+    useLargeSurface(tester);
+    const kdfParams = SyncKdfParams(memoryKiB: 64, iterations: 1, parallelism: 1);
+    final salt = SyncCrypto.randomBytes(16);
+    final masterKey = SyncCrypto.generateMasterKey();
+    final derived = await SyncCrypto.derivePasswordKeys(password: 'pw', salt: salt, params: kdfParams);
+    final backup = await SyncCrypto.sealMasterKeyBackup(masterKey, derived.kek);
+
+    String? revokedTokenId;
+    final mockClient = MockClient((req) async {
+      if (req.url.path == '/api/v1/auth/kdf') {
+        return http.Response(
+          jsonEncode({'code': 0, 'kdf_salt': base64Encode(salt), 'kdf_params': kdfParams.toJson()}),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+      if (req.url.path == '/api/v1/auth/login') {
+        return http.Response(
+          jsonEncode({
+            'code': 0,
+            'user_id': 'u-alice',
+            'username': 'alice',
+            'access_token': 'tok-temp-1',
+            'kdf_salt': base64Encode(salt),
+            'kdf_params': kdfParams.toJson(),
+            'encrypted_master_key_backup': backup,
+            'settings': {},
+            'server_time_ms': 10000,
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+      if (req.url.path == '/api/v1/user/me') {
+        return http.Response(
+          jsonEncode({
+            'code': 0,
+            'user_id': 'u-alice',
+            'username': 'alice',
+            'stats': {'sources': 1, 'works': 1, 'files': 1, 'work_prefs': 0, 'watch_progress': 0, 'lists': 0},
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+      if (req.url.path == '/api/v1/sync/pull') {
+        return http.Response(
+          jsonEncode({
+            'code': 0,
+            'server_time_ms': 10000,
+            'current_max_seq': 2,
+            'next_seq': 2,
+            'has_more': false,
+            'reset_required': false,
+            'user_settings': {},
+            'data': {
+              'sources': [
+                {
+                  'source_id': 'm-cloud-1',
+                  'canonical_key': 'webdav://http://192.168.1.88/dav',
+                  'name': 'Cloud NAS',
+                  'protocol': 'webdav',
+                  'is_deleted': false,
+                },
+              ],
+              'works': [
+                {'work_key': 'tmdb:movie:603', 'kind': 'movie', 'library_type': 'movie', 'is_deleted': false},
+              ],
+              'files': [],
+              'work_prefs': [],
+              'watch_progress': [],
+              'lists': [],
+            },
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+      if (req.url.path == '/api/v1/user/devices' && req.method == 'GET') {
+        return http.Response(
+          jsonEncode({
+            'code': 0,
+            'devices': [
+              {'token_id': 'tid-1', 'device_id': 'd1', 'is_current': true},
+            ],
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+      if (req.url.path == '/api/v1/user/devices/tid-1' && req.method == 'DELETE') {
+        revokedTokenId = 'tid-1';
+        return http.Response(
+          jsonEncode({'code': 0, 'status': 'revoked'}),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+      return http.Response('{}', 404);
+    });
+    final apiClient = SyncApiClient(httpClient: mockClient);
+    addTearDown(apiClient.close);
+
+    final h = await createSync(apiClient: apiClient);
+    addTearDown(() async {
+      h.sync.dispose();
+      await h.manager.dispose();
+      await h.db.close();
+    });
+
+    await h.manager.registry.upsert(
+      const StorageMount(
+        id: 'm-local-shared',
+        kind: StorageKind.webdav,
+        displayName: 'Local NAS',
+        config: {MountKeys.baseUrl: 'http://192.168.1.99/dav'},
+      ),
+    );
+    final itemId = await h.sync.repo.insertItem(
+      LibraryItemsCompanion.insert(
+        workKey: const Value('tmdb:movie:27205'),
+        kind: LibraryKinds.movie,
+        libraryType: LibraryTypes.movie,
+        title: 'Inception',
+        sortTitle: 'inception',
+        tmdbId: const Value('27205'),
+        metadataSource: const Value('tmdb'),
+        scrapedAt: const Value(2000),
+        addedAt: 2000,
+        updatedAt: 2000,
+      ),
+    );
+    final fid = await h.sync.repo.upsertFile(
+      mountId: 'm-local-shared',
+      path: '/Inception.mkv',
+      role: LibraryFileRoles.video,
+      scanId: 1,
+    );
+    await h.sync.repo.linkFile(fid, itemId);
+    await h.sync.repo.updateFile(fid, const LibraryFilesCompanion(matchState: Value(LibraryMatchStates.matched)));
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<SyncAndScanCoordinator>.value(
+        value: h.sync,
+        child: TranslationProvider(child: const MaterialApp(home: SyncSettingsScreen())),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final fields = find.byType(TextField);
+    await tester.enterText(fields.at(0), 'alice');
+    await tester.enterText(fields.at(1), 'pw');
+    await tester.tap(find.text(t.sync.login));
+    await tester.pumpAndSettle();
+
+    expect(find.text(t.sync.mergeDiffTitle), findsOneWidget);
+    expect(find.textContaining('Local NAS'), findsOneWidget);
+    expect(find.textContaining('Cloud NAS'), findsOneWidget);
+    expect(h.sync.isSignedIn, isFalse);
+
+    await tester.tap(find.text(t.common.cancel));
+    await tester.pumpAndSettle();
+
+    expect(revokedTokenId, 'tid-1');
+    expect(h.sync.isSignedIn, isFalse);
+    expect((await h.manager.registry.list()).map((m) => m.displayName), ['Local NAS']);
   });
 }

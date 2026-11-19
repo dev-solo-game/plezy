@@ -59,7 +59,13 @@ class _FakeSyncApiClient extends SyncApiClient {
   bool pulled = false;
 
   @override
-  Future<SyncPullResult> pullDelta(String serverUrl, String accessToken, {int sinceSeq = 0, int limit = 500}) async {
+  Future<SyncPullResult> pullDelta(
+    String serverUrl,
+    String accessToken, {
+    int sinceSeq = 0,
+    int limit = 500,
+    bool activeOnly = false,
+  }) async {
     if (!pulled) {
       pulled = true;
       return pullResult;

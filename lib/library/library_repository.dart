@@ -1485,6 +1485,12 @@ class LibraryRepository {
         updateKind: UpdateKind.delete,
       );
     }
+    await _db.customUpdate(
+      'DELETE FROM library_people WHERE NOT EXISTS '
+      '(SELECT 1 FROM library_credits c WHERE c.person_id = library_people.id)',
+      updates: {_db.libraryPeople},
+      updateKind: UpdateKind.delete,
+    );
   }
 
   // ─── Collections and playlists ─────────────────────────────────────────

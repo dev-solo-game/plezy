@@ -12,9 +12,11 @@ import 'package:plezy/library/library_scan_service.dart';
 import 'package:plezy/library/library_scanner.dart';
 import 'package:plezy/library/local_library_client.dart';
 import 'package:plezy/library/sync/library_workspace_store.dart';
+import 'package:plezy/library/sync/sync_api_client.dart';
 import 'package:plezy/library/sync/sync_coordinator.dart';
 import 'package:plezy/library/sync/sync_crypto.dart';
 import 'package:plezy/library/sync/sync_local_store.dart';
+import 'package:plezy/media/work_identity.dart';
 import 'package:plezy/services/credential_vault.dart';
 import 'package:plezy/storage/mount_manager.dart';
 import 'package:plezy/storage/mount_registry.dart';
@@ -391,6 +393,387 @@ void main() {
       expect(tv.sync.session?.serverUrl, SyncLocalStore.normalizeServerUrl(selfUrl));
       expect(await tv.sync.syncStore.getLastSelfHostedUrl(), SyncLocalStore.normalizeServerUrl(selfUrl));
       expect(await tv.repo.findByWorkKey('tmdb:movie:27205'), isNotNull);
+    },
+  );
+
+  test(
+    '5. Post-auth inspectPendingSignIn detects localEmpty, cloudEmpty, exact diffs, noLocalDifferences, existingArchive & cancel revokes token',
+    () async {
+      final serverUrl = await startSyncServer();
+
+      // 5a. Pure local-disk mount is ignored by hasLocalSyncableContent -> localEmpty.
+      final diskOnly = _ModeNode('DiskOnly');
+      addTearDown(diskOnly.dispose);
+      await diskOnly.sync.initialize();
+      await diskOnly.registry.upsert(
+        const StorageMount(id: 'm_disk', kind: StorageKind.local, displayName: 'Local Disk', config: {'rootPath': '/'}),
+      );
+      expect(await diskOnly.sync.workspaceStore.hasLocalSyncableContent(), isFalse);
+      final pendingDisk = await diskOnly.sync.prepareRegister(
+        serverUrl: serverUrl,
+        username: 'disk_user',
+        password: 'pw',
+        kdfParams: fastKdf,
+      );
+      final diskPreview = await diskOnly.sync.inspectPendingSignIn(pendingDisk);
+      expect(diskPreview.reason, SyncSignInDecisionReason.localEmpty);
+      expect(diskPreview.requiresConfirmation, isFalse);
+      await diskOnly.sync.cancelPendingSignIn(pendingDisk);
+
+      // 5b. Local shared data + empty new account -> cloudEmpty (auto-merge without conflict prompt), and cancel revokes token.
+      final emptyCloudCheck = _ModeNode('EmptyCloudCheck');
+      addTearDown(emptyCloudCheck.dispose);
+      await _seedMovie(
+        emptyCloudCheck,
+        mountId: 'm_new_acct',
+        tmdbId: '550',
+        title: 'Fight Club',
+        filePath: '/Movies/FightClub.mkv',
+        updatedAt: 1500,
+      );
+      final pendingNew = await emptyCloudCheck.sync.prepareRegister(
+        serverUrl: serverUrl,
+        username: 'new_user_with_local',
+        password: 'pw',
+        kdfParams: fastKdf,
+      );
+      final newPreview = await emptyCloudCheck.sync.inspectPendingSignIn(pendingNew);
+      expect(newPreview.reason, SyncSignInDecisionReason.cloudEmpty);
+      expect(newPreview.requiresConfirmation, isFalse);
+      expect(newPreview.recommendedPolicy, LocalMergePolicy.mergeLocal);
+      await emptyCloudCheck.sync.cancelPendingSignIn(pendingNew);
+      await expectLater(
+        emptyCloudCheck.sync.apiClient.getUserStats(serverUrl, pendingNew.credentials.accessToken),
+        throwsA(isA<SyncApiException>().having((e) => e.statusCode, 'statusCode', 401)),
+      );
+
+      // 5c. Seed Cloud Account A with Shared DAV + Cloud DAV, Matrix + Interstellar, list Favorites, progress.
+      final seedA = _ModeNode('SeedA');
+      addTearDown(seedA.dispose);
+      await seedA.registry.upsert(
+        const StorageMount(
+          id: 'm_shared_a',
+          kind: StorageKind.webdav,
+          displayName: 'Shared DAV',
+          config: {MountKeys.baseUrl: 'http://192.168.1.50/shared'},
+        ),
+      );
+      await seedA.registry.upsert(
+        const StorageMount(
+          id: 'm_cloud_only_a',
+          kind: StorageKind.webdav,
+          displayName: 'Cloud DAV',
+          config: {MountKeys.baseUrl: 'http://192.168.1.50/cloud'},
+        ),
+      );
+      final itemMatrixA = await seedA.repo.insertItem(
+        LibraryItemsCompanion.insert(
+          workKey: const Value('tmdb:movie:603'),
+          kind: LibraryKinds.movie,
+          libraryType: LibraryTypes.movie,
+          title: 'The Matrix',
+          sortTitle: 'the matrix',
+          tmdbId: const Value('603'),
+          metadataSource: const Value('tmdb'),
+          scrapedAt: const Value(2000),
+          addedAt: 2000,
+          updatedAt: 2000,
+        ),
+      );
+      final fMatrixA = await seedA.repo.upsertFile(
+        mountId: 'm_shared_a',
+        path: '/Matrix.mkv',
+        role: LibraryFileRoles.video,
+        scanId: 1,
+        size: 50000,
+        modifiedAt: 2000,
+      );
+      await seedA.repo.linkFile(fMatrixA, itemMatrixA);
+      await seedA.repo.updateFile(fMatrixA, const LibraryFilesCompanion(matchState: Value(LibraryMatchStates.matched)));
+
+      final itemInterstellarA = await seedA.repo.insertItem(
+        LibraryItemsCompanion.insert(
+          workKey: const Value('tmdb:movie:157336'),
+          kind: LibraryKinds.movie,
+          libraryType: LibraryTypes.movie,
+          title: 'Interstellar',
+          sortTitle: 'interstellar',
+          tmdbId: const Value('157336'),
+          metadataSource: const Value('tmdb'),
+          scrapedAt: const Value(2000),
+          addedAt: 2000,
+          updatedAt: 2000,
+        ),
+      );
+      final fInterstellarA = await seedA.repo.upsertFile(
+        mountId: 'm_cloud_only_a',
+        path: '/Interstellar.mkv',
+        role: LibraryFileRoles.video,
+        scanId: 1,
+        size: 60000,
+        modifiedAt: 2000,
+      );
+      await seedA.repo.linkFile(fInterstellarA, itemInterstellarA);
+      await seedA.repo.updateFile(
+        fInterstellarA,
+        const LibraryFilesCompanion(matchState: Value(LibraryMatchStates.matched)),
+      );
+
+      final listFavA = await seedA.db
+          .into(seedA.db.libraryLists)
+          .insert(
+            LibraryListsCompanion.insert(
+              kind: LibraryListKinds.playlist,
+              title: 'Favorites',
+              createdAt: 2000,
+              updatedAt: 2000,
+            ),
+          );
+      await seedA.db
+          .into(seedA.db.libraryListItems)
+          .insert(LibraryListItemsCompanion.insert(listId: listFavA, itemId: itemMatrixA));
+      await seedA.db
+          .into(seedA.db.workWatchStates)
+          .insert(
+            WorkWatchStatesCompanion.insert(
+              stateKey: 'local-library:movie:tmdb:603',
+              source: WorkIdentity.localSource,
+              kind: LibraryKinds.movie,
+              provider: 'tmdb',
+              externalId: '603',
+              positionMs: const Value(10000),
+              durationMs: const Value(120000),
+              updatedAt: 2000,
+            ),
+          );
+
+      await seedA.sync.register(serverUrl: serverUrl, username: 'merge_acct', password: 'pw', kdfParams: fastKdf);
+
+      // 5d. Node B has Shared DAV + Local DAV, Matrix + Inception, conflicting Favorites + local Watch Later, conflicting progress.
+      final nodeB = _ModeNode('NodeB');
+      addTearDown(nodeB.dispose);
+      await nodeB.registry.upsert(
+        const StorageMount(
+          id: 'm_shared_b',
+          kind: StorageKind.webdav,
+          displayName: 'Shared DAV',
+          config: {MountKeys.baseUrl: 'http://192.168.1.50/shared'},
+        ),
+      );
+      await nodeB.registry.upsert(
+        const StorageMount(
+          id: 'm_local_only_b',
+          kind: StorageKind.webdav,
+          displayName: 'Local DAV',
+          config: {MountKeys.baseUrl: 'http://192.168.1.50/local'},
+        ),
+      );
+      final itemMatrixB = await nodeB.repo.insertItem(
+        LibraryItemsCompanion.insert(
+          workKey: const Value('tmdb:movie:603'),
+          kind: LibraryKinds.movie,
+          libraryType: LibraryTypes.movie,
+          title: 'The Matrix',
+          sortTitle: 'the matrix',
+          tmdbId: const Value('603'),
+          metadataSource: const Value('tmdb'),
+          scrapedAt: const Value(2000),
+          addedAt: 2000,
+          updatedAt: 2000,
+        ),
+      );
+      final fMatrixB = await nodeB.repo.upsertFile(
+        mountId: 'm_shared_b',
+        path: '/Matrix.mkv',
+        role: LibraryFileRoles.video,
+        scanId: 1,
+        size: 50000,
+        modifiedAt: 2000,
+      );
+      await nodeB.repo.linkFile(fMatrixB, itemMatrixB);
+      await nodeB.repo.updateFile(fMatrixB, const LibraryFilesCompanion(matchState: Value(LibraryMatchStates.matched)));
+
+      final itemInceptionB = await nodeB.repo.insertItem(
+        LibraryItemsCompanion.insert(
+          workKey: const Value('tmdb:movie:27205'),
+          kind: LibraryKinds.movie,
+          libraryType: LibraryTypes.movie,
+          title: 'Inception',
+          sortTitle: 'inception',
+          tmdbId: const Value('27205'),
+          metadataSource: const Value('tmdb'),
+          scrapedAt: const Value(2500),
+          addedAt: 2500,
+          updatedAt: 2500,
+        ),
+      );
+      final fInceptionB = await nodeB.repo.upsertFile(
+        mountId: 'm_local_only_b',
+        path: '/Inception.mkv',
+        role: LibraryFileRoles.video,
+        scanId: 1,
+        size: 70000,
+        modifiedAt: 2500,
+      );
+      await nodeB.repo.linkFile(fInceptionB, itemInceptionB);
+      await nodeB.repo.updateFile(
+        fInceptionB,
+        const LibraryFilesCompanion(matchState: Value(LibraryMatchStates.matched)),
+      );
+
+      final listFavB = await nodeB.db
+          .into(nodeB.db.libraryLists)
+          .insert(
+            LibraryListsCompanion.insert(
+              kind: LibraryListKinds.playlist,
+              title: 'Favorites',
+              createdAt: 2500,
+              updatedAt: 2500,
+            ),
+          );
+      await nodeB.db
+          .into(nodeB.db.libraryListItems)
+          .insert(LibraryListItemsCompanion.insert(listId: listFavB, itemId: itemInceptionB));
+      await nodeB.db
+          .into(nodeB.db.libraryLists)
+          .insert(
+            LibraryListsCompanion.insert(
+              kind: LibraryListKinds.playlist,
+              title: 'Watch Later',
+              createdAt: 2500,
+              updatedAt: 2500,
+            ),
+          );
+      await nodeB.db
+          .into(nodeB.db.workWatchStates)
+          .insert(
+            WorkWatchStatesCompanion.insert(
+              stateKey: 'local-library:movie:tmdb:603',
+              source: WorkIdentity.localSource,
+              kind: LibraryKinds.movie,
+              provider: 'tmdb',
+              externalId: '603',
+              positionMs: const Value(90000),
+              durationMs: const Value(120000),
+              updatedAt: 2500,
+            ),
+          );
+
+      final pendingDiff = await nodeB.sync.prepareLoginWithPassword(
+        serverUrl: serverUrl,
+        username: 'merge_acct',
+        password: 'pw',
+      );
+      expect(nodeB.sync.isSignedIn, isFalse);
+
+      final diff = await nodeB.sync.inspectPendingSignIn(pendingDiff);
+      expect(diff.reason, SyncSignInDecisionReason.requiresMergeChoice);
+      expect(diff.requiresConfirmation, isTrue);
+      expect(diff.localOnlySourceNames, ['Local DAV']);
+      expect(diff.cloudOnlySourceNames, ['Cloud DAV']);
+      expect(diff.sharedSourceNames, ['Shared DAV']);
+      expect(diff.localOnlyWorks, 1);
+      expect(diff.cloudOnlyWorks, 1);
+      expect(diff.localOnlyLists, 1);
+      expect(diff.conflictingLists, 1);
+      expect(diff.conflictingProgress, 1);
+
+      // Cancelling revokes the temporary token and leaves local state intact.
+      await nodeB.sync.cancelPendingSignIn(pendingDiff);
+      expect(nodeB.sync.isSignedIn, isFalse);
+      await expectLater(
+        nodeB.sync.apiClient.getUserStats(serverUrl, pendingDiff.credentials.accessToken),
+        throwsA(isA<SyncApiException>().having((e) => e.statusCode, 'statusCode', 401)),
+      );
+      expect(await nodeB.repo.findByWorkKey('tmdb:movie:27205'), isNotNull);
+
+      // 5e. Node D with identical local subset of Account A -> noLocalDifferences (auto-proceed without prompt).
+      final nodeD = _ModeNode('NodeD');
+      addTearDown(nodeD.dispose);
+      await nodeD.registry.upsert(
+        const StorageMount(
+          id: 'm_shared_d',
+          kind: StorageKind.webdav,
+          displayName: 'Shared DAV',
+          config: {MountKeys.baseUrl: 'http://192.168.1.50/shared'},
+        ),
+      );
+      final itemMatrixD = await nodeD.repo.insertItem(
+        LibraryItemsCompanion.insert(
+          workKey: const Value('tmdb:movie:603'),
+          kind: LibraryKinds.movie,
+          libraryType: LibraryTypes.movie,
+          title: 'The Matrix',
+          sortTitle: 'the matrix',
+          tmdbId: const Value('603'),
+          metadataSource: const Value('tmdb'),
+          scrapedAt: const Value(2000),
+          addedAt: 2000,
+          updatedAt: 2000,
+        ),
+      );
+      final fMatrixD = await nodeD.repo.upsertFile(
+        mountId: 'm_shared_d',
+        path: '/Matrix.mkv',
+        role: LibraryFileRoles.video,
+        scanId: 1,
+        size: 50000,
+        modifiedAt: 2000,
+      );
+      await nodeD.repo.linkFile(fMatrixD, itemMatrixD);
+      await nodeD.repo.updateFile(fMatrixD, const LibraryFilesCompanion(matchState: Value(LibraryMatchStates.matched)));
+      final listFavD = await nodeD.db
+          .into(nodeD.db.libraryLists)
+          .insert(
+            LibraryListsCompanion.insert(
+              kind: LibraryListKinds.playlist,
+              title: 'Favorites',
+              createdAt: 2000,
+              updatedAt: 2000,
+            ),
+          );
+      await nodeD.db
+          .into(nodeD.db.libraryListItems)
+          .insert(LibraryListItemsCompanion.insert(listId: listFavD, itemId: itemMatrixD));
+      await nodeD.db
+          .into(nodeD.db.workWatchStates)
+          .insert(
+            WorkWatchStatesCompanion.insert(
+              stateKey: 'local-library:movie:tmdb:603',
+              source: WorkIdentity.localSource,
+              kind: LibraryKinds.movie,
+              provider: 'tmdb',
+              externalId: '603',
+              positionMs: const Value(10000),
+              durationMs: const Value(120000),
+              updatedAt: 2000,
+            ),
+          );
+
+      final pendingD = await nodeD.sync.prepareLoginWithPassword(
+        serverUrl: serverUrl,
+        username: 'merge_acct',
+        password: 'pw',
+      );
+      final previewD = await nodeD.sync.inspectPendingSignIn(pendingD);
+      expect(previewD.reason, SyncSignInDecisionReason.noLocalDifferences);
+      expect(previewD.requiresConfirmation, isFalse);
+
+      // Commit, sign out (archives account workspace), then re-login -> existingAccountArchive.
+      await nodeD.sync.commitPendingSignIn(pendingD, mergePolicy: previewD.recommendedPolicy);
+      expect(nodeD.sync.isSignedIn, isTrue);
+      await nodeD.sync.signOut();
+      expect(nodeD.sync.isSignedIn, isFalse);
+
+      final pendingReLogin = await nodeD.sync.prepareLoginWithPassword(
+        serverUrl: serverUrl,
+        username: 'merge_acct',
+        password: 'pw',
+      );
+      final archivePreview = await nodeD.sync.inspectPendingSignIn(pendingReLogin);
+      expect(archivePreview.reason, SyncSignInDecisionReason.existingAccountArchive);
+      expect(archivePreview.requiresConfirmation, isFalse);
+      await nodeD.sync.cancelPendingSignIn(pendingReLogin);
     },
   );
 }

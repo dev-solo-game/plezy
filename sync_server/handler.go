@@ -46,9 +46,21 @@ func NewSyncMux(store *SyncStore) http.Handler {
 	mux.HandleFunc("DELETE /api/v1/user/devices/{token_id}", h.handleUserRevokeDevice)
 	mux.HandleFunc("POST /api/v1/user/clear-sync-data", h.handleUserClearSyncData)
 
+	// Public / shared metadata cache routes
+	mux.HandleFunc("GET /api/v1/metadata/config", h.handleMetadataPublicConfig)
+	mux.HandleFunc("GET /api/v1/metadata/search", h.handleMetadataSearch)
+	mux.HandleFunc("GET /api/v1/metadata/work/{provider}/{kind}/{id}", h.handleMetadataWork)
+	mux.HandleFunc("GET /api/v1/metadata/season/{provider}/{id}/{season}", h.handleMetadataSeason)
+	mux.HandleFunc("GET /api/v1/metadata/person/{provider}/{id}", h.handleMetadataPerson)
+	mux.HandleFunc("POST /api/v1/metadata/batch", h.handleMetadataBatch)
+
 	// Web admin panel routes
 	mux.HandleFunc("GET /api/v1/admin/overview", h.handleAdminOverview)
 	mux.HandleFunc("POST /api/v1/admin/config", h.handleAdminConfig)
+	mux.HandleFunc("GET /api/v1/admin/metadata/config", h.handleAdminMetadataConfigGet)
+	mux.HandleFunc("POST /api/v1/admin/metadata/config", h.handleAdminMetadataConfigUpdate)
+	mux.HandleFunc("POST /api/v1/admin/metadata/test", h.handleAdminMetadataTest)
+	mux.HandleFunc("POST /api/v1/admin/metadata/clear-cache", h.handleAdminMetadataClearCache)
 	mux.HandleFunc("GET /api/v1/admin/users", h.handleAdminUsers)
 	mux.HandleFunc("POST /api/v1/admin/users/{user_id}/status", h.handleAdminUserStatus)
 	mux.HandleFunc("DELETE /api/v1/admin/users/{user_id}", h.handleAdminDeleteUser)
@@ -87,13 +99,17 @@ func writeMappedErr(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, ErrUserExists):
 		writeErr(w, r, http.StatusConflict, err.Error())
-	case errors.Is(err, ErrRegistrationClosed), errors.Is(err, ErrUserDisabled), errors.Is(err, ErrForbidden):
+	case errors.Is(err, ErrRegistrationClosed), errors.Is(err, ErrUserDisabled), errors.Is(err, ErrForbidden), errors.Is(err, ErrMetadataDisabled):
 		writeErr(w, r, http.StatusForbidden, err.Error())
+	case errors.Is(err, ErrMetadataNotConfigured):
+		writeErr(w, r, http.StatusPreconditionFailed, err.Error())
+	case errors.Is(err, ErrMetadataUpstream):
+		writeErr(w, r, http.StatusBadGateway, err.Error())
 	case errors.Is(err, ErrQuotaExceeded):
 		writeErr(w, r, http.StatusRequestEntityTooLarge, err.Error())
 	case errors.Is(err, ErrInvalidCreds), errors.Is(err, ErrUnauthorized):
 		writeErr(w, r, http.StatusUnauthorized, err.Error())
-	case errors.Is(err, ErrQrNotFound), errors.Is(err, ErrSourceNotFound), errors.Is(err, ErrUserNotFound):
+	case errors.Is(err, ErrQrNotFound), errors.Is(err, ErrSourceNotFound), errors.Is(err, ErrUserNotFound), errors.Is(err, ErrMetadataNotFound):
 		writeErr(w, r, http.StatusNotFound, err.Error())
 	case errors.Is(err, ErrQrExpired):
 		writeErr(w, r, http.StatusGone, err.Error())
@@ -441,7 +457,19 @@ func (h *syncHandler) handlePull(w http.ResponseWriter, r *http.Request) {
 		}
 		limit = parsed
 	}
-	writeJSON(w, r, http.StatusOK, h.store.Pull(user, sinceSeq, limit))
+	activeOnly := sinceSeq == 0
+	if raw := strings.TrimSpace(r.URL.Query().Get("active_only")); raw != "" {
+		switch strings.ToLower(raw) {
+		case "1", "true":
+			activeOnly = true
+		case "0", "false":
+			activeOnly = false
+		default:
+			writeErr(w, r, http.StatusBadRequest, "invalid active_only")
+			return
+		}
+	}
+	writeJSON(w, r, http.StatusOK, h.store.PullWithOptions(user, sinceSeq, limit, activeOnly))
 }
 
 func (h *syncHandler) handlePush(w http.ResponseWriter, r *http.Request) {
@@ -499,4 +527,199 @@ func (h *syncHandler) handleSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, r, http.StatusOK, map[string]any{"code": 0, "settings": merged, "server_time_ms": nowMs()})
+}
+
+func (h *syncHandler) authorizeMetadataRead(r *http.Request) error {
+	if h.store.AllowPublicMetadata() {
+		return nil
+	}
+	_, _, err := h.authenticate(r)
+	return err
+}
+
+func isRefreshParam(r *http.Request) bool {
+	v := strings.TrimSpace(strings.ToLower(r.URL.Query().Get("refresh")))
+	return v == "1" || v == "true"
+}
+
+func (h *syncHandler) handleMetadataPublicConfig(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, r, http.StatusOK, h.store.GetPublicMetadataConfig())
+}
+
+func (h *syncHandler) handleMetadataSearch(w http.ResponseWriter, r *http.Request) {
+	if err := h.authorizeMetadataRead(r); err != nil {
+		writeMappedErr(w, r, err)
+		return
+	}
+	q := r.URL.Query()
+	provider := strings.TrimSpace(q.Get("provider"))
+	if provider == "" {
+		provider = "tmdb"
+	}
+	kind := strings.TrimSpace(q.Get("kind"))
+	if kind == "" {
+		kind = "movie"
+	}
+	queryStr := strings.TrimSpace(q.Get("q"))
+	var year int
+	if rawY := strings.TrimSpace(q.Get("year")); rawY != "" {
+		parsed, err := strconv.Atoi(rawY)
+		if err != nil || parsed < 0 {
+			writeErr(w, r, http.StatusBadRequest, "invalid year")
+			return
+		}
+		year = parsed
+	}
+	resp, err := h.store.MetadataSearch(r.Context(), provider, kind, queryStr, year, q.Get("lang"), isRefreshParam(r))
+	if err != nil {
+		writeMappedErr(w, r, err)
+		return
+	}
+	writeJSON(w, r, http.StatusOK, resp)
+}
+
+func (h *syncHandler) handleMetadataWork(w http.ResponseWriter, r *http.Request) {
+	if err := h.authorizeMetadataRead(r); err != nil {
+		writeMappedErr(w, r, err)
+		return
+	}
+	resp, err := h.store.MetadataGetWork(
+		r.Context(),
+		r.PathValue("provider"),
+		r.PathValue("kind"),
+		r.PathValue("id"),
+		r.URL.Query().Get("lang"),
+		isRefreshParam(r),
+	)
+	if err != nil {
+		writeMappedErr(w, r, err)
+		return
+	}
+	writeJSON(w, r, http.StatusOK, resp)
+}
+
+func (h *syncHandler) handleMetadataSeason(w http.ResponseWriter, r *http.Request) {
+	if err := h.authorizeMetadataRead(r); err != nil {
+		writeMappedErr(w, r, err)
+		return
+	}
+	seasonNum, err := strconv.Atoi(strings.TrimSpace(r.PathValue("season")))
+	if err != nil || seasonNum < 0 {
+		writeErr(w, r, http.StatusBadRequest, "invalid season")
+		return
+	}
+	resp, err := h.store.MetadataGetSeason(
+		r.Context(),
+		r.PathValue("provider"),
+		r.PathValue("id"),
+		seasonNum,
+		r.URL.Query().Get("lang"),
+		isRefreshParam(r),
+	)
+	if err != nil {
+		writeMappedErr(w, r, err)
+		return
+	}
+	writeJSON(w, r, http.StatusOK, resp)
+}
+
+func (h *syncHandler) handleMetadataPerson(w http.ResponseWriter, r *http.Request) {
+	if err := h.authorizeMetadataRead(r); err != nil {
+		writeMappedErr(w, r, err)
+		return
+	}
+	resp, err := h.store.MetadataGetPerson(
+		r.Context(),
+		r.PathValue("provider"),
+		r.PathValue("id"),
+		r.URL.Query().Get("lang"),
+		isRefreshParam(r),
+	)
+	if err != nil {
+		writeMappedErr(w, r, err)
+		return
+	}
+	writeJSON(w, r, http.StatusOK, resp)
+}
+
+func (h *syncHandler) handleMetadataBatch(w http.ResponseWriter, r *http.Request) {
+	if err := h.authorizeMetadataRead(r); err != nil {
+		writeMappedErr(w, r, err)
+		return
+	}
+	var req MetadataBatchRequest
+	if err := decodeBody(w, r, &req); err != nil {
+		writeErr(w, r, http.StatusBadRequest, err.Error())
+		return
+	}
+	resp, err := h.store.MetadataBatch(r.Context(), req)
+	if err != nil {
+		writeMappedErr(w, r, err)
+		return
+	}
+	writeJSON(w, r, http.StatusOK, resp)
+}
+
+func (h *syncHandler) handleAdminMetadataConfigGet(w http.ResponseWriter, r *http.Request) {
+	if _, err := h.authenticateAdmin(r); err != nil {
+		writeMappedErr(w, r, err)
+		return
+	}
+	writeJSON(w, r, http.StatusOK, h.store.AdminGetMetadataConfig())
+}
+
+func (h *syncHandler) handleAdminMetadataConfigUpdate(w http.ResponseWriter, r *http.Request) {
+	if _, err := h.authenticateAdmin(r); err != nil {
+		writeMappedErr(w, r, err)
+		return
+	}
+	var req AdminMetadataConfigRequest
+	if err := decodeBody(w, r, &req); err != nil {
+		writeErr(w, r, http.StatusBadRequest, err.Error())
+		return
+	}
+	cfg, err := h.store.AdminUpdateMetadataConfig(req)
+	if err != nil {
+		writeMappedErr(w, r, err)
+		return
+	}
+	writeJSON(w, r, http.StatusOK, cfg)
+}
+
+func (h *syncHandler) handleAdminMetadataTest(w http.ResponseWriter, r *http.Request) {
+	if _, err := h.authenticateAdmin(r); err != nil {
+		writeMappedErr(w, r, err)
+		return
+	}
+	var req AdminMetadataTestRequest
+	if r.Body != nil {
+		_ = decodeBody(w, r, &req)
+	}
+	latencyMs, err := h.store.AdminTestMetadataConnection(r.Context(), req)
+	if err != nil {
+		writeMappedErr(w, r, err)
+		return
+	}
+	writeJSON(w, r, http.StatusOK, map[string]any{"code": 0, "ok": true, "latency_ms": latencyMs})
+}
+
+func (h *syncHandler) handleAdminMetadataClearCache(w http.ResponseWriter, r *http.Request) {
+	if _, err := h.authenticateAdmin(r); err != nil {
+		writeMappedErr(w, r, err)
+		return
+	}
+	var req MetadataClearCacheRequest
+	if r.Body != nil {
+		_ = decodeBody(w, r, &req)
+	}
+	deleted, stats, err := h.store.AdminClearMetadataCache(req.Scope)
+	if err != nil {
+		writeMappedErr(w, r, err)
+		return
+	}
+	writeJSON(w, r, http.StatusOK, map[string]any{
+		"code":        0,
+		"deleted":     deleted,
+		"cache_stats": stats,
+	})
 }

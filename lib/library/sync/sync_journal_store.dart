@@ -6,6 +6,7 @@ import 'package:drift/drift.dart';
 
 import '../../database/app_database.dart';
 import '../../storage/storage_path.dart';
+import '../scrapers/tmdb_image_url.dart';
 
 /// Persistent local record in `sync_journal` tracking the latest canonical state,
 /// monotonic `local_seq`, causal origin, and deletion tombstones for incremental
@@ -109,6 +110,7 @@ class SyncJournalStore {
       final value = payload[key];
       if (value == null) continue;
       if (entityType == 'file' && key == 'file_created_at' && value is num && value == 0) continue;
+      if (entityType == 'file' && key == 'file_name') continue;
       if (entityType == 'work_pref' && key == 'playback_speed' && value is num && value == 0) continue;
       if (entityType == 'work_pref' && key == 'danmaku_offset_ms' && value is num && value == 0) continue;
       var canonicalValue = _canonicalizeValue(value);
@@ -119,8 +121,7 @@ class SyncJournalStore {
         final isLockedFile = (payload['match_status'] as num?)?.toInt() == 3; // MatchStatusRank.matchLocked
         canonicalValue = {
           for (final entry in canonicalValue.entries)
-            if (entry.key != 'ep_scraped_at' && (!hasMatchedWork || isLockedFile || entry.key != 'ep_overview'))
-              entry.key: entry.value,
+            if (!hasMatchedWork || isLockedFile || !entry.key.startsWith('ep_')) entry.key: entry.value,
         };
       } else if (entityType == 'file' &&
           key == 'parsed_json' &&
@@ -155,6 +156,20 @@ class SyncJournalStore {
     return jsonEncode(copy);
   }
 
+  static const Set<String> _slimOmittedWorkMetaKeys = {
+    'summary',
+    'tagline',
+    'credits',
+    'aliases',
+    'backdrop_path',
+    'logo_path',
+    'original_title',
+    'release_date',
+    'content_rating',
+    'studio',
+    'runtime_ms',
+  };
+
   static Map<String, Object?> _normalizeWorkMetadataForHash(Map<String, Object?> meta) {
     final hasExternalId =
         ((meta['tmdb_id'] as String?)?.isNotEmpty ?? false) ||
@@ -166,11 +181,14 @@ class SyncJournalStore {
     final out = <String, Object?>{};
     for (final entry in meta.entries) {
       final key = entry.key;
-      final val = entry.value;
+      var val = entry.value;
       if (key == 'source_added_at') continue;
       if (key == 'locked' && val == false) continue;
-      if (omitHeavyDetails && (key == 'summary' || key == 'tagline' || key == 'credits')) continue;
+      if (omitHeavyDetails && _slimOmittedWorkMetaKeys.contains(key)) continue;
       if ((key == 'genres' || key == 'credits') && val is List && val.isEmpty) continue;
+      if ((key == 'poster_path' || key == 'backdrop_path' || key == 'logo_path') && val is String) {
+        val = TmdbImageUrl.toRelativePath(val) ?? val;
+      }
       out[key] = val;
     }
     return out;
@@ -409,12 +427,13 @@ class SyncJournalStore {
   }
 
   Future<List<SyncJournalEntry>> getPendingCloudEntries({required int afterSeq, int limit = 500}) async {
+    final activeFilter = afterSeq == 0 ? 'AND is_deleted = 0 ' : '';
     final rows = await db
         .customSelect(
-          "SELECT entity_type, entity_key, source_id, relative_path, work_key, local_seq, "
-          "payload_hash, payload_json, client_updated_at, is_deleted, origin_device_id, origin_epoch "
-          "FROM sync_journal "
-          "WHERE local_seq > ? AND COALESCE(origin_device_id, '') != 'cloud' "
+          'SELECT entity_type, entity_key, source_id, relative_path, work_key, local_seq, '
+          'payload_hash, payload_json, client_updated_at, is_deleted, origin_device_id, origin_epoch '
+          'FROM sync_journal '
+          "WHERE local_seq > ? AND COALESCE(origin_device_id, '') != 'cloud' $activeFilter"
           'ORDER BY local_seq ASC LIMIT ?',
           variables: [Variable.withInt(afterSeq), Variable.withInt(limit)],
         )

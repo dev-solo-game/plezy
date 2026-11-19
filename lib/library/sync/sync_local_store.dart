@@ -674,6 +674,10 @@ class SyncLocalStore {
   Future<void> setAuthUpdatedAt(String mountId, int timestampMs) =>
       _putMeta('$_kAuthUpdatedPrefix$mountId', '$timestampMs');
 
+  Future<void> deleteAuthUpdatedAt(String mountId) async {
+    await (db.delete(db.syncMetadata)..where((t) => t.key.equals('$_kAuthUpdatedPrefix$mountId'))).go();
+  }
+
   Future<void> clearAllOutbox() => db.delete(db.syncOutbox).go();
 
   /// Rekeys pending `file` / `source` outbox entries when [oldSourceId] is

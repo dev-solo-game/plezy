@@ -6736,8 +6736,32 @@ class Translations$storage$en {
 	/// en: 'Media sources'
 	String get mediaSources => 'Media sources';
 
-	/// en: 'TMDB key, language and proxy for metadata'
-	String get scraperSettingsDescription => 'TMDB key, language and proxy for metadata';
+	/// en: 'Server metadata cache, language and Bangumi preferences'
+	String get scraperSettingsDescription => 'Server metadata cache, language and Bangumi preferences';
+
+	/// en: 'Server Metadata Service'
+	String get metadataServiceTitle => 'Server Metadata Service';
+
+	/// en: 'Using Official Sync Server metadata cache'
+	String get metadataServiceOfficial => 'Using Official Sync Server metadata cache';
+
+	/// en: 'Using Self-Hosted Sync Server metadata cache'
+	String get metadataServiceSelfHosted => 'Using Self-Hosted Sync Server metadata cache';
+
+	/// en: 'TMDB API key, proxy, and image mirror are configured centrally in the sync server Web admin console.'
+	String get metadataServiceManagedHint => 'TMDB API key, proxy, and image mirror are configured centrally in the sync server Web admin console.';
+
+	/// en: 'Test server connection'
+	String get metadataServerTest => 'Test server connection';
+
+	/// en: 'Connected · TMDB ready (cache: ${works} works, ${seasons} seasons, ${people} people)'
+	String metadataServerTestOk({required Object works, required Object seasons, required Object people}) => 'Connected · TMDB ready (cache: ${works} works, ${seasons} seasons, ${people} people)';
+
+	/// en: 'Connected to server, but TMDB API key is not configured yet in the Web admin console.'
+	String get metadataServerTestNoKey => 'Connected to server, but TMDB API key is not configured yet in the Web admin console.';
+
+	/// en: 'Client preferences'
+	String get metadataPreferencesHeading => 'Client preferences';
 
 	/// en: 'Fallback URL (optional)'
 	String get fallbackUrl => 'Fallback URL (optional)';
@@ -6934,8 +6958,8 @@ class Translations$sync$en {
 	/// en: 'Sign In to Sync Server'
 	String get modeCloudTitle => 'Sign In to Sync Server';
 
-	/// en: 'Connect to your Sync Server for multi-device library, list & progress sync and TV QR login (default: http://127.0.0.1:8088).'
-	String get modeCloudDesc => 'Connect to your Sync Server for multi-device library, list & progress sync and TV QR login (default: http://127.0.0.1:8088).';
+	/// en: 'Connect to your Sync Server for multi-device library, list & progress sync and TV QR login (default: http://10.0.10.48:8088).'
+	String get modeCloudDesc => 'Connect to your Sync Server for multi-device library, list & progress sync and TV QR login (default: http://10.0.10.48:8088).';
 
 	/// en: 'Current mode: Local Mode (No Sync)'
 	String get activeModeLan => 'Current mode: Local Mode (No Sync)';
@@ -7225,11 +7249,62 @@ class Translations$sync$en {
 	/// en: 'You can pair anytime in Remote Control Devices.'
 	String get lanPopupLaterHint => 'You can pair anytime in Remote Control Devices.';
 
-	/// en: 'Local Library Detected'
-	String get mergePromptTitle => 'Local Library Detected';
+	/// en: 'Sync Data Differences Detected'
+	String get mergeDiffTitle => 'Sync Data Differences Detected';
 
-	/// en: 'You have local media sources, collections, or watch history on this device. Merge them into this account, or start from account data only (your local data stays archived)?'
-	String get mergePromptBody => 'You have local media sources, collections, or watch history on this device. Merge them into this account, or start from account data only (your local data stays archived)?';
+	/// en: 'Signed in as ${name}. Choose how to handle differences between this device and the cloud account:'
+	String mergeDiffIntro({required Object name}) => 'Signed in as ${name}. Choose how to handle differences between this device and the cloud account:';
+
+	/// en: 'Local: ${sources} source(s), ${works} title(s), ${lists} list(s), ${progress} progress record(s)'
+	String mergeDiffLocalSummary({required Object sources, required Object works, required Object lists, required Object progress}) => 'Local: ${sources} source(s), ${works} title(s), ${lists} list(s), ${progress} progress record(s)';
+
+	/// en: 'Cloud: ${sources} source(s), ${works} title(s), ${lists} list(s), ${progress} progress record(s)'
+	String mergeDiffCloudSummary({required Object sources, required Object works, required Object lists, required Object progress}) => 'Cloud: ${sources} source(s), ${works} title(s), ${lists} list(s), ${progress} progress record(s)';
+
+	/// en: 'Difference details:'
+	String get mergeDiffDetailsHeading => 'Difference details:';
+
+	/// en: 'Local-only sources: ${names}'
+	String mergeDiffLocalOnlySources({required Object names}) => 'Local-only sources: ${names}';
+
+	/// en: 'Cloud-only sources: ${names}'
+	String mergeDiffCloudOnlySources({required Object names}) => 'Cloud-only sources: ${names}';
+
+	/// en: 'Shared sources: ${names}'
+	String mergeDiffSharedSources({required Object names}) => 'Shared sources: ${names}';
+
+	/// en: 'Local-only titles: ${count}'
+	String mergeDiffLocalOnlyWorks({required Object count}) => 'Local-only titles: ${count}';
+
+	/// en: 'Cloud-only titles: ${count}'
+	String mergeDiffCloudOnlyWorks({required Object count}) => 'Cloud-only titles: ${count}';
+
+	/// en: 'Local-only lists: ${count}'
+	String mergeDiffLocalOnlyLists({required Object count}) => 'Local-only lists: ${count}';
+
+	/// en: 'Cloud-only lists: ${count}'
+	String mergeDiffCloudOnlyLists({required Object count}) => 'Cloud-only lists: ${count}';
+
+	/// en: 'Lists with different contents: ${count}'
+	String mergeDiffConflictingLists({required Object count}) => 'Lists with different contents: ${count}';
+
+	/// en: 'Local-only watch progress: ${count}'
+	String mergeDiffLocalOnlyProgress({required Object count}) => 'Local-only watch progress: ${count}';
+
+	/// en: 'Cloud-only watch progress: ${count}'
+	String mergeDiffCloudOnlyProgress({required Object count}) => 'Cloud-only watch progress: ${count}';
+
+	/// en: 'Watch progress differences (newer wins): ${count}'
+	String mergeDiffConflictingProgress({required Object count}) => 'Watch progress differences (newer wins): ${count}';
+
+	/// en: 'Skip / favorite preference differences: ${count}'
+	String mergeDiffWorkPrefs({required Object count}) => 'Skip / favorite preference differences: ${count}';
+
+	/// en: 'Note: Cloud library is very large; diff counts reflect the first scanned pages only.'
+	String get mergeDiffTruncatedNote => 'Note: Cloud library is very large; diff counts reflect the first scanned pages only.';
+
+	/// en: 'Choosing Merge combines both sides cleanly (same sources/titles deduplicate; newer progress wins) and backs up local data into the local archive.'
+	String get mergeDiffFootnote => 'Choosing Merge combines both sides cleanly (same sources/titles deduplicate; newer progress wins) and backs up local data into the local archive.';
 
 	/// en: 'Merge Local Library'
 	String get mergeLocalOption => 'Merge Local Library';
@@ -11817,7 +11892,15 @@ extension on Translations {
 			'storage.manualMatch' => 'Match manually',
 			'storage.noMatchResults' => 'No results',
 			'storage.mediaSources' => 'Media sources',
-			'storage.scraperSettingsDescription' => 'TMDB key, language and proxy for metadata',
+			'storage.scraperSettingsDescription' => 'Server metadata cache, language and Bangumi preferences',
+			'storage.metadataServiceTitle' => 'Server Metadata Service',
+			'storage.metadataServiceOfficial' => 'Using Official Sync Server metadata cache',
+			'storage.metadataServiceSelfHosted' => 'Using Self-Hosted Sync Server metadata cache',
+			'storage.metadataServiceManagedHint' => 'TMDB API key, proxy, and image mirror are configured centrally in the sync server Web admin console.',
+			'storage.metadataServerTest' => 'Test server connection',
+			'storage.metadataServerTestOk' => ({required Object works, required Object seasons, required Object people}) => 'Connected · TMDB ready (cache: ${works} works, ${seasons} seasons, ${people} people)',
+			'storage.metadataServerTestNoKey' => 'Connected to server, but TMDB API key is not configured yet in the Web admin console.',
+			'storage.metadataPreferencesHeading' => 'Client preferences',
 			'storage.fallbackUrl' => 'Fallback URL (optional)',
 			'storage.fallbackUrlHelp' => 'Used automatically when the primary address is unreachable (e.g. DDNS outside your home network).',
 			'storage.smbFallbackHost' => 'Fallback server (optional)',
@@ -11840,6 +11923,8 @@ extension on Translations {
 			'streamQuality.noneForFile' => 'This file has no transcoded qualities yet; it plays the original',
 			'streamQuality.original' => 'Original',
 			'streamQuality.superHd' => 'Full HD',
+			_ => null,
+		} ?? switch (path) {
 			'streamQuality.high' => 'HD',
 			'streamQuality.normal' => 'SD',
 			'streamQuality.low' => 'Low',
@@ -11848,8 +11933,6 @@ extension on Translations {
 			'workSkip.scopeMovie' => 'Applies to every file version of this movie, within this media source.',
 			'workSkip.intro' => 'Skip intro',
 			'workSkip.introStart' => 'Intro starts at',
-			_ => null,
-		} ?? switch (path) {
 			'workSkip.introEnd' => 'Intro ends at',
 			'workSkip.credits' => 'Skip credits',
 			'workSkip.creditsDuration' => 'Credits length',
@@ -11876,7 +11959,7 @@ extension on Translations {
 			'sync.officialBadge' => 'Official',
 			'sync.selfHostedBadge' => 'Self-Hosted',
 			'sync.modeCloudTitle' => 'Sign In to Sync Server',
-			'sync.modeCloudDesc' => 'Connect to your Sync Server for multi-device library, list & progress sync and TV QR login (default: http://127.0.0.1:8088).',
+			'sync.modeCloudDesc' => 'Connect to your Sync Server for multi-device library, list & progress sync and TV QR login (default: http://10.0.10.48:8088).',
 			'sync.activeModeLan' => 'Current mode: Local Mode (No Sync)',
 			'sync.activeModeCloud' => 'Current mode: Sync Server',
 			'sync.activeModeOfficial' => 'Current mode: Official Sync',
@@ -11973,8 +12056,25 @@ extension on Translations {
 			'sync.lanPopupWaitingBody' => ({required Object device}) => 'Waiting for "${device}" to confirm pairing…',
 			'sync.lanPopupCancelCountdown' => ({required Object seconds}) => 'Cancel (${seconds}s)',
 			'sync.lanPopupLaterHint' => 'You can pair anytime in Remote Control Devices.',
-			'sync.mergePromptTitle' => 'Local Library Detected',
-			'sync.mergePromptBody' => 'You have local media sources, collections, or watch history on this device. Merge them into this account, or start from account data only (your local data stays archived)?',
+			'sync.mergeDiffTitle' => 'Sync Data Differences Detected',
+			'sync.mergeDiffIntro' => ({required Object name}) => 'Signed in as ${name}. Choose how to handle differences between this device and the cloud account:',
+			'sync.mergeDiffLocalSummary' => ({required Object sources, required Object works, required Object lists, required Object progress}) => 'Local: ${sources} source(s), ${works} title(s), ${lists} list(s), ${progress} progress record(s)',
+			'sync.mergeDiffCloudSummary' => ({required Object sources, required Object works, required Object lists, required Object progress}) => 'Cloud: ${sources} source(s), ${works} title(s), ${lists} list(s), ${progress} progress record(s)',
+			'sync.mergeDiffDetailsHeading' => 'Difference details:',
+			'sync.mergeDiffLocalOnlySources' => ({required Object names}) => 'Local-only sources: ${names}',
+			'sync.mergeDiffCloudOnlySources' => ({required Object names}) => 'Cloud-only sources: ${names}',
+			'sync.mergeDiffSharedSources' => ({required Object names}) => 'Shared sources: ${names}',
+			'sync.mergeDiffLocalOnlyWorks' => ({required Object count}) => 'Local-only titles: ${count}',
+			'sync.mergeDiffCloudOnlyWorks' => ({required Object count}) => 'Cloud-only titles: ${count}',
+			'sync.mergeDiffLocalOnlyLists' => ({required Object count}) => 'Local-only lists: ${count}',
+			'sync.mergeDiffCloudOnlyLists' => ({required Object count}) => 'Cloud-only lists: ${count}',
+			'sync.mergeDiffConflictingLists' => ({required Object count}) => 'Lists with different contents: ${count}',
+			'sync.mergeDiffLocalOnlyProgress' => ({required Object count}) => 'Local-only watch progress: ${count}',
+			'sync.mergeDiffCloudOnlyProgress' => ({required Object count}) => 'Cloud-only watch progress: ${count}',
+			'sync.mergeDiffConflictingProgress' => ({required Object count}) => 'Watch progress differences (newer wins): ${count}',
+			'sync.mergeDiffWorkPrefs' => ({required Object count}) => 'Skip / favorite preference differences: ${count}',
+			'sync.mergeDiffTruncatedNote' => 'Note: Cloud library is very large; diff counts reflect the first scanned pages only.',
+			'sync.mergeDiffFootnote' => 'Choosing Merge combines both sides cleanly (same sources/titles deduplicate; newer progress wins) and backs up local data into the local archive.',
 			'sync.mergeLocalOption' => 'Merge Local Library',
 			'sync.accountOnlyOption' => 'Account Only (Archive Local)',
 			'sync.initialSyncRestoring' => 'Restoring media sources & library from server…',

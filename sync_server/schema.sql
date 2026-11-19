@@ -128,3 +128,55 @@ CREATE TABLE IF NOT EXISTS sync_applied_ops (
     created_at BIGINT      NOT NULL,
     PRIMARY KEY (user_id, op_id)
 );
+
+-- Public shared metadata cache (strictly isolated from per-user sync_* tables)
+CREATE TABLE IF NOT EXISTS meta_works_cache (
+    provider     VARCHAR(32) NOT NULL,
+    kind         VARCHAR(16) NOT NULL,
+    external_id  VARCHAR(64) NOT NULL,
+    lang         VARCHAR(16) NOT NULL,
+    payload_json TEXT        NOT NULL,
+    status       VARCHAR(64) NOT NULL DEFAULT '',
+    release_date VARCHAR(32) NOT NULL DEFAULT '',
+    fetched_at   BIGINT      NOT NULL,
+    expires_at   BIGINT      NOT NULL,
+    PRIMARY KEY (provider, kind, external_id, lang)
+);
+CREATE INDEX IF NOT EXISTS idx_meta_works_expires ON meta_works_cache (expires_at);
+
+CREATE TABLE IF NOT EXISTS meta_seasons_cache (
+    provider      VARCHAR(32) NOT NULL,
+    external_id   VARCHAR(64) NOT NULL,
+    season_number INTEGER     NOT NULL,
+    lang          VARCHAR(16) NOT NULL,
+    payload_json  TEXT        NOT NULL,
+    fetched_at    BIGINT      NOT NULL,
+    expires_at    BIGINT      NOT NULL,
+    PRIMARY KEY (provider, external_id, season_number, lang)
+);
+CREATE INDEX IF NOT EXISTS idx_meta_seasons_expires ON meta_seasons_cache (expires_at);
+
+CREATE TABLE IF NOT EXISTS meta_people_cache (
+    provider     VARCHAR(32) NOT NULL,
+    person_id    VARCHAR(64) NOT NULL,
+    name         TEXT        NOT NULL,
+    profile_path TEXT        NOT NULL DEFAULT '',
+    extra_json   TEXT        NOT NULL DEFAULT '{}',
+    fetched_at   BIGINT      NOT NULL,
+    expires_at   BIGINT      NOT NULL,
+    PRIMARY KEY (provider, person_id)
+);
+CREATE INDEX IF NOT EXISTS idx_meta_people_expires ON meta_people_cache (expires_at);
+
+CREATE TABLE IF NOT EXISTS meta_search_cache (
+    cache_key    VARCHAR(64) PRIMARY KEY,
+    provider     VARCHAR(32) NOT NULL,
+    kind         VARCHAR(16) NOT NULL,
+    query        TEXT        NOT NULL,
+    year         INTEGER     NOT NULL DEFAULT 0,
+    lang         VARCHAR(16) NOT NULL,
+    payload_json TEXT        NOT NULL,
+    fetched_at   BIGINT      NOT NULL,
+    expires_at   BIGINT      NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_meta_search_expires ON meta_search_cache (expires_at);

@@ -244,10 +244,11 @@ func (s *SyncStore) applySourceTx(
 
 	existing, err := loadSourceRow(tx, userID, incoming.SourceID)
 	if errors.Is(err, sql.ErrNoRows) {
-		if !incoming.IsDeleted {
-			if err := checkQuota(1); err != nil {
-				return 0, err
-			}
+		if incoming.IsDeleted {
+			return 0, nil
+		}
+		if err := checkQuota(1); err != nil {
+			return 0, err
 		}
 		seq := allocSeq()
 		copySrc := *incoming
@@ -405,7 +406,9 @@ func (s *SyncStore) applyWorkTx(
 				return 0, err
 			}
 		}
-	} else if !incoming.IsDeleted {
+	} else if incoming.IsDeleted {
+		return 0, nil
+	} else {
 		if err := checkQuota(1); err != nil {
 			return 0, err
 		}
@@ -473,7 +476,9 @@ func (s *SyncStore) applyFileTx(
 				return 0, err
 			}
 		}
-	} else if !incoming.IsDeleted {
+	} else if incoming.IsDeleted {
+		return 0, nil
+	} else {
 		if err := checkQuota(1); err != nil {
 			return 0, err
 		}
@@ -583,7 +588,9 @@ func (s *SyncStore) applyListTx(
 				return 0, err
 			}
 		}
-	} else if !incoming.IsDeleted {
+	} else if incoming.IsDeleted {
+		return 0, nil
+	} else {
 		if err := checkQuota(1); err != nil {
 			return 0, err
 		}
@@ -612,6 +619,10 @@ type deltaEnvelope struct {
 }
 
 func (s *SyncStore) Pull(user *UserRecord, sinceSeq int64, limit int) PullResponse {
+	return s.PullWithOptions(user, sinceSeq, limit, sinceSeq == 0)
+}
+
+func (s *SyncStore) PullWithOptions(user *UserRecord, sinceSeq int64, limit int, activeOnly bool) PullResponse {
 	if limit <= 0 {
 		limit = 500
 	}
@@ -651,17 +662,17 @@ func (s *SyncStore) Pull(user *UserRecord, sinceSeq int64, limit int) PullRespon
 	queryLimit := limit + 1
 	deltas := make([]deltaEnvelope, 0)
 
-	if sources, err := querySourcesSince(s.db, user.UserID, sinceSeq, queryLimit); err == nil {
+	if sources, err := querySourcesSince(s.db, user.UserID, sinceSeq, queryLimit, activeOnly); err == nil {
 		for _, src := range sources {
 			deltas = append(deltas, deltaEnvelope{seq: src.ServerSeq, kind: "source", item: src})
 		}
 	}
-	if works, err := queryWorksSince(s.db, user.UserID, sinceSeq, queryLimit); err == nil {
+	if works, err := queryWorksSince(s.db, user.UserID, sinceSeq, queryLimit, activeOnly); err == nil {
 		for _, w := range works {
 			deltas = append(deltas, deltaEnvelope{seq: w.ServerSeq, kind: "work", item: w})
 		}
 	}
-	if files, err := queryFilesSince(s.db, user.UserID, sinceSeq, queryLimit); err == nil {
+	if files, err := queryFilesSince(s.db, user.UserID, sinceSeq, queryLimit, activeOnly); err == nil {
 		for _, f := range files {
 			deltas = append(deltas, deltaEnvelope{seq: f.ServerSeq, kind: "file", item: f})
 		}
@@ -676,7 +687,7 @@ func (s *SyncStore) Pull(user *UserRecord, sinceSeq int64, limit int) PullRespon
 			deltas = append(deltas, deltaEnvelope{seq: g.ServerSeq, kind: "watch_progress", item: g})
 		}
 	}
-	if lists, err := queryListsSince(s.db, user.UserID, sinceSeq, queryLimit); err == nil {
+	if lists, err := queryListsSince(s.db, user.UserID, sinceSeq, queryLimit, activeOnly); err == nil {
 		for _, l := range lists {
 			deltas = append(deltas, deltaEnvelope{seq: l.ServerSeq, kind: "list", item: l})
 		}
@@ -694,6 +705,9 @@ func (s *SyncStore) Pull(user *UserRecord, sinceSeq int64, limit int) PullRespon
 	nextSeq := sinceSeq
 	if len(deltas) > 0 {
 		nextSeq = deltas[len(deltas)-1].seq
+	}
+	if !hasMore && activeOnly && nextSeqMax > nextSeq {
+		nextSeq = nextSeqMax
 	}
 
 	out := PullData{
@@ -814,13 +828,17 @@ func scanSourceRow(s interface{ Scan(...any) error }) (*SyncSource, error) {
 	return &out, nil
 }
 
-func querySourcesSince(db *sql.DB, userID string, sinceSeq int64, limit int) ([]SyncSource, error) {
+func querySourcesSince(db *sql.DB, userID string, sinceSeq int64, limit int, activeOnly bool) ([]SyncSource, error) {
+	filter := ""
+	if activeOnly {
+		filter = " AND is_deleted = 0"
+	}
 	rows, err := db.Query(`
 		SELECT source_id, canonical_key, name, protocol, is_lan_only, primary_url, fallback_url,
 		       config_json, include_paths_json, exclude_paths_json, encrypted_auth, auth_updated_at,
 		       quark_checkpoint, scan_finished_at, scan_lease_owner, scan_lease_until,
 		       client_updated_at, is_deleted, server_seq
-		FROM sync_sources WHERE user_id = ? AND server_seq > ? ORDER BY server_seq ASC LIMIT ?`,
+		FROM sync_sources WHERE user_id = ? AND server_seq > ?`+filter+` ORDER BY server_seq ASC LIMIT ?`,
 		userID, sinceSeq, limit,
 	)
 	if err != nil {
@@ -878,11 +896,15 @@ func scanWorkRow(s interface{ Scan(...any) error }) (*SyncWork, error) {
 	return &out, nil
 }
 
-func queryWorksSince(db *sql.DB, userID string, sinceSeq int64, limit int) ([]SyncWork, error) {
+func queryWorksSince(db *sql.DB, userID string, sinceSeq int64, limit int, activeOnly bool) ([]SyncWork, error) {
+	filter := ""
+	if activeOnly {
+		filter = " AND is_deleted = 0"
+	}
 	rows, err := db.Query(`
 		SELECT work_key, kind, library_type, provider, external_id,
 		       match_status, metadata_json, client_updated_at, is_deleted, server_seq
-		FROM sync_works WHERE user_id = ? AND server_seq > ? ORDER BY server_seq ASC LIMIT ?`,
+		FROM sync_works WHERE user_id = ? AND server_seq > ?`+filter+` ORDER BY server_seq ASC LIMIT ?`,
 		userID, sinceSeq, limit,
 	)
 	if err != nil {
@@ -957,13 +979,17 @@ func scanFileRow(s interface{ Scan(...any) error }) (*SyncFile, error) {
 	return &out, nil
 }
 
-func queryFilesSince(db *sql.DB, userID string, sinceSeq int64, limit int) ([]SyncFile, error) {
+func queryFilesSince(db *sql.DB, userID string, sinceSeq int64, limit int, activeOnly bool) ([]SyncFile, error) {
+	filter := ""
+	if activeOnly {
+		filter = " AND is_deleted = 0"
+	}
 	rows, err := db.Query(`
 		SELECT file_id, source_id, relative_path, remote_id, role, owner_file_id, language,
 		       file_name, file_size, file_mtime, file_created_at, work_key, season_num, episode_num,
 		       episode_end_num, match_status, version_label, parsed_json, media_spec_json,
 		       client_updated_at, is_deleted, server_seq
-		FROM sync_files WHERE user_id = ? AND server_seq > ? ORDER BY server_seq ASC LIMIT ?`,
+		FROM sync_files WHERE user_id = ? AND server_seq > ?`+filter+` ORDER BY server_seq ASC LIMIT ?`,
 		userID, sinceSeq, limit,
 	)
 	if err != nil {
@@ -1164,11 +1190,15 @@ func scanListRow(s interface{ Scan(...any) error }) (*SyncList, error) {
 	return &out, nil
 }
 
-func queryListsSince(db *sql.DB, userID string, sinceSeq int64, limit int) ([]SyncList, error) {
+func queryListsSince(db *sql.DB, userID string, sinceSeq int64, limit int, activeOnly bool) ([]SyncList, error) {
+	filter := ""
+	if activeOnly {
+		filter = " AND is_deleted = 0"
+	}
 	rows, err := db.Query(`
 		SELECT list_key, kind, title, summary, poster_path, tmdb_id,
 		       item_work_keys_json, client_updated_at, is_deleted, server_seq
-		FROM sync_lists WHERE user_id = ? AND server_seq > ? ORDER BY server_seq ASC LIMIT ?`,
+		FROM sync_lists WHERE user_id = ? AND server_seq > ?`+filter+` ORDER BY server_seq ASC LIMIT ?`,
 		userID, sinceSeq, limit,
 	)
 	if err != nil {

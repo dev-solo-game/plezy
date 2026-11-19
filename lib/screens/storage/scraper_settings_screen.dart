@@ -1,25 +1,24 @@
-import '../../focus/focusable_button.dart';
-import '../../focus/focusable_text_field.dart';
-import '../../utils/dialogs.dart';
-import '../../utils/platform_detector.dart';
-import '../../widgets/app_icon.dart';
-import '../../widgets/focusable_list_tile.dart';
-import '../../library/scrapers/scraper_http.dart';
-import '../../library/scrapers/scraped_metadata.dart';
-import 'package:material_symbols_icons/symbols.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:material_symbols_icons/symbols.dart';
 import 'package:provider/provider.dart';
 
+import '../../focus/focusable_button.dart';
 import '../../i18n/strings.g.dart';
 import '../../library/library_scan_service.dart';
+import '../../library/library_scrape_runner.dart';
 import '../../library/library_settings.dart';
-import '../../library/scrapers/tmdb_provider.dart';
+import '../../library/scrapers/scraped_metadata.dart';
+import '../../library/scrapers/server_metadata_provider.dart';
 import '../../library/sync/sync_coordinator.dart';
+import '../../library/sync/sync_local_store.dart';
+import '../../utils/dialogs.dart';
+import '../../widgets/app_icon.dart';
+import '../../widgets/focusable_list_tile.dart';
 import 'mounts_screen.dart';
 
-/// Where metadata comes from: the TMDB key, language, mirrors and proxy.
+/// Server-managed metadata connection check and client-level language/Bangumi prefs.
 class ScraperSettingsScreen extends StatefulWidget {
   const ScraperSettingsScreen({super.key});
 
@@ -31,14 +30,16 @@ class _ScraperSettingsScreenState extends State<ScraperSettingsScreen> {
   static const double _gap = 14;
   static const List<String> _languages = ['zh-CN', 'zh-TW', 'zh-HK', 'en-US', 'ja-JP', 'ko-KR'];
 
-  final _apiKey = TextEditingController();
-  final _apiBase = TextEditingController();
-  final _imageBase = TextEditingController();
-  final _proxy = TextEditingController();
+  ScraperSettings _stored = const ScraperSettings();
   String _language = ScraperSettings.defaultLanguage;
   bool _bangumi = true;
   bool _loaded = false;
   bool _saving = false;
+  ({bool ok, String message})? _testResult;
+  bool _testing = false;
+
+  String _endpointUrl = SyncLocalStore.effectiveDefaultOfficialSyncUrl;
+  bool _isOfficialEndpoint = true;
 
   @override
   void initState() {
@@ -46,61 +47,84 @@ class _ScraperSettingsScreenState extends State<ScraperSettingsScreen> {
     unawaited(_load());
   }
 
+  T? _maybeRead<T>() {
+    try {
+      return Provider.of<T>(context, listen: false);
+    } catch (_) {
+      return null;
+    }
+  }
+
   Future<void> _load() async {
-    final settings = await context.read<LibrarySettingsStore>().loadScraper();
+    final store = _maybeRead<LibrarySettingsStore>();
+    final runner = _maybeRead<LibraryScrapeRunner>();
+    final sync = _maybeRead<SyncAndScanCoordinator>();
+
+    final settings = store != null ? await store.loadScraper() : const ScraperSettings();
+    var endpointUrl = SyncLocalStore.effectiveDefaultOfficialSyncUrl;
+    var isOfficial = true;
+    if (runner != null) {
+      final resolved = await runner.resolveActiveMetadataEndpoint();
+      endpointUrl = resolved.serverUrl;
+      isOfficial = resolved.isOfficial;
+    } else if (sync?.session case final sess?) {
+      endpointUrl = sess.serverUrl;
+      isOfficial = sess.serverKind == SyncServerKind.official;
+    }
+
     if (!mounted) return;
     setState(() {
-      _apiKey.text = settings.tmdbApiKey;
-      // Shown filled in, so the default host can be edited rather than typed.
-      _apiBase.text = settings.tmdbApiBase.isEmpty ? TmdbProvider.defaultApiHost : settings.tmdbApiBase;
-      _imageBase.text = settings.tmdbImageBase.isEmpty ? TmdbProvider.defaultImageHost : settings.tmdbImageBase;
-      _proxy.text = settings.proxy;
+      _stored = settings;
       _language = settings.language;
       _bangumi = settings.bangumiEnabled;
+      _endpointUrl = endpointUrl;
+      _isOfficialEndpoint = isOfficial;
       _loaded = true;
     });
   }
 
-  @override
-  void dispose() {
-    for (final controller in [_apiKey, _apiBase, _imageBase, _proxy]) {
-      controller.dispose();
-    }
-    super.dispose();
-  }
-
-  /// Result of the last connection test: null while none ran, else the
-  /// message to show and whether it passed.
-  ({bool ok, String message})? _testResult;
-  bool _testing = false;
-
   Future<void> _testConnection() async {
     if (_testing) return;
-    final key = _apiKey.text.trim();
-    if (key.isEmpty) {
-      setState(() => _testResult = (ok: false, message: t.storage.tmdbTestNoKey));
-      return;
-    }
     setState(() {
       _testing = true;
       _testResult = null;
     });
-    final provider = TmdbProvider(
-      apiKey: key,
-      language: _language,
-      apiBase: _apiBase.text,
-      imageBase: _imageBase.text,
-      http: ScraperHttp(proxy: _proxy.text),
-    );
+
+    final runner = _maybeRead<LibraryScrapeRunner>();
     ({bool ok, String message}) result;
     try {
-      await provider.checkConnection();
-      result = (ok: true, message: t.storage.tmdbTestOk);
+      final res = runner != null
+          ? await runner.checkMetadataServerConnection()
+          : (
+              serverUrl: _endpointUrl,
+              isOfficial: _isOfficialEndpoint,
+              config: await ServerMetadataProvider.fetchConfig(serverUrl: _endpointUrl),
+            );
+      if (mounted) {
+        setState(() {
+          _endpointUrl = res.serverUrl;
+          _isOfficialEndpoint = res.isOfficial;
+        });
+      }
+      final cfg = res.config;
+      if (cfg.tmdbConfigured) {
+        result = (
+          ok: true,
+          message: t.storage.metadataServerTestOk(
+            works: cfg.cachedWorks,
+            seasons: cfg.cachedSeasons,
+            people: cfg.cachedPeople,
+          ),
+        );
+      } else {
+        result = (ok: false, message: t.storage.metadataServerTestNoKey);
+      }
     } on ScrapeException catch (e) {
       result = (ok: false, message: t.storage.tmdbTestFailed(message: e.message));
-    } finally {
-      provider.close();
+    } catch (e) {
+      result = (ok: false, message: t.storage.tmdbTestFailed(message: '$e'));
     }
+
     if (mounted) {
       setState(() {
         _testing = false;
@@ -111,27 +135,27 @@ class _ScraperSettingsScreenState extends State<ScraperSettingsScreen> {
 
   Future<void> _save() async {
     if (_saving) return;
-    final store = context.read<LibrarySettingsStore>();
-    final scans = context.read<LibraryScanService>();
-    SyncAndScanCoordinator? sync;
-    try {
-      sync = context.read<SyncAndScanCoordinator>();
-    } catch (_) {}
+    final store = _maybeRead<LibrarySettingsStore>();
+    final scans = _maybeRead<LibraryScanService>();
+    final sync = _maybeRead<SyncAndScanCoordinator>();
     final navigator = Navigator.of(context);
+
     setState(() => _saving = true);
-    await store.saveScraper(
-      ScraperSettings(
-        tmdbApiKey: _apiKey.text,
-        tmdbApiBase: _apiBase.text,
-        tmdbImageBase: _imageBase.text,
-        language: _language,
-        proxy: _proxy.text,
-        bangumiEnabled: _bangumi,
-      ),
-    );
-    // New settings may reach titles the old ones could not: try them again,
-    // and stop a run still going with the old ones.
-    unawaited(scans.scrapeLibrary(retryUnmatched: true, restart: true));
+    if (store != null) {
+      await store.saveScraper(
+        ScraperSettings(
+          tmdbApiKey: _stored.tmdbApiKey,
+          tmdbApiBase: _stored.tmdbApiBase,
+          tmdbImageBase: _stored.tmdbImageBase,
+          language: _language,
+          proxy: _stored.proxy,
+          bangumiEnabled: _bangumi,
+        ),
+      );
+    }
+    if (scans != null) {
+      unawaited(scans.scrapeLibrary(retryUnmatched: true, restart: true));
+    }
     if (sync != null) {
       unawaited(sync.syncScraperSettingsToCloud());
     }
@@ -150,17 +174,6 @@ class _ScraperSettingsScreenState extends State<ScraperSettingsScreen> {
     if (picked != null && mounted) setState(() => _language = picked);
   }
 
-  // The fields set TvTextInputAutoOpenBehavior.never: on Android TV the
-  // keyboard otherwise opens as the remote lands on a field and keeps its
-  // arrows. OK starts typing.
-  InputDecoration _decoration(String label, {String? hint, String? helper}) => InputDecoration(
-    labelText: label,
-    hintText: hint,
-    helperText: helper,
-    helperMaxLines: 3,
-    border: const OutlineInputBorder(),
-  );
-
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -175,15 +188,80 @@ class _ScraperSettingsScreenState extends State<ScraperSettingsScreen> {
                 child: ListView(
                   padding: const EdgeInsets.all(16),
                   children: [
-                    FocusableTextField(
-                      tvTextInputAutoOpenBehavior: TvTextInputAutoOpenBehavior.never,
-                      controller: _apiKey,
-                      autofocus: PlatformDetector.isTV(),
-                      decoration: _decoration(t.storage.tmdbKey, helper: t.storage.tmdbKeyHelp),
-                      autocorrect: false,
-                      enableSuggestions: false,
+                    Card(
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Row(
+                              children: [
+                                AppIcon(
+                                  _isOfficialEndpoint ? Symbols.cloud_sync_rounded : Symbols.dns_rounded,
+                                  color: theme.colorScheme.primary,
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Text(t.storage.metadataServiceTitle, style: theme.textTheme.titleMedium),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              _isOfficialEndpoint
+                                  ? t.storage.metadataServiceOfficial
+                                  : t.storage.metadataServiceSelfHosted,
+                              style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.primary),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              _endpointUrl,
+                              style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                            ),
+                            const SizedBox(height: 10),
+                            Text(
+                              t.storage.metadataServiceManagedHint,
+                              style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                            ),
+                            const SizedBox(height: 14),
+                            Row(
+                              children: [
+                                FocusableButton(
+                                  onPressed: _testing ? null : _testConnection,
+                                  child: OutlinedButton.icon(
+                                    onPressed: _testing ? null : _testConnection,
+                                    icon: _testing
+                                        ? const SizedBox.square(
+                                            dimension: 16,
+                                            child: CircularProgressIndicator(strokeWidth: 2),
+                                          )
+                                        : const AppIcon(Symbols.network_check_rounded),
+                                    label: Text(t.storage.metadataServerTest),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            if (_testResult case final result?) ...[
+                              const SizedBox(height: 10),
+                              Text(
+                                result.message,
+                                style: theme.textTheme.bodySmall?.copyWith(
+                                  color: result.ok ? theme.colorScheme.primary : theme.colorScheme.error,
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
                     ),
                     const SizedBox(height: _gap),
+                    Padding(
+                      padding: const EdgeInsets.only(top: 6, bottom: 8),
+                      child: Text(
+                        t.storage.metadataPreferencesHeading,
+                        style: theme.textTheme.titleSmall?.copyWith(color: theme.colorScheme.primary),
+                      ),
+                    ),
                     // A picker rather than a dropdown: a remote's arrows move
                     // between rows instead of getting lost in a menu.
                     FocusableListTile(
@@ -202,62 +280,6 @@ class _ScraperSettingsScreenState extends State<ScraperSettingsScreen> {
                       subtitle: Text(t.storage.bangumiForAnimeHelp),
                       value: _bangumi,
                       onChanged: (value) => setState(() => _bangumi = value),
-                    ),
-                    Padding(
-                      padding: const EdgeInsets.only(top: 20, bottom: 12),
-                      child: Text(
-                        t.storage.sectionAdvanced,
-                        style: theme.textTheme.titleSmall?.copyWith(color: theme.colorScheme.primary),
-                      ),
-                    ),
-                    FocusableTextField(
-                      tvTextInputAutoOpenBehavior: TvTextInputAutoOpenBehavior.never,
-                      controller: _proxy,
-                      decoration: _decoration(
-                        t.storage.metadataProxy,
-                        hint: '127.0.0.1:7890',
-                        helper: t.storage.metadataProxyHelp,
-                      ),
-                      autocorrect: false,
-                    ),
-                    const SizedBox(height: _gap),
-                    FocusableTextField(
-                      tvTextInputAutoOpenBehavior: TvTextInputAutoOpenBehavior.never,
-                      controller: _apiBase,
-                      decoration: _decoration(t.storage.tmdbApiBase, hint: TmdbProvider.defaultApiHost),
-                      autocorrect: false,
-                    ),
-                    const SizedBox(height: _gap),
-                    FocusableTextField(
-                      tvTextInputAutoOpenBehavior: TvTextInputAutoOpenBehavior.never,
-                      controller: _imageBase,
-                      decoration: _decoration(t.storage.tmdbImageBase, hint: TmdbProvider.defaultImageHost),
-                      autocorrect: false,
-                    ),
-                    const SizedBox(height: _gap),
-                    Row(
-                      children: [
-                        FocusableButton(
-                          onPressed: _testing ? null : _testConnection,
-                          child: OutlinedButton.icon(
-                            onPressed: _testing ? null : _testConnection,
-                            icon: _testing
-                                ? const SizedBox.square(dimension: 16, child: CircularProgressIndicator(strokeWidth: 2))
-                                : const AppIcon(Symbols.network_check_rounded),
-                            label: Text(t.storage.tmdbTest),
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        if (_testResult case final result?)
-                          Expanded(
-                            child: Text(
-                              result.message,
-                              style: theme.textTheme.bodySmall?.copyWith(
-                                color: result.ok ? theme.colorScheme.primary : theme.colorScheme.error,
-                              ),
-                            ),
-                          ),
-                      ],
                     ),
                   ],
                 ),

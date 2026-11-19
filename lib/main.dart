@@ -87,6 +87,7 @@ import 'library/library_settings.dart';
 import 'library/local_library_client.dart';
 import 'library/library_scan_service.dart';
 import 'library/library_scanner.dart';
+import 'library/scrapers/tmdb_provider.dart';
 import 'library/sync/sync_coordinator.dart';
 import 'library/sync/sync_local_store.dart';
 import 'storage/http_range_reader.dart';
@@ -1641,11 +1642,35 @@ class _MainAppState extends State<MainApp> with WidgetsBindingObserver {
       repository: _libraryRepository,
       settings: _librarySettingsStore,
       mounts: _mountManager,
+      resolveMetadataEndpoint: () async {
+        final sess = _syncCoordinator?.session ?? await SyncLocalStore(_appDatabase).loadSession();
+        if (sess != null) {
+          return (
+            serverUrl: sess.serverUrl,
+            accessToken: sess.accessToken,
+            isOfficial: sess.serverKind == SyncServerKind.official,
+          );
+        }
+        return (serverUrl: SyncLocalStore.effectiveDefaultOfficialSyncUrl, accessToken: null, isOfficial: true);
+      },
+      onImageBaseUpdated: (imageBase) {
+        final trimmed = imageBase.trim();
+        if (trimmed.isNotEmpty) {
+          _localLibraryClient.tmdbImageBase = trimmed;
+        }
+      },
     );
     _localLibraryClient = LocalLibraryClient(
       repository: _libraryRepository,
       mounts: _mountManager,
       scrapeRunner: _libraryScrapeRunner,
+    );
+    unawaited(
+      _librarySettingsStore.loadScraper().then((s) {
+        if (s.tmdbImageBase.trim().isNotEmpty && _localLibraryClient.tmdbImageBase == TmdbProvider.defaultImageBase) {
+          _localLibraryClient.tmdbImageBase = s.tmdbImageBase.trim();
+        }
+      }),
     );
     _libraryScanService = LibraryScanService(
       repository: _libraryRepository,
@@ -1695,6 +1720,7 @@ class _MainAppState extends State<MainApp> with WidgetsBindingObserver {
       if (widget.enableBackgroundSyncServices) {
         _mountManager.startReachabilityMonitor();
         unawaited(_mountManager.proxy.start());
+        unawaited(_libraryScrapeRunner.checkMetadataServerConnection().then<void>((_) {}, onError: (_) {}));
       }
       unawaited(OrientationHelper.restoreDefaultOrientations());
       unawaited(DeepLinkService.instance.fetchInitialLink());

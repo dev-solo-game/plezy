@@ -19,8 +19,10 @@ import 'sync_crypto.dart';
 import 'sync_local_store.dart';
 import 'sync_mapper.dart';
 import 'sync_models.dart';
+import 'sync_sign_in_preview.dart';
 
 export 'sync_local_store.dart' show SyncMode, SyncServerKind, defaultOfficialSyncUrl, normalizeSyncServerUrl;
+export 'sync_sign_in_preview.dart';
 
 enum SyncQrAuthErrorCode { notSignedIn, invalidQrUri, serverMismatch, expired }
 
@@ -146,6 +148,13 @@ class SyncAndScanCoordinator extends ChangeNotifier {
         await syncStore.saveMinRetainedSeq(gc.maxPurgedSeq);
       }
     }
+    try {
+      final freeRow = await db.customSelect('PRAGMA freelist_count').getSingleOrNull();
+      final freelistCount = freeRow?.data.values.whereType<int>().firstOrNull ?? 0;
+      if (gc.deletedCount > 0 || freelistCount >= 500) {
+        await db.customStatement('VACUUM');
+      }
+    } catch (_) {}
     final healed = await mapper.healCatalogFromJournal();
     if (healed > 0) {
       scanService?.notifyLibraryChanged();
@@ -182,24 +191,19 @@ class SyncAndScanCoordinator extends ChangeNotifier {
 
   Future<void> selectLanMode({bool startService = true}) => selectLocalMode(startService: startService);
 
-  Future<bool> hasLocalDataToMerge() async {
-    await initialize();
-    if (_session != null) return false;
-    return workspaceStore.hasLocalSyncableContent();
-  }
-
   Future<void> refreshOutboxCount() async {
     _pendingOutboxCount = (await syncStore.readPendingOutbox(limit: 1000)).length;
     if (!_disposed) notifyListeners();
   }
 
-  Future<void> register({
+  Future<PendingSyncSignIn> prepareRegister({
     required String serverUrl,
     required String username,
     required String password,
     SyncKdfParams kdfParams = const SyncKdfParams(),
-    LocalMergePolicy mergePolicy = LocalMergePolicy.mergeLocal,
     SyncServerKind? serverKind,
+    Map<String, Object?>? settings,
+    bool includeLocalScraperSettings = false,
   }) async {
     await initialize();
     final masterKey = SyncCrypto.generateMasterKey();
@@ -207,9 +211,11 @@ class SyncAndScanCoordinator extends ChangeNotifier {
     final derived = await SyncCrypto.derivePasswordKeys(password: password, salt: salt, params: kdfParams);
     final backupEnvelope = await SyncCrypto.sealMasterKeyBackup(masterKey, derived.kek);
 
-    final settingsMap = mergePolicy == LocalMergePolicy.mergeLocal
-        ? await mapper.buildCloudUserSettingsPayload(masterKey)
-        : const <String, Object?>{};
+    final effectiveSettings =
+        settings ??
+        (includeLocalScraperSettings
+            ? await mapper.buildCloudUserSettingsPayload(masterKey)
+            : const <String, Object?>{});
 
     final normalizedUrl = SyncLocalStore.normalizeServerUrl(serverUrl);
     final resp = await apiClient.register(
@@ -220,7 +226,7 @@ class SyncAndScanCoordinator extends ChangeNotifier {
       kdfParams: kdfParams,
       encryptedMasterKeyBackup: backupEnvelope,
       deviceId: _deviceId!,
-      settings: settingsMap,
+      settings: effectiveSettings,
     );
 
     final creds = SyncSessionCredentials(
@@ -231,19 +237,37 @@ class SyncAndScanCoordinator extends ChangeNotifier {
       masterKey: masterKey,
       serverKind: serverKind,
     );
-    await _finishSignIn(
-      creds,
+    return PendingSyncSignIn(
+      credentials: creds,
       serverTimeMs: resp.serverTimeMs,
-      mergePolicy: mergePolicy,
       remoteSettings: resp.settings,
+      isNewAccount: true,
     );
   }
 
-  Future<void> loginWithPassword({
+  Future<void> register({
     required String serverUrl,
     required String username,
     required String password,
+    SyncKdfParams kdfParams = const SyncKdfParams(),
     LocalMergePolicy mergePolicy = LocalMergePolicy.mergeLocal,
+    SyncServerKind? serverKind,
+  }) async {
+    final pending = await prepareRegister(
+      serverUrl: serverUrl,
+      username: username,
+      password: password,
+      kdfParams: kdfParams,
+      serverKind: serverKind,
+      includeLocalScraperSettings: mergePolicy == LocalMergePolicy.mergeLocal,
+    );
+    await commitPendingSignIn(pending, mergePolicy: mergePolicy);
+  }
+
+  Future<PendingSyncSignIn> prepareLoginWithPassword({
+    required String serverUrl,
+    required String username,
+    required String password,
     SyncServerKind? serverKind,
   }) async {
     await initialize();
@@ -269,12 +293,23 @@ class SyncAndScanCoordinator extends ChangeNotifier {
       masterKey: masterKey,
       serverKind: serverKind,
     );
-    await _finishSignIn(
-      creds,
-      serverTimeMs: resp.serverTimeMs,
-      mergePolicy: mergePolicy,
-      remoteSettings: resp.settings,
+    return PendingSyncSignIn(credentials: creds, serverTimeMs: resp.serverTimeMs, remoteSettings: resp.settings);
+  }
+
+  Future<void> loginWithPassword({
+    required String serverUrl,
+    required String username,
+    required String password,
+    LocalMergePolicy mergePolicy = LocalMergePolicy.mergeLocal,
+    SyncServerKind? serverKind,
+  }) async {
+    final pending = await prepareLoginWithPassword(
+      serverUrl: serverUrl,
+      username: username,
+      password: password,
+      serverKind: serverKind,
     );
+    await commitPendingSignIn(pending, mergePolicy: mergePolicy);
   }
 
   Future<({String sessionId, String qrUri, SyncQrKeyPair keyPair, int expiresAtMs})> startQrSession({
@@ -312,11 +347,10 @@ class SyncAndScanCoordinator extends ChangeNotifier {
     return (sessionId: created.sessionId, qrUri: uri, keyPair: keyPair, expiresAtMs: created.expiresAtMs);
   }
 
-  Future<bool> pollQrSession({
+  Future<PendingSyncSignIn?> pollQrSessionPending({
     required String serverUrl,
     required String sessionId,
     required SyncQrKeyPair keyPair,
-    LocalMergePolicy mergePolicy = LocalMergePolicy.mergeLocal,
     SyncServerKind? serverKind,
   }) async {
     await initialize();
@@ -326,7 +360,7 @@ class SyncAndScanCoordinator extends ChangeNotifier {
       throw const SyncApiException(410, 'QR session expired');
     }
     if (poll.status != 'confirmed' || poll.accessToken == null || poll.sealedMasterKey == null || poll.userId == null) {
-      return false;
+      return null;
     }
 
     final masterKey = await SyncCrypto.unsealMasterKeyOnTv(
@@ -341,13 +375,337 @@ class SyncAndScanCoordinator extends ChangeNotifier {
       masterKey: masterKey,
       serverKind: serverKind,
     );
-    await _finishSignIn(
-      creds,
-      serverTimeMs: poll.serverTimeMs,
-      mergePolicy: mergePolicy,
-      remoteSettings: poll.settings,
+    return PendingSyncSignIn(credentials: creds, serverTimeMs: poll.serverTimeMs, remoteSettings: poll.settings);
+  }
+
+  Future<bool> pollQrSession({
+    required String serverUrl,
+    required String sessionId,
+    required SyncQrKeyPair keyPair,
+    LocalMergePolicy mergePolicy = LocalMergePolicy.mergeLocal,
+    SyncServerKind? serverKind,
+  }) async {
+    final pending = await pollQrSessionPending(
+      serverUrl: serverUrl,
+      sessionId: sessionId,
+      keyPair: keyPair,
+      serverKind: serverKind,
     );
+    if (pending == null) return false;
+    await commitPendingSignIn(pending, mergePolicy: mergePolicy);
     return true;
+  }
+
+  /// Inspects differences between local syncable data and the authenticated
+  /// cloud account in read-only mode before committing a workspace switch.
+  Future<SyncSignInDiffPreview> inspectPendingSignIn(
+    PendingSyncSignIn pending, {
+    int maxPreviewPages = 4,
+    int pageLimit = 5000,
+  }) async {
+    await initialize();
+    final creds = pending.credentials;
+    final toKey = LibraryWorkspaceStore.accountWorkspaceKey(creds.serverUrl, creds.userId);
+    final hasArchive = await workspaceStore.hasWorkspaceArchive(toKey);
+    final hasLocal = await workspaceStore.hasLocalSyncableContent();
+    final localSnapshot = hasLocal ? await mapper.collectLocalPreviewSnapshot() : const LocalSyncPreviewSnapshot();
+    final localStats = localSnapshot.stats;
+
+    SyncLibraryStats? fetchedCloudStats;
+    if (pending.isNewAccount) {
+      fetchedCloudStats = const SyncLibraryStats();
+    } else {
+      try {
+        fetchedCloudStats = await apiClient.getUserStats(creds.serverUrl, creds.accessToken);
+      } on SyncApiException catch (e) {
+        if (e.statusCode == 401 || e.statusCode == 403) rethrow;
+      } catch (_) {}
+    }
+
+    if (hasArchive) {
+      return SyncSignInDiffPreview(
+        username: creds.username,
+        serverUrl: creds.serverUrl,
+        serverKind: creds.serverKind,
+        reason: SyncSignInDecisionReason.existingAccountArchive,
+        recommendedPolicy: LocalMergePolicy.accountOnly,
+        localStats: localStats,
+        cloudStats: fetchedCloudStats ?? const SyncLibraryStats(),
+      );
+    }
+
+    if (localStats.isEmpty) {
+      return SyncSignInDiffPreview(
+        username: creds.username,
+        serverUrl: creds.serverUrl,
+        serverKind: creds.serverKind,
+        reason: SyncSignInDecisionReason.localEmpty,
+        recommendedPolicy: LocalMergePolicy.accountOnly,
+        localStats: localStats,
+        cloudStats: fetchedCloudStats ?? const SyncLibraryStats(),
+      );
+    }
+
+    if (fetchedCloudStats != null && fetchedCloudStats.isEmpty) {
+      return SyncSignInDiffPreview(
+        username: creds.username,
+        serverUrl: creds.serverUrl,
+        serverKind: creds.serverKind,
+        reason: SyncSignInDecisionReason.cloudEmpty,
+        recommendedPolicy: LocalMergePolicy.mergeLocal,
+        localStats: localStats,
+        cloudStats: fetchedCloudStats,
+        localOnlySourceNames: localSnapshot.sourcesByCanonicalKey.values.toList()..sort(),
+        localOnlyWorks: localSnapshot.workKeys.length,
+        localOnlyLists: localSnapshot.listsByKey.length,
+        localOnlyProgress: localSnapshot.progressByKey.length,
+        localOnlyOrConflictingWorkPrefs: localSnapshot.workPrefsByKey.length,
+      );
+    }
+
+    final cloudSources = <String, String>{};
+    final cloudSourceKeyById = <String, String>{};
+    final cloudWorkKeys = <String>{};
+    final cloudFileIds = <String>{};
+    final cloudLists = <String, SyncListPreview>{};
+    final cloudProgress = <String, SyncProgressPreview>{};
+    final cloudWorkPrefs = <String, SyncWorkPrefPreview>{};
+
+    var seq = 0;
+    var hasMore = true;
+    var pages = 0;
+    while (hasMore && pages < maxPreviewPages && !_disposed) {
+      final resp = await apiClient.pullDelta(
+        creds.serverUrl,
+        creds.accessToken,
+        sinceSeq: seq,
+        limit: pageLimit,
+        activeOnly: true,
+      );
+      if (resp.resetRequired) break;
+
+      for (final src in resp.sources) {
+        final sourceId = (src['source_id'] as String?)?.trim() ?? '';
+        if (sourceId.isEmpty) continue;
+        if (src['is_deleted'] == true) {
+          final prevKey = cloudSourceKeyById.remove(sourceId);
+          if (prevKey != null) cloudSources.remove(prevKey);
+          continue;
+        }
+        final normCanon = DeterministicKeys.normalizeCanonicalSourceKey((src['canonical_key'] as String?) ?? '');
+        final key = normCanon.isNotEmpty ? normCanon : sourceId;
+        final rawName = (src['name'] as String?)?.trim() ?? '';
+        final proto = (src['protocol'] as String?)?.trim() ?? '';
+        final displayName = rawName.isNotEmpty ? rawName : (proto.isNotEmpty ? proto : sourceId);
+        cloudSourceKeyById[sourceId] = key;
+        cloudSources[key] = displayName;
+      }
+
+      for (final w in resp.works) {
+        final wk = DeterministicKeys.canonicalizeWorkKey(w['work_key'] as String?);
+        if (wk.isEmpty || wk.startsWith('raw:')) continue;
+        if (w['is_deleted'] == true) {
+          cloudWorkKeys.remove(wk);
+        } else {
+          cloudWorkKeys.add(wk);
+        }
+      }
+
+      for (final f in resp.files) {
+        final fid = (f['file_id'] as String?)?.trim() ?? '';
+        if (fid.isEmpty) continue;
+        if (f['is_deleted'] == true) {
+          cloudFileIds.remove(fid);
+        } else {
+          cloudFileIds.add(fid);
+        }
+      }
+
+      for (final l in resp.lists) {
+        final listKey = (l['list_key'] as String?)?.trim() ?? '';
+        if (listKey.isEmpty) continue;
+        if (l['is_deleted'] == true) {
+          cloudLists.remove(listKey);
+          continue;
+        }
+        final title = (l['title'] as String?)?.trim() ?? '';
+        final rawKeys = l['item_work_keys'] as List<dynamic>? ?? const [];
+        final items = <String>[
+          for (final raw in rawKeys)
+            if (DeterministicKeys.canonicalizeWorkKey('$raw').isNotEmpty &&
+                !DeterministicKeys.canonicalizeWorkKey('$raw').startsWith('raw:'))
+              DeterministicKeys.canonicalizeWorkKey('$raw'),
+        ];
+        cloudLists[listKey] = (title: title, itemWorkKeys: items);
+      }
+
+      for (final g in resp.watchProgress) {
+        final wk = DeterministicKeys.canonicalizeWorkKey(g['work_key'] as String?);
+        if (wk.isEmpty || wk.startsWith('raw:')) continue;
+        final parts = wk.split(':');
+        if (parts.length < 3) continue;
+        final kind = parts[1];
+        final seasonNum = (g['season_num'] as num?)?.toInt() ?? -1;
+        final episodeNum = (g['episode_num'] as num?)?.toInt() ?? -1;
+        final rawPk = (g['progress_key'] as String?)?.trim() ?? '';
+        final pk = rawPk.isNotEmpty
+            ? rawPk
+            : DeterministicKeys.generateProgressKey(
+                workKey: wk,
+                kind: kind,
+                seasonNum: seasonNum,
+                episodeNum: episodeNum,
+              );
+        cloudProgress[pk] = (watched: g['watched'] == true, positionMs: (g['position_ms'] as num?)?.toInt() ?? 0);
+      }
+
+      for (final p in resp.workPrefs) {
+        final wk = DeterministicKeys.canonicalizeWorkKey(p['work_key'] as String?);
+        if (wk.isEmpty || wk.startsWith('raw:')) continue;
+        cloudWorkPrefs[wk] = (
+          favorite: p['is_favorite'] == true,
+          hidden: p['hidden_from_continue'] == true,
+          introEnabled: p['intro_enabled'] == true,
+          introStartMs: (p['intro_start_ms'] as num?)?.toInt() ?? 0,
+          introEndMs: (p['intro_end_ms'] as num?)?.toInt() ?? 0,
+          creditsEnabled: p['credits_enabled'] == true,
+          creditsFromEndMs: (p['credits_from_end_ms'] as num?)?.toInt() ?? 0,
+          keepEasterEggMs: (p['keep_easter_egg_ms'] as num?)?.toInt() ?? 0,
+        );
+      }
+
+      pages++;
+      hasMore = resp.hasMore;
+      if (hasMore && resp.nextSeq <= seq) break;
+      seq = resp.nextSeq;
+    }
+
+    final diffTruncated = hasMore;
+    final derivedCloudStats = SyncLibraryStats(
+      sources: cloudSources.length,
+      works: cloudWorkKeys.length,
+      files: cloudFileIds.length,
+      lists: cloudLists.length,
+      watchProgress: cloudProgress.length,
+      workPrefs: cloudWorkPrefs.length,
+    );
+    final effectiveCloudStats = fetchedCloudStats ?? derivedCloudStats;
+
+    if (effectiveCloudStats.isEmpty && !diffTruncated) {
+      return SyncSignInDiffPreview(
+        username: creds.username,
+        serverUrl: creds.serverUrl,
+        serverKind: creds.serverKind,
+        reason: SyncSignInDecisionReason.cloudEmpty,
+        recommendedPolicy: LocalMergePolicy.mergeLocal,
+        localStats: localStats,
+        cloudStats: effectiveCloudStats,
+        localOnlySourceNames: localSnapshot.sourcesByCanonicalKey.values.toList()..sort(),
+        localOnlyWorks: localSnapshot.workKeys.length,
+        localOnlyLists: localSnapshot.listsByKey.length,
+        localOnlyProgress: localSnapshot.progressByKey.length,
+        localOnlyOrConflictingWorkPrefs: localSnapshot.workPrefsByKey.length,
+      );
+    }
+
+    final localOnlySourceNames = <String>[
+      for (final entry in localSnapshot.sourcesByCanonicalKey.entries)
+        if (!cloudSources.containsKey(entry.key)) entry.value,
+    ]..sort();
+    final cloudOnlySourceNames = <String>[
+      for (final entry in cloudSources.entries)
+        if (!localSnapshot.sourcesByCanonicalKey.containsKey(entry.key)) entry.value,
+    ]..sort();
+    final sharedSourceNames = <String>[
+      for (final entry in localSnapshot.sourcesByCanonicalKey.entries)
+        if (cloudSources.containsKey(entry.key)) entry.value,
+    ]..sort();
+
+    final localOnlyWorks = localSnapshot.workKeys.where((k) => !cloudWorkKeys.contains(k)).length;
+    final cloudOnlyWorks = cloudWorkKeys.where((k) => !localSnapshot.workKeys.contains(k)).length;
+
+    var localOnlyLists = 0;
+    var conflictingLists = 0;
+    for (final entry in localSnapshot.listsByKey.entries) {
+      final remote = cloudLists[entry.key];
+      if (remote == null) {
+        localOnlyLists++;
+      } else if (entry.value.title != remote.title || !listEquals(entry.value.itemWorkKeys, remote.itemWorkKeys)) {
+        conflictingLists++;
+      }
+    }
+    final cloudOnlyLists = cloudLists.keys.where((k) => !localSnapshot.listsByKey.containsKey(k)).length;
+
+    var localOnlyProgress = 0;
+    var conflictingProgress = 0;
+    for (final entry in localSnapshot.progressByKey.entries) {
+      final remote = cloudProgress[entry.key];
+      if (remote == null) {
+        localOnlyProgress++;
+      } else if (entry.value.watched != remote.watched || (entry.value.positionMs - remote.positionMs).abs() >= 5000) {
+        conflictingProgress++;
+      }
+    }
+    final cloudOnlyProgress = cloudProgress.keys.where((k) => !localSnapshot.progressByKey.containsKey(k)).length;
+
+    var localOnlyOrConflictingWorkPrefs = 0;
+    for (final entry in localSnapshot.workPrefsByKey.entries) {
+      final remote = cloudWorkPrefs[entry.key];
+      if (remote == null || remote != entry.value) {
+        localOnlyOrConflictingWorkPrefs++;
+      }
+    }
+
+    final hasLocalChanges =
+        diffTruncated ||
+        localOnlySourceNames.isNotEmpty ||
+        localOnlyWorks > 0 ||
+        localOnlyLists > 0 ||
+        conflictingLists > 0 ||
+        localOnlyProgress > 0 ||
+        conflictingProgress > 0 ||
+        localOnlyOrConflictingWorkPrefs > 0;
+
+    return SyncSignInDiffPreview(
+      username: creds.username,
+      serverUrl: creds.serverUrl,
+      serverKind: creds.serverKind,
+      reason: hasLocalChanges
+          ? SyncSignInDecisionReason.requiresMergeChoice
+          : SyncSignInDecisionReason.noLocalDifferences,
+      recommendedPolicy: hasLocalChanges ? LocalMergePolicy.mergeLocal : LocalMergePolicy.accountOnly,
+      localStats: localStats,
+      cloudStats: effectiveCloudStats,
+      localOnlySourceNames: localOnlySourceNames,
+      cloudOnlySourceNames: cloudOnlySourceNames,
+      sharedSourceNames: sharedSourceNames,
+      localOnlyWorks: localOnlyWorks,
+      cloudOnlyWorks: cloudOnlyWorks,
+      localOnlyLists: localOnlyLists,
+      cloudOnlyLists: cloudOnlyLists,
+      conflictingLists: conflictingLists,
+      localOnlyProgress: localOnlyProgress,
+      cloudOnlyProgress: cloudOnlyProgress,
+      conflictingProgress: conflictingProgress,
+      localOnlyOrConflictingWorkPrefs: localOnlyOrConflictingWorkPrefs,
+      diffTruncated: diffTruncated,
+    );
+  }
+
+  Future<void> commitPendingSignIn(
+    PendingSyncSignIn pending, {
+    LocalMergePolicy mergePolicy = LocalMergePolicy.mergeLocal,
+  }) => _finishSignIn(
+    pending.credentials,
+    serverTimeMs: pending.serverTimeMs,
+    mergePolicy: mergePolicy,
+    remoteSettings: pending.remoteSettings,
+  );
+
+  Future<void> cancelPendingSignIn(PendingSyncSignIn pending) async {
+    try {
+      await apiClient.revokeCurrentDeviceSession(pending.credentials.serverUrl, pending.credentials.accessToken);
+    } catch (_) {}
   }
 
   Future<void> confirmQrUri(String rawInput) async {
@@ -542,6 +900,7 @@ class SyncAndScanCoordinator extends ChangeNotifier {
     await repo.pruneEmptyTitles();
     scanService?.notifyLibraryChanged();
     await mapper.reconcileMountRemovalToJournal(mountId);
+    await syncStore.deleteAuthUpdatedAt(mountId);
     final sess = _session;
     if (sess == null) {
       return;
@@ -743,6 +1102,7 @@ class SyncAndScanCoordinator extends ChangeNotifier {
 
   Future<bool> _pullAllDeltas(SyncSessionCredentials sess) async {
     var localSeq = await syncStore.getLastPullSeq();
+    var activeOnly = localSeq == 0;
     var hasMore = true;
     var anyChanges = false;
     var resetAttempted = false;
@@ -764,7 +1124,13 @@ class SyncAndScanCoordinator extends ChangeNotifier {
 
     while (hasMore && !_disposed) {
       _setProgress(SyncProgress(phase: SyncPhase.pulling, processed: appliedAcrossPages));
-      final resp = await apiClient.pullDelta(sess.serverUrl, sess.accessToken, sinceSeq: localSeq, limit: 500);
+      final resp = await apiClient.pullDelta(
+        sess.serverUrl,
+        sess.accessToken,
+        sinceSeq: localSeq,
+        limit: 500,
+        activeOnly: activeOnly,
+      );
       if (resp.serverTimeMs > 0) {
         final offset = resp.serverTimeMs - clock.now().millisecondsSinceEpoch;
         await syncStore.saveServerTimeOffsetMs(offset);
@@ -773,6 +1139,7 @@ class SyncAndScanCoordinator extends ChangeNotifier {
         if (resetAttempted) break;
         resetAttempted = true;
         isRebuild = true;
+        activeOnly = true;
         survivingFileIdsByMount.clear();
         authoritativeMountIds.clear();
         await syncStore.resetSyncCursorsForFullRebuild();

@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -61,6 +62,44 @@ func WithInitialAllowRegistration(allow bool) StoreOption {
 	}
 }
 
+// WithMetadataDefaults overrides server-level scraper and public metadata
+// defaults on boot when provided via CLI flags or environment variables.
+func WithMetadataDefaults(
+	tmdbApiKey string,
+	tmdbApiBase string,
+	tmdbImageBase string,
+	metadataProxy string,
+	bangumiEnabled *bool,
+	allowPublicMetadata *bool,
+) StoreOption {
+	return func(s *SyncStore) {
+		if v := strings.TrimSpace(tmdbApiKey); v != "" {
+			s.initTmdbApiKey = &v
+		}
+		if v := strings.TrimSpace(tmdbApiBase); v != "" {
+			s.initTmdbApiBase = &v
+		}
+		if v := strings.TrimSpace(tmdbImageBase); v != "" {
+			s.initTmdbImageBase = &v
+		}
+		if v := strings.TrimSpace(metadataProxy); v != "" {
+			s.initMetadataProxy = &v
+		}
+		s.initBangumiEnabled = bangumiEnabled
+		s.initAllowPublicMeta = allowPublicMetadata
+	}
+}
+
+// WithBangumiBase overrides the upstream Bangumi API base URL (used for tests
+// or self-hosted mirrors).
+func WithBangumiBase(base string) StoreOption {
+	return func(s *SyncStore) {
+		if v := strings.TrimSpace(base); v != "" {
+			s.initBangumiBase = &v
+		}
+	}
+}
+
 type SyncStore struct {
 	mu                   sync.Mutex
 	db                   *sql.DB
@@ -68,7 +107,18 @@ type SyncStore struct {
 	dataDir              string
 	adminUsername        string
 	initialAllowRegister *bool
+	initTmdbApiKey       *string
+	initTmdbApiBase      *string
+	initTmdbImageBase    *string
+	initMetadataProxy    *string
+	initBangumiEnabled   *bool
+	initAllowPublicMeta  *bool
+	initBangumiBase      *string
 	qrSessions           map[string]*QrSession
+	metaFlight           *sfGroup
+	metaHTTPMu           sync.Mutex
+	metaHTTPClients      map[string]*http.Client
+	metaNow              func() int64
 }
 
 func OpenSyncStore(dataDir string, opts ...StoreOption) (*SyncStore, error) {
@@ -83,10 +133,12 @@ func OpenSyncStore(dataDir string, opts ...StoreOption) (*SyncStore, error) {
 	db.SetMaxOpenConns(1)
 
 	s := &SyncStore{
-		db:         db,
-		dbPath:     dbPath,
-		dataDir:    dataDir,
-		qrSessions: make(map[string]*QrSession),
+		db:              db,
+		dbPath:          dbPath,
+		dataDir:         dataDir,
+		qrSessions:      make(map[string]*QrSession),
+		metaFlight:      &sfGroup{},
+		metaHTTPClients: make(map[string]*http.Client),
 	}
 	for _, opt := range opts {
 		if opt != nil {
@@ -305,6 +357,60 @@ func (s *SyncStore) initSchema() error {
 		`CREATE INDEX IF NOT EXISTS idx_applied_ops_created ON applied_ops(created_at)`,
 		`INSERT OR IGNORE INTO server_config(key, value) VALUES ('allow_registration', 'true')`,
 		`INSERT OR IGNORE INTO server_config(key, value) VALUES ('max_entities_per_user', '0')`,
+		`INSERT OR IGNORE INTO server_config(key, value) VALUES ('tmdb_api_key', '')`,
+		`INSERT OR IGNORE INTO server_config(key, value) VALUES ('tmdb_api_base', 'https://api.tmdb.org/3')`,
+		`INSERT OR IGNORE INTO server_config(key, value) VALUES ('tmdb_image_base', 'https://image.tmdb.org/t/p')`,
+		`INSERT OR IGNORE INTO server_config(key, value) VALUES ('metadata_proxy', '')`,
+		`INSERT OR IGNORE INTO server_config(key, value) VALUES ('bangumi_enabled', 'true')`,
+		`INSERT OR IGNORE INTO server_config(key, value) VALUES ('allow_public_metadata', 'true')`,
+		`INSERT OR IGNORE INTO server_config(key, value) VALUES ('bangumi_api_base', 'https://api.bgm.tv')`,
+		`CREATE TABLE IF NOT EXISTS meta_works_cache (
+			provider     TEXT NOT NULL,
+			kind         TEXT NOT NULL,
+			external_id  TEXT NOT NULL,
+			lang         TEXT NOT NULL,
+			payload_json TEXT NOT NULL,
+			status       TEXT NOT NULL DEFAULT '',
+			release_date TEXT NOT NULL DEFAULT '',
+			fetched_at   INTEGER NOT NULL,
+			expires_at   INTEGER NOT NULL,
+			PRIMARY KEY (provider, kind, external_id, lang)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_meta_works_expires ON meta_works_cache(expires_at)`,
+		`CREATE TABLE IF NOT EXISTS meta_seasons_cache (
+			provider      TEXT NOT NULL,
+			external_id   TEXT NOT NULL,
+			season_number INTEGER NOT NULL,
+			lang          TEXT NOT NULL,
+			payload_json  TEXT NOT NULL,
+			fetched_at    INTEGER NOT NULL,
+			expires_at    INTEGER NOT NULL,
+			PRIMARY KEY (provider, external_id, season_number, lang)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_meta_seasons_expires ON meta_seasons_cache(expires_at)`,
+		`CREATE TABLE IF NOT EXISTS meta_people_cache (
+			provider     TEXT NOT NULL,
+			person_id    TEXT NOT NULL,
+			name         TEXT NOT NULL,
+			profile_path TEXT NOT NULL DEFAULT '',
+			extra_json   TEXT NOT NULL DEFAULT '{}',
+			fetched_at   INTEGER NOT NULL,
+			expires_at   INTEGER NOT NULL,
+			PRIMARY KEY (provider, person_id)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_meta_people_expires ON meta_people_cache(expires_at)`,
+		`CREATE TABLE IF NOT EXISTS meta_search_cache (
+			cache_key    TEXT PRIMARY KEY,
+			provider     TEXT NOT NULL,
+			kind         TEXT NOT NULL,
+			query        TEXT NOT NULL,
+			year         INTEGER NOT NULL DEFAULT 0,
+			lang         TEXT NOT NULL,
+			payload_json TEXT NOT NULL,
+			fetched_at   INTEGER NOT NULL,
+			expires_at   BIGINT NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_meta_search_expires ON meta_search_cache(expires_at)`,
 	}
 
 	for _, stmt := range stmts {
@@ -319,6 +425,52 @@ func (s *SyncStore) initSchema() error {
 		}
 		if _, err := s.db.Exec(`INSERT OR REPLACE INTO server_config(key, value) VALUES ('allow_registration', ?)`, val); err != nil {
 			return fmt.Errorf("set allow_registration: %w", err)
+		}
+	}
+	if s.initTmdbApiKey != nil {
+		if _, err := s.db.Exec(`INSERT OR REPLACE INTO server_config(key, value) VALUES ('tmdb_api_key', ?)`, *s.initTmdbApiKey); err != nil {
+			return fmt.Errorf("set tmdb_api_key: %w", err)
+		}
+	}
+	if s.initTmdbApiBase != nil {
+		norm := normalizeTmdbBase(*s.initTmdbApiBase, defaultTmdbApiBase, "/3")
+		if _, err := s.db.Exec(`INSERT OR REPLACE INTO server_config(key, value) VALUES ('tmdb_api_base', ?)`, norm); err != nil {
+			return fmt.Errorf("set tmdb_api_base: %w", err)
+		}
+	}
+	if s.initTmdbImageBase != nil {
+		norm := normalizeTmdbBase(*s.initTmdbImageBase, defaultTmdbImageBase, "/t/p")
+		if _, err := s.db.Exec(`INSERT OR REPLACE INTO server_config(key, value) VALUES ('tmdb_image_base', ?)`, norm); err != nil {
+			return fmt.Errorf("set tmdb_image_base: %w", err)
+		}
+	}
+	if s.initMetadataProxy != nil {
+		if _, err := s.db.Exec(`INSERT OR REPLACE INTO server_config(key, value) VALUES ('metadata_proxy', ?)`, *s.initMetadataProxy); err != nil {
+			return fmt.Errorf("set metadata_proxy: %w", err)
+		}
+	}
+	if s.initBangumiEnabled != nil {
+		val := "false"
+		if *s.initBangumiEnabled {
+			val = "true"
+		}
+		if _, err := s.db.Exec(`INSERT OR REPLACE INTO server_config(key, value) VALUES ('bangumi_enabled', ?)`, val); err != nil {
+			return fmt.Errorf("set bangumi_enabled: %w", err)
+		}
+	}
+	if s.initAllowPublicMeta != nil {
+		val := "false"
+		if *s.initAllowPublicMeta {
+			val = "true"
+		}
+		if _, err := s.db.Exec(`INSERT OR REPLACE INTO server_config(key, value) VALUES ('allow_public_metadata', ?)`, val); err != nil {
+			return fmt.Errorf("set allow_public_metadata: %w", err)
+		}
+	}
+	if s.initBangumiBase != nil {
+		norm := strings.TrimRight(*s.initBangumiBase, "/")
+		if _, err := s.db.Exec(`INSERT OR REPLACE INTO server_config(key, value) VALUES ('bangumi_api_base', ?)`, norm); err != nil {
+			return fmt.Errorf("set bangumi_api_base: %w", err)
 		}
 	}
 	return nil
@@ -1392,6 +1544,15 @@ func (s *SyncStore) RunGC(atMs int64) error {
 	}
 	if _, err := tx.Exec(`DELETE FROM applied_ops WHERE created_at <= ?`, opCutoff); err != nil {
 		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM meta_search_cache WHERE expires_at <= ?`, atMs); err != nil {
+		return err
+	}
+	staleCacheCutoff := atMs - 7*24*60*60*1000
+	for _, tbl := range []string{"meta_works_cache", "meta_seasons_cache", "meta_people_cache"} {
+		if _, err := tx.Exec(`DELETE FROM `+tbl+` WHERE expires_at <= ?`, staleCacheCutoff); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
 }

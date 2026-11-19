@@ -344,7 +344,7 @@ func TestSourceDedupFileRekeyMonotonicAndLww(t *testing.T) {
 	}
 	defer reloaded.Close()
 
-	// Delete a work in the distant past and run GC so minRetainedSeq advances.
+	// Create then delete a work in the distant past and run GC so minRetainedSeq advances.
 	reloadedUser, err := reloaded.Authenticate(tok)
 	if err != nil {
 		t.Fatalf("reloaded auth failed: %v", err)
@@ -353,6 +353,19 @@ func TestSourceDedupFileRekeyMonotonicAndLww(t *testing.T) {
 	_, _ = reloaded.Push(reloadedUser.UserID, PushRequest{
 		DeviceID: "dev-a",
 		Mutations: []PushMutation{
+			{
+				OpID:       "op-old-create",
+				EntityType: "work",
+				EntityKey:  "tmdb:movie:999",
+				Payload: mustJSON(t, SyncWork{
+					WorkKey:         "tmdb:movie:999",
+					Kind:            "movie",
+					LibraryType:     "movie",
+					MatchStatus:     3,
+					MetadataJSON:    map[string]any{"title": "Old"},
+					ClientUpdatedAt: oldDeletedAt - 1000,
+				}),
+			},
 			{
 				OpID:       "op-old-del",
 				EntityType: "work",
@@ -1003,5 +1016,145 @@ func TestInitialAllowRegistrationOption(t *testing.T) {
 	})
 	if ownerRec.Code != http.StatusOK {
 		t.Fatalf("expected designated admin registration to succeed, got %d %s", ownerRec.Code, ownerRec.Body.String())
+	}
+}
+
+func TestPushIgnoresNonExistentTombstonesAndPullFiltersActiveOnly(t *testing.T) {
+	store, err := OpenSyncStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer store.Close()
+	mux := NewSyncMux(store)
+
+	regRec := doReq(t, mux, "POST", "/api/v1/auth/register", "", RegisterRequest{
+		Username:                 "clean",
+		AuthVerifier:             "hash",
+		KdfSalt:                  "salt",
+		KdfParams:                KdfParams{Algo: "argon2id", M: 1024, T: 1, P: 1},
+		EncryptedMasterKeyBackup: "enc:backup",
+		DeviceID:                 "dev-1",
+	})
+	var auth AuthResponse
+	_ = json.Unmarshal(regRec.Body.Bytes(), &auth)
+	tok := auth.AccessToken
+
+	// 1. Pushing tombstones for entities that never existed must be a no-op (no seq advance, accepted op IDs returned).
+	phantomRespRec := doReq(t, mux, "POST", "/api/v1/sync/push", tok, PushRequest{
+		DeviceID: "dev-1",
+		Mutations: []PushMutation{
+			{
+				OpID:       "del-src",
+				EntityType: "source",
+				EntityKey:  "ghost-src",
+				Payload:    mustJSON(t, SyncSource{SourceID: "ghost-src", IsDeleted: true, ClientUpdatedAt: 100}),
+			},
+			{
+				OpID:       "del-work",
+				EntityType: "work",
+				EntityKey:  "tmdb:movie:1",
+				Payload:    mustJSON(t, SyncWork{WorkKey: "tmdb:movie:1", Kind: "movie", LibraryType: "movie", IsDeleted: true, ClientUpdatedAt: 100}),
+			},
+			{
+				OpID:       "del-file",
+				EntityType: "file",
+				EntityKey:  "ghost-file",
+				Payload:    mustJSON(t, SyncFile{FileID: "ghost-file", SourceID: "ghost-src", RelativePath: "/a.mp4", IsDeleted: true, ClientUpdatedAt: 100}),
+			},
+			{
+				OpID:       "del-list",
+				EntityType: "list",
+				EntityKey:  "col:tmdb:1",
+				Payload:    mustJSON(t, SyncList{ListKey: "col:tmdb:1", Kind: "collection", Title: "X", IsDeleted: true, ClientUpdatedAt: 100}),
+			},
+		},
+	})
+	var phantomResp PushResponse
+	_ = json.Unmarshal(phantomRespRec.Body.Bytes(), &phantomResp)
+	if len(phantomResp.AcceptedOpIDs) != 4 {
+		t.Fatalf("expected all 4 phantom delete ops accepted, got %+v", phantomResp.AcceptedOpIDs)
+	}
+	emptyPullRec := doReq(t, mux, "GET", "/api/v1/sync/pull?since_seq=0", tok, nil)
+	var emptyPull PullResponse
+	_ = json.Unmarshal(emptyPullRec.Body.Bytes(), &emptyPull)
+	if emptyPull.CurrentMaxSeq != 0 || emptyPull.NextSeq != 0 {
+		t.Fatalf("expected seq unchanged at 0 after phantom deletes, got max=%d next=%d", emptyPull.CurrentMaxSeq, emptyPull.NextSeq)
+	}
+
+	// 2. Push real active entities then delete one file + list; initial pull (since_seq=0) skips trailing tombstones and advances NextSeq to CurrentMaxSeq.
+	workKey := "tmdb:movie:42"
+	_ = doReq(t, mux, "POST", "/api/v1/sync/push", tok, PushRequest{
+		DeviceID: "dev-1",
+		Mutations: []PushMutation{
+			{
+				OpID:       "add-src",
+				EntityType: "source",
+				EntityKey:  "src-1",
+				Payload: mustJSON(t, SyncSource{
+					SourceID: "src-1", CanonicalKey: "webdav:a", Name: "WebDAV", Protocol: "webdav",
+					PrimaryURL: "https://a.example", IncludePaths: []string{}, ExcludePaths: []string{},
+					ClientUpdatedAt: 200,
+				}),
+			},
+			{
+				OpID:       "add-work",
+				EntityType: "work",
+				EntityKey:  workKey,
+				Payload: mustJSON(t, SyncWork{
+					WorkKey: workKey, Kind: "movie", LibraryType: "movie", MatchStatus: 3,
+					MetadataJSON: map[string]any{"title": "Active Movie"}, ClientUpdatedAt: 200,
+				}),
+			},
+			{
+				OpID:       "add-f1",
+				EntityType: "file",
+				EntityKey:  "f-keep",
+				Payload: mustJSON(t, SyncFile{
+					FileID: "f-keep", SourceID: "src-1", RelativePath: "/keep.mp4", Role: "video",
+					WorkKey: &workKey, SeasonNum: -1, EpisodeNum: -1, MatchStatus: 3, ClientUpdatedAt: 200,
+				}),
+			},
+			{
+				OpID:       "add-f2",
+				EntityType: "file",
+				EntityKey:  "f-del",
+				Payload: mustJSON(t, SyncFile{
+					FileID: "f-del", SourceID: "src-1", RelativePath: "/del.mp4", Role: "video",
+					WorkKey: &workKey, SeasonNum: -1, EpisodeNum: -1, MatchStatus: 3, ClientUpdatedAt: 200,
+				}),
+			},
+		},
+	})
+	_ = doReq(t, mux, "POST", "/api/v1/sync/push", tok, PushRequest{
+		DeviceID: "dev-1",
+		Mutations: []PushMutation{
+			{
+				OpID:       "del-f2",
+				EntityType: "file",
+				EntityKey:  "f-del",
+				Payload: mustJSON(t, SyncFile{
+					FileID: "f-del", SourceID: "src-1", RelativePath: "/del.mp4", Role: "video",
+					SeasonNum: -1, EpisodeNum: -1, MatchStatus: 3, IsDeleted: true, ClientUpdatedAt: 300,
+				}),
+			},
+		},
+	})
+
+	initialPullRec := doReq(t, mux, "GET", "/api/v1/sync/pull?since_seq=0", tok, nil)
+	var initialPull PullResponse
+	_ = json.Unmarshal(initialPullRec.Body.Bytes(), &initialPull)
+	if len(initialPull.Data.Files) != 1 || initialPull.Data.Files[0].FileID != "f-keep" {
+		t.Fatalf("expected only active f-keep in initial pull, got %+v", initialPull.Data.Files)
+	}
+	if initialPull.NextSeq != initialPull.CurrentMaxSeq || initialPull.CurrentMaxSeq != 5 {
+		t.Fatalf("expected NextSeq==CurrentMaxSeq==5 skipping trailing tombstone, got next=%d max=%d", initialPull.NextSeq, initialPull.CurrentMaxSeq)
+	}
+
+	// 3. Incremental pull (since_seq > 0 without active_only) still returns the tombstone.
+	incPullRec := doReq(t, mux, "GET", "/api/v1/sync/pull?since_seq=4", tok, nil)
+	var incPull PullResponse
+	_ = json.Unmarshal(incPullRec.Body.Bytes(), &incPull)
+	if len(incPull.Data.Files) != 1 || !incPull.Data.Files[0].IsDeleted || incPull.Data.Files[0].FileID != "f-del" {
+		t.Fatalf("expected incremental pull from seq 4 to return tombstone f-del, got %+v", incPull.Data.Files)
 	}
 }

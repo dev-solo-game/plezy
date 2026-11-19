@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:drift/drift.dart';
 
@@ -71,11 +72,11 @@ class LibraryWorkspaceStore {
 
   Future<bool> hasLocalSyncableContent() async {
     const probes = [
-      'SELECT COUNT(*) AS c FROM mounts',
-      'SELECT COUNT(*) AS c FROM library_items',
-      'SELECT COUNT(*) AS c FROM library_files',
-      'SELECT COUNT(*) AS c FROM work_watch_states',
+      "SELECT COUNT(*) AS c FROM mounts WHERE kind != 'local'",
+      "SELECT COUNT(*) AS c FROM library_files lf JOIN mounts m ON m.id = lf.mount_id WHERE m.kind != 'local' AND lf.match_state != 'ignored'",
+      "SELECT COUNT(*) AS c FROM work_watch_states WHERE source = 'local-library'",
       'SELECT COUNT(*) AS c FROM library_lists',
+      "SELECT COUNT(*) AS c FROM library_settings WHERE key LIKE 'work-skip:%local-library%'",
     ];
     for (final sql in probes) {
       final row = await db.customSelect(sql).getSingleOrNull();
@@ -96,10 +97,11 @@ class LibraryWorkspaceStore {
 
   Future<void> saveCurrentWorkspace(String key) async {
     final snapshot = await _captureSnapshot();
+    final encoded = 'gz:${base64Encode(gzip.encode(utf8.encode(jsonEncode(snapshot))))}';
     final nowMs = DateTime.now().millisecondsSinceEpoch;
     await db.customStatement(
       'INSERT OR REPLACE INTO sync_workspace_archives (workspace_key, snapshot_json, updated_at) VALUES (?, ?, ?)',
-      [key, jsonEncode(snapshot), nowMs],
+      [key, encoded, nowMs],
     );
   }
 
@@ -176,7 +178,8 @@ class LibraryWorkspaceStore {
   Future<Map<String, Object?>> _captureSnapshot() async {
     final tables = <String, Object?>{};
     for (final table in _workspaceTables) {
-      final rows = await db.customSelect('SELECT * FROM $table').get();
+      final sql = table == 'sync_journal' ? 'SELECT * FROM sync_journal WHERE is_deleted = 0' : 'SELECT * FROM $table';
+      final rows = await db.customSelect(sql).get();
       tables[table] = [
         for (final row in rows) {for (final entry in row.data.entries) entry.key: _encodeValue(entry.value)},
       ];
@@ -201,9 +204,12 @@ class LibraryWorkspaceStore {
     final raw = row?.readNullable<String>('snapshot_json');
     if (raw == null || raw.isEmpty) return null;
     try {
-      final decoded = jsonDecode(raw);
+      final jsonText = raw.startsWith('gz:') ? utf8.decode(gzip.decode(base64Decode(raw.substring(3)))) : raw;
+      final decoded = jsonDecode(jsonText);
       return decoded is Map<String, dynamic> ? decoded : null;
     } on FormatException {
+      return null;
+    } on Object {
       return null;
     }
   }

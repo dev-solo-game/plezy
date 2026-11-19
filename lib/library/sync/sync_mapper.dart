@@ -19,11 +19,13 @@ import '../library_repository.dart';
 import '../library_scanner.dart';
 import '../library_settings.dart';
 import '../library_watch_state_store.dart';
+import '../scrapers/tmdb_image_url.dart';
 import 'deterministic_keys.dart';
 import 'sync_crypto.dart';
 import 'sync_journal_store.dart';
 import 'sync_local_store.dart';
 import 'sync_models.dart';
+import 'sync_sign_in_preview.dart';
 
 /// Translates between local Drift auto-increment rows (`LibraryItems`,
 /// `LibraryFiles`, `Mounts`, `WorkWatchStates`) and deterministic cloud sync
@@ -157,6 +159,9 @@ class SyncMapper {
           ]
         : null;
     final (provider, extId) = _primaryProviderAndId(workItem);
+    final posterPath = TmdbImageUrl.toRelativePath(workItem.posterSource);
+    final backdropPath = TmdbImageUrl.toRelativePath(workItem.backdropSource);
+    final logoPath = TmdbImageUrl.toRelativePath(workItem.logoSource);
     return {
       'work_key': workKey,
       'kind': workItem.kind,
@@ -167,29 +172,33 @@ class SyncMapper {
       'metadata_json': {
         'title': workItem.title,
         'sort_title': workItem.sortTitle,
-        'original_title': workItem.originalTitle,
-        'aliases': workItem.aliases,
+        if (includeHeavyDetails) 'original_title': workItem.originalTitle,
+        if (includeHeavyDetails) 'aliases': workItem.aliases,
         'year': workItem.year,
-        'release_date': workItem.releaseDate,
+        if (includeHeavyDetails) 'release_date': workItem.releaseDate,
         if (includeHeavyDetails) 'summary': workItem.summary,
         if (includeHeavyDetails) 'tagline': workItem.tagline,
-        'content_rating': workItem.contentRating,
-        'studio': workItem.studio,
+        if (includeHeavyDetails) 'content_rating': workItem.contentRating,
+        if (includeHeavyDetails) 'studio': workItem.studio,
         'rating': workItem.rating,
-        'runtime_ms': workItem.runtimeMs,
+        if (includeHeavyDetails) 'runtime_ms': workItem.runtimeMs,
         'tmdb_id': workItem.tmdbId,
         'imdb_id': workItem.imdbId,
         'tvdb_id': workItem.tvdbId,
         'bangumi_id': workItem.bangumiId,
         'douban_id': workItem.doubanId,
-        'poster_path': workItem.posterSource,
-        'backdrop_path': workItem.backdropSource,
-        'logo_path': workItem.logoSource,
+        'poster_path': posterPath,
+        if (includeHeavyDetails) 'backdrop_path': backdropPath,
+        if (includeHeavyDetails) 'logo_path': logoPath,
         'metadata_source': workItem.metadataSource,
         'locked': workItem.locked,
         'source_added_at': workItem.sourceAddedAt,
         'genres': genres,
-        'credits': ?credits,
+        if (credits != null)
+          'credits': [
+            for (final c in credits)
+              {...c, if (c['photo_url'] != null) 'photo_url': TmdbImageUrl.toRelativePath(c['photo_url'])},
+          ],
       },
       'client_updated_at': updatedAt,
       'is_deleted': false,
@@ -210,6 +219,7 @@ class SyncMapper {
         ? MatchStatusRank.fromFile(file, item: workItem)
         : (file.matchState == LibraryMatchStates.unmatched ? MatchStatusRank.unmatched : MatchStatusRank.pending);
     final includeHeavyEpisodeFields = !hasMatchedWork || file.matchLocked;
+    final epStillPath = includeHeavyEpisodeFields && ep != null ? TmdbImageUrl.toRelativePath(ep.posterSource) : null;
     return {
       'file_id': fileId,
       'source_id': file.mountId,
@@ -218,7 +228,6 @@ class SyncMapper {
       'role': file.role,
       'owner_file_id': null,
       'language': file.language,
-      'file_name': StoragePath.name(file.path),
       'file_size': file.size ?? 0,
       'file_mtime': file.modifiedAt ?? 0,
       'file_created_at': file.sourceCreatedAt ?? 0,
@@ -227,7 +236,7 @@ class SyncMapper {
       'episode_num': ep?.episodeNumber ?? -1,
       'match_status': status,
       'version_label': file.versionLabel,
-      'parsed_json': includeHeavyEpisodeFields ? file.parsed : null,
+      'parsed_json': ?(includeHeavyEpisodeFields ? file.parsed : null),
       'media_spec_json': {
         if (file.durationMs != null) 'duration_ms': file.durationMs,
         if (file.container != null) 'container': file.container,
@@ -235,13 +244,13 @@ class SyncMapper {
         if (file.width != null) 'width': file.width,
         if (file.height != null) 'height': file.height,
         if (file.hdrFormat != null) 'hdr_format': file.hdrFormat,
-        if (ep != null) 'ep_title': ep.title,
+        if (includeHeavyEpisodeFields && ep != null) 'ep_title': ep.title,
         if (includeHeavyEpisodeFields && ep?.summary != null) 'ep_overview': ep!.summary,
-        if (ep?.posterSource != null) 'ep_still_path': ep!.posterSource,
-        if (ep?.runtimeMs != null) 'ep_runtime_ms': ep!.runtimeMs,
-        if (ep?.metadataSource != null) 'ep_metadata_source': ep!.metadataSource,
-        if (ep?.scrapedAt != null) 'ep_scraped_at': ep!.scrapedAt,
-        if (ep?.releaseDate != null) 'ep_release_date': ep!.releaseDate,
+        'ep_still_path': ?epStillPath,
+        if (includeHeavyEpisodeFields && ep?.runtimeMs != null) 'ep_runtime_ms': ep!.runtimeMs,
+        if (includeHeavyEpisodeFields && ep?.metadataSource != null) 'ep_metadata_source': ep!.metadataSource,
+        if (includeHeavyEpisodeFields && ep?.scrapedAt != null) 'ep_scraped_at': ep!.scrapedAt,
+        if (includeHeavyEpisodeFields && ep?.releaseDate != null) 'ep_release_date': ep!.releaseDate,
       },
       'client_updated_at': updatedAt,
       'is_deleted': false,
@@ -261,7 +270,6 @@ class SyncMapper {
     'role': LibraryFileRoles.subtitle,
     'owner_file_id': ownerFileId,
     'language': file.language,
-    'file_name': StoragePath.name(file.path),
     'file_size': file.size ?? 0,
     'file_mtime': file.modifiedAt ?? 0,
     'season_num': -1,
@@ -1068,6 +1076,160 @@ class SyncMapper {
       'preferred_scrape_lang': s.language.trim(),
       'bangumi_enabled': s.bangumiEnabled,
     };
+  }
+
+  /// Collects a read-only summary of local syncable data without mutating
+  /// `sync_journal` or `sync_outbox`.
+  Future<LocalSyncPreviewSnapshot> collectLocalPreviewSnapshot() async {
+    final mounts = await mountManager.registry.list();
+    final sharedMounts = [
+      for (final m in mounts)
+        if (m.kind != StorageKind.local) m,
+    ];
+    final sourcesByCanonicalKey = <String, String>{};
+    final sharedIds = <String>{};
+    for (final m in sharedMounts) {
+      sharedIds.add(m.id);
+      final normKey = DeterministicKeys.normalizeCanonicalSourceKey(DeterministicKeys.canonicalSourceKey(m));
+      final key = normKey.isNotEmpty ? normKey : m.id;
+      sourcesByCanonicalKey.putIfAbsent(key, () => m.displayName);
+    }
+
+    final workKeys = <String>{};
+    var sharedFilesCount = 0;
+    if (sharedIds.isNotEmpty) {
+      final files = await (db.select(
+        db.libraryFiles,
+      )..where((t) => t.mountId.isIn(sharedIds) & t.matchState.isNotValue(LibraryMatchStates.ignored))).get();
+      sharedFilesCount = files.length;
+
+      final itemsCache = <int, LibraryItemRow>{};
+      Future<LibraryItemRow?> tryLoadItem(int? id) async {
+        if (id == null) return null;
+        if (itemsCache.containsKey(id)) return itemsCache[id];
+        final row = await (db.select(db.libraryItems)..where((t) => t.id.equals(id))).getSingleOrNull();
+        if (row != null) itemsCache[id] = row;
+        return row;
+      }
+
+      for (final file in files) {
+        if (file.role != LibraryFileRoles.video) continue;
+        final item = await tryLoadItem(file.itemId);
+        LibraryItemRow? workItem;
+        if (item != null) {
+          if (item.kind == LibraryKinds.movie) {
+            workItem = item;
+          } else if (item.kind == LibraryKinds.episode || item.kind == LibraryKinds.season) {
+            workItem = await tryLoadItem(item.showId ?? item.parentId);
+          }
+        }
+        final wk = _resolveSyncWorkKey(workItem: workItem);
+        if (wk != null && wk.isNotEmpty && !wk.startsWith('raw:')) {
+          workKeys.add(wk);
+        }
+      }
+    }
+
+    final lists = await db.select(db.libraryLists).get();
+    final listsByKey = <String, SyncListPreview>{};
+    for (final row in lists) {
+      final listKey = DeterministicKeys.generateListKey(kind: row.kind, title: row.title, tmdbId: row.tmdbId);
+      if (listsByKey.containsKey(listKey)) continue;
+      final itemRows =
+          await (db.select(db.libraryListItems).join([
+                  innerJoin(db.libraryItems, db.libraryItems.id.equalsExp(db.libraryListItems.itemId)),
+                ])
+                ..where(db.libraryListItems.listId.equals(row.id))
+                ..orderBy([OrderingTerm.asc(db.libraryListItems.sortOrder)]))
+              .get();
+      final itemWorkKeys = <String>[];
+      for (final joined in itemRows) {
+        final wk = _resolveSyncWorkKey(workItem: joined.readTable(db.libraryItems));
+        if (wk != null && wk.isNotEmpty && !wk.startsWith('raw:')) {
+          itemWorkKeys.add(wk);
+        }
+      }
+      listsByKey[listKey] = (title: row.title, itemWorkKeys: itemWorkKeys);
+    }
+
+    final skipStore = WorkSkipSettingsStore(db);
+    final stateStore = LibraryWatchStateStore(db);
+    final allStates = await (db.select(
+      db.workWatchStates,
+    )..where((t) => t.source.equals(WorkIdentity.localSource))).get();
+
+    final seenWorkPrefs = <String, WorkIdentity>{};
+    final progressByKey = <String, SyncProgressPreview>{};
+    for (final st in allStates) {
+      final workKey = '${st.provider}:${st.kind}:${st.externalId}';
+      seenWorkPrefs.putIfAbsent(
+        workKey,
+        () => WorkIdentity(source: st.source, kind: st.kind, provider: st.provider, externalId: st.externalId),
+      );
+      if (st.kind == LibraryKinds.show && (st.seasonNumber < 0 || st.episodeNumber < 0)) {
+        continue;
+      }
+      if (st.watched || st.positionMs > 0 || st.playCount > 0) {
+        final progressKey = DeterministicKeys.generateProgressKey(
+          workKey: workKey,
+          kind: st.kind,
+          seasonNum: st.seasonNumber,
+          episodeNum: st.episodeNumber,
+        );
+        progressByKey[progressKey] = (watched: st.watched, positionMs: st.positionMs);
+      }
+    }
+
+    final skipSettings = await (db.select(
+      db.librarySettings,
+    )..where((t) => t.key.like('work-skip:${WorkIdentity.localSource}:%'))).get();
+    for (final row in skipSettings) {
+      final parts = row.key.substring('work-skip:'.length).split(':');
+      if (parts.length < 4) continue;
+      final identity = WorkIdentity(
+        source: parts[0],
+        kind: parts[1],
+        provider: parts[2],
+        externalId: parts.sublist(3).join(':'),
+      );
+      final workKey = '${identity.provider}:${identity.kind}:${identity.externalId}';
+      seenWorkPrefs.putIfAbsent(workKey, () => identity);
+    }
+
+    final workPrefsByKey = <String, SyncWorkPrefPreview>{};
+    for (final entry in seenWorkPrefs.entries) {
+      final skip = await skipStore.read(entry.value);
+      final wholeState = await stateStore.read(entry.value.stateKey());
+      final isFavorite = wholeState?.favorite ?? false;
+      final isHidden = wholeState?.hiddenFromContinue ?? false;
+      final hasNonDefaultSkip =
+          skip.introEnabled ||
+          skip.introStartMs != 0 ||
+          skip.introEndMs != 0 ||
+          skip.creditsEnabled ||
+          skip.creditsDurationMs != 0 ||
+          skip.creditsResumeBeforeEndMs != 0;
+      if (!isFavorite && !isHidden && !hasNonDefaultSkip) continue;
+      workPrefsByKey[entry.key] = (
+        favorite: isFavorite,
+        hidden: isHidden,
+        introEnabled: skip.introEnabled,
+        introStartMs: skip.introStartMs,
+        introEndMs: skip.introEndMs,
+        creditsEnabled: skip.creditsEnabled,
+        creditsFromEndMs: skip.creditsDurationMs,
+        keepEasterEggMs: skip.creditsResumeBeforeEndMs,
+      );
+    }
+
+    return LocalSyncPreviewSnapshot(
+      sourcesByCanonicalKey: sourcesByCanonicalKey,
+      workKeys: workKeys,
+      sharedFilesCount: sharedFilesCount,
+      listsByKey: listsByKey,
+      progressByKey: progressByKey,
+      workPrefsByKey: workPrefsByKey,
+    );
   }
 
   Future<List<_JournalCandidate>> _collectChangedWorkStateCandidates({required int calibratedNow}) async {
@@ -3233,31 +3395,32 @@ class SyncMapper {
     final metaSource = (meta['metadata_source'] as String?) ?? (w['provider'] as String?);
     final locked = (meta['locked'] as bool?) ?? (matchStatus >= MatchStatusRank.matchLocked);
     final updatedAt = (w['client_updated_at'] as num?)?.toInt() ?? _nowMs();
-    final preserveSummary = !locked && metaSource != 'nfo' && meta['summary'] == null && existing?.summary != null;
-    final preserveTagline = !locked && metaSource != 'nfo' && meta['tagline'] == null && existing?.tagline != null;
+    final canPreserveHydrated = !locked && metaSource != 'nfo';
+    Value<T?> keepIfOmitted<T>(T? incoming, T? existingVal) =>
+        (canPreserveHydrated && incoming == null && existingVal != null) ? const Value.absent() : Value(incoming);
     return LibraryItemsCompanion(
       workKey: resolvedWorkKey.isEmpty ? const Value.absent() : Value(resolvedWorkKey),
       libraryType: Value((w['library_type'] as String?) ?? LibraryTypes.movie),
       title: Value(title),
       sortTitle: Value(sortTitle),
-      originalTitle: Value(meta['original_title'] as String?),
-      aliases: Value(meta['aliases'] as String?),
+      originalTitle: keepIfOmitted(meta['original_title'] as String?, existing?.originalTitle),
+      aliases: keepIfOmitted(meta['aliases'] as String?, existing?.aliases),
       year: Value((meta['year'] as num?)?.toInt()),
-      releaseDate: Value(meta['release_date'] as String?),
-      summary: preserveSummary ? const Value.absent() : Value(meta['summary'] as String?),
-      tagline: preserveTagline ? const Value.absent() : Value(meta['tagline'] as String?),
-      contentRating: Value(meta['content_rating'] as String?),
-      studio: Value(meta['studio'] as String?),
+      releaseDate: keepIfOmitted(meta['release_date'] as String?, existing?.releaseDate),
+      summary: keepIfOmitted(meta['summary'] as String?, existing?.summary),
+      tagline: keepIfOmitted(meta['tagline'] as String?, existing?.tagline),
+      contentRating: keepIfOmitted(meta['content_rating'] as String?, existing?.contentRating),
+      studio: keepIfOmitted(meta['studio'] as String?, existing?.studio),
       rating: Value((meta['rating'] as num?)?.toDouble()),
-      runtimeMs: Value((meta['runtime_ms'] as num?)?.toInt()),
-      posterSource: Value(meta['poster_path'] as String?),
-      backdropSource: Value(meta['backdrop_path'] as String?),
-      logoSource: Value(meta['logo_path'] as String?),
-      tmdbId: Value(meta['tmdb_id'] as String?),
-      imdbId: Value(meta['imdb_id'] as String?),
-      tvdbId: Value(meta['tvdb_id'] as String?),
-      bangumiId: Value(meta['bangumi_id'] as String?),
-      doubanId: Value(meta['douban_id'] as String?),
+      runtimeMs: keepIfOmitted((meta['runtime_ms'] as num?)?.toInt(), existing?.runtimeMs),
+      posterSource: keepIfOmitted(meta['poster_path'] as String?, existing?.posterSource),
+      backdropSource: keepIfOmitted(meta['backdrop_path'] as String?, existing?.backdropSource),
+      logoSource: keepIfOmitted(meta['logo_path'] as String?, existing?.logoSource),
+      tmdbId: keepIfOmitted(meta['tmdb_id'] as String?, existing?.tmdbId),
+      imdbId: keepIfOmitted(meta['imdb_id'] as String?, existing?.imdbId),
+      tvdbId: keepIfOmitted(meta['tvdb_id'] as String?, existing?.tvdbId),
+      bangumiId: keepIfOmitted(meta['bangumi_id'] as String?, existing?.bangumiId),
+      doubanId: keepIfOmitted(meta['douban_id'] as String?, existing?.doubanId),
       metadataSource: Value(metaSource),
       locked: Value(locked),
       sourceAddedAt: Value((meta['source_added_at'] as num?)?.toInt()),

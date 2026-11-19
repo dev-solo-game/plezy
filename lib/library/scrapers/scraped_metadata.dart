@@ -125,13 +125,16 @@ class ScrapedSeason {
 
 /// Why a scraper could not answer.
 class ScrapeException implements Exception {
-  const ScrapeException(this.message, {this.isConfiguration = false, this.cause});
+  const ScrapeException(this.message, {this.isConfiguration = false, this.isMissingKey = false, this.cause});
 
   final String message;
 
   /// True when the scraper cannot work until the user changes a setting (no
   /// API key, key rejected). Retrying every title would only repeat it.
   final bool isConfiguration;
+
+  /// True specifically when TMDB credentials are missing on the client/server.
+  final bool isMissingKey;
   final Object? cause;
 
   @override

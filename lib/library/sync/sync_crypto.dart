@@ -32,7 +32,7 @@ enum SyncServerKind { official, selfHosted }
 
 const String defaultOfficialSyncUrl = String.fromEnvironment(
   'OFFICIAL_SYNC_URL',
-  defaultValue: 'http://127.0.0.1:8088',
+  defaultValue: 'http://10.0.10.48:8088',
 );
 
 String normalizeSyncServerUrl(String raw) => raw.trim().replaceAll(RegExp(r'/+$'), '');

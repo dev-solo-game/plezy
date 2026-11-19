@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 
 import '../../database/app_database.dart';
 import 'sync_crypto.dart';
+import 'sync_sign_in_preview.dart';
 
 class SyncApiException implements Exception {
   const SyncApiException(this.statusCode, this.message);
@@ -247,10 +248,11 @@ class SyncApiClient {
     String accessToken, {
     required int sinceSeq,
     int limit = 500,
+    bool activeOnly = false,
   }) async {
     final uri = Uri.parse(
       '${_base(serverUrl)}/api/v1/sync/pull',
-    ).replace(queryParameters: {'since_seq': '$sinceSeq', 'limit': '$limit'});
+    ).replace(queryParameters: {'since_seq': '$sinceSeq', 'limit': '$limit', if (activeOnly) 'active_only': '1'});
     final json = await _requestJson('GET', uri.toString(), accessToken: accessToken);
     final data = (json['data'] as Map<String, dynamic>?) ?? const {};
     return SyncPullResult(
@@ -325,6 +327,37 @@ class SyncApiClient {
 
   Future<void> updateUserSettings(String serverUrl, String accessToken, Map<String, Object?> updates) async {
     await _requestJson('POST', '${_base(serverUrl)}/api/v1/user/settings', accessToken: accessToken, body: updates);
+  }
+
+  Future<SyncLibraryStats> getUserStats(String serverUrl, String accessToken) async {
+    final json = await _requestJson('GET', '${_base(serverUrl)}/api/v1/user/me', accessToken: accessToken);
+    final stats = _mapOf(json['stats']);
+    return SyncLibraryStats(
+      sources: (stats['sources'] as num?)?.toInt() ?? 0,
+      works: (stats['works'] as num?)?.toInt() ?? 0,
+      files: (stats['files'] as num?)?.toInt() ?? 0,
+      lists: (stats['lists'] as num?)?.toInt() ?? 0,
+      watchProgress: (stats['watch_progress'] as num?)?.toInt() ?? 0,
+      workPrefs: (stats['work_prefs'] as num?)?.toInt() ?? 0,
+    );
+  }
+
+  Future<void> revokeCurrentDeviceSession(String serverUrl, String accessToken) async {
+    final json = await _requestJson('GET', '${_base(serverUrl)}/api/v1/user/devices', accessToken: accessToken);
+    final devices = _listOfMaps(json['devices']);
+    for (final d in devices) {
+      if (d['is_current'] == true) {
+        final tokenId = (d['token_id'] as String?)?.trim() ?? '';
+        if (tokenId.isNotEmpty) {
+          await _requestJson(
+            'DELETE',
+            '${_base(serverUrl)}/api/v1/user/devices/${Uri.encodeComponent(tokenId)}',
+            accessToken: accessToken,
+          );
+          return;
+        }
+      }
+    }
   }
 
   SyncAuthResult _parseAuth(Map<String, dynamic> json) => SyncAuthResult(

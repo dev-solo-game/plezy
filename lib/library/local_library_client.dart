@@ -53,6 +53,8 @@ import 'library_scanner.dart';
 import 'library_scrape_runner.dart';
 import 'media_probe.dart';
 import 'scrapers/bangumi_provider.dart';
+import 'scrapers/tmdb_image_url.dart';
+import 'scrapers/tmdb_provider.dart';
 import 'sync/sync_local_store.dart';
 
 class _PlaybackSyncSession {
@@ -103,6 +105,7 @@ class LocalLibraryClient implements MediaServerClient {
   LibraryScrapeRunner? scrapeRunner;
   final Duration seekDebounceDuration;
   void Function()? onSyncOutboxEnqueued;
+  String tmdbImageBase = TmdbProvider.defaultImageBase;
   late final SyncLocalStore _syncStore = SyncLocalStore(_repo.database);
   final Map<int, _PlaybackSyncSession> _playbackSyncSessions = {};
   Map<String, StorageMount> _mountsById = const {};
@@ -1140,11 +1143,21 @@ class LocalLibraryClient implements MediaServerClient {
   // ─── Artwork ───────────────────────────────────────────────────────────
 
   /// Resolves an artwork source to something an image widget can load: a
-  /// remote URL as it is, or a proxy URL for an image on a mount.
+  /// remote URL as it is, a relative TMDB path expanded via [tmdbImageBase],
+  /// or a proxy URL for an image on a mount.
   @override
   String thumbnailUrl(String? path, {int? width, int? height, bool cover = true}) {
     if (path == null || path.isEmpty) return '';
-    if (!path.startsWith('mount:')) return path;
+    if (!path.startsWith('mount:')) {
+      if (path.startsWith('/') && !path.startsWith('//')) {
+        return TmdbImageUrl.resolve(
+          path,
+          imageBase: tmdbImageBase,
+          size: TmdbImageUrl.sizeForWidth(width, path: path),
+        );
+      }
+      return path;
+    }
     final rest = path.substring('mount:'.length);
     final separator = rest.indexOf(':');
     if (separator <= 0) return '';

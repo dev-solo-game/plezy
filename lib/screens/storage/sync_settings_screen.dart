@@ -49,7 +49,7 @@ class _SyncSettingsScreenState extends State<SyncSettingsScreen> {
   String? _qrUri;
   SyncQrKeyPair? _qrKeyPair;
   Timer? _qrPollTimer;
-  LocalMergePolicy _pendingQrMergePolicy = LocalMergePolicy.mergeLocal;
+  bool _pollingQr = false;
 
   @override
   void initState() {
@@ -126,15 +126,128 @@ class _SyncSettingsScreenState extends State<SyncSettingsScreen> {
     return true;
   }
 
-  Future<LocalMergePolicy?> _promptMergePolicyIfNeeded(SyncAndScanCoordinator coordinator) async {
-    if (!await coordinator.hasLocalDataToMerge() || !mounted) {
-      return LocalMergePolicy.mergeLocal;
+  Future<bool> _completePendingSignIn(SyncAndScanCoordinator coordinator, PendingSyncSignIn pending) async {
+    final SyncSignInDiffPreview preview;
+    try {
+      preview = await coordinator.inspectPendingSignIn(pending);
+    } catch (_) {
+      unawaited(coordinator.cancelPendingSignIn(pending));
+      rethrow;
     }
+    if (!mounted) {
+      unawaited(coordinator.cancelPendingSignIn(pending));
+      return false;
+    }
+    if (!preview.requiresConfirmation) {
+      await coordinator.commitPendingSignIn(pending, mergePolicy: preview.recommendedPolicy);
+      return true;
+    }
+    final chosen = await _showSignInDiffDialog(preview);
+    if (chosen == null || !mounted) {
+      await coordinator.cancelPendingSignIn(pending);
+      return false;
+    }
+    await coordinator.commitPendingSignIn(pending, mergePolicy: chosen);
+    return true;
+  }
+
+  Future<LocalMergePolicy?> _showSignInDiffDialog(SyncSignInDiffPreview preview) {
+    final theme = Theme.of(context);
+    final diffLines = <String>[
+      if (preview.localOnlySourceNames.isNotEmpty)
+        t.sync.mergeDiffLocalOnlySources(names: preview.localOnlySourceNames.join(', ')),
+      if (preview.cloudOnlySourceNames.isNotEmpty)
+        t.sync.mergeDiffCloudOnlySources(names: preview.cloudOnlySourceNames.join(', ')),
+      if (preview.sharedSourceNames.isNotEmpty)
+        t.sync.mergeDiffSharedSources(names: preview.sharedSourceNames.join(', ')),
+      if (preview.localOnlyWorks > 0) t.sync.mergeDiffLocalOnlyWorks(count: preview.localOnlyWorks),
+      if (preview.cloudOnlyWorks > 0) t.sync.mergeDiffCloudOnlyWorks(count: preview.cloudOnlyWorks),
+      if (preview.localOnlyLists > 0) t.sync.mergeDiffLocalOnlyLists(count: preview.localOnlyLists),
+      if (preview.cloudOnlyLists > 0) t.sync.mergeDiffCloudOnlyLists(count: preview.cloudOnlyLists),
+      if (preview.conflictingLists > 0) t.sync.mergeDiffConflictingLists(count: preview.conflictingLists),
+      if (preview.localOnlyProgress > 0) t.sync.mergeDiffLocalOnlyProgress(count: preview.localOnlyProgress),
+      if (preview.cloudOnlyProgress > 0) t.sync.mergeDiffCloudOnlyProgress(count: preview.cloudOnlyProgress),
+      if (preview.conflictingProgress > 0) t.sync.mergeDiffConflictingProgress(count: preview.conflictingProgress),
+      if (preview.localOnlyOrConflictingWorkPrefs > 0)
+        t.sync.mergeDiffWorkPrefs(count: preview.localOnlyOrConflictingWorkPrefs),
+    ];
+
     return showDialog<LocalMergePolicy>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: Text(t.sync.mergePromptTitle),
-        content: Text(t.sync.mergePromptBody),
+        title: Text(t.sync.mergeDiffTitle),
+        content: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 460),
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(t.sync.mergeDiffIntro(name: preview.username)),
+                const SizedBox(height: 12),
+                Material(
+                  color: theme.colorScheme.surfaceContainerHighest,
+                  borderRadius: const BorderRadius.all(Radius.circular(10)),
+                  child: Padding(
+                    padding: const EdgeInsets.all(10),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          t.sync.mergeDiffLocalSummary(
+                            sources: preview.localStats.sources,
+                            works: preview.localStats.works,
+                            lists: preview.localStats.lists,
+                            progress: preview.localStats.watchProgress,
+                          ),
+                          style: theme.textTheme.bodySmall,
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          t.sync.mergeDiffCloudSummary(
+                            sources: preview.cloudStats.sources,
+                            works: preview.cloudStats.works,
+                            lists: preview.cloudStats.lists,
+                            progress: preview.cloudStats.watchProgress,
+                          ),
+                          style: theme.textTheme.bodySmall,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                if (diffLines.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  Text(t.sync.mergeDiffDetailsHeading, style: theme.textTheme.titleSmall),
+                  const SizedBox(height: 6),
+                  for (final line in diffLines)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 4),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('• ', style: theme.textTheme.bodySmall),
+                          Expanded(child: Text(line, style: theme.textTheme.bodySmall)),
+                        ],
+                      ),
+                    ),
+                ],
+                if (preview.diffTruncated) ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    t.sync.mergeDiffTruncatedNote,
+                    style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.tertiary),
+                  ),
+                ],
+                const SizedBox(height: 10),
+                Text(
+                  t.sync.mergeDiffFootnote,
+                  style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                ),
+              ],
+            ),
+          ),
+        ),
         actions: [
           TextButton(onPressed: () => Navigator.of(ctx).pop(null), child: Text(t.common.cancel)),
           OutlinedButton(
@@ -186,35 +299,30 @@ class _SyncSettingsScreenState extends State<SyncSettingsScreen> {
     final pass = _passController.text;
     if (server.isEmpty || user.isEmpty || pass.isEmpty || _busy) return;
 
-    final mergePolicy = await _promptMergePolicyIfNeeded(coordinator);
-    if (mergePolicy == null || !mounted) return;
-
     setState(() {
       _busy = true;
       _error = null;
       _statusMessage = null;
     });
     try {
-      if (isRegister) {
-        await coordinator.register(
-          serverUrl: server,
-          username: user,
-          password: pass,
-          mergePolicy: mergePolicy,
-          serverKind: _selectedKind,
-        );
-      } else {
-        await coordinator.loginWithPassword(
-          serverUrl: server,
-          username: user,
-          password: pass,
-          mergePolicy: mergePolicy,
-          serverKind: _selectedKind,
-        );
-      }
+      final pending = isRegister
+          ? await coordinator.prepareRegister(
+              serverUrl: server,
+              username: user,
+              password: pass,
+              serverKind: _selectedKind,
+            )
+          : await coordinator.prepareLoginWithPassword(
+              serverUrl: server,
+              username: user,
+              password: pass,
+              serverKind: _selectedKind,
+            );
+      final completed = await _completePendingSignIn(coordinator, pending);
+      if (!completed || !mounted) return;
       _passController.clear();
       _cancelQr();
-      if (mounted && widget.onboardingMode) {
+      if (widget.onboardingMode) {
         navigator.pop(true);
       }
     } catch (e) {
@@ -228,9 +336,6 @@ class _SyncSettingsScreenState extends State<SyncSettingsScreen> {
     final coordinator = context.read<SyncAndScanCoordinator>();
     final server = _effectiveServerUrl();
     if (server.isEmpty || _busy) return;
-    final mergePolicy = await _promptMergePolicyIfNeeded(coordinator);
-    if (mergePolicy == null || !mounted) return;
-    _pendingQrMergePolicy = mergePolicy;
     _cancelQr();
     setState(() {
       _busy = true;
@@ -256,27 +361,40 @@ class _SyncSettingsScreenState extends State<SyncSettingsScreen> {
   Future<void> _pollQr(String server, SyncServerKind kind) async {
     final sessionId = _qrSessionId;
     final kp = _qrKeyPair;
-    if (sessionId == null || kp == null || !mounted) return;
+    if (sessionId == null || kp == null || !mounted || _pollingQr) return;
+    _pollingQr = true;
     final coordinator = context.read<SyncAndScanCoordinator>();
     final navigator = Navigator.of(context);
     try {
-      final done = await coordinator.pollQrSession(
+      final pending = await coordinator.pollQrSessionPending(
         serverUrl: server,
         sessionId: sessionId,
         keyPair: kp,
-        mergePolicy: _pendingQrMergePolicy,
         serverKind: kind,
       );
-      if (done && mounted) {
-        _cancelQr();
-        if (widget.onboardingMode) {
-          navigator.pop(true);
-        }
+      if (pending == null) return;
+      if (!mounted) {
+        unawaited(coordinator.cancelPendingSignIn(pending));
+        return;
+      }
+      _cancelQr();
+      setState(() {
+        _busy = true;
+        _error = null;
+      });
+      final completed = await _completePendingSignIn(coordinator, pending);
+      if (completed && mounted && widget.onboardingMode) {
+        navigator.pop(true);
       }
     } catch (e) {
       if (mounted) {
         _cancelQr();
         setState(() => _error = '$e');
+      }
+    } finally {
+      _pollingQr = false;
+      if (mounted && _busy) {
+        setState(() => _busy = false);
       }
     }
   }

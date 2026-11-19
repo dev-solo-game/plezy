@@ -219,6 +219,50 @@
 
       <div class="card">
         <div class="row" style="margin-bottom:12px">
+          <h2 style="margin:0">刮削与元数据缓存设置</h2>
+          <span class="badge" id="metaTmdbBadge">未配置 TMDB Key</span>
+        </div>
+        <p class="muted" style="margin-top:0">全局配置 TMDB / Bangumi 刮削源、代理与图片镜像，所有客户端（含纯本地模式）共享服务端缓存，免去每端单独配置。</p>
+        <div class="grid" id="metaCacheStatsGrid" style="margin-bottom:14px"></div>
+        <form id="metaCfgForm">
+          <label for="metaTmdbKey">TMDB API Key / Read Token（留空表示保留当前已保存的密钥）</label>
+          <input id="metaTmdbKey" type="password" autocomplete="off" placeholder="输入新的 v3 API Key 或 v4 Token">
+          <label class="switch-row">
+            <input id="metaClearKey" type="checkbox">
+            <span>清空已保存的 TMDB API Key</span>
+          </label>
+          <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));">
+            <div>
+              <label for="metaApiBase">TMDB API 地址</label>
+              <input id="metaApiBase" type="text" placeholder="https://api.tmdb.org/3">
+            </div>
+            <div>
+              <label for="metaImageBase">TMDB 图片镜像地址</label>
+              <input id="metaImageBase" type="text" placeholder="https://image.tmdb.org/t/p">
+            </div>
+            <div>
+              <label for="metaProxy">上游 HTTP 代理（可选）</label>
+              <input id="metaProxy" type="text" placeholder="127.0.0.1:7890">
+            </div>
+          </div>
+          <label class="switch-row">
+            <input id="metaBangumiEnabled" type="checkbox">
+            <span>启用 Bangumi 动漫元数据源</span>
+          </label>
+          <label class="switch-row">
+            <input id="metaAllowPublic" type="checkbox">
+            <span>开放公开元数据接口（供未登录的纯本地模式客户端使用）</span>
+          </label>
+          <div class="row" style="margin-top:14px; justify-content:flex-start;">
+            <button type="submit">保存刮削配置</button>
+            <button class="ghost" id="btnTestMeta" type="button">测试 TMDB 连接</button>
+            <button class="danger" id="btnClearMetaCache" type="button">清空元数据缓存</button>
+          </div>
+        </form>
+      </div>
+
+      <div class="card">
+        <div class="row" style="margin-bottom:12px">
           <h2 style="margin:0">用户管理</h2>
           <input id="userSearch" type="text" placeholder="搜索用户名..." style="width:220px">
         </div>
@@ -456,9 +500,10 @@ $('btnClearData').onclick = async () => {
 };
 
 async function loadAdminPanel() {
-  const [ov, usersResp] = await Promise.all([
+  const [ov, usersResp, metaCfg] = await Promise.all([
     api('GET', '/api/v1/admin/overview'),
     api('GET', '/api/v1/admin/users'),
+    api('GET', '/api/v1/admin/metadata/config'),
   ]);
   $('adminStatsGrid').innerHTML = [
     ['注册用户', ov.total_users || 0],
@@ -471,9 +516,88 @@ async function loadAdminPanel() {
 
   $('cfgAllowReg').checked = !!ov.allow_registration;
   $('cfgQuota').value = ov.max_entities_per_user || 0;
+  renderAdminMetaConfig(metaCfg);
   cachedUsers = usersResp.users || [];
   renderAdminUsers();
 }
+
+function renderAdminMetaConfig(cfg) {
+  const badge = $('metaTmdbBadge');
+  if (cfg.tmdb_api_key_set) {
+    badge.textContent = `已配置 (${cfg.tmdb_api_key_masked})`;
+    badge.className = 'badge ok';
+  } else {
+    badge.textContent = '未配置 TMDB Key';
+    badge.className = 'badge danger';
+  }
+  const cs = cfg.cache_stats || {};
+  $('metaCacheStatsGrid').innerHTML = [
+    ['作品缓存', cs.works || 0],
+    ['分季缓存', cs.seasons || 0],
+    ['演员缓存', cs.people || 0],
+    ['搜索缓存', cs.searches || 0],
+  ].map(([k, v]) => `<div class="stat"><div class="k">${k}</div><div class="v">${v}</div></div>`).join('');
+  $('metaTmdbKey').value = '';
+  $('metaTmdbKey').placeholder = cfg.tmdb_api_key_set ? `已保存 (${cfg.tmdb_api_key_masked})，留空保持不变` : '输入 TMDB v3 API Key 或 v4 Token';
+  $('metaClearKey').checked = false;
+  $('metaApiBase').value = cfg.tmdb_api_base || 'https://api.tmdb.org/3';
+  $('metaImageBase').value = cfg.tmdb_image_base || 'https://image.tmdb.org/t/p';
+  $('metaProxy').value = cfg.metadata_proxy || '';
+  $('metaBangumiEnabled').checked = !!cfg.bangumi_enabled;
+  $('metaAllowPublic').checked = !!cfg.allow_public_metadata;
+}
+
+$('metaCfgForm').onsubmit = async (e) => {
+  e.preventDefault();
+  showMsg('');
+  try {
+    const body = {
+      tmdb_api_base: $('metaApiBase').value.trim(),
+      tmdb_image_base: $('metaImageBase').value.trim(),
+      metadata_proxy: $('metaProxy').value.trim(),
+      bangumi_enabled: $('metaBangumiEnabled').checked,
+      allow_public_metadata: $('metaAllowPublic').checked,
+      clear_tmdb_api_key: $('metaClearKey').checked,
+    };
+    const keyVal = $('metaTmdbKey').value.trim();
+    if (keyVal && !$('metaClearKey').checked) {
+      body.tmdb_api_key = keyVal;
+    }
+    const updated = await api('POST', '/api/v1/admin/metadata/config', body);
+    renderAdminMetaConfig(updated);
+    showMsg('刮削与元数据缓存配置已保存');
+  } catch (err) {
+    showMsg(err.message, true);
+  }
+};
+
+$('btnTestMeta').onclick = async () => {
+  showMsg('');
+  try {
+    const body = {
+      tmdb_api_base: $('metaApiBase').value.trim(),
+      metadata_proxy: $('metaProxy').value.trim(),
+    };
+    const keyVal = $('metaTmdbKey').value.trim();
+    if (keyVal) body.tmdb_api_key = keyVal;
+    const res = await api('POST', '/api/v1/admin/metadata/test', body);
+    showMsg(`TMDB 连接成功（延迟 ${res.latency_ms} ms）`);
+  } catch (err) {
+    showMsg(err.message, true);
+  }
+};
+
+$('btnClearMetaCache').onclick = async () => {
+  if (!confirm('确认清空全部公共元数据缓存（作品/分季/演员/搜索）？')) return;
+  showMsg('');
+  try {
+    const res = await api('POST', '/api/v1/admin/metadata/clear-cache', { scope: 'all' });
+    showMsg(`已清理 ${res.deleted || 0} 条缓存记录`);
+    await loadAdminPanel();
+  } catch (err) {
+    showMsg(err.message, true);
+  }
+};
 
 function renderAdminUsers() {
   const q = $('userSearch').value.trim().toLowerCase();

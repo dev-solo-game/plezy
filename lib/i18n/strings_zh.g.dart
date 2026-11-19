@@ -2673,7 +2673,15 @@ class Translations$storage$zh extends Translations$storage$en {
 	@override String get manualMatch => '手动匹配';
 	@override String get noMatchResults => '没有结果';
 	@override String get mediaSources => '媒体来源';
-	@override String get scraperSettingsDescription => 'TMDB key、语言与刮削代理';
+	@override String get scraperSettingsDescription => '服务端元数据服务、刮削语言与 Bangumi 偏好';
+	@override String get metadataServiceTitle => '服务端元数据服务';
+	@override String get metadataServiceOfficial => '当前使用官方同步服务器元数据缓存';
+	@override String get metadataServiceSelfHosted => '当前使用自建同步服务器元数据缓存';
+	@override String get metadataServiceManagedHint => 'TMDB API Key、上游代理与图片镜像已统一在同步服务器 Web 管理后台配置，全端免配置共享缓存。';
+	@override String get metadataServerTest => '测试元数据服务';
+	@override String metadataServerTestOk({required Object works, required Object seasons, required Object people}) => '连接正常 · TMDB 已就绪（已缓存 ${works} 部作品、${seasons} 季剧集、${people} 位演职员）';
+	@override String get metadataServerTestNoKey => '已连上服务器，但管理员尚未在 Web 控制台配置 TMDB API Key。';
+	@override String get metadataPreferencesHeading => '客户端偏好';
 	@override String get fallbackUrl => '备用地址（可选）';
 	@override String get fallbackUrlHelp => '主地址不可达时自动切换（例如外出时使用的外网 DDNS 地址）。';
 	@override String get smbFallbackHost => '备用服务器（可选）';
@@ -2757,7 +2765,7 @@ class Translations$sync$zh extends Translations$sync$en {
 	@override String get officialBadge => '官方同步';
 	@override String get selfHostedBadge => '自建同步';
 	@override String get modeCloudTitle => '登录同步服务器';
-	@override String get modeCloudDesc => '连接同步服务器，跨网络同步媒体库、自定义片单、刮削配置与播放进度（默认 http://127.0.0.1:8088）。';
+	@override String get modeCloudDesc => '连接同步服务器，跨网络同步媒体库、自定义片单、刮削配置与播放进度（默认 http://10.0.10.48:8088）。';
 	@override String get activeModeLan => '当前模式：本地模式（不同步）';
 	@override String get activeModeCloud => '当前模式：同步服务器';
 	@override String get activeModeOfficial => '当前模式：官方同步';
@@ -2854,8 +2862,25 @@ class Translations$sync$zh extends Translations$sync$en {
 	@override String lanPopupWaitingBody({required Object device}) => '已发送配对请求，正在等待「${device}」确认…';
 	@override String lanPopupCancelCountdown({required Object seconds}) => '取消 (${seconds}s)';
 	@override String get lanPopupLaterHint => '关闭后仍可随时在「遥控与投屏设备」中手动配对。';
-	@override String get mergePromptTitle => '检测到本地媒体库数据';
-	@override String get mergePromptBody => '本机已有本地媒体源、合集/片单或观看记录。是否将其合并至该账号，还是仅使用账号云端数据（本地数据将安全归档，退出账号后可恢复）？';
+	@override String get mergeDiffTitle => '检测到本机与云端数据存在差异';
+	@override String mergeDiffIntro({required Object name}) => '已验证账号「${name}」。请选择如何处理本机与云端账号之间的数据差异：';
+	@override String mergeDiffLocalSummary({required Object sources, required Object works, required Object lists, required Object progress}) => '本机：${sources} 个媒体源、${works} 部作品、${lists} 个片单、${progress} 条观看记录';
+	@override String mergeDiffCloudSummary({required Object sources, required Object works, required Object lists, required Object progress}) => '云端：${sources} 个媒体源、${works} 部作品、${lists} 个片单、${progress} 条观看记录';
+	@override String get mergeDiffDetailsHeading => '差异明细：';
+	@override String mergeDiffLocalOnlySources({required Object names}) => '仅本机有的媒体源：${names}';
+	@override String mergeDiffCloudOnlySources({required Object names}) => '仅云端有的媒体源：${names}';
+	@override String mergeDiffSharedSources({required Object names}) => '双方共有的媒体源：${names}';
+	@override String mergeDiffLocalOnlyWorks({required Object count}) => '仅本机有的作品：${count} 部';
+	@override String mergeDiffCloudOnlyWorks({required Object count}) => '仅云端有的作品：${count} 部';
+	@override String mergeDiffLocalOnlyLists({required Object count}) => '仅本机有的片单/合集：${count} 个';
+	@override String mergeDiffCloudOnlyLists({required Object count}) => '仅云端有的片单/合集：${count} 个';
+	@override String mergeDiffConflictingLists({required Object count}) => '内容存在差异的同名片单/合集：${count} 个';
+	@override String mergeDiffLocalOnlyProgress({required Object count}) => '仅本机有的观看记录：${count} 条';
+	@override String mergeDiffCloudOnlyProgress({required Object count}) => '仅云端有的观看记录：${count} 条';
+	@override String mergeDiffConflictingProgress({required Object count}) => '进度不一致的观看记录（按最新时间保留）：${count} 条';
+	@override String mergeDiffWorkPrefs({required Object count}) => '跳过片头片尾/收藏偏好差异：${count} 项';
+	@override String get mergeDiffTruncatedNote => '注：云端数据量较大，以上差异仅基于前几批拉取数据估算。';
+	@override String get mergeDiffFootnote => '选择合并时，相同媒体源和作品会自动去重，观看记录按最新操作保留，且本机原数据会安全归档（退出账号后可恢复）。';
 	@override String get mergeLocalOption => '合并本地数据到账号';
 	@override String get accountOnlyOption => '仅使用账号云端数据（本地归档）';
 	@override String get initialSyncRestoring => '正在从服务器恢复媒体源与媒体库索引…';
@@ -6376,7 +6401,15 @@ extension on TranslationsZh {
 			'storage.manualMatch' => '手动匹配',
 			'storage.noMatchResults' => '没有结果',
 			'storage.mediaSources' => '媒体来源',
-			'storage.scraperSettingsDescription' => 'TMDB key、语言与刮削代理',
+			'storage.scraperSettingsDescription' => '服务端元数据服务、刮削语言与 Bangumi 偏好',
+			'storage.metadataServiceTitle' => '服务端元数据服务',
+			'storage.metadataServiceOfficial' => '当前使用官方同步服务器元数据缓存',
+			'storage.metadataServiceSelfHosted' => '当前使用自建同步服务器元数据缓存',
+			'storage.metadataServiceManagedHint' => 'TMDB API Key、上游代理与图片镜像已统一在同步服务器 Web 管理后台配置，全端免配置共享缓存。',
+			'storage.metadataServerTest' => '测试元数据服务',
+			'storage.metadataServerTestOk' => ({required Object works, required Object seasons, required Object people}) => '连接正常 · TMDB 已就绪（已缓存 ${works} 部作品、${seasons} 季剧集、${people} 位演职员）',
+			'storage.metadataServerTestNoKey' => '已连上服务器，但管理员尚未在 Web 控制台配置 TMDB API Key。',
+			'storage.metadataPreferencesHeading' => '客户端偏好',
 			'storage.fallbackUrl' => '备用地址（可选）',
 			'storage.fallbackUrlHelp' => '主地址不可达时自动切换（例如外出时使用的外网 DDNS 地址）。',
 			'storage.smbFallbackHost' => '备用服务器（可选）',
@@ -6407,6 +6440,8 @@ extension on TranslationsZh {
 			'workSkip.scopeMovie' => '对当前媒体来源中的这部电影生效，所有文件版本共用。',
 			'workSkip.intro' => '跳过片头',
 			'workSkip.introStart' => '片头开始时间',
+			_ => null,
+		} ?? switch (path) {
 			'workSkip.introEnd' => '片头结束时间',
 			'workSkip.credits' => '跳过片尾',
 			'workSkip.creditsDuration' => '片尾时长',
@@ -6415,8 +6450,6 @@ extension on TranslationsZh {
 			'workSkip.timeHint' => '分:秒',
 			'workSkip.behavior' => '片头直接跳过；片尾使用播放设置中的延迟，默认 5 秒。',
 			'workSkip.invalid' => '请检查时间：片头结束需晚于开始，片尾不能超出视频，区间不能重叠。',
-			_ => null,
-		} ?? switch (path) {
 			'workSkip.unavailable' => '请先为这部电影或剧集匹配 TMDB 或 IMDb 信息，再设置跳过。',
 			'workSkip.loadFailed' => '无法读取跳过设置，请重试。',
 			'workSkip.saveFailed' => '保存失败，修改尚未生效，请重试。',
@@ -6435,7 +6468,7 @@ extension on TranslationsZh {
 			'sync.officialBadge' => '官方同步',
 			'sync.selfHostedBadge' => '自建同步',
 			'sync.modeCloudTitle' => '登录同步服务器',
-			'sync.modeCloudDesc' => '连接同步服务器，跨网络同步媒体库、自定义片单、刮削配置与播放进度（默认 http://127.0.0.1:8088）。',
+			'sync.modeCloudDesc' => '连接同步服务器，跨网络同步媒体库、自定义片单、刮削配置与播放进度（默认 http://10.0.10.48:8088）。',
 			'sync.activeModeLan' => '当前模式：本地模式（不同步）',
 			'sync.activeModeCloud' => '当前模式：同步服务器',
 			'sync.activeModeOfficial' => '当前模式：官方同步',
@@ -6532,8 +6565,25 @@ extension on TranslationsZh {
 			'sync.lanPopupWaitingBody' => ({required Object device}) => '已发送配对请求，正在等待「${device}」确认…',
 			'sync.lanPopupCancelCountdown' => ({required Object seconds}) => '取消 (${seconds}s)',
 			'sync.lanPopupLaterHint' => '关闭后仍可随时在「遥控与投屏设备」中手动配对。',
-			'sync.mergePromptTitle' => '检测到本地媒体库数据',
-			'sync.mergePromptBody' => '本机已有本地媒体源、合集/片单或观看记录。是否将其合并至该账号，还是仅使用账号云端数据（本地数据将安全归档，退出账号后可恢复）？',
+			'sync.mergeDiffTitle' => '检测到本机与云端数据存在差异',
+			'sync.mergeDiffIntro' => ({required Object name}) => '已验证账号「${name}」。请选择如何处理本机与云端账号之间的数据差异：',
+			'sync.mergeDiffLocalSummary' => ({required Object sources, required Object works, required Object lists, required Object progress}) => '本机：${sources} 个媒体源、${works} 部作品、${lists} 个片单、${progress} 条观看记录',
+			'sync.mergeDiffCloudSummary' => ({required Object sources, required Object works, required Object lists, required Object progress}) => '云端：${sources} 个媒体源、${works} 部作品、${lists} 个片单、${progress} 条观看记录',
+			'sync.mergeDiffDetailsHeading' => '差异明细：',
+			'sync.mergeDiffLocalOnlySources' => ({required Object names}) => '仅本机有的媒体源：${names}',
+			'sync.mergeDiffCloudOnlySources' => ({required Object names}) => '仅云端有的媒体源：${names}',
+			'sync.mergeDiffSharedSources' => ({required Object names}) => '双方共有的媒体源：${names}',
+			'sync.mergeDiffLocalOnlyWorks' => ({required Object count}) => '仅本机有的作品：${count} 部',
+			'sync.mergeDiffCloudOnlyWorks' => ({required Object count}) => '仅云端有的作品：${count} 部',
+			'sync.mergeDiffLocalOnlyLists' => ({required Object count}) => '仅本机有的片单/合集：${count} 个',
+			'sync.mergeDiffCloudOnlyLists' => ({required Object count}) => '仅云端有的片单/合集：${count} 个',
+			'sync.mergeDiffConflictingLists' => ({required Object count}) => '内容存在差异的同名片单/合集：${count} 个',
+			'sync.mergeDiffLocalOnlyProgress' => ({required Object count}) => '仅本机有的观看记录：${count} 条',
+			'sync.mergeDiffCloudOnlyProgress' => ({required Object count}) => '仅云端有的观看记录：${count} 条',
+			'sync.mergeDiffConflictingProgress' => ({required Object count}) => '进度不一致的观看记录（按最新时间保留）：${count} 条',
+			'sync.mergeDiffWorkPrefs' => ({required Object count}) => '跳过片头片尾/收藏偏好差异：${count} 项',
+			'sync.mergeDiffTruncatedNote' => '注：云端数据量较大，以上差异仅基于前几批拉取数据估算。',
+			'sync.mergeDiffFootnote' => '选择合并时，相同媒体源和作品会自动去重，观看记录按最新操作保留，且本机原数据会安全归档（退出账号后可恢复）。',
 			'sync.mergeLocalOption' => '合并本地数据到账号',
 			'sync.accountOnlyOption' => '仅使用账号云端数据（本地归档）',
 			'sync.initialSyncRestoring' => '正在从服务器恢复媒体源与媒体库索引…',
