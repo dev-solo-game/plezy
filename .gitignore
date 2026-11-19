@@ -10,6 +10,7 @@
 .history
 .svn/
 .swiftpm/
+.box-agent/
 migrate_working_dir/
 
 # IntelliJ related
@@ -58,6 +59,7 @@ app.*.symbols
 app.*.map.json
 
 # Android Studio will place build artifacts here
+/android/build/
 /android/app/debug
 /android/app/profile
 /android/app/release

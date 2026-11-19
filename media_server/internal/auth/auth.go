@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -38,6 +39,35 @@ const (
 type Service struct {
 	store *db.Store
 	nowFn func() time.Time
+
+	// Authenticate runs on every API, artwork and image request. Caching the
+	// admin row and recently validated sessions avoids two SQLite round trips per
+	// request (the store uses a single connection, so these queue behind heavy
+	// library queries). Every mutation of admin_account/sessions in this file
+	// invalidates the caches.
+	cacheMu      sync.Mutex
+	adminCache   *db.AdminAccount
+	sessionCache map[string]cachedSession
+	cacheGen     uint64
+}
+
+type cachedSession struct {
+	sess     db.SessionRecord
+	cachedAt int64
+}
+
+// sessionCacheTTLMs bounds how long a validated session is trusted without
+// re-reading the sessions table.
+const sessionCacheTTLMs = 30_000
+
+func (s *Service) invalidateAuthCache(admin bool) {
+	s.cacheMu.Lock()
+	if admin {
+		s.adminCache = nil
+	}
+	s.sessionCache = nil
+	s.cacheGen++
+	s.cacheMu.Unlock()
 }
 
 type AdminSession struct {
@@ -61,12 +91,37 @@ func (s *Service) SetClock(fn func() time.Time) {
 }
 
 func (s *Service) IsInitialized() bool {
+	s.cacheMu.Lock()
+	known := s.adminCache != nil
+	s.cacheMu.Unlock()
+	if known {
+		return true
+	}
 	var cnt int
 	err := s.store.DB().QueryRow(`SELECT COUNT(*) FROM admin_account WHERE id = 1`).Scan(&cnt)
 	return err == nil && cnt > 0
 }
 
 func (s *Service) GetAdmin() (*db.AdminAccount, error) {
+	s.cacheMu.Lock()
+	cached := s.adminCache
+	s.cacheMu.Unlock()
+	if cached != nil {
+		cp := *cached
+		return &cp, nil
+	}
+	acc, err := s.loadAdmin()
+	if err != nil {
+		return nil, err
+	}
+	s.cacheMu.Lock()
+	cp := *acc
+	s.adminCache = &cp
+	s.cacheMu.Unlock()
+	return acc, nil
+}
+
+func (s *Service) loadAdmin() (*db.AdminAccount, error) {
 	var acc db.AdminAccount
 	err := s.store.DB().QueryRow(`
 		SELECT username, password_salt, password_hash, created_at, updated_at
@@ -140,6 +195,7 @@ func (s *Service) createAdmin(username, password string) (db.AdminAccount, error
 	if err != nil {
 		return db.AdminAccount{}, err
 	}
+	s.invalidateAuthCache(true)
 	if n, _ := res.RowsAffected(); n == 0 {
 		return db.AdminAccount{}, ErrAlreadyInitialized
 	}
@@ -230,6 +286,17 @@ func (s *Service) Authenticate(token string) (*db.AdminAccount, *db.SessionRecor
 		return nil, nil, ErrUnauthorized
 	}
 	th := hashToken(token)
+	nowMs := s.nowFn().UnixMilli()
+
+	s.cacheMu.Lock()
+	if c, ok := s.sessionCache[th]; ok && nowMs >= c.cachedAt && nowMs-c.cachedAt < sessionCacheTTLMs && c.sess.ExpiresAt > nowMs {
+		sess := c.sess
+		s.cacheMu.Unlock()
+		return acc, &sess, nil
+	}
+	gen := s.cacheGen
+	s.cacheMu.Unlock()
+
 	var sess db.SessionRecord
 	err = s.store.DB().QueryRow(`
 		SELECT token_id, token_hash, device_name, platform, ip, created_at, last_used_at, expires_at
@@ -238,7 +305,6 @@ func (s *Service) Authenticate(token string) (*db.AdminAccount, *db.SessionRecor
 	if err != nil {
 		return nil, nil, ErrUnauthorized
 	}
-	nowMs := s.nowFn().UnixMilli()
 	if sess.ExpiresAt <= nowMs {
 		_, _ = s.store.DB().Exec(`DELETE FROM sessions WHERE token_id = ?`, sess.TokenID)
 		return nil, nil, ErrUnauthorized
@@ -247,6 +313,15 @@ func (s *Service) Authenticate(token string) (*db.AdminAccount, *db.SessionRecor
 		_, _ = s.store.DB().Exec(`UPDATE sessions SET last_used_at = ? WHERE token_id = ?`, nowMs, sess.TokenID)
 		sess.LastUsedAt = nowMs
 	}
+	s.cacheMu.Lock()
+	// Skip caching if a logout/revoke raced with this lookup.
+	if s.cacheGen == gen {
+		if s.sessionCache == nil || len(s.sessionCache) >= 256 {
+			s.sessionCache = make(map[string]cachedSession)
+		}
+		s.sessionCache[th] = cachedSession{sess: sess, cachedAt: nowMs}
+	}
+	s.cacheMu.Unlock()
 	return acc, &sess, nil
 }
 
@@ -256,6 +331,7 @@ func (s *Service) Logout(token string) error {
 		return nil
 	}
 	_, err := s.store.DB().Exec(`DELETE FROM sessions WHERE token_hash = ?`, th)
+	s.invalidateAuthCache(false)
 	return err
 }
 
@@ -293,6 +369,7 @@ func (s *Service) ChangePassword(oldPassword, newPassword, newUsername, keepToke
 	if err != nil {
 		return err
 	}
+	defer s.invalidateAuthCache(true)
 	if keepTokenID != "" {
 		_, _ = s.store.DB().Exec(`DELETE FROM sessions WHERE token_id != ?`, keepTokenID)
 	} else {
@@ -326,6 +403,7 @@ func (s *Service) ListSessions(currentTokenID string) ([]db.SessionRecord, error
 
 func (s *Service) RevokeSession(tokenID string) error {
 	res, err := s.store.DB().Exec(`DELETE FROM sessions WHERE token_id = ?`, tokenID)
+	s.invalidateAuthCache(false)
 	if err != nil {
 		return err
 	}

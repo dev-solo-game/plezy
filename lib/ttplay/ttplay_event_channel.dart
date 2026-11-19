@@ -14,6 +14,7 @@ class TtplayEventChannel implements LibraryEventChannel {
     required String baseUrl,
     required this.accessToken,
     this.onRawEvent,
+    this.onLibraryChange,
     this.coalesceDuration = const Duration(milliseconds: 500),
   }) : baseUrl = SelfHostedSession.normalizeServerUrl(baseUrl);
 
@@ -21,6 +22,10 @@ class TtplayEventChannel implements LibraryEventChannel {
   final String baseUrl;
   final String accessToken;
   final void Function(String event, Map<String, dynamic> data)? onRawEvent;
+
+  /// Invoked synchronously for every library-change frame, before the
+  /// coalesced [events] emission, so clients can drop cached data first.
+  final void Function()? onLibraryChange;
   final Duration coalesceDuration;
 
   static const List<Duration> _backoff = [
@@ -178,6 +183,9 @@ class TtplayEventChannel implements LibraryEventChannel {
 
     final effectiveEvent = eventName.isNotEmpty ? eventName : (payload['event'] as String? ?? '');
     if (_libraryEvents.contains(effectiveEvent)) {
+      try {
+        onLibraryChange?.call();
+      } catch (_) {}
       _scheduleLibraryChange();
     }
   }

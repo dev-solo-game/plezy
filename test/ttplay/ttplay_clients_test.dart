@@ -632,6 +632,45 @@ void main() {
     expect(received, isNotEmpty);
   });
 
+  test('TtplayServerClient shares one /home request across libraries, hubs and continue watching', () async {
+    final session = SelfHostedSession(
+      serverUrl: server.baseUrl,
+      username: 'alice',
+      accessToken: server.validToken,
+      serverName: 'NAS Media',
+    );
+    final api = TtplayApiClient(baseUrl: server.baseUrl, accessToken: server.validToken);
+    final client = TtplayServerClient(api: api, session: session);
+    addTearDown(client.close);
+    int homeRequests() => server.requests.where((r) => r.path == '/api/v1/home').length;
+    final before = homeRequests();
+
+    final results = await Future.wait<Object>([
+      client.fetchLibraries(),
+      client.fetchGlobalHubs(),
+      client.fetchContinueWatching(),
+    ]);
+    expect((results[0] as List).isNotEmpty, isTrue);
+    expect((results[1] as List).isNotEmpty, isTrue);
+    expect((results[2] as List).isNotEmpty, isTrue);
+    expect(homeRequests() - before, 1);
+
+    // Served from the short-lived cache.
+    await client.fetchLibraries();
+    expect(homeRequests() - before, 1);
+
+    // Watch-state mutations drop the cache.
+    final item = (await client.fetchContinueWatching()).first;
+    expect(homeRequests() - before, 1);
+    await client.markWatched(item);
+    await client.fetchContinueWatching();
+    expect(homeRequests() - before, 2);
+
+    client.invalidateHomeCache();
+    await client.fetchGlobalHubs();
+    expect(homeRequests() - before, 3);
+  });
+
   test('TtplayExternalServerClient maps Emby and Jellyfin dialects, browse, search, watch & playback', () async {
     final api = TtplayApiClient(baseUrl: server.baseUrl, accessToken: server.validToken);
     addTearDown(api.close);

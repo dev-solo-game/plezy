@@ -22,6 +22,12 @@ type Store struct {
 	metaMu      sync.Mutex
 	scanLockMu  sync.Mutex
 	activeScans map[string]struct{}
+
+	// In-memory cache of server_settings (see store_settings.go).
+	settingsMu       sync.RWMutex
+	settingsCache    map[string]string
+	settingsSnapshot *ServerSettings
+	settingsGen      uint64
 }
 
 func Open(dataDir string, v *vault.Vault) (*Store, error) {
@@ -394,13 +400,25 @@ func (s *Store) initSchema() error {
 		`CREATE INDEX IF NOT EXISTS idx_media_items_anilist ON media_items(kind, anilist_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_media_items_imdb ON media_items(kind, imdb_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_media_items_tvdb ON media_items(kind, tvdb_id)`,
+		// Effective "added" ordering used by home shelves / library browse default sort.
+		`CREATE INDEX IF NOT EXISTS idx_media_items_added_eff ON media_items(COALESCE(source_added_at, added_at), id)`,
+		`CREATE INDEX IF NOT EXISTS idx_media_files_item_role ON media_files(item_id, role)`,
 	}
 	for _, stmt := range postIdxStmts {
 		if _, err := s.db.Exec(stmt); err != nil {
 			return fmt.Errorf("init schema index: %w", err)
 		}
 	}
+	s.Optimize()
 	return nil
+}
+
+// Optimize refreshes SQLite planner statistics (bounded cost). Without stats the
+// planner ignores the ordering indexes and sorts the whole library for every
+// home/browse query. Safe to call repeatedly, e.g. after a library scan.
+func (s *Store) Optimize() {
+	_, _ = s.db.Exec(`PRAGMA analysis_limit = 1000`)
+	_, _ = s.db.Exec(`PRAGMA optimize = 0x10002`)
 }
 
 func (s *Store) ensureColumn(table, column, colDef string) error {

@@ -193,6 +193,7 @@ func (c *Coordinator) TriggerMountScanAsync(mountID string, full bool) {
 			return
 		}
 		if res.Videos > 0 || res.AddedPending {
+			c.Store.Optimize()
 			c.NotifyScrape()
 			c.Scanner.ProbePendingFiles(c.ctx, 100)
 		}
@@ -226,6 +227,7 @@ func (c *Coordinator) TriggerScanAllAsync(full bool) {
 			}
 		}
 		if anyAdded {
+			c.Store.Optimize()
 			c.NotifyScrape()
 			c.Scanner.ProbePendingFiles(c.ctx, 150)
 		}

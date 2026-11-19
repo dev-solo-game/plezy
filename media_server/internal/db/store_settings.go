@@ -93,17 +93,61 @@ func MaskSecret(raw string) string {
 	return "****" + trimmed[len(trimmed)-4:]
 }
 
-func (s *Store) GetSetting(key, fallback string) string {
-	var raw string
-	err := s.db.QueryRow(`SELECT value FROM server_settings WHERE key = ?`, key).Scan(&raw)
-	if err != nil {
-		return fallback
+// settingsKV returns the in-memory copy of the server_settings table, loading it
+// with a single query on first use. Settings are read on hot paths (bootstrap,
+// every proxied artwork request, every metadata call), so per-key queries were a
+// major source of contention on the single SQLite connection.
+func (s *Store) settingsKV() map[string]string {
+	s.settingsMu.RLock()
+	kv := s.settingsCache
+	s.settingsMu.RUnlock()
+	if kv != nil {
+		return kv
 	}
-	return raw
+	s.settingsMu.Lock()
+	defer s.settingsMu.Unlock()
+	if s.settingsCache != nil {
+		return s.settingsCache
+	}
+	loaded := make(map[string]string)
+	rows, err := s.db.Query(`SELECT key, value FROM server_settings`)
+	if err != nil {
+		// Do not cache a failed load; next call retries.
+		return loaded
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var k, v string
+		if rows.Scan(&k, &v) == nil {
+			loaded[k] = v
+		}
+	}
+	if rows.Err() != nil {
+		return loaded
+	}
+	s.settingsCache = loaded
+	return loaded
+}
+
+// invalidateSettingsCache drops cached settings so the next read reloads them.
+func (s *Store) invalidateSettingsCache() {
+	s.settingsMu.Lock()
+	s.settingsCache = nil
+	s.settingsSnapshot = nil
+	s.settingsGen++
+	s.settingsMu.Unlock()
+}
+
+func (s *Store) GetSetting(key, fallback string) string {
+	if raw, ok := s.settingsKV()[key]; ok {
+		return raw
+	}
+	return fallback
 }
 
 func (s *Store) SetSetting(key, val string) error {
 	_, err := s.db.Exec(`INSERT OR REPLACE INTO server_settings(key, value) VALUES (?, ?)`, key, val)
+	s.invalidateSettingsCache()
 	return err
 }
 
@@ -170,6 +214,24 @@ func (s *Store) setSecretSetting(encKey, legacyPlainKey string, val *string, cle
 }
 
 func (s *Store) GetServerSettings() ServerSettings {
+	s.settingsMu.RLock()
+	snap := s.settingsSnapshot
+	gen := s.settingsGen
+	s.settingsMu.RUnlock()
+	if snap != nil {
+		return *snap
+	}
+	cfg := s.buildServerSettings()
+	s.settingsMu.Lock()
+	// Only publish the snapshot if no write happened while it was being built.
+	if s.settingsGen == gen && s.settingsCache != nil {
+		s.settingsSnapshot = &cfg
+	}
+	s.settingsMu.Unlock()
+	return cfg
+}
+
+func (s *Store) buildServerSettings() ServerSettings {
 	tmdbKey := s.getSecretSetting("tmdb_api_key_enc", "tmdb_api_key")
 	bangumiToken := s.getSecretSetting("bangumi_token_enc", "")
 	doubanCookie := s.getSecretSetting("douban_cookie_enc", "")
@@ -483,6 +545,7 @@ func (s *Store) AdoptQuarkPcDeviceIfAbsent(utdid, machine string) {
 		return
 	}
 	_, _ = s.db.Exec(`INSERT OR IGNORE INTO server_settings(key, value) VALUES ('quark_pc_device', ?)`, string(raw))
+	s.invalidateSettingsCache()
 }
 
 func (s *Store) GetOrCreateQuarkPcDevice(generate func() (string, string)) (string, string) {

@@ -8,6 +8,7 @@ import (
 	"mime"
 	"net/http"
 	"path"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -410,6 +411,18 @@ func (s *Server) handleSPA(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 		} else {
 			w.Header().Set("Cache-Control", "no-cache")
+		}
+		if isCompressibleStatic(ct) && len(data) > 1024 {
+			w.Header().Add("Vary", "Accept-Encoding")
+			if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+				if gz := gzipStaticCached(name, info.ModTime().UnixNano(), data); gz != nil {
+					w.Header().Set("Content-Encoding", "gzip")
+					w.Header().Set("Content-Length", strconv.Itoa(len(gz)))
+					w.WriteHeader(http.StatusOK)
+					_, _ = w.Write(gz)
+					return true
+				}
+			}
 		}
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(data)

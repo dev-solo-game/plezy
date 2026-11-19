@@ -84,6 +84,36 @@ func TestAdminSetupLoginPasswordAndSessions(t *testing.T) {
 	}
 }
 
+func TestRevokeAndLogoutBypassSessionCache(t *testing.T) {
+	svc, _ := openTestAuth(t)
+	sess, err := svc.SetupAdmin("admin", "secret123", "Chrome", "web", "127.0.0.1")
+	if err != nil {
+		t.Fatalf("setup admin: %v", err)
+	}
+	sess2, err := svc.Login("admin", "secret123", "Safari", "web", "127.0.0.1")
+	if err != nil {
+		t.Fatalf("login: %v", err)
+	}
+	// Warm the cache for both sessions.
+	for _, tok := range []string{sess.AccessToken, sess2.AccessToken} {
+		if _, _, err := svc.Authenticate(tok); err != nil {
+			t.Fatalf("authenticate: %v", err)
+		}
+	}
+	if err := svc.RevokeSession(sess.TokenID); err != nil {
+		t.Fatalf("revoke: %v", err)
+	}
+	if _, _, err := svc.Authenticate(sess.AccessToken); !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("revoked session must not authenticate from cache, got %v", err)
+	}
+	if err := svc.Logout(sess2.AccessToken); err != nil {
+		t.Fatalf("logout: %v", err)
+	}
+	if _, _, err := svc.Authenticate(sess2.AccessToken); !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("logged out session must not authenticate from cache, got %v", err)
+	}
+}
+
 func TestStreamTokenSigningAndExpiry(t *testing.T) {
 	svc, _ := openTestAuth(t)
 	now := time.Date(2026, 11, 19, 12, 0, 0, 0, time.UTC)

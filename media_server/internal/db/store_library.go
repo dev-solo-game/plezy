@@ -45,6 +45,29 @@ func likeEscapePattern(q string) string {
 	return "%" + r.Replace(strings.TrimSpace(q)) + "%"
 }
 
+// itemVideoFilesSubquery yields the video files that belong to the outer row `mi`
+// (the item itself, every episode of a show, or every episode of a season).
+//
+// It is written as three UNION ALL branches instead of a single
+// `target.id = mi.id OR target.show_id = mi.id OR target.parent_id = mi.id`
+// predicate so each branch can use its own index (media_files.item_id,
+// media_items.show_id, media_items.parent_id). The OR form forced SQLite to scan
+// every video file for every candidate row, which made list/home queries
+// O(items × files).
+const itemVideoFilesSubquery = `(
+			SELECT f.width AS width, f.hdr_format AS hdr_format, f.mount_id AS mount_id
+			FROM media_files f
+			WHERE f.item_id = mi.id AND f.role = 'video'
+			UNION ALL
+			SELECT f.width, f.hdr_format, f.mount_id
+			FROM media_items t JOIN media_files f ON f.item_id = t.id
+			WHERE mi.kind = 'show' AND t.show_id = mi.id AND f.role = 'video'
+			UNION ALL
+			SELECT f.width, f.hdr_format, f.mount_id
+			FROM media_items t JOIN media_files f ON f.item_id = t.id
+			WHERE mi.kind = 'season' AND t.parent_id = mi.id AND f.role = 'video'
+		)`
+
 const mediaItemBaseSelect = `
 	SELECT
 		mi.id, mi.work_key, mi.kind, mi.library_type, mi.parent_id, mi.show_id,
@@ -68,35 +91,15 @@ const mediaItemBaseSelect = `
 			ELSE 0
 		END AS watched_ep_count,
 		COALESCE((
-			SELECT MAX(COALESCE(mf.width, 0))
-			FROM media_files mf
-			JOIN media_items target ON target.id = mf.item_id
-			WHERE mf.role = 'video' AND (
-				target.id = mi.id OR
-				(mi.kind = 'show' AND target.show_id = mi.id) OR
-				(mi.kind = 'season' AND target.parent_id = mi.id)
-			)
+			SELECT MAX(COALESCE(vf.width, 0)) FROM ` + itemVideoFilesSubquery + ` vf
 		), 0) AS max_width,
 		COALESCE((
-			SELECT GROUP_CONCAT(DISTINCT mf.hdr_format)
-			FROM media_files mf
-			JOIN media_items target ON target.id = mf.item_id
-			WHERE mf.role = 'video' AND mf.hdr_format IS NOT NULL AND mf.hdr_format != '' AND (
-				target.id = mi.id OR
-				(mi.kind = 'show' AND target.show_id = mi.id) OR
-				(mi.kind = 'season' AND target.parent_id = mi.id)
-			)
+			SELECT GROUP_CONCAT(DISTINCT vf.hdr_format) FROM ` + itemVideoFilesSubquery + ` vf
+			WHERE vf.hdr_format IS NOT NULL AND vf.hdr_format != ''
 		), '') AS hdr_formats,
 		COALESCE((
-			SELECT GROUP_CONCAT(DISTINCT m.kind)
-			FROM media_files mf
-			JOIN mounts m ON m.id = mf.mount_id
-			JOIN media_items target ON target.id = mf.item_id
-			WHERE mf.role = 'video' AND (
-				target.id = mi.id OR
-				(mi.kind = 'show' AND target.show_id = mi.id) OR
-				(mi.kind = 'season' AND target.parent_id = mi.id)
-			)
+			SELECT GROUP_CONCAT(DISTINCT m.kind) FROM ` + itemVideoFilesSubquery + ` vf
+			JOIN mounts m ON m.id = vf.mount_id
 		), '') AS source_kinds
 	FROM media_items mi
 	LEFT JOIN watch_states ws ON ws.item_id = mi.id
@@ -361,14 +364,12 @@ func (s *Store) QueryLibrary(q LibraryQuery) (LibraryPage, error) {
 		where = append(where, `mi.kind IN ('movie', 'show')`)
 	}
 
+	// Video-file filters reuse itemVideoFilesSubquery so they stay index-driven.
+	videoFileExists := func(cond string) string {
+		return `EXISTS (SELECT 1 FROM ` + itemVideoFilesSubquery + ` vf WHERE ` + cond + `)`
+	}
 	if q.MountID != "" {
-		where = append(where, `EXISTS (
-			SELECT 1 FROM media_files mf
-			JOIN media_items target ON target.id = mf.item_id
-			WHERE mf.mount_id = ? AND mf.role = 'video' AND (
-				target.id = mi.id OR (mi.kind = 'show' AND target.show_id = mi.id)
-			)
-		)`)
+		where = append(where, videoFileExists(`vf.mount_id = ?`))
 		args = append(args, q.MountID)
 	}
 	if q.GenreID > 0 {
@@ -381,37 +382,13 @@ func (s *Store) QueryLibrary(q LibraryQuery) (LibraryPage, error) {
 	}
 	switch strings.ToLower(strings.TrimSpace(q.Quality)) {
 	case "4k":
-		where = append(where, `EXISTS (
-			SELECT 1 FROM media_files mf
-			JOIN media_items target ON target.id = mf.item_id
-			WHERE mf.role = 'video' AND COALESCE(mf.width, 0) >= 3800 AND (
-				target.id = mi.id OR (mi.kind = 'show' AND target.show_id = mi.id)
-			)
-		)`)
+		where = append(where, videoFileExists(`COALESCE(vf.width, 0) >= 3800`))
 	case "1080p":
-		where = append(where, `EXISTS (
-			SELECT 1 FROM media_files mf
-			JOIN media_items target ON target.id = mf.item_id
-			WHERE mf.role = 'video' AND COALESCE(mf.width, 0) >= 1900 AND COALESCE(mf.width, 0) < 3800 AND (
-				target.id = mi.id OR (mi.kind = 'show' AND target.show_id = mi.id)
-			)
-		)`)
+		where = append(where, videoFileExists(`COALESCE(vf.width, 0) >= 1900 AND COALESCE(vf.width, 0) < 3800`))
 	case "hdr":
-		where = append(where, `EXISTS (
-			SELECT 1 FROM media_files mf
-			JOIN media_items target ON target.id = mf.item_id
-			WHERE mf.role = 'video' AND mf.hdr_format IS NOT NULL AND mf.hdr_format != '' AND (
-				target.id = mi.id OR (mi.kind = 'show' AND target.show_id = mi.id)
-			)
-		)`)
+		where = append(where, videoFileExists(`vf.hdr_format IS NOT NULL AND vf.hdr_format != ''`))
 	case "dv":
-		where = append(where, `EXISTS (
-			SELECT 1 FROM media_files mf
-			JOIN media_items target ON target.id = mf.item_id
-			WHERE mf.role = 'video' AND LOWER(COALESCE(mf.hdr_format, '')) = 'dolbyvision' AND (
-				target.id = mi.id OR (mi.kind = 'show' AND target.show_id = mi.id)
-			)
-		)`)
+		where = append(where, videoFileExists(`LOWER(COALESCE(vf.hdr_format, '')) = 'dolbyvision'`))
 	}
 	if q.Watched != nil {
 		watchedExpr := `(CASE WHEN mi.kind = 'show' THEN (

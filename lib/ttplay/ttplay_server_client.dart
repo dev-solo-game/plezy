@@ -100,6 +100,50 @@ class TtplayServerClient implements MediaServerClient, StreamQualityClient {
   bool _offlineMode = false;
   bool _closed = false;
 
+  // `/api/v1/home` backs fetchLibraries, fetchContinueWatching and
+  // fetchGlobalHubs, which the home screen fires together. Share one in-flight
+  // request and keep the result briefly so a single home load costs one server
+  // round trip instead of three. Invalidated on library events and on any
+  // watch-state mutation made through this client.
+  static const Duration _homeCacheTtl = Duration(seconds: 3);
+  Future<Map<String, dynamic>>? _homeInFlight;
+  Map<String, dynamic>? _homeCache;
+  DateTime? _homeCachedAt;
+  int _homeGeneration = 0;
+
+  Future<Map<String, dynamic>> _fetchHome() {
+    final cached = _homeCache;
+    final cachedAt = _homeCachedAt;
+    if (cached != null && cachedAt != null && DateTime.now().difference(cachedAt) < _homeCacheTtl) {
+      return Future.value(cached);
+    }
+    final inFlight = _homeInFlight;
+    if (inFlight != null) return inFlight;
+
+    final gen = _homeGeneration;
+    final future = api.getJson('/api/v1/home').then((resp) {
+      final home = ttplayMap(resp['home']) ?? <String, dynamic>{};
+      if (gen == _homeGeneration) {
+        _homeCache = home;
+        _homeCachedAt = DateTime.now();
+      }
+      return home;
+    });
+    _homeInFlight = future;
+    future.whenComplete(() {
+      if (identical(_homeInFlight, future)) _homeInFlight = null;
+    }).ignore();
+    return future;
+  }
+
+  /// Drops the shared `/home` result so the next hub/library fetch hits the server.
+  void invalidateHomeCache() {
+    _homeGeneration++;
+    _homeCache = null;
+    _homeCachedAt = null;
+    _homeInFlight = null;
+  }
+
   Map<String, String> shelfTitles = const {
     'movie': 'Movies',
     'show': 'TV Shows',
@@ -172,6 +216,7 @@ class TtplayServerClient implements MediaServerClient, StreamQualityClient {
     baseUrl: api.baseUrl,
     accessToken: api.accessToken,
     onRawEvent: onRawEvent,
+    onLibraryChange: invalidateHomeCache,
   );
 
   @override
@@ -367,8 +412,7 @@ class TtplayServerClient implements MediaServerClient, StreamQualityClient {
 
   @override
   Future<List<MediaLibrary>> fetchLibraries() async {
-    final resp = await api.getJson('/api/v1/home');
-    final home = ttplayMap(resp['home']) ?? const {};
+    final home = await _fetchHome();
     final counts = ttplayMap(home['counts']) ?? const {};
     final unmatchedCount = ttplayInt(home['unmatched_count']) ?? 0;
 
@@ -586,8 +630,7 @@ class TtplayServerClient implements MediaServerClient, StreamQualityClient {
 
   @override
   Future<List<MediaItem>> fetchContinueWatching({int? count = 20, Set<String> excludedLibraryIds = const {}}) async {
-    final resp = await api.getJson('/api/v1/home');
-    final home = ttplayMap(resp['home']) ?? const {};
+    final home = await _fetchHome();
     final items = [
       for (final row in ttplayMapList(home['continue_watching']))
         if (!excludedLibraryIds.contains(ttplayString(row['library_type']))) _mapItem(row),
@@ -603,8 +646,7 @@ class TtplayServerClient implements MediaServerClient, StreamQualityClient {
     HubFetchDiagnostics? diagnostics,
   }) async {
     try {
-      final resp = await api.getJson('/api/v1/home');
-      final home = ttplayMap(resp['home']) ?? const {};
+      final home = await _fetchHome();
       final hubs = <MediaHub>[];
 
       if (includePlaybackHubs) {
@@ -969,16 +1011,19 @@ class TtplayServerClient implements MediaServerClient, StreamQualityClient {
   @override
   Future<void> markWatched(MediaItem item) async {
     await api.postJson('/api/v1/items/${item.id}/watched', body: const {'watched': true});
+    invalidateHomeCache();
   }
 
   @override
   Future<void> markUnwatched(MediaItem item) async {
     await api.postJson('/api/v1/items/${item.id}/watched', body: const {'watched': false});
+    invalidateHomeCache();
   }
 
   @override
   Future<void> removeFromContinueWatching(MediaItem item) async {
     await api.postJson('/api/v1/items/${item.id}/hide-continue');
+    invalidateHomeCache();
   }
 
   @override
@@ -987,6 +1032,7 @@ class TtplayServerClient implements MediaServerClient, StreamQualityClient {
   @override
   Future<void> setFavorite(MediaItem item, bool isFavorite) async {
     await api.postJson('/api/v1/items/${item.id}/favorite', body: {'favorite': isFavorite});
+    invalidateHomeCache();
   }
 
   Future<void> _sendProgress(String itemId, Duration position, Duration? duration, String? mediaSourceId) async {
@@ -994,6 +1040,7 @@ class TtplayServerClient implements MediaServerClient, StreamQualityClient {
     final parsedItem = int.tryParse(itemId);
     if (parsedItem == null) return;
     final parsedFile = mediaSourceId == null ? null : int.tryParse(mediaSourceId);
+    invalidateHomeCache();
     await api.postJson(
       '/api/v1/playback/progress',
       body: {
