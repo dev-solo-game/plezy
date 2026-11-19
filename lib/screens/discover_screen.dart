@@ -33,10 +33,12 @@ import '../widgets/hub_section.dart';
 import '../widgets/app_menu.dart';
 import '../widgets/clickable_cursor.dart';
 import '../widgets/loading_indicator_box.dart';
+import 'auth/self_hosted_login_screen.dart';
 import 'profile/profile_teardown.dart';
 import 'storage/lan_devices_screen.dart';
-import 'storage/sync_settings_screen.dart';
-import '../library/sync/sync_coordinator.dart';
+import '../services/companion_remote/lan_pairing_service.dart';
+import '../session/app_session_controller.dart';
+import '../ttplay/ttplay_session_binder.dart';
 import '../utils/initials_palette.dart';
 import '../services/settings_service.dart';
 import '../widgets/settings_builder.dart';
@@ -749,28 +751,29 @@ class _DiscoverScreenState extends State<DiscoverScreen>
     Navigator.push(context, buildSettingsRoute());
   }
 
-  /// Build the [FocusableAction] wrapping the top-right sync/mode & devices menu.
+  /// Build the [FocusableAction] wrapping the top-right mode & devices menu.
   FocusableAction _buildUserMenuAction(BuildContext context) {
     return FocusableAction(
       onPressed: () => _userMenuKey.currentState?.showButtonMenu(focusFirstItem: true),
       child: Builder(
         builder: (menuBtnContext) {
-          final sync = menuBtnContext.watch<SyncAndScanCoordinator?>();
-          final session = sync?.session;
-          final isCloud = session != null;
-          final requestCount = sync?.lanService.incomingPairRequests.length ?? 0;
+          final appSession = menuBtnContext.watch<AppSessionController?>();
+          final lan = menuBtnContext.watch<LanPairingService?>();
+          final selfHosted = appSession?.selfHostedSession;
+          final isSelfHosted = selfHosted != null;
+          final requestCount = lan?.incomingPairRequests.length ?? 0;
           final theme = Theme.of(menuBtnContext);
           final colorScheme = theme.colorScheme;
 
-          final Widget iconWidget = isCloud
+          final Widget iconWidget = isSelfHosted
               ? ClipOval(
                   child: Container(
                     width: 32,
                     height: 32,
-                    color: colorForName(session.username, theme),
+                    color: colorForName(selfHosted.username, theme),
                     alignment: Alignment.center,
                     child: Text(
-                      initialOf(session.username),
+                      initialOf(selfHosted.username),
                       style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w600),
                     ),
                   ),
@@ -807,31 +810,17 @@ class _DiscoverScreenState extends State<DiscoverScreen>
                   ],
                 );
 
-          final Widget menuBadge = (sync?.isSyncing ?? false)
-              ? Stack(
-                  alignment: Alignment.center,
-                  clipBehavior: Clip.none,
-                  children: [
-                    iconWidget,
-                    Positioned.fill(
-                      child: IgnorePointer(
-                        child: CircularProgressIndicator(strokeWidth: 2, color: colorScheme.primary),
-                      ),
-                    ),
-                  ],
-                )
-              : iconWidget;
-
           return AppMenuButton<String>(
             key: _userMenuKey,
-            icon: menuBadge,
+            icon: iconWidget,
             tooltip: t.sync.userMenuTooltip,
             adaptiveSheet: true,
             anchorAlignment: AppMenuAnchorAlignment.end,
             onSelected: (value) => unawaited(_handleUserMenuAction(menuBtnContext, value)),
             entriesBuilder: (menuContext) => _userMenuItems(
               menuContext,
-              sync: Provider.of<SyncAndScanCoordinator?>(menuContext, listen: false) ?? sync,
+              appSession: Provider.of<AppSessionController?>(menuContext, listen: false) ?? appSession,
+              lan: Provider.of<LanPairingService?>(menuContext, listen: false) ?? lan,
             ),
           );
         },
@@ -839,28 +828,27 @@ class _DiscoverScreenState extends State<DiscoverScreen>
     );
   }
 
-  List<AppMenuEntry<String>> _userMenuItems(BuildContext context, {required SyncAndScanCoordinator? sync}) {
+  List<AppMenuEntry<String>> _userMenuItems(
+    BuildContext context, {
+    required AppSessionController? appSession,
+    required LanPairingService? lan,
+  }) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
-    final session = sync?.session;
-    final progressDetail = sync != null && sync.progress.isActive ? formatSyncProgressDetail(t, sync.progress) : null;
+    final selfHosted = appSession?.selfHostedSession;
+    final requestCount = lan?.incomingPairRequests.length ?? 0;
 
-    if (session != null) {
-      final pending = sync?.pendingOutboxCount ?? 0;
-      final requestCount = sync?.lanService.incomingPairRequests.length ?? 0;
+    if (selfHosted != null) {
+      final serverLabel = (selfHosted.serverName?.isNotEmpty == true)
+          ? selfHosted.serverName!
+          : (Uri.tryParse(selfHosted.serverUrl)?.host ?? selfHosted.serverUrl);
       return [
         AppMenuHeader<String>(
-          icon: Symbols.cloud_done_rounded,
-          label: t.sync.menuModeCloudTitle,
-          subtitle: t.sync.menuModeCloudSubtitle(name: session.username),
+          icon: Symbols.dns_rounded,
+          label: t.session.menuModeSelfHostedTitle,
+          subtitle: t.session.menuModeSelfHostedSubtitle(user: selfHosted.username, server: serverLabel),
         ),
         const AppMenuDivider<String>(),
-        AppMenuItem<String>(
-          value: 'sync_settings',
-          icon: Symbols.cloud_sync_rounded,
-          label: t.sync.title,
-          subtitle: progressDetail ?? (pending > 0 ? t.sync.pendingChanges(count: pending) : null),
-        ),
         AppMenuItem<String>(
           value: 'lan_devices',
           icon: Symbols.devices_rounded,
@@ -868,26 +856,26 @@ class _DiscoverScreenState extends State<DiscoverScreen>
           subtitle: requestCount > 0 ? t.sync.lanPairRequestBadge(count: requestCount) : null,
         ),
         AppMenuItem<String>(value: 'settings', icon: Symbols.settings_rounded, label: t.common.settings),
+        AppMenuItem<String>(value: 'switch_mode', icon: Symbols.swap_horiz_rounded, label: t.session.switchMode),
         AppMenuItem<String>(value: 'logout', icon: Symbols.logout_rounded, label: t.common.logout),
       ];
     }
 
-    final deviceName = sync?.lanService.deviceName ?? 'TTPlay';
-    final discoveredCount = sync?.lanService.discoveredPeers.length ?? 0;
-    final requestCount = sync?.lanService.incomingPairRequests.length ?? 0;
+    final deviceName = lan?.deviceName ?? 'TTPlay';
+    final discoveredCount = lan?.discoveredPeers.length ?? 0;
 
     return [
       AppMenuHeader<String>(
-        icon: Symbols.wifi_tethering_rounded,
-        label: t.sync.menuModeLanTitle,
-        subtitle: t.sync.menuModeLanSubtitle(device: deviceName),
+        icon: Symbols.devices_rounded,
+        label: t.session.menuModeOfflineTitle,
+        subtitle: t.session.menuModeOfflineSubtitle(device: deviceName),
       ),
       const AppMenuDivider<String>(),
       AppMenuItem<String>(
         value: 'lan_devices',
         icon: Symbols.devices_rounded,
         label: t.sync.lanDevicesTitle,
-        subtitle: progressDetail ?? (requestCount > 0 ? t.sync.lanPairRequestBadge(count: requestCount) : null),
+        subtitle: requestCount > 0 ? t.sync.lanPairRequestBadge(count: requestCount) : null,
         trailing: Container(
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
           decoration: BoxDecoration(
@@ -904,7 +892,7 @@ class _DiscoverScreenState extends State<DiscoverScreen>
         ),
       ),
       AppMenuItem<String>(value: 'settings', icon: Symbols.settings_rounded, label: t.common.settings),
-      AppMenuItem<String>(value: 'switch_mode', icon: Symbols.swap_horiz_rounded, label: t.sync.switchSyncMode),
+      AppMenuItem<String>(value: 'switch_mode', icon: Symbols.swap_horiz_rounded, label: t.session.switchMode),
     ];
   }
 
@@ -912,8 +900,27 @@ class _DiscoverScreenState extends State<DiscoverScreen>
     switch (value) {
       case 'lan_devices':
         unawaited(Navigator.push(context, MaterialPageRoute(builder: (_) => const LanDevicesScreen())));
-      case 'sync_settings':
-        unawaited(Navigator.push(context, MaterialPageRoute(builder: (_) => const SyncSettingsScreen())));
+      case 'self_hosted_login':
+        AppSessionController? appSession;
+        TtplaySessionBinder? ttplayBinder;
+        try {
+          appSession = context.read<AppSessionController?>();
+        } on ProviderNotFoundException {
+          appSession = null;
+        }
+        try {
+          ttplayBinder = context.read<TtplaySessionBinder?>();
+        } on ProviderNotFoundException {
+          ttplayBinder = null;
+        }
+        final signedIn = await Navigator.push<bool>(
+          context,
+          MaterialPageRoute(builder: (_) => const SelfHostedLoginScreen()),
+        );
+        if (!mounted) return;
+        if (signedIn == true || appSession?.isSelfHosted == true) {
+          await ttplayBinder?.syncFromSession(refreshExternalServers: true);
+        }
       case 'settings':
         _handleOpenSettings(context);
       case 'switch_mode':

@@ -7,7 +7,6 @@ import 'package:plezy/i18n/strings.g.dart';
 import 'package:plezy/library/library_repository.dart';
 import 'package:plezy/library/library_scan_service.dart';
 import 'package:plezy/library/library_scanner.dart';
-import 'package:plezy/library/sync/sync_coordinator.dart';
 import 'package:plezy/screens/storage/mount_edit_screen.dart';
 import 'package:plezy/screens/storage/mounts_screen.dart';
 import 'package:plezy/services/credential_vault.dart';
@@ -107,17 +106,7 @@ void main() {
     final mounts = MountManager(registry, driverFactory: (mount, {bool useFallback = false}) => _ClosingRaceDriver());
     final repo = LibraryRepository(db);
     final scans = LibraryScanService(repository: repo, scanner: LibraryScanner(db, repo), mounts: mounts);
-    final sync = SyncAndScanCoordinator(
-      db: db,
-      repo: repo,
-      mountManager: mounts,
-      scanService: scans,
-      enableLanUdp: false,
-      autoStartLanService: false,
-    );
-    await sync.initialize();
     addTearDown(() async {
-      sync.dispose();
       scans.dispose();
       await mounts.dispose();
       await db.close();
@@ -128,7 +117,6 @@ void main() {
         providers: [
           Provider<MountManager>.value(value: mounts),
           ChangeNotifierProvider<LibraryScanService>.value(value: scans),
-          ChangeNotifierProvider<SyncAndScanCoordinator>.value(value: sync),
         ],
         child: const InputModeTracker(child: MaterialApp(home: MountsScreen())),
       ),

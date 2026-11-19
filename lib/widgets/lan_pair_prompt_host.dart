@@ -6,12 +6,11 @@ import 'package:material_symbols_icons/symbols.dart';
 import 'package:provider/provider.dart';
 
 import '../i18n/strings.g.dart';
-import '../library/sync/lan_peer_sync_service.dart';
-import '../library/sync/sync_coordinator.dart';
+import '../services/companion_remote/lan_pairing_service.dart';
 import 'app_icon.dart';
 import 'dialog_action_button.dart';
 
-/// Listens to [SyncAndScanCoordinator] and presents at most one global top-level
+/// Listens to [LanPairingService] and presents at most one global top-level
 /// dialog at a time when an explicit incoming LAN remote-control pairing request
 /// arrives (passive UDP discovery alone never pops a modal).
 class LanPairPromptHost extends StatefulWidget {
@@ -25,7 +24,7 @@ class LanPairPromptHost extends StatefulWidget {
 }
 
 class _LanPairPromptHostState extends State<LanPairPromptHost> {
-  SyncAndScanCoordinator? _sync;
+  LanPairingService? _lan;
   bool _checkScheduled = false;
   bool _isDialogOpen = false;
   DialogRoute<bool>? _activeRoute;
@@ -33,19 +32,19 @@ class _LanPairPromptHostState extends State<LanPairPromptHost> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    final nextSync = _readOptionalSync();
-    if (!identical(nextSync, _sync)) {
-      _sync?.removeListener(_scheduleCheck);
-      _sync = nextSync;
-      _sync?.addListener(_scheduleCheck);
+    final nextLan = _readOptionalLan();
+    if (!identical(nextLan, _lan)) {
+      _lan?.removeListener(_scheduleCheck);
+      _lan = nextLan;
+      _lan?.addListener(_scheduleCheck);
     }
     _scheduleCheck();
   }
 
   @override
   void dispose() {
-    _sync?.removeListener(_scheduleCheck);
-    _sync = null;
+    _lan?.removeListener(_scheduleCheck);
+    _lan = null;
     final route = _activeRoute;
     _activeRoute = null;
     if (route != null && route.isActive) {
@@ -54,9 +53,9 @@ class _LanPairPromptHostState extends State<LanPairPromptHost> {
     super.dispose();
   }
 
-  SyncAndScanCoordinator? _readOptionalSync() {
+  LanPairingService? _readOptionalLan() {
     try {
-      return Provider.of<SyncAndScanCoordinator?>(context, listen: false);
+      return Provider.of<LanPairingService?>(context, listen: false);
     } on ProviderNotFoundException {
       return null;
     }
@@ -73,10 +72,8 @@ class _LanPairPromptHostState extends State<LanPairPromptHost> {
 
   void _maybePresentNextPrompt() {
     if (!mounted || _isDialogOpen) return;
-    final sync = _sync;
-    if (sync == null) return;
-    final lan = sync.lanService;
-    if (!lan.isRunning) return;
+    final lan = _lan;
+    if (lan == null || !lan.isRunning) return;
 
     final incoming = lan.unpromptedIncomingRequests.firstOrNull;
     if (incoming == null) return;
@@ -140,7 +137,7 @@ class LanPairPromptDialog extends StatefulWidget {
     this.countdownDuration = const Duration(seconds: 15),
   });
 
-  final LanPeerSyncService lanService;
+  final LanPairingService lanService;
   final String deviceId;
   final LanDiscoveredPeer? initialPeer;
   final LanPairRequest? initialRequest;

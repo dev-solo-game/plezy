@@ -74,6 +74,7 @@ class MultiServerManager {
 
   final Map<String, MediaServerClient> _clients = {};
   MediaServerClient? _localLibraryClient;
+  final Set<String> _selfHostedServerIds = {};
 
   final Map<String, PlexServer> _plexServers = {};
 
@@ -357,6 +358,78 @@ class MultiServerManager {
     _clients[client.serverId] = client;
     _serverStatus[client.serverId] = true;
     _emitStatus();
+  }
+
+  /// Server ids currently managed by the active self-hosted `ttplay-server` session
+  /// (`ttplay-server` plus enabled `ttplay-ext:*` external servers).
+  Set<String> get selfHostedServerIds => Set.unmodifiable(_selfHostedServerIds);
+
+  /// Whether [serverId] belongs to the active self-hosted `ttplay-server` session.
+  bool isSelfHostedServer(String serverId) => _selfHostedServerIds.contains(serverId);
+
+  /// Detaches the local library client without closing it, so switching
+  /// Offline -> Self-Hosted -> Offline can re-register the same instance.
+  void unregisterLocalLibrary() {
+    final local = _localLibraryClient;
+    if (local == null) return;
+    _forgetServer(local.serverId);
+    _localLibraryClient = null;
+    _emitStatus();
+  }
+
+  /// Registers the active self-hosted primary server and its enabled external
+  /// servers, replacing or removing any stale self-hosted entries.
+  void registerSelfHostedServers(MediaServerClient primary, List<MediaServerClient> externals) {
+    final incoming = <MediaServerClient>[primary, ...externals];
+    final incomingIds = {for (final c in incoming) c.serverId};
+    final incomingIdentity = Set<MediaServerClient>.identity()..addAll(incoming);
+    final toClose = <MediaServerClient>{};
+
+    for (final oldId in _selfHostedServerIds.toList()) {
+      if (!incomingIds.contains(oldId)) {
+        final removed = _forgetServer(oldId);
+        if (removed != null) {
+          toClose.add(removed);
+        }
+      }
+    }
+
+    for (final client in incoming) {
+      final existing = _clients[client.serverId];
+      if (existing != null && !identical(existing, client)) {
+        toClose.add(existing);
+      }
+      _clients[client.serverId] = client;
+      _serverStatus[client.serverId] = true;
+      _refusedServers.remove(client.serverId);
+      _selfHostedServerIds.add(client.serverId);
+    }
+
+    for (final stale in toClose) {
+      if (!identical(stale, primary) && !incomingIdentity.contains(stale)) {
+        unawaited(_closeClientGracefully(stale));
+      }
+    }
+    _emitStatus();
+  }
+
+  /// Detaches and gracefully closes all self-hosted `ttplay-server` and
+  /// proxied external server clients.
+  void clearSelfHostedServers() {
+    if (_selfHostedServerIds.isEmpty) return;
+    final ids = _selfHostedServerIds.toList();
+    _selfHostedServerIds.clear();
+    final toClose = <MediaServerClient>[];
+    for (final id in ids) {
+      final client = _forgetServer(id);
+      if (client != null) {
+        toClose.add(client);
+      }
+    }
+    _emitStatus();
+    for (final client in toClose) {
+      unawaited(_closeClientGracefully(client));
+    }
   }
 
   @visibleForTesting
@@ -643,6 +716,7 @@ class MultiServerManager {
   }
 
   void removeServer(ServerId serverId) {
+    final wasLocal = identical(_localLibraryClient, _clients[serverId]);
     final jellyfinCompoundIds = _jellyfinByCompoundId.entries
         .where((entry) => entry.value.connection.serverMachineId == serverId)
         .map((entry) => entry.key)
@@ -657,8 +731,8 @@ class MultiServerManager {
           unawaited(_closeClientGracefully(client));
         }
       }
-    } else if (activeClient != null) {
-      // Jellyfin's clients were all closed above.
+    } else if (activeClient != null && !wasLocal) {
+      // Jellyfin's clients were all closed above. Keep LocalLibraryClient unclosed.
       unawaited(_closeClientGracefully(activeClient));
     }
     _emitStatus();
@@ -674,6 +748,10 @@ class MultiServerManager {
     _reconnectDebounce.remove(serverId)?.cancel();
     _stopRelayEscape(serverId);
     final client = _clients.remove(serverId);
+    if (identical(client, _localLibraryClient)) {
+      _localLibraryClient = null;
+    }
+    _selfHostedServerIds.remove(serverId);
     _activeJellyfinMachine.remove(serverId);
     _plexServers.remove(serverId);
     _clientIdByServer.remove(serverId);
@@ -1706,6 +1784,7 @@ class MultiServerManager {
       ..._jellyfinByCompoundId.values,
     };
     _clients.clear();
+    _selfHostedServerIds.clear();
     _jellyfinByCompoundId.clear();
     _activeJellyfinMachine.clear();
     _jellyfinHealthByCompoundId.clear();

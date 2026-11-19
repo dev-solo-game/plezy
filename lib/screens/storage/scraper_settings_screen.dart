@@ -11,14 +11,11 @@ import '../../library/library_scrape_runner.dart';
 import '../../library/library_settings.dart';
 import '../../library/scrapers/scraped_metadata.dart';
 import '../../library/scrapers/server_metadata_provider.dart';
-import '../../library/sync/sync_coordinator.dart';
-import '../../library/sync/sync_local_store.dart';
 import '../../utils/dialogs.dart';
 import '../../widgets/app_icon.dart';
 import '../../widgets/focusable_list_tile.dart';
-import 'mounts_screen.dart';
 
-/// Server-managed metadata connection check and client-level language/Bangumi prefs.
+/// Official metadata server connection check and client-level metadata language prefs.
 class ScraperSettingsScreen extends StatefulWidget {
   const ScraperSettingsScreen({super.key});
 
@@ -32,14 +29,13 @@ class _ScraperSettingsScreenState extends State<ScraperSettingsScreen> {
 
   ScraperSettings _stored = const ScraperSettings();
   String _language = ScraperSettings.defaultLanguage;
-  bool _bangumi = true;
   bool _loaded = false;
   bool _saving = false;
   ({bool ok, String message})? _testResult;
   bool _testing = false;
 
-  String _endpointUrl = SyncLocalStore.effectiveDefaultOfficialSyncUrl;
-  bool _isOfficialEndpoint = true;
+  String _endpointUrl = ServerMetadataProvider.defaultOfficialMetadataUrl;
+  List<String> _enabledProviders = const [];
 
   @override
   void initState() {
@@ -58,27 +54,19 @@ class _ScraperSettingsScreenState extends State<ScraperSettingsScreen> {
   Future<void> _load() async {
     final store = _maybeRead<LibrarySettingsStore>();
     final runner = _maybeRead<LibraryScrapeRunner>();
-    final sync = _maybeRead<SyncAndScanCoordinator>();
 
     final settings = store != null ? await store.loadScraper() : const ScraperSettings();
-    var endpointUrl = SyncLocalStore.effectiveDefaultOfficialSyncUrl;
-    var isOfficial = true;
+    var endpointUrl = ServerMetadataProvider.defaultOfficialMetadataUrl;
     if (runner != null) {
       final resolved = await runner.resolveActiveMetadataEndpoint();
       endpointUrl = resolved.serverUrl;
-      isOfficial = resolved.isOfficial;
-    } else if (sync?.session case final sess?) {
-      endpointUrl = sess.serverUrl;
-      isOfficial = sess.serverKind == SyncServerKind.official;
     }
 
     if (!mounted) return;
     setState(() {
       _stored = settings;
       _language = settings.language;
-      _bangumi = settings.bangumiEnabled;
       _endpointUrl = endpointUrl;
-      _isOfficialEndpoint = isOfficial;
       _loaded = true;
     });
   }
@@ -92,21 +80,22 @@ class _ScraperSettingsScreenState extends State<ScraperSettingsScreen> {
 
     final runner = _maybeRead<LibraryScrapeRunner>();
     ({bool ok, String message}) result;
+    var providers = _enabledProviders;
     try {
       final res = runner != null
           ? await runner.checkMetadataServerConnection()
           : (
               serverUrl: _endpointUrl,
-              isOfficial: _isOfficialEndpoint,
+              isOfficial: true,
               config: await ServerMetadataProvider.fetchConfig(serverUrl: _endpointUrl),
             );
       if (mounted) {
         setState(() {
           _endpointUrl = res.serverUrl;
-          _isOfficialEndpoint = res.isOfficial;
         });
       }
       final cfg = res.config;
+      providers = cfg.enabledProviders;
       if (cfg.tmdbConfigured) {
         result = (
           ok: true,
@@ -128,6 +117,7 @@ class _ScraperSettingsScreenState extends State<ScraperSettingsScreen> {
     if (mounted) {
       setState(() {
         _testing = false;
+        _enabledProviders = providers;
         _testResult = result;
       });
     }
@@ -137,7 +127,6 @@ class _ScraperSettingsScreenState extends State<ScraperSettingsScreen> {
     if (_saving) return;
     final store = _maybeRead<LibrarySettingsStore>();
     final scans = _maybeRead<LibraryScanService>();
-    final sync = _maybeRead<SyncAndScanCoordinator>();
     final navigator = Navigator.of(context);
 
     setState(() => _saving = true);
@@ -149,15 +138,12 @@ class _ScraperSettingsScreenState extends State<ScraperSettingsScreen> {
           tmdbImageBase: _stored.tmdbImageBase,
           language: _language,
           proxy: _stored.proxy,
-          bangumiEnabled: _bangumi,
+          bangumiEnabled: _stored.bangumiEnabled,
         ),
       );
     }
     if (scans != null) {
       unawaited(scans.scrapeLibrary(retryUnmatched: true, restart: true));
-    }
-    if (sync != null) {
-      unawaited(sync.syncScraperSettingsToCloud());
     }
     if (mounted) navigator.pop();
   }
@@ -177,134 +163,134 @@ class _ScraperSettingsScreenState extends State<ScraperSettingsScreen> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
     return Scaffold(
       appBar: AppBar(title: Text(t.storage.scraperSettings)),
       body: !_loaded
           ? const Center(child: CircularProgressIndicator())
-          : Align(
-              alignment: Alignment.topCenter,
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: storageContentMaxWidth),
-                child: ListView(
-                  padding: const EdgeInsets.all(16),
-                  children: [
-                    Card(
-                      child: Padding(
-                        padding: const EdgeInsets.all(16),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
+          : ListView(
+              padding: const EdgeInsets.all(20),
+              children: [
+                Card(
+                  margin: EdgeInsets.zero,
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
                           children: [
-                            Row(
+                            AppIcon(Symbols.cloud_done_rounded, size: 22, color: colorScheme.primary),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Text(
+                                t.storage.metadataServiceTitle,
+                                style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          t.storage.metadataServiceOfficial,
+                          style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w500),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          _endpointUrl,
+                          style: theme.textTheme.bodySmall?.copyWith(color: colorScheme.onSurfaceVariant),
+                        ),
+                        if (_enabledProviders.isNotEmpty) ...[
+                          const SizedBox(height: 8),
+                          Wrap(
+                            spacing: 6,
+                            runSpacing: 6,
+                            children: [
+                              for (final p in _enabledProviders)
+                                Chip(
+                                  label: Text(p.toUpperCase()),
+                                  visualDensity: VisualDensity.compact,
+                                ),
+                            ],
+                          ),
+                        ],
+                        const SizedBox(height: 8),
+                        Text(
+                          t.storage.metadataServiceManagedHint,
+                          style: theme.textTheme.bodySmall?.copyWith(color: colorScheme.onSurfaceVariant),
+                        ),
+                        const SizedBox(height: 12),
+                        FocusableButton(
+                          child: OutlinedButton.icon(
+                            onPressed: _testing ? null : _testConnection,
+                            icon: _testing
+                                ? const SizedBox.square(
+                                    dimension: 16,
+                                    child: CircularProgressIndicator(strokeWidth: 2),
+                                  )
+                                : const AppIcon(Symbols.network_check_rounded, size: 18),
+                            label: Text(t.storage.metadataServerTest),
+                          ),
+                        ),
+                        if (_testResult case final result?) ...[
+                          const SizedBox(height: 10),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                            decoration: BoxDecoration(
+                              color: result.ok ? colorScheme.primaryContainer : colorScheme.errorContainer,
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Row(
                               children: [
                                 AppIcon(
-                                  _isOfficialEndpoint ? Symbols.cloud_sync_rounded : Symbols.dns_rounded,
-                                  color: theme.colorScheme.primary,
+                                  result.ok ? Symbols.check_circle_rounded : Symbols.error_outline_rounded,
+                                  size: 18,
+                                  color: result.ok ? colorScheme.onPrimaryContainer : colorScheme.onErrorContainer,
                                 ),
-                                const SizedBox(width: 10),
+                                const SizedBox(width: 8),
                                 Expanded(
-                                  child: Text(t.storage.metadataServiceTitle, style: theme.textTheme.titleMedium),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 8),
-                            Text(
-                              _isOfficialEndpoint
-                                  ? t.storage.metadataServiceOfficial
-                                  : t.storage.metadataServiceSelfHosted,
-                              style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.primary),
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              _endpointUrl,
-                              style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
-                            ),
-                            const SizedBox(height: 10),
-                            Text(
-                              t.storage.metadataServiceManagedHint,
-                              style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
-                            ),
-                            const SizedBox(height: 14),
-                            Row(
-                              children: [
-                                FocusableButton(
-                                  onPressed: _testing ? null : _testConnection,
-                                  child: OutlinedButton.icon(
-                                    onPressed: _testing ? null : _testConnection,
-                                    icon: _testing
-                                        ? const SizedBox.square(
-                                            dimension: 16,
-                                            child: CircularProgressIndicator(strokeWidth: 2),
-                                          )
-                                        : const AppIcon(Symbols.network_check_rounded),
-                                    label: Text(t.storage.metadataServerTest),
+                                  child: Text(
+                                    result.message,
+                                    style: theme.textTheme.bodySmall?.copyWith(
+                                      color: result.ok ? colorScheme.onPrimaryContainer : colorScheme.onErrorContainer,
+                                    ),
                                   ),
                                 ),
                               ],
                             ),
-                            if (_testResult case final result?) ...[
-                              const SizedBox(height: 10),
-                              Text(
-                                result.message,
-                                style: theme.textTheme.bodySmall?.copyWith(
-                                  color: result.ok ? theme.colorScheme.primary : theme.colorScheme.error,
-                                ),
-                              ),
-                            ],
-                          ],
-                        ),
-                      ),
+                          ),
+                        ],
+                      ],
                     ),
-                    const SizedBox(height: _gap),
-                    Padding(
-                      padding: const EdgeInsets.only(top: 6, bottom: 8),
-                      child: Text(
-                        t.storage.metadataPreferencesHeading,
-                        style: theme.textTheme.titleSmall?.copyWith(color: theme.colorScheme.primary),
-                      ),
-                    ),
-                    // A picker rather than a dropdown: a remote's arrows move
-                    // between rows instead of getting lost in a menu.
-                    FocusableListTile(
-                      contentPadding: EdgeInsets.zero,
-                      dense: false,
-                      leading: const AppIcon(Symbols.translate_rounded),
-                      title: Text(t.storage.metadataLanguage),
-                      subtitle: Text(_language),
-                      trailing: const AppIcon(Symbols.chevron_right_rounded),
-                      onTap: _pickLanguage,
-                    ),
-                    FocusableSwitchListTile(
-                      contentPadding: EdgeInsets.zero,
-                      dense: false,
-                      title: Text(t.storage.bangumiForAnime),
-                      subtitle: Text(t.storage.bangumiForAnimeHelp),
-                      value: _bangumi,
-                      onChanged: (value) => setState(() => _bangumi = value),
-                    ),
-                  ],
+                  ),
                 ),
-              ),
-            ),
-      bottomNavigationBar: SafeArea(
-        child: Align(
-          heightFactor: 1,
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: storageContentMaxWidth),
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-              child: FocusableButton(
-                useBackgroundFocus: true,
-                onPressed: _saving || !_loaded ? null : _save,
-                child: FilledButton(
-                  onPressed: _saving || !_loaded ? null : _save,
-                  style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52)),
-                  child: Text(t.common.save),
+                const SizedBox(height: 20),
+                Text(
+                  t.storage.metadataPreferencesHeading,
+                  style: theme.textTheme.titleSmall?.copyWith(color: colorScheme.primary, fontWeight: FontWeight.w600),
                 ),
-              ),
+                const SizedBox(height: 8),
+                FocusableListTile(
+                  leading: const AppIcon(Symbols.translate_rounded),
+                  title: Text(t.storage.metadataLanguage),
+                  subtitle: Text(_language),
+                  trailing: const AppIcon(Symbols.chevron_right_rounded),
+                  onTap: _pickLanguage,
+                ),
+                const SizedBox(height: _gap * 1.5),
+                FocusableButton(
+                  child: FilledButton(
+                    onPressed: _saving ? null : _save,
+                    child: _saving
+                        ? const SizedBox.square(
+                            dimension: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : Text(t.common.save),
+                  ),
+                ),
+              ],
             ),
-          ),
-        ),
-      ),
     );
   }
 }

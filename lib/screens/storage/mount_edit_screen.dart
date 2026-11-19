@@ -10,8 +10,7 @@ import '../../focus/focusable_button.dart';
 import '../../focus/focusable_text_field.dart';
 import '../../i18n/strings.g.dart';
 import '../../library/library_scan_service.dart';
-import '../../library/sync/deterministic_keys.dart';
-import '../../library/sync/sync_coordinator.dart';
+import '../../library/deterministic_keys.dart';
 import '../../services/file_picker_service.dart';
 import '../../services/settings_service.dart';
 import '../../storage/drivers/quark_pc_device_store.dart';
@@ -278,10 +277,6 @@ class _MountEditScreenState extends State<MountEditScreen> {
     }
     final manager = context.read<MountManager>();
     final scans = context.read<LibraryScanService>();
-    SyncAndScanCoordinator? syncCoordinator;
-    try {
-      syncCoordinator = context.read<SyncAndScanCoordinator>();
-    } on ProviderNotFoundException catch (_) {}
     final navigator = Navigator.of(context);
     setState(() {
       _saving = true;
@@ -305,9 +300,6 @@ class _MountEditScreenState extends State<MountEditScreen> {
         await scans.cancelAndAwaitMount(mount.id);
         await manager.save(mount);
         manager.setStatus(mount.id, resolvedStatus);
-        if (syncCoordinator != null) {
-          await syncCoordinator.onMountSaved(mount, dropDriver: false);
-        }
         // A new or changed mount is scanned straight away; the list shows progress.
         unawaited(scans.scan(mount));
       }

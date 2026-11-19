@@ -533,6 +533,14 @@ func supplementTmdbWork(tmdbWork *metadata.Work, aux *metadata.Work) {
 		v := *aux.Summary
 		tmdbWork.Summary = &v
 	}
+	if (tmdbWork.PosterPath == nil || strings.TrimSpace(*tmdbWork.PosterPath) == "") && aux.PosterPath != nil && strings.TrimSpace(*aux.PosterPath) != "" {
+		v := *aux.PosterPath
+		tmdbWork.PosterPath = &v
+	}
+	if (tmdbWork.BackdropPath == nil || strings.TrimSpace(*tmdbWork.BackdropPath) == "") && aux.BackdropPath != nil && strings.TrimSpace(*aux.BackdropPath) != "" {
+		v := *aux.BackdropPath
+		tmdbWork.BackdropPath = &v
+	}
 	if strings.TrimSpace(aux.Title) != "" {
 		tmdbWork.Aliases = append(tmdbWork.Aliases, aux.Title)
 	}
@@ -788,10 +796,22 @@ func (sc *Scraper) lookupAuxCandidateWork(
 	lang string,
 	forceSearch bool,
 ) (*bestMatchResult, string, metadata.Work, bool) {
+	return sc.lookupAuxCandidateWorkWithKindPolicy(ctx, auxProv, item, rawTitles, lang, forceSearch, sc.canChangeKind(item))
+}
+
+func (sc *Scraper) lookupAuxCandidateWorkWithKindPolicy(
+	ctx context.Context,
+	auxProv string,
+	item db.MediaItem,
+	rawTitles []string,
+	lang string,
+	forceSearch bool,
+	allowKindChange bool,
+) (*bestMatchResult, string, metadata.Work, bool) {
 	auxCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
 
-	auxMatch, auxKind, aErr := sc.matchOnProvider(auxCtx, auxProv, item, rawTitles, nil, lang, forceSearch)
+	auxMatch, auxKind, aErr := sc.matchOnProviderWithKindPolicy(auxCtx, auxProv, item, rawTitles, nil, lang, forceSearch, allowKindChange)
 	if aErr != nil {
 		applog.Warnf("scraper", "  辅助源查询出错 #%d [%s]: %s", item.ID, auxProv, applog.RedactURL(aErr.Error()))
 		return nil, "", metadata.Work{}, false
@@ -1642,8 +1662,12 @@ func (sc *Scraper) looksLikeAnime(item db.MediaItem) bool {
 }
 
 func (sc *Scraper) auxiliaryProvidersFor(item db.MediaItem, cfg db.ServerSettings) []string {
+	return auxiliaryProvidersOrder(sc.looksLikeAnime(item), cfg)
+}
+
+func auxiliaryProvidersOrder(isAnime bool, cfg db.ServerSettings) []string {
 	var order []string
-	if sc.looksLikeAnime(item) {
+	if isAnime {
 		order = []string{"bangumi", "anilist", "douban", "tvdb", "imdb"}
 	} else {
 		order = []string{"douban", "imdb", "tvdb", "bangumi", "anilist"}
@@ -1769,6 +1793,19 @@ func (sc *Scraper) matchOnProvider(
 	lang string,
 	forceRefresh bool,
 ) (*bestMatchResult, string, error) {
+	return sc.matchOnProviderWithKindPolicy(ctx, prov, item, rawTitles, overrideYear, lang, forceRefresh, sc.canChangeKind(item))
+}
+
+func (sc *Scraper) matchOnProviderWithKindPolicy(
+	ctx context.Context,
+	prov string,
+	item db.MediaItem,
+	rawTitles []string,
+	overrideYear *int,
+	lang string,
+	forceRefresh bool,
+	allowKindChange bool,
+) (*bestMatchResult, string, error) {
 	isShow := item.Kind == db.KindShow
 	variants := buildQueryVariantsForTitles(rawTitles, isShow, isShow)
 	res, err := sc.searchBestOnSingleProvider(ctx, prov, item, overrideYear, isShow, variants, lang, forceRefresh)
@@ -1778,7 +1815,7 @@ func (sc *Scraper) matchOnProvider(
 	if res != nil {
 		return res, item.Kind, nil
 	}
-	if sc.canChangeKind(item) {
+	if allowKindChange {
 		altIsShow := !isShow
 		altKind := db.KindMovie
 		if altIsShow {

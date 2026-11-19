@@ -2,7 +2,6 @@ import 'dart:convert';
 
 import '../database/app_database.dart';
 import '../library/library_watch_state_store.dart';
-import '../library/sync/sync_local_store.dart';
 import '../media/media_item.dart';
 import '../media/media_kind.dart';
 import '../media/media_server_client.dart';
@@ -91,8 +90,5 @@ class WorkSkipSettingsStore {
   Future<void> save(WorkIdentity work, WorkSkipSettings settings, {bool syncToOutbox = true}) async {
     if (!settings.validFor()) throw ArgumentError('Invalid skip ranges');
     await _put(_key(work), jsonEncode(settings.toJson()));
-    if (syncToOutbox && work.source == WorkIdentity.localSource) {
-      await SyncLocalStore(db).enqueueWorkPrefsForIdentity(work);
-    }
   }
 }

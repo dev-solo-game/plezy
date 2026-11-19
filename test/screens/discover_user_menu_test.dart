@@ -1,5 +1,3 @@
-import 'dart:typed_data';
-
 import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -7,11 +5,6 @@ import 'package:intl/date_symbol_data_local.dart';
 import 'package:plezy/database/app_database.dart';
 import 'package:plezy/focus/input_mode_tracker.dart';
 import 'package:plezy/i18n/strings.g.dart';
-import 'package:plezy/library/library_repository.dart';
-import 'package:plezy/library/sync/lan_peer_sync_service.dart';
-import 'package:plezy/library/sync/sync_coordinator.dart';
-import 'package:plezy/library/sync/sync_crypto.dart';
-import 'package:plezy/library/sync/sync_models.dart';
 import 'package:plezy/media/ids.dart';
 import 'package:plezy/media/media_backend.dart';
 import 'package:plezy/media/media_hub.dart';
@@ -27,9 +20,14 @@ import 'package:plezy/providers/multi_server_provider.dart';
 import 'package:plezy/screens/discover_screen.dart';
 import 'package:plezy/screens/main_screen.dart';
 import 'package:plezy/screens/storage/lan_devices_screen.dart';
+import 'package:plezy/services/companion_remote/lan_crypto.dart';
+import 'package:plezy/services/companion_remote/lan_identity_store.dart';
+import 'package:plezy/services/companion_remote/lan_pairing_service.dart';
 import 'package:plezy/services/multi_server_manager.dart';
 import 'package:plezy/services/offline_watch_sync_service.dart';
 import 'package:plezy/services/settings_service.dart';
+import 'package:plezy/session/app_session_controller.dart';
+import 'package:plezy/session/app_session_models.dart';
 import 'package:plezy/storage/mount_manager.dart';
 import 'package:plezy/storage/mount_registry.dart';
 import 'package:plezy/theme/mono_theme.dart';
@@ -57,16 +55,16 @@ void main() {
   });
 
   testWidgets(
-    'Local/LAN mode menu shows non-clickable mode header, device count, Switch Sync Mode, and opens LanDevicesScreen',
+    'Offline mode menu shows non-clickable mode header, device count, Switch Mode, and opens LanDevicesScreen',
     (tester) async {
-      final harness = await _pumpDiscoverWithSync(tester);
+      final harness = await _pumpDiscoverWithSession(tester);
       addTearDown(() => harness.dispose(tester));
 
-      final kp1 = await SyncCrypto.generateLanIdentityKeyPair();
-      final kp2 = await SyncCrypto.generateLanIdentityKeyPair();
+      final kp1 = await LanCrypto.generateLanIdentityKeyPair();
+      final kp2 = await LanCrypto.generateLanIdentityKeyPair();
       final now = DateTime(2026, 11, 16, 17, 0);
 
-      harness.sync.lanService.debugSeedStateForTesting(
+      harness.lan.debugSeedStateForTesting(
         deviceName: 'LivingRoom-PC',
         publicKeyBase64: kp1.publicKeyBase64,
         discovered: [
@@ -77,7 +75,6 @@ void main() {
             host: '192.168.1.20',
             httpPort: 48635,
             pubKeyBase64: kp2.publicKeyBase64,
-            revision: 3,
             lastSeen: now,
           ),
           LanDiscoveredPeer(
@@ -87,7 +84,6 @@ void main() {
             host: '192.168.1.21',
             httpPort: 48636,
             pubKeyBase64: kp1.publicKeyBase64,
-            revision: 1,
             lastSeen: now,
           ),
         ],
@@ -102,11 +98,11 @@ void main() {
       await tester.pump(const Duration(milliseconds: 200));
 
       // Mode header (non-clickable)
-      final headerFinder = find.text(t.sync.menuModeLanTitle);
+      final headerFinder = find.text(t.session.menuModeOfflineTitle);
       expect(headerFinder, findsOneWidget);
-      expect(find.text(t.sync.menuModeLanSubtitle(device: 'LivingRoom-PC')), findsOneWidget);
+      expect(find.text(t.session.menuModeOfflineSubtitle(device: 'LivingRoom-PC')), findsOneWidget);
 
-      // Legacy profile UI and logout must not appear in Local/LAN mode
+      // Legacy profile UI and logout must not appear in Offline mode
       expect(find.text(t.profiles.sectionTitle), findsNothing);
       expect(find.text(t.common.logout), findsNothing);
 
@@ -115,12 +111,12 @@ void main() {
       await tester.pump(const Duration(milliseconds: 150));
       expect(headerFinder, findsOneWidget);
 
-      // Switch Sync Mode + LAN devices with discovered count
-      expect(find.text(t.sync.switchSyncMode), findsOneWidget);
+      // Switch Mode + LAN devices with discovered count
+      expect(find.text(t.session.switchMode), findsOneWidget);
       expect(find.text(t.sync.lanDevicesTitle), findsOneWidget);
       expect(find.text(t.sync.lanDiscoveredCount(count: 2)), findsOneWidget);
 
-      // Tap LAN Devices -> opens standalone LanDevicesScreen without cloud login fields
+      // Tap LAN Devices -> opens standalone LanDevicesScreen without login fields
       await tester.tap(find.text(t.sync.lanDevicesTitle));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 350));
@@ -128,25 +124,24 @@ void main() {
       expect(find.byType(LanDevicesScreen), findsOneWidget);
       expect(find.text('MacBook-Pro (macos)'), findsOneWidget);
       expect(find.text('iPhone-15 (ios)'), findsOneWidget);
-      expect(find.text(t.sync.password), findsNothing);
+      expect(find.text(t.session.passwordLabel), findsNothing);
     },
   );
 
-  testWidgets('Cloud Sync mode shows account avatar initial, cloud mode header, Sync Settings, and Logout', (
+  testWidgets('Self-Hosted mode shows account avatar initial, server header, LAN devices, Switch Mode, and Logout', (
     tester,
   ) async {
-    final harness = await _pumpDiscoverWithSync(tester);
+    final harness = await _pumpDiscoverWithSession(tester);
     addTearDown(() => harness.dispose(tester));
 
-    harness.sync.debugSetSessionForTesting(
-      SyncSessionCredentials(
-        serverUrl: 'https://sync.example.com',
-        userId: 'u-1',
+    harness.appSession.debugSetStateForTesting(
+      mode: AppLoginMode.selfHosted,
+      selfHostedSession: SelfHostedSession(
+        serverUrl: 'https://nas.example.com',
         username: 'alice',
         accessToken: 'tok-1',
-        masterKey: Uint8List.fromList(List<int>.filled(32, 7)),
+        serverName: 'Home NAS',
       ),
-      pendingOutboxCount: 3,
     );
     await tester.pump();
 
@@ -158,26 +153,23 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 200));
 
-    expect(find.text(t.sync.menuModeCloudTitle), findsOneWidget);
-    expect(find.text(t.sync.menuModeCloudSubtitle(name: 'alice')), findsOneWidget);
-    expect(find.text(t.sync.title), findsOneWidget);
-    expect(find.text(t.sync.pendingChanges(count: 3)), findsOneWidget);
-    expect(find.text(t.common.settings), findsOneWidget);
-    expect(find.text(t.common.logout), findsOneWidget);
-
+    expect(find.text(t.session.menuModeSelfHostedTitle), findsOneWidget);
+    expect(find.text(t.session.menuModeSelfHostedSubtitle(user: 'alice', server: 'Home NAS')), findsOneWidget);
     expect(find.text(t.sync.lanDevicesTitle), findsOneWidget);
-    expect(find.text(t.sync.switchSyncMode), findsNothing);
+    expect(find.text(t.common.settings), findsOneWidget);
+    expect(find.text(t.session.switchMode), findsOneWidget);
+    expect(find.text(t.common.logout), findsOneWidget);
   });
 
-  testWidgets('Local/LAN mode shows Chinese mode labels and incoming pair request badge', (tester) async {
+  testWidgets('Offline mode shows Chinese mode labels and incoming pair request badge', (tester) async {
     await tester.runAsync(() => LocaleSettings.setLocale(AppLocale.zh));
     addTearDown(() => LocaleSettings.setLocaleSync(AppLocale.en));
-    final harness = await _pumpDiscoverWithSync(tester);
+    final harness = await _pumpDiscoverWithSession(tester);
     addTearDown(() => harness.dispose(tester));
 
-    final kp = await SyncCrypto.generateLanIdentityKeyPair();
+    final kp = await LanCrypto.generateLanIdentityKeyPair();
     final now = DateTime(2026, 11, 16, 17, 5);
-    harness.sync.lanService.debugSeedStateForTesting(
+    harness.lan.debugSeedStateForTesting(
       deviceName: '客厅电脑',
       publicKeyBase64: kp.publicKeyBase64,
       discovered: [
@@ -188,7 +180,6 @@ void main() {
           host: '192.168.1.30',
           httpPort: 48635,
           pubKeyBase64: kp.publicKeyBase64,
-          revision: 1,
           lastSeen: now,
         ),
       ],
@@ -207,73 +198,26 @@ void main() {
     );
     await tester.pump();
 
-    await tester.tap(find.byTooltip('同步与设备菜单'));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 200));
-
-    expect(find.text('本地模式'), findsOneWidget);
-    expect(find.text('本机：客厅电脑'), findsOneWidget);
-    expect(find.text('遥控与投屏设备'), findsOneWidget);
-    expect(find.text('已发现 1 台'), findsOneWidget);
-    expect(find.text('1 条配对请求'), findsOneWidget);
-    expect(find.text('切换同步模式'), findsOneWidget);
-    expect(find.text('退出登录'), findsNothing);
-  });
-
-  testWidgets('DiscoverScreen top bar and user menu display Cloud sync progress', (tester) async {
-    final harness = await _pumpDiscoverWithSync(tester);
-    addTearDown(() => harness.dispose(tester));
-
-    harness.sync.debugSetSessionForTesting(
-      SyncSessionCredentials(
-        serverUrl: 'https://sync.example.com',
-        userId: 'u-1',
-        username: 'alice',
-        accessToken: 'tok-1',
-        masterKey: Uint8List.fromList(List<int>.filled(32, 7)),
-      ),
-      pendingOutboxCount: 20,
-      progress: const SyncProgress(phase: SyncPhase.pushing, processed: 8, total: 20),
-    );
-    await tester.pump();
-
-    expect(find.text('Cloud Sync · Uploading 8/20'), findsOneWidget);
-
     await tester.tap(find.byTooltip(t.sync.userMenuTooltip));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 200));
-    expect(find.text('Uploading 8/20'), findsOneWidget);
 
-    await tester.tapAt(const Offset(10, 10));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 200));
-
-    await tester.runAsync(() => LocaleSettings.setLocale(AppLocale.zh));
-    addTearDown(() => LocaleSettings.setLocaleSync(AppLocale.en));
-    harness.sync.debugSetSessionForTesting(
-      SyncSessionCredentials(
-        serverUrl: 'https://sync.example.com',
-        userId: 'u-1',
-        username: 'alice',
-        accessToken: 'tok-1',
-        masterKey: Uint8List.fromList(List<int>.filled(32, 7)),
-      ),
-      pendingOutboxCount: 20,
-      progress: const SyncProgress(phase: SyncPhase.pushing, processed: 9, total: 20),
-    );
-    await tester.pump();
-    expect(find.text('云端同步 · 正在上传 9/20'), findsOneWidget);
-
-    await tester.runAsync(() => LocaleSettings.setLocale(AppLocale.en));
-    harness.sync.debugSetSessionForTesting(null, progress: SyncProgress.idle);
-    await tester.pump();
+    expect(find.text(t.session.menuModeOfflineTitle), findsOneWidget);
+    expect(find.text(t.session.menuModeOfflineSubtitle(device: '客厅电脑')), findsOneWidget);
+    expect(find.text(t.sync.lanDevicesTitle), findsOneWidget);
+    expect(find.text(t.sync.lanDiscoveredCount(count: 1)), findsOneWidget);
+    expect(find.text(t.sync.lanPairRequestBadge(count: 1)), findsOneWidget);
+    expect(find.text(t.session.switchMode), findsOneWidget);
+    expect(find.text(t.common.logout), findsNothing);
   });
 }
 
 class _MenuHarness {
   _MenuHarness({
     required this.db,
-    required this.sync,
+    required this.mountManager,
+    required this.lan,
+    required this.appSession,
     required this.offlineWatch,
     required this.discoverProvider,
     required this.librariesProvider,
@@ -283,7 +227,9 @@ class _MenuHarness {
   });
 
   final AppDatabase db;
-  final SyncAndScanCoordinator sync;
+  final MountManager mountManager;
+  final LanPairingService lan;
+  final AppSessionController appSession;
   final OfflineWatchSyncService offlineWatch;
   final DiscoverProvider discoverProvider;
   final LibrariesProvider librariesProvider;
@@ -294,18 +240,20 @@ class _MenuHarness {
   Future<void> dispose(WidgetTester tester) async {
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump();
-    sync.dispose();
+    lan.dispose();
+    appSession.dispose();
     offlineWatch.dispose();
     discoverProvider.dispose();
     librariesProvider.dispose();
     hiddenLibrariesProvider.dispose();
     companionRemoteProvider.dispose();
     multiServerProvider.dispose();
+    await mountManager.dispose();
     await db.close();
   }
 }
 
-Future<_MenuHarness> _pumpDiscoverWithSync(WidgetTester tester) async {
+Future<_MenuHarness> _pumpDiscoverWithSession(WidgetTester tester) async {
   await SettingsService.getInstance();
   tester.view.devicePixelRatio = 1.0;
   tester.view.physicalSize = const Size(1280, 720);
@@ -322,15 +270,11 @@ Future<_MenuHarness> _pumpDiscoverWithSync(WidgetTester tester) async {
   final companionRemoteProvider = CompanionRemoteProvider();
 
   final db = AppDatabase.forTesting(NativeDatabase.memory());
-  final repo = LibraryRepository(db);
   final mountManager = MountManager(MountRegistry(db));
-  final sync = SyncAndScanCoordinator(
-    db: db,
-    repo: repo,
-    mountManager: mountManager,
-    enableLanUdp: false,
-    autoStartLanService: false,
-  );
+  final identityStore = LanIdentityStore(db);
+  final lan = LanPairingService(identityStore: identityStore, enableUdpBroadcast: false);
+  final appSession = AppSessionController(db: db, mountManager: mountManager, identityStore: identityStore)
+    ..debugSetStateForTesting(mode: AppLoginMode.offline);
   final offlineWatch = OfflineWatchSyncService(database: db, serverManager: manager);
   final discoverProvider = DiscoverProvider(
     multiServerProvider,
@@ -344,7 +288,8 @@ Future<_MenuHarness> _pumpDiscoverWithSync(WidgetTester tester) async {
     TranslationProvider(
       child: MultiProvider(
         providers: [
-          ChangeNotifierProvider<SyncAndScanCoordinator>.value(value: sync),
+          ChangeNotifierProvider<AppSessionController>.value(value: appSession),
+          ChangeNotifierProvider<LanPairingService>.value(value: lan),
           ChangeNotifierProvider<OfflineWatchSyncService>.value(value: offlineWatch),
           ChangeNotifierProvider<MultiServerProvider>.value(value: multiServerProvider),
           ChangeNotifierProvider<HiddenLibrariesProvider>.value(value: hiddenLibrariesProvider),
@@ -375,7 +320,9 @@ Future<_MenuHarness> _pumpDiscoverWithSync(WidgetTester tester) async {
 
   return _MenuHarness(
     db: db,
-    sync: sync,
+    mountManager: mountManager,
+    lan: lan,
+    appSession: appSession,
     offlineWatch: offlineWatch,
     discoverProvider: discoverProvider,
     librariesProvider: librariesProvider,

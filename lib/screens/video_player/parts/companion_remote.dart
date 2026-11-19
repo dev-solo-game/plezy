@@ -397,9 +397,7 @@ extension _VideoPlayerCompanionRemoteMethods on VideoPlayerScreenState {
     final volume = (_volumeController?.value ?? state?.volume ?? 100.0).clamp(0.0, 100.0).toDouble();
     final offsets = currentPlayer != null ? PlayerSyncOffsets.of(currentPlayer) : null;
 
-    final rawThumb = _currentMetadata.thumbPath;
-    final posterUrl =
-        rawThumb != null && (rawThumb.startsWith('http://') || rawThumb.startsWith('https://')) ? rawThumb : null;
+    final posterUrl = resolveRemoteReachablePosterUrl(_getMediaServerClient(context), _currentMetadata);
 
     final audioTracks = _buildRemoteAudioTrackOptions(currentPlayer);
     final subtitleTracks = _buildRemoteSubtitleTrackOptions(currentPlayer);
@@ -593,9 +591,11 @@ extension _VideoPlayerCompanionRemoteMethods on VideoPlayerScreenState {
       mountManager = null;
     }
 
+    final client = _getMediaServerClient(context);
     final navigator = Navigator.of(context);
     final target = await buildRemoteMediaTarget(
       metadata: _currentMetadata,
+      client: client,
       db: db,
       mountManager: mountManager,
       selectedMediaIndex: selectedMediaIndex,

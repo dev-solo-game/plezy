@@ -20,7 +20,10 @@ import '../../../library/library_scan_service.dart';
 import '../../../library/library_scrape_runner.dart';
 import '../../../library/library_settings.dart';
 import '../../../library/local_library_client.dart';
+import '../../../ttplay/ttplay_server_client.dart';
 import '../../storage/scraper_settings_screen.dart';
+import '../../ttplay_admin/ttplay_admin_guard.dart';
+import '../../ttplay_admin/ttplay_scraper_settings_screen.dart';
 import '../../../media/media_filter.dart';
 import '../../../media/media_sort.dart';
 import '../../../widgets/settings_builder.dart';
@@ -428,7 +431,9 @@ class _LibraryBrowseTabState extends BaseLibraryTabState<MediaItem, LibraryBrows
   }
 
   bool get _isMediaBrowserLibrary => widget.library.backend.usesMediaBrowserApi;
-  bool get _isPendingLibrary => LocalLibraryClient.isPendingLibrary(widget.library);
+  bool get _isLocalPendingLibrary => LocalLibraryClient.isPendingLibrary(widget.library);
+  bool get _isTtplayPendingLibrary => TtplayServerClient.isPendingLibrary(widget.library);
+  bool get _isPendingLibrary => _isLocalPendingLibrary || _isTtplayPendingLibrary;
   int get _activeFetchSize => _isMediaBrowserLibrary ? _mediaBrowserFetchSize : _fetchSize;
 
   // Focus nodes for filter chips
@@ -1854,6 +1859,7 @@ class _LibraryBrowseTabState extends BaseLibraryTabState<MediaItem, LibraryBrows
                   height: _pendingHeaderHeight,
                   builder: (_) => _PendingScrapeHeader(
                     totalSize: totalSize,
+                    isSelfHosted: _isTtplayPendingLibrary,
                     primaryButtonFocusNode: _pendingPrimaryButtonFocusNode,
                     settingsButtonFocusNode: _pendingSettingsButtonFocusNode,
                     onRescrape: _triggerRescrape,
@@ -2389,6 +2395,26 @@ class _LibraryBrowseTabState extends BaseLibraryTabState<MediaItem, LibraryBrows
   }
 
   Future<void> _triggerRescrape() async {
+    if (_isTtplayPendingLibrary) {
+      if (PlatformDetector.isTV()) return;
+      final admin = resolveTtplayAdminService(context);
+      if (admin == null) return;
+      try {
+        await admin.triggerScrape(retryUnmatched: true);
+        if (!mounted) return;
+        ScaffoldMessenger.maybeOf(context)
+          ?..hideCurrentSnackBar()
+          ..showSnackBar(SnackBar(content: Text(t.serverAdmin.retryUnmatched)));
+        await performLiveLibraryRefresh();
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.maybeOf(context)
+            ?..hideCurrentSnackBar()
+            ..showSnackBar(SnackBar(content: Text(ttplayAdminErrorText(e))));
+        }
+      }
+      return;
+    }
     final scans = Provider.of<LibraryScanService?>(context, listen: false);
     if (scans == null) return;
     await scans.scrapeLibrary(retryUnmatched: true);
@@ -2407,6 +2433,11 @@ class _LibraryBrowseTabState extends BaseLibraryTabState<MediaItem, LibraryBrows
   }
 
   void _openScraperSettings() {
+    if (_isTtplayPendingLibrary) {
+      if (PlatformDetector.isTV()) return;
+      Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const TtplayScraperSettingsScreen()));
+      return;
+    }
     Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const ScraperSettingsScreen()));
   }
 }
@@ -2414,6 +2445,7 @@ class _LibraryBrowseTabState extends BaseLibraryTabState<MediaItem, LibraryBrows
 class _PendingScrapeHeader extends StatelessWidget {
   const _PendingScrapeHeader({
     required this.totalSize,
+    this.isSelfHosted = false,
     required this.primaryButtonFocusNode,
     required this.settingsButtonFocusNode,
     required this.onRescrape,
@@ -2425,6 +2457,7 @@ class _PendingScrapeHeader extends StatelessWidget {
   });
 
   final int totalSize;
+  final bool isSelfHosted;
   final FocusNode primaryButtonFocusNode;
   final FocusNode settingsButtonFocusNode;
   final VoidCallback onRescrape;
@@ -2454,13 +2487,14 @@ class _PendingScrapeHeader extends StatelessWidget {
     final scheme = theme.colorScheme;
     final scans = context.watch<LibraryScanService?>();
     final hasSettingsStore = Provider.of<LibrarySettingsStore?>(context, listen: false) != null;
+    final selfHostedAdmin = isSelfHosted && !PlatformDetector.isTV() && resolveTtplayAdminService(context, watch: true) != null;
 
     final update = scans?.update;
     final scrapeStatus = scans?.scrapeStatus;
-    final isScraping = (update?.scraping ?? false) || (scrapeStatus?.running ?? false);
+    final isScraping = !isSelfHosted && ((update?.scraping ?? false) || (scrapeStatus?.running ?? false));
     final done = (update?.scraping ?? false) ? update!.scraped : (scrapeStatus?.done ?? 0);
     final total = (update?.scraping ?? false) ? update!.scrapeTotal : (scrapeStatus?.total ?? 0);
-    final note = scrapeStatus?.note ?? scans?.updateError?.message;
+    final note = isSelfHosted ? null : (scrapeStatus?.note ?? scans?.updateError?.message);
 
     final Widget leadingIcon;
     final String statusText;
@@ -2481,7 +2515,9 @@ class _PendingScrapeHeader extends StatelessWidget {
       statusColor = scheme.onSurfaceVariant;
     }
 
-    final canRescrape = scans != null && totalSize > 0;
+    final showSettingsButton = selfHostedAdmin || (!isSelfHosted && hasSettingsStore);
+    final showRescrapeButton = selfHostedAdmin || (!isSelfHosted && scans != null);
+    final canRescrape = showRescrapeButton && totalSize > 0;
 
     return Container(
       color: theme.scaffoldBackgroundColor,
@@ -2523,7 +2559,7 @@ class _PendingScrapeHeader extends StatelessWidget {
               ),
             )
           else ...[
-            if (hasSettingsStore) ...[
+            if (showSettingsButton) ...[
               FocusableButton(
                 focusNode: settingsButtonFocusNode,
                 autoScroll: false,
@@ -2547,16 +2583,16 @@ class _PendingScrapeHeader extends StatelessWidget {
                         label: Text(t.storage.scraperSettings),
                       ),
               ),
-              if (scans != null) const SizedBox(width: 8),
+              if (showRescrapeButton) const SizedBox(width: 8),
             ],
-            if (scans != null)
+            if (showRescrapeButton)
               FocusableButton(
                 focusNode: primaryButtonFocusNode,
                 autoScroll: false,
                 onPressed: canRescrape ? onRescrape : null,
                 onNavigateDown: onNavigateDown,
                 onNavigateUp: onNavigateUp,
-                onNavigateLeft: hasSettingsStore ? settingsButtonFocusNode.requestFocus : onNavigateLeft,
+                onNavigateLeft: showSettingsButton ? settingsButtonFocusNode.requestFocus : onNavigateLeft,
                 onBack: onBack,
                 child: FilledButton.icon(
                   style: _compactButtonStyle,

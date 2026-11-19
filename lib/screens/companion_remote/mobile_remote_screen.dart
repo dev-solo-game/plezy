@@ -18,9 +18,12 @@ import '../../utils/formatters.dart';
 import '../../widgets/app_icon.dart';
 import '../../widgets/companion_remote/discovery_view.dart';
 import '../../widgets/companion_remote/remote_device_menu.dart';
+import '../../widgets/companion_remote/remote_host_catalog_view.dart';
 import '../../widgets/overlay_sheet.dart';
 
 typedef MobileRemoteScreen = RemoteControlScreen;
+
+enum _RemoteControlTab { control, media, dpad }
 
 /// Unified cross-device Remote Playback Control Center replacing the legacy
 /// 3-tab D-Pad remote view. Works identically across Mobile, Tablet, Desktop, and TV.
@@ -41,6 +44,7 @@ class _RemoteControlScreenState extends State<RemoteControlScreen> {
   double? _dragPositionMs;
   double? _dragVolume;
   bool _initiatedInitialConnect = false;
+  _RemoteControlTab _selectedTab = _RemoteControlTab.control;
   CompanionRemoteProvider? _provider;
 
   @override
@@ -208,28 +212,254 @@ class _RemoteControlScreenState extends State<RemoteControlScreen> {
     }
 
     final snapshot = provider.remotePlayerSnapshot;
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 4, 16, 2),
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 720),
+              child: SizedBox(
+                width: double.infinity,
+                child: SegmentedButton<_RemoteControlTab>(
+                  style: const ButtonStyle(
+                    visualDensity: VisualDensity.compact,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                  segments: [
+                    ButtonSegment(
+                      value: _RemoteControlTab.control,
+                      icon: const AppIcon(Symbols.tune_rounded, size: 18),
+                      label: Text(t.companionRemote.tabControl),
+                    ),
+                    ButtonSegment(
+                      value: _RemoteControlTab.media,
+                      icon: const AppIcon(Symbols.video_library_rounded, size: 18),
+                      label: Text(t.companionRemote.tabMedia),
+                    ),
+                    ButtonSegment(
+                      value: _RemoteControlTab.dpad,
+                      icon: const AppIcon(Symbols.gamepad_rounded, size: 18),
+                      label: Text(t.companionRemote.tabDpad),
+                    ),
+                  ],
+                  selected: {_selectedTab},
+                  onSelectionChanged: (next) {
+                    if (next.isEmpty) return;
+                    setState(() => _selectedTab = next.first);
+                  },
+                ),
+              ),
+            ),
+          ),
+        ),
+        Expanded(
+          child: switch (_selectedTab) {
+            _RemoteControlTab.control => _buildControlTab(context, provider, snapshot),
+            _RemoteControlTab.media => RemoteHostCatalogView(
+              onPlaybackStarted: () {
+                if (mounted) setState(() => _selectedTab = _RemoteControlTab.control);
+              },
+            ),
+            _RemoteControlTab.dpad => _buildDpadTab(context, provider, snapshot),
+          },
+        ),
+      ],
+    );
+  }
+
+  Widget _buildControlTab(
+    BuildContext context,
+    CompanionRemoteProvider provider,
+    RemotePlayerSnapshot snapshot,
+  ) {
     return Center(
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 720),
         child: ListView(
           key: const PageStorageKey<String>('remote_control_scroll'),
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
+          padding: const EdgeInsets.fromLTRB(16, 4, 16, 20),
           children: [
             _buildNowPlayingCard(context, provider, snapshot),
-            const SizedBox(height: 16),
+            const SizedBox(height: 8),
             if (snapshot.active) ...[
               _buildProgressCard(context, provider, snapshot),
-              const SizedBox(height: 16),
+              const SizedBox(height: 8),
             ],
             _buildTransportCard(context, provider, snapshot),
             if (snapshot.seasons.isNotEmpty || snapshot.episodes.isNotEmpty) ...[
-              const SizedBox(height: 16),
+              const SizedBox(height: 8),
               _buildEpisodesCard(context, provider, snapshot),
             ],
-            const SizedBox(height: 16),
+            const SizedBox(height: 8),
             _buildVolumeAndSpeedCard(context, provider, snapshot),
-            const SizedBox(height: 16),
+            const SizedBox(height: 8),
             _buildTracksAndDisplayCard(context, provider, snapshot),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDpadTab(
+    BuildContext context,
+    CompanionRemoteProvider provider,
+    RemotePlayerSnapshot snapshot,
+  ) {
+    final theme = Theme.of(context);
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 460),
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
+          children: [
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(20),
+                child: Column(
+                  children: [
+                    Text(
+                      t.companionRemote.dpadControls,
+                      style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+                    ),
+                    const SizedBox(height: 16),
+                    IconButton.filledTonal(
+                      iconSize: 32,
+                      tooltip: 'Up',
+                      onPressed: () => provider.sendCommand(RemoteCommandType.dpadUp),
+                      icon: const AppIcon(Symbols.keyboard_arrow_up_rounded),
+                    ),
+                    const SizedBox(height: 12),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        IconButton.filledTonal(
+                          iconSize: 32,
+                          tooltip: 'Left',
+                          onPressed: () => provider.sendCommand(RemoteCommandType.dpadLeft),
+                          icon: const AppIcon(Symbols.keyboard_arrow_left_rounded),
+                        ),
+                        const SizedBox(width: 18),
+                        FilledButton(
+                          onPressed: () => provider.sendCommand(RemoteCommandType.select),
+                          style: FilledButton.styleFrom(
+                            shape: const CircleBorder(),
+                            minimumSize: const Size(72, 72),
+                          ),
+                          child: Text(t.companionRemote.ok),
+                        ),
+                        const SizedBox(width: 18),
+                        IconButton.filledTonal(
+                          iconSize: 32,
+                          tooltip: 'Right',
+                          onPressed: () => provider.sendCommand(RemoteCommandType.dpadRight),
+                          icon: const AppIcon(Symbols.keyboard_arrow_right_rounded),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    IconButton.filledTonal(
+                      iconSize: 32,
+                      tooltip: 'Down',
+                      onPressed: () => provider.sendCommand(RemoteCommandType.dpadDown),
+                      icon: const AppIcon(Symbols.keyboard_arrow_down_rounded),
+                    ),
+                    const SizedBox(height: 20),
+                    Wrap(
+                      spacing: 12,
+                      runSpacing: 8,
+                      alignment: WrapAlignment.center,
+                      children: [
+                        OutlinedButton.icon(
+                          onPressed: () => provider.sendCommand(RemoteCommandType.back),
+                          icon: const AppIcon(Symbols.arrow_back_rounded, size: 18),
+                          label: Text(t.companionRemote.backToBrowse),
+                        ),
+                        OutlinedButton.icon(
+                          onPressed: () => provider.sendCommand(RemoteCommandType.home),
+                          icon: const AppIcon(Symbols.home_rounded, size: 18),
+                          label: Text(t.discover.title),
+                        ),
+                        IconButton.outlined(
+                          tooltip: t.companionRemote.remote.menu,
+                          onPressed: () => provider.sendCommand(RemoteCommandType.contextMenu),
+                          icon: const AppIcon(Symbols.menu_rounded, size: 20),
+                        ),
+                        IconButton.outlined(
+                          tooltip: t.companionRemote.remote.fullscreen,
+                          onPressed: () => provider.sendCommand(RemoteCommandType.fullscreen),
+                          icon: const AppIcon(Symbols.fullscreen_rounded, size: 20),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      t.companionRemote.quickActions,
+                      style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+                    ),
+                    const SizedBox(height: 10),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        ActionChip(
+                          label: Text(t.companionRemote.remote.tabDiscover),
+                          onPressed: () => provider.sendCommand(RemoteCommandType.tabDiscover),
+                        ),
+                        ActionChip(
+                          label: Text(t.companionRemote.remote.tabLibraries),
+                          onPressed: () => provider.sendCommand(RemoteCommandType.tabLibraries),
+                        ),
+                        ActionChip(
+                          label: Text(t.companionRemote.remote.tabSearch),
+                          onPressed: () => provider.sendCommand(RemoteCommandType.tabSearch),
+                        ),
+                        ActionChip(
+                          label: Text(t.companionRemote.remote.tabSettings),
+                          onPressed: () => provider.sendCommand(RemoteCommandType.tabSettings),
+                        ),
+                      ],
+                    ),
+                    const Divider(height: 24),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                      children: [
+                        IconButton(
+                          tooltip: t.companionRemote.remote.volumeDown,
+                          onPressed: () => provider.sendCommand(RemoteCommandType.volumeDown),
+                          icon: const AppIcon(Symbols.volume_down_rounded),
+                        ),
+                        IconButton(
+                          tooltip: t.companionRemote.remote.volume,
+                          onPressed: () => provider.sendCommand(RemoteCommandType.volumeMute),
+                          icon: const AppIcon(Symbols.volume_off_rounded),
+                        ),
+                        FilledButton.tonalIcon(
+                          onPressed: () => provider.sendCommand(RemoteCommandType.playPause),
+                          icon: AppIcon(snapshot.playing ? Symbols.pause_rounded : Symbols.play_arrow_rounded),
+                          label: Text(t.companionRemote.remote.playPause),
+                        ),
+                        IconButton(
+                          tooltip: t.companionRemote.remote.volumeUp,
+                          onPressed: () => provider.sendCommand(RemoteCommandType.volumeUp),
+                          icon: const AppIcon(Symbols.volume_up_rounded),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
           ],
         ),
       ),
@@ -278,6 +508,14 @@ class _RemoteControlScreenState extends State<RemoteControlScreen> {
                       isOpening ? (snapshot.title ?? '') : t.companionRemote.idleControlHint,
                       style: theme.textTheme.bodySmall?.copyWith(color: tokens(context).textMuted),
                     ),
+                    if (!isOpening) ...[
+                      const SizedBox(height: 10),
+                      FilledButton.tonalIcon(
+                        onPressed: () => setState(() => _selectedTab = _RemoteControlTab.media),
+                        icon: const AppIcon(Symbols.search_rounded, size: 18),
+                        label: Text(t.companionRemote.browseTargetMedia),
+                      ),
+                    ],
                   ],
                 ),
               ),

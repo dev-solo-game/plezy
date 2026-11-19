@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import '../sync/sync_local_store.dart';
+import '../../session/app_session_models.dart';
 import 'scraped_metadata.dart';
 import 'scraper_http.dart';
 import 'tmdb_image_url.dart';
@@ -10,20 +10,34 @@ import 'tmdb_provider.dart';
 
 class ServerMetadataConfig {
   const ServerMetadataConfig({
+    this.allowPublicMetadata = true,
     this.tmdbConfigured = false,
     this.bangumiEnabled = true,
+    this.doubanEnabled = true,
+    this.anilistEnabled = true,
+    this.imdbEnabled = true,
+    this.tvdbEnabled = false,
+    this.enabledProviders = const [],
     this.tmdbImageBase = TmdbProvider.defaultImageBase,
-    this.allowPublicMetadata = true,
+    this.artworkProxyPath = '/api/v1/public/metadata/artwork',
+    this.proxyImages = false,
     this.cachedWorks = 0,
     this.cachedSeasons = 0,
     this.cachedPeople = 0,
     this.cachedSearches = 0,
   });
 
+  final bool allowPublicMetadata;
   final bool tmdbConfigured;
   final bool bangumiEnabled;
+  final bool doubanEnabled;
+  final bool anilistEnabled;
+  final bool imdbEnabled;
+  final bool tvdbEnabled;
+  final List<String> enabledProviders;
   final String tmdbImageBase;
-  final bool allowPublicMetadata;
+  final String artworkProxyPath;
+  final bool proxyImages;
   final int cachedWorks;
   final int cachedSeasons;
   final int cachedPeople;
@@ -31,17 +45,47 @@ class ServerMetadataConfig {
 
   factory ServerMetadataConfig.fromJson(Map<dynamic, dynamic> json) {
     final stats = json.obj('cache_stats');
+    final rawProviders = json['enabled_providers'];
     return ServerMetadataConfig(
+      allowPublicMetadata: json['allow_public_metadata'] != false,
       tmdbConfigured: json['tmdb_configured'] == true,
       bangumiEnabled: json['bangumi_enabled'] != false,
+      doubanEnabled: json['douban_enabled'] != false,
+      anilistEnabled: json['anilist_enabled'] != false,
+      imdbEnabled: json['imdb_enabled'] != false,
+      tvdbEnabled: json['tvdb_enabled'] == true,
+      enabledProviders: [
+        if (rawProviders is List)
+          for (final p in rawProviders)
+            if ('$p'.trim().isNotEmpty) '$p'.trim(),
+      ],
       tmdbImageBase: json.str('tmdb_image_base') ?? TmdbProvider.defaultImageBase,
-      allowPublicMetadata: json['allow_public_metadata'] != false,
+      artworkProxyPath: json.str('artwork_proxy_path') ?? '/api/v1/public/metadata/artwork',
+      proxyImages: json['proxy_images'] == true,
       cachedWorks: stats?.integer('works') ?? 0,
       cachedSeasons: stats?.integer('seasons') ?? 0,
       cachedPeople: stats?.integer('people') ?? 0,
       cachedSearches: stats?.integer('searches') ?? 0,
     );
   }
+}
+
+class ServerIdentifyResult {
+  const ServerIdentifyResult({
+    required this.matched,
+    required this.kind,
+    required this.source,
+    required this.bridgedFrom,
+    required this.impliedSeason,
+    this.work,
+  });
+
+  final bool matched;
+  final String kind;
+  final String source;
+  final String bridgedFrom;
+  final int impliedSeason;
+  final ScrapedTitle? work;
 }
 
 class ServerMetadataException extends ScrapeException {
@@ -56,18 +100,30 @@ class ServerMetadataException extends ScrapeException {
   final int? statusCode;
 }
 
-/// Fetches cached/proxied public TMDB & Bangumi metadata from `sync_server`.
+/// Fetches generic metadata & smart-identification results from `media_server`
+/// `/api/v1/public/metadata/*`, rewriting artwork URLs through the server's
+/// image proxy when `proxy_images` is enabled.
 class ServerMetadataProvider implements MetadataProvider {
   ServerMetadataProvider({
     required String serverUrl,
-    required this.source,
+    this.source = 'all',
     this.language = 'zh-CN',
     this.accessToken,
     HttpClient? client,
     this.onImageBaseDiscovered,
-  }) : _baseUrl = SyncLocalStore.normalizeServerUrl(serverUrl),
+  }) : _baseUrl = normalizeServerUrl(serverUrl),
        _client = client ?? (HttpClient()..connectionTimeout = const Duration(seconds: 15)),
        _ownsClient = client == null;
+
+  static const String defaultOfficialMetadataUrl = String.fromEnvironment(
+    'PLEZY_OFFICIAL_METADATA_URL',
+    defaultValue: 'http://10.0.10.48:8090',
+  );
+
+  static const String defaultArtworkProxyPath = '/api/v1/public/metadata/artwork';
+  static const int maxBatchItems = 50;
+
+  static String normalizeServerUrl(String raw) => SelfHostedSession.normalizeServerUrl(raw);
 
   final String _baseUrl;
   @override
@@ -78,16 +134,14 @@ class ServerMetadataProvider implements MetadataProvider {
   final bool _ownsClient;
   final void Function(String imageBase)? onImageBaseDiscovered;
 
-  static const int maxBatchItems = 50;
-
   static Future<ServerMetadataConfig> fetchConfig({
     required String serverUrl,
     String? accessToken,
     HttpClient? client,
   }) async {
-    final prov = ServerMetadataProvider(serverUrl: serverUrl, source: 'tmdb', accessToken: accessToken, client: client);
+    final prov = ServerMetadataProvider(serverUrl: serverUrl, source: 'all', accessToken: accessToken, client: client);
     try {
-      final decoded = await prov._requestJson('GET', '/api/v1/metadata/config');
+      final decoded = await prov._requestJson('GET', '/api/v1/public/metadata/config');
       if (decoded is! Map) {
         throw const ServerMetadataException('Invalid metadata server response');
       }
@@ -141,7 +195,9 @@ class ServerMetadataProvider implements MetadataProvider {
     }
 
     if (status >= 400) {
-      final msg = decoded is Map ? (decoded.str('message') ?? 'Metadata error HTTP $status') : 'HTTP $status';
+      final msg = decoded is Map
+          ? (decoded.str('error') ?? decoded.str('message') ?? 'Metadata error HTTP $status')
+          : 'HTTP $status';
       if (status == HttpStatus.preconditionFailed) {
         throw ServerMetadataException(msg, isConfiguration: true, isMissingKey: true, statusCode: status);
       }
@@ -160,69 +216,196 @@ class ServerMetadataProvider implements MetadataProvider {
     return decoded;
   }
 
-  Future<List<ScrapedCandidate>> _search(String kind, String title, {int? year}) async {
+  static String? resolveArtworkUrl(
+    String? raw, {
+    required String serverBaseUrl,
+    required bool proxyImages,
+    required String artworkProxyPath,
+    required String size,
+    String? imageBase,
+    bool asCandidate = false,
+  }) {
+    final s = raw?.trim();
+    if (s == null || s.isEmpty) return null;
+    if (s.startsWith('mount:')) return s;
+
+    final proxyPath = artworkProxyPath.isNotEmpty ? artworkProxyPath : defaultArtworkProxyPath;
+    if (proxyImages && serverBaseUrl.isNotEmpty) {
+      if (s.startsWith('$serverBaseUrl$proxyPath')) return s;
+      if (s.startsWith(proxyPath)) return '$serverBaseUrl$s';
+      if (s.startsWith('/') || s.startsWith('http://') || s.startsWith('https://')) {
+        return '$serverBaseUrl$proxyPath?src=${Uri.encodeQueryComponent(s)}&size=$size';
+      }
+    }
+
+    if (asCandidate) {
+      return TmdbImageUrl.resolve(s, imageBase: imageBase ?? TmdbProvider.defaultImageBase, size: size);
+    }
+    return s;
+  }
+
+  Future<List<ScrapedCandidate>> searchAll({
+    required String kind,
+    required String title,
+    int? year,
+    String? provider,
+    bool refresh = false,
+  }) async {
+    final prov = (provider != null && provider.isNotEmpty) ? provider : source;
     final decoded = await _requestJson(
       'GET',
-      '/api/v1/metadata/search',
-      query: {'provider': source, 'kind': kind, 'q': title, 'lang': language, if (year != null) 'year': '$year'},
+      '/api/v1/public/metadata/search',
+      query: {
+        'provider': prov,
+        'kind': kind,
+        'q': title,
+        'lang': language,
+        if (year != null) 'year': '$year',
+        if (refresh) 'refresh': 'true',
+      },
     );
     if (decoded is! Map) {
       throw ServerMetadataException('Metadata search endpoint not found at $_baseUrl', isConfiguration: true);
     }
     final imageBase = decoded.str('image_base') ?? TmdbProvider.defaultImageBase;
+    final proxyImages = decoded['proxy_images'] == true;
+    final artworkProxyPath = decoded.str('artwork_proxy_path') ?? defaultArtworkProxyPath;
     return [
       for (final row in decoded.objs('results'))
         if (row.str('id') != null && row.str('title') != null)
           ScrapedCandidate(
-            source: row.str('source') ?? source,
+            source: row.str('source') ?? prov,
             id: row.str('id')!,
             title: row.str('title')!,
             originalTitle: row.str('original_title'),
             year: row.integer('year'),
             summary: row.str('summary'),
-            posterUrl: switch (row.str('poster_path')) {
-              final String p when p.isNotEmpty => TmdbImageUrl.resolve(p, imageBase: imageBase, size: 'w342'),
-              _ => null,
-            },
+            posterUrl: resolveArtworkUrl(
+              row.str('poster_path'),
+              serverBaseUrl: _baseUrl,
+              proxyImages: proxyImages,
+              artworkProxyPath: artworkProxyPath,
+              size: 'w342',
+              imageBase: imageBase,
+              asCandidate: true,
+            ),
           ),
     ];
   }
 
   @override
-  Future<List<ScrapedCandidate>> searchMovie(String title, {int? year}) => _search('movie', title, year: year);
+  Future<List<ScrapedCandidate>> searchMovie(String title, {int? year}) =>
+      searchAll(kind: 'movie', title: title, year: year);
 
   @override
-  Future<List<ScrapedCandidate>> searchShow(String title, {int? year}) => _search('show', title, year: year);
+  Future<List<ScrapedCandidate>> searchShow(String title, {int? year}) =>
+      searchAll(kind: 'show', title: title, year: year);
 
-  Future<ScrapedTitle> _work(String kind, String id) async {
+  Future<ServerIdentifyResult> identify({
+    required String title,
+    int? year,
+    required String kind,
+    String? filename,
+    String? folderHint,
+    bool isAnime = false,
+    bool allowKindChange = true,
+    bool refresh = false,
+  }) async {
+    final decoded = await _requestJson(
+      'POST',
+      '/api/v1/public/metadata/identify',
+      body: {
+        'title': title,
+        'year': ?year,
+        'kind': kind,
+        if (filename != null && filename.isNotEmpty) 'filename': filename,
+        if (folderHint != null && folderHint.isNotEmpty) 'folder_hint': folderHint,
+        'is_anime': isAnime,
+        'allow_kind_change': allowKindChange,
+        'lang': language,
+        if (refresh) 'refresh': true,
+      },
+    );
+    if (decoded is! Map) {
+      throw ServerMetadataException('Metadata identify endpoint not found at $_baseUrl', isConfiguration: true);
+    }
+    final proxyImages = decoded['proxy_images'] == true;
+    final artworkProxyPath = decoded.str('artwork_proxy_path') ?? defaultArtworkProxyPath;
+    final workMap = decoded.obj('work');
+    return ServerIdentifyResult(
+      matched: decoded['matched'] == true && workMap != null,
+      kind: decoded.str('kind') ?? kind,
+      source: decoded.str('source') ?? '',
+      bridgedFrom: decoded.str('bridged_from') ?? '',
+      impliedSeason: decoded.integer('implied_season') ?? 0,
+      work: workMap == null
+          ? null
+          : workFromJson(
+              workMap,
+              serverBaseUrl: _baseUrl,
+              proxyImages: proxyImages,
+              artworkProxyPath: artworkProxyPath,
+            ),
+    );
+  }
+
+  Future<ScrapedTitle> workFor({
+    required String provider,
+    required String kind,
+    required String id,
+    bool refresh = false,
+  }) async {
+    final effectiveProvider = (provider.isEmpty || provider == 'all') ? 'tmdb' : provider;
     final decoded = await _requestJson(
       'GET',
-      '/api/v1/metadata/work/${Uri.encodeComponent(source)}/$kind/${Uri.encodeComponent(id)}',
-      query: {'lang': language},
+      '/api/v1/public/metadata/work/${Uri.encodeComponent(effectiveProvider)}/$kind/${Uri.encodeComponent(id)}',
+      query: {'lang': language, if (refresh) 'refresh': 'true'},
     );
     if (decoded is! Map || decoded.obj('work') == null) {
-      throw ServerMetadataException('$source has no $kind $id', statusCode: HttpStatus.notFound);
+      throw ServerMetadataException('$effectiveProvider has no $kind $id', statusCode: HttpStatus.notFound);
     }
-    return workFromJson(decoded.obj('work')!);
+    final proxyImages = decoded['proxy_images'] == true;
+    final artworkProxyPath = decoded.str('artwork_proxy_path') ?? defaultArtworkProxyPath;
+    return workFromJson(
+      decoded.obj('work')!,
+      serverBaseUrl: _baseUrl,
+      proxyImages: proxyImages,
+      artworkProxyPath: artworkProxyPath,
+    );
   }
 
   @override
-  Future<ScrapedTitle> movie(String id) => _work('movie', id);
+  Future<ScrapedTitle> movie(String id) => workFor(provider: source, kind: 'movie', id: id);
 
   @override
-  Future<ScrapedTitle> show(String id) => _work('show', id);
+  Future<ScrapedTitle> show(String id) => workFor(provider: source, kind: 'show', id: id);
 
-  @override
-  Future<ScrapedSeason?> season(String id, int number) async {
-    if (source == 'bangumi' && number != 1) return null;
+  Future<ScrapedSeason?> seasonFor({
+    required String provider,
+    required String id,
+    required int season,
+    bool refresh = false,
+  }) async {
+    final effectiveProvider = (provider.isEmpty || provider == 'all') ? 'tmdb' : provider;
+    if (effectiveProvider == 'bangumi' && season != 1) return null;
     final decoded = await _requestJson(
       'GET',
-      '/api/v1/metadata/season/${Uri.encodeComponent(source)}/${Uri.encodeComponent(id)}/$number',
-      query: {'lang': language},
+      '/api/v1/public/metadata/season/${Uri.encodeComponent(effectiveProvider)}/${Uri.encodeComponent(id)}/$season',
+      query: {'lang': language, if (refresh) 'refresh': 'true'},
     );
     if (decoded is! Map || decoded.obj('season') == null) return null;
-    return seasonFromJson(decoded.obj('season')!);
+    final proxyImages = decoded['proxy_images'] == true;
+    final artworkProxyPath = decoded.str('artwork_proxy_path') ?? defaultArtworkProxyPath;
+    return seasonFromJson(
+      decoded.obj('season')!,
+      serverBaseUrl: _baseUrl,
+      proxyImages: proxyImages,
+      artworkProxyPath: artworkProxyPath,
+    );
   }
+
+  @override
+  Future<ScrapedSeason?> season(String id, int number) => seasonFor(provider: source, id: id, season: number);
 
   Future<({Map<String, ScrapedTitle> works, Map<String, ScrapedSeason> seasons, Map<String, String> errors})>
   fetchBatch({
@@ -245,7 +428,7 @@ class ServerMetadataProvider implements MetadataProvider {
 
       final decoded = await _requestJson(
         'POST',
-        '/api/v1/metadata/batch',
+        '/api/v1/public/metadata/batch',
         body: {
           'lang': lang ?? language,
           if (refresh) 'refresh': true,
@@ -272,11 +455,18 @@ class ServerMetadataProvider implements MetadataProvider {
         },
       );
       if (decoded is! Map) continue;
+      final proxyImages = decoded['proxy_images'] == true;
+      final artworkProxyPath = decoded.str('artwork_proxy_path') ?? defaultArtworkProxyPath;
       final worksObj = decoded.obj('works');
       if (worksObj != null) {
         for (final entry in worksObj.entries) {
           if (entry.value is Map) {
-            outWorks['${entry.key}'] = workFromJson(entry.value as Map);
+            outWorks['${entry.key}'] = workFromJson(
+              entry.value as Map,
+              serverBaseUrl: _baseUrl,
+              proxyImages: proxyImages,
+              artworkProxyPath: artworkProxyPath,
+            );
           }
         }
       }
@@ -284,7 +474,12 @@ class ServerMetadataProvider implements MetadataProvider {
       if (seasonsObj != null) {
         for (final entry in seasonsObj.entries) {
           if (entry.value is Map) {
-            outSeasons['${entry.key}'] = seasonFromJson(entry.value as Map);
+            outSeasons['${entry.key}'] = seasonFromJson(
+              entry.value as Map,
+              serverBaseUrl: _baseUrl,
+              proxyImages: proxyImages,
+              artworkProxyPath: artworkProxyPath,
+            );
           }
         }
       }
@@ -298,15 +493,30 @@ class ServerMetadataProvider implements MetadataProvider {
     return (works: outWorks, seasons: outSeasons, errors: outErrors);
   }
 
-  static ScrapedTitle workFromJson(Map<dynamic, dynamic> work) {
+  static ScrapedTitle workFromJson(
+    Map<dynamic, dynamic> work, {
+    String serverBaseUrl = '',
+    bool proxyImages = false,
+    String artworkProxyPath = defaultArtworkProxyPath,
+  }) {
     final aliasesRaw = work['aliases'];
     final genresRaw = work['genres'];
+    String? art(String? raw, String size) => resolveArtworkUrl(
+      raw,
+      serverBaseUrl: serverBaseUrl,
+      proxyImages: proxyImages,
+      artworkProxyPath: artworkProxyPath,
+      size: size,
+    );
     return ScrapedTitle(
       source: work.str('source') ?? 'tmdb',
+      externalId: work.str('external_id'),
       tmdbId: work.str('tmdb_id'),
       imdbId: work.str('imdb_id'),
       tvdbId: work.str('tvdb_id'),
       bangumiId: work.str('bangumi_id'),
+      doubanId: work.str('douban_id'),
+      anilistId: work.str('anilist_id'),
       title: work.str('title') ?? '',
       originalTitle: work.str('original_title'),
       aliases: [
@@ -327,9 +537,9 @@ class ServerMetadataProvider implements MetadataProvider {
           for (final g in genresRaw)
             if ('$g'.trim().isNotEmpty) '$g'.trim(),
       ],
-      posterSource: work.str('poster_path'),
-      backdropSource: work.str('backdrop_path'),
-      logoSource: work.str('logo_path'),
+      posterSource: art(work.str('poster_path'), 'w500'),
+      backdropSource: art(work.str('backdrop_path'), 'w1280'),
+      logoSource: art(work.str('logo_path'), 'w500'),
       credits: [
         for (final c in work.objs('credits'))
           if (c.str('name') != null && c.str('job') != null)
@@ -338,7 +548,7 @@ class ServerMetadataProvider implements MetadataProvider {
               job: c.str('job')!,
               character: c.str('character'),
               tmdbId: c.str('tmdb_id'),
-              photoUrl: c.str('photo_path'),
+              photoUrl: art(c.str('photo_path'), 'w185'),
             ),
       ],
       collectionId: work.str('collection_id'),
@@ -347,11 +557,22 @@ class ServerMetadataProvider implements MetadataProvider {
     );
   }
 
-  static ScrapedSeason seasonFromJson(Map<dynamic, dynamic> season) => ScrapedSeason(
+  static ScrapedSeason seasonFromJson(
+    Map<dynamic, dynamic> season, {
+    String serverBaseUrl = '',
+    bool proxyImages = false,
+    String artworkProxyPath = defaultArtworkProxyPath,
+  }) => ScrapedSeason(
     number: season.integer('number') ?? 0,
     title: season.str('title'),
     summary: season.str('summary'),
-    posterSource: season.str('poster_path'),
+    posterSource: resolveArtworkUrl(
+      season.str('poster_path'),
+      serverBaseUrl: serverBaseUrl,
+      proxyImages: proxyImages,
+      artworkProxyPath: artworkProxyPath,
+      size: 'w500',
+    ),
     episodes: [
       for (final ep in season.objs('episodes'))
         if (ep.integer('number') != null)
@@ -361,7 +582,13 @@ class ServerMetadataProvider implements MetadataProvider {
             summary: ep.str('summary'),
             airDate: ep.str('air_date'),
             runtimeMs: ep.integer('runtime_ms'),
-            stillSource: ep.str('still_path'),
+            stillSource: resolveArtworkUrl(
+              ep.str('still_path'),
+              serverBaseUrl: serverBaseUrl,
+              proxyImages: proxyImages,
+              artworkProxyPath: artworkProxyPath,
+              size: 'w780',
+            ),
             rating: ep.number('rating'),
           ),
     ],

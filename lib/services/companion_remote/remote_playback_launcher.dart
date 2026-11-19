@@ -7,8 +7,7 @@ import 'package:provider/provider.dart';
 import '../../database/app_database.dart';
 import '../../library/library_repository.dart';
 import '../../library/local_library_client.dart';
-import '../../library/sync/deterministic_keys.dart';
-import '../../library/sync/sync_coordinator.dart';
+import '../../library/deterministic_keys.dart';
 import '../../media/ids.dart';
 import '../../media/media_item.dart';
 import '../../media/media_kind.dart';
@@ -24,6 +23,7 @@ import '../../utils/app_logger.dart';
 import '../../utils/video_player_navigation.dart';
 import '../settings_service.dart';
 import 'companion_remote_receiver.dart';
+import 'remote_host_catalog_handler.dart';
 
 T? _readOptional<T>(BuildContext context) {
   try {
@@ -37,6 +37,7 @@ T? _readOptional<T>(BuildContext context) {
 /// Plezy device without relying on device-local SQLite row IDs.
 Future<RemoteMediaTarget> buildRemoteMediaTarget({
   required MediaItem metadata,
+  MediaServerClient? client,
   AppDatabase? db,
   MountManager? mountManager,
   int? selectedMediaIndex,
@@ -45,10 +46,7 @@ Future<RemoteMediaTarget> buildRemoteMediaTarget({
   String? streamQuality,
 }) async {
   final kind = metadata.kind == MediaKind.episode ? 'episode' : 'movie';
-  final rawThumb = metadata.thumbPath;
-  final posterUrl = rawThumb != null && (rawThumb.startsWith('http://') || rawThumb.startsWith('https://'))
-      ? rawThumb
-      : null;
+  final posterUrl = resolveRemoteReachablePosterUrl(client, metadata);
 
   if (metadata.serverId == LocalLibraryClient.localServerId && db != null) {
     final itemId = int.tryParse(metadata.id);
@@ -211,17 +209,57 @@ Future<ResolvedRemoteTarget?> resolveRemoteMediaTargetLocally({
     }
   }
 
-  // Priority 3: Shared Plex/Jellyfin server fallback
-  if (target.remoteServerId != null && target.remoteItemId != null && remoteClientLookup != null) {
-    final client = remoteClientLookup(target.remoteServerId!);
+  // Priority 3: Shared server item (local-library, ttplay-server, ttplay-ext, Plex, Jellyfin)
+  if (target.remoteServerId != null && target.remoteItemId != null) {
+    final client =
+        remoteClientLookup?.call(target.remoteServerId!) ??
+        (target.remoteServerId == LocalLibraryClient.localServerId ? localClient : null);
     if (client != null) {
       final item = await client.fetchItem(target.remoteItemId!);
       if (item != null) {
-        return (item: item, mediaIndex: null, mediaSourceId: null);
+        final playable = await _resolvePlayableMediaItem(client, item);
+        if (playable != null) {
+          return (item: playable, mediaIndex: null, mediaSourceId: null);
+        }
       }
     }
   }
 
+  return null;
+}
+
+Future<MediaItem?> _resolvePlayableMediaItem(MediaServerClient client, MediaItem item) async {
+  if (item.kind == MediaKind.movie || item.kind == MediaKind.episode || item.kind == MediaKind.clip) {
+    return item;
+  }
+  if (item.kind == MediaKind.show) {
+    try {
+      final withOnDeck = await client.fetchItemWithOnDeck(item.id);
+      if (withOnDeck.onDeckEpisode != null) {
+        return withOnDeck.onDeckEpisode;
+      }
+    } catch (_) {}
+    try {
+      final episodes = await client.fetchPlayableDescendants(item.id);
+      if (episodes.isNotEmpty) {
+        return episodes.where((ep) => !ep.isWatched).firstOrNull ?? episodes.first;
+      }
+    } catch (_) {}
+    return null;
+  }
+  if (item.kind == MediaKind.season) {
+    try {
+      final children = await client.fetchChildren(item.id);
+      final playableChildren = [
+        for (final c in children)
+          if (c.kind == MediaKind.episode || c.kind == MediaKind.movie) c,
+      ];
+      if (playableChildren.isNotEmpty) {
+        return playableChildren.where((ep) => !ep.isWatched).firstOrNull ?? playableChildren.first;
+      }
+    } catch (_) {}
+    return null;
+  }
   return null;
 }
 
@@ -302,7 +340,6 @@ Future<bool> launchRemoteMediaTarget({required BuildContext context, required Re
   final db = _readOptional<AppDatabase>(context);
   final multiServer = _readOptional<MultiServerProvider>(context);
   final mountManager = _readOptional<MountManager>(context);
-  final sync = _readOptional<SyncAndScanCoordinator>(context);
 
   final localClientRaw = multiServer?.serverManager.getClient(ServerId(LocalLibraryClient.localServerId));
   final localClient = localClientRaw is LocalLibraryClient ? localClientRaw : null;
@@ -316,14 +353,14 @@ Future<bool> launchRemoteMediaTarget({required BuildContext context, required Re
       mountManager: mountManager,
       remoteClientLookup: (id) => multiServer?.serverManager.getClient(ServerId(id)),
     );
-    if (resolved == null && sync != null) {
+    final shouldRefreshLocalMounts =
+        localClient != null &&
+        (target.remoteServerId == null || target.remoteServerId == LocalLibraryClient.localServerId);
+    if (resolved == null && shouldRefreshLocalMounts) {
       try {
-        if (sync.isSignedIn) {
-          await sync.syncNow(allowBackgroundScan: false);
-        }
-        await localClient?.refreshMounts();
+        await localClient.refreshMounts();
       } catch (e) {
-        appLogger.w('CompanionRemote: Incremental sync before remote launch failed', error: e);
+        appLogger.w('CompanionRemote: Mount refresh before remote launch failed', error: e);
       }
       resolved = await resolveRemoteMediaTargetLocally(
         target: target,
@@ -335,9 +372,14 @@ Future<bool> launchRemoteMediaTarget({required BuildContext context, required Re
     }
   } else if (multiServer != null && target.remoteServerId != null && target.remoteItemId != null) {
     final client = multiServer.serverManager.getClient(ServerId(target.remoteServerId!));
-    final item = await client?.fetchItem(target.remoteItemId!);
-    if (item != null) {
-      resolved = (item: item, mediaIndex: null, mediaSourceId: null);
+    if (client != null) {
+      final item = await client.fetchItem(target.remoteItemId!);
+      if (item != null) {
+        final playable = await _resolvePlayableMediaItem(client, item);
+        if (playable != null) {
+          resolved = (item: playable, mediaIndex: null, mediaSourceId: null);
+        }
+      }
     }
   }
 

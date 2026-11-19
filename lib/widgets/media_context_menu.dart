@@ -55,6 +55,9 @@ import 'collection_picker_dialog.dart';
 import '../library/library_repository.dart';
 import '../library/local_library_client.dart';
 import '../screens/storage/manual_match_dialog.dart';
+import '../screens/ttplay_admin/ttplay_admin_guard.dart';
+import '../screens/ttplay_admin/ttplay_item_admin_dialogs.dart';
+import '../ttplay/ttplay_server_client.dart';
 import '../screens/plex_match_screen.dart';
 import '../screens/media_detail_screen.dart';
 import '../screens/metadata_edit_screen.dart';
@@ -684,6 +687,17 @@ class MediaContextMenuState extends State<MediaContextMenu> {
       // The local library's own matching: search TMDB / Bangumi and pick.
       if (isMovieOrShow && mediaItem.serverId == LocalLibraryClient.localServerId)
         _MenuAction(value: 'local_match', icon: Symbols.manage_search_rounded, label: t.storage.manualMatch),
+      // Server-authoritative item administration for `ttplay-server` (PC & mobile only).
+      if (isMovieOrShow && mediaItem.serverId == TtplayServerClient.primaryServerId && !PlatformDetector.isTV()) ...[
+        _MenuAction(value: 'ttplay_match', icon: Symbols.manage_search_rounded, label: t.serverAdmin.manualMatch),
+        _MenuAction(value: 'ttplay_edit_metadata', icon: Symbols.edit_rounded, label: t.serverAdmin.editMetadata),
+        _MenuAction(
+          value: 'ttplay_refresh_metadata',
+          icon: Symbols.refresh_rounded,
+          label: t.serverAdmin.refreshMetadata,
+        ),
+        _MenuAction(value: 'ttplay_unmatch', icon: Symbols.link_off_rounded, label: t.serverAdmin.unmatch),
+      ],
       // Remove from Collection (only when viewing items within a collection).
       // Every backend implements `removeFromCollection`.
       if (widget.collectionId != null && menu.canManageCollections)
@@ -946,6 +960,22 @@ class MediaContextMenuState extends State<MediaContextMenu> {
         break;
       case 'local_match':
         if (context.mounted) await _handleLocalMatch(context, mediaItem);
+        break;
+      case 'ttplay_match':
+        if (context.mounted && await showTtplayManualMatchDialog(context, mediaItem)) {
+          _notifyRefresh(mediaItem);
+        }
+        break;
+      case 'ttplay_edit_metadata':
+        if (context.mounted && await showTtplayMetadataEditDialog(context, mediaItem)) {
+          _notifyRefresh(mediaItem);
+        }
+        break;
+      case 'ttplay_refresh_metadata':
+        if (context.mounted) await _handleTtplayRefresh(context, mediaItem);
+        break;
+      case 'ttplay_unmatch':
+        if (context.mounted) await _handleTtplayUnmatch(context, mediaItem);
         break;
       case 'remove_from_collection':
         await _handleRemoveFromCollection(context, mediaItem);
@@ -1250,6 +1280,44 @@ class MediaContextMenuState extends State<MediaContextMenu> {
     final view = await context.read<LibraryRepository>().getItem(id);
     if (view == null || !context.mounted) return;
     if (await showManualMatchDialog(context, view.item)) _notifyRefresh(item);
+  }
+
+  Future<void> _handleTtplayRefresh(BuildContext context, MediaItem item) async {
+    final admin = resolveTtplayAdminService(context);
+    if (admin == null) return;
+    try {
+      await admin.refreshItemMetadata(item.id);
+      if (!context.mounted) return;
+      showSuccessSnackBar(context, t.serverAdmin.refreshSuccess);
+      _notifyRefresh(item);
+    } catch (e) {
+      if (context.mounted) {
+        showErrorSnackBar(context, ttplayAdminErrorText(e));
+      }
+    }
+  }
+
+  Future<void> _handleTtplayUnmatch(BuildContext context, MediaItem item) async {
+    final admin = resolveTtplayAdminService(context);
+    if (admin == null) return;
+    final confirmed = await showConfirmDialog(
+      context,
+      title: t.serverAdmin.unmatch,
+      message: t.serverAdmin.unmatchConfirm,
+      confirmText: t.serverAdmin.unmatch,
+      isDestructive: true,
+    );
+    if (!confirmed || !context.mounted) return;
+    try {
+      await admin.unmatchItem(item.id);
+      if (!context.mounted) return;
+      showSuccessSnackBar(context, t.serverAdmin.unmatchSuccess);
+      _notifyRefresh(item);
+    } catch (e) {
+      if (context.mounted) {
+        showErrorSnackBar(context, ttplayAdminErrorText(e));
+      }
+    }
   }
 
   Future<void> _handleUnmatch(BuildContext context, MediaItem item) async {

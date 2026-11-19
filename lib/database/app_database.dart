@@ -11,7 +11,7 @@ import 'package:path/path.dart' as p;
 
 import 'library_tables.dart';
 import '../library/library_watch_state_store.dart';
-import '../library/sync/deterministic_keys.dart';
+import '../library/deterministic_keys.dart';
 import 'tables.dart';
 import 'plex_metadata_recovery.dart';
 import 'tvos_database_recovery_store.dart';

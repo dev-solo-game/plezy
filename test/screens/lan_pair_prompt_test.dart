@@ -8,16 +8,14 @@ import 'package:intl/date_symbol_data_local.dart';
 import 'package:plezy/database/app_database.dart';
 import 'package:plezy/focus/input_mode_tracker.dart';
 import 'package:plezy/i18n/strings.g.dart';
-import 'package:plezy/library/library_repository.dart';
-import 'package:plezy/library/sync/lan_peer_sync_service.dart';
-import 'package:plezy/library/sync/sync_coordinator.dart';
-import 'package:plezy/library/sync/sync_crypto.dart';
-import 'package:plezy/library/sync/sync_local_store.dart';
 import 'package:plezy/screens/storage/lan_devices_screen.dart';
+import 'package:plezy/services/companion_remote/lan_crypto.dart';
+import 'package:plezy/services/companion_remote/lan_identity_store.dart';
+import 'package:plezy/services/companion_remote/lan_pairing_service.dart';
 import 'package:plezy/services/credential_vault.dart';
 import 'package:plezy/services/settings_service.dart';
-import 'package:plezy/storage/mount_manager.dart';
-import 'package:plezy/storage/mount_registry.dart';
+import 'package:plezy/session/app_session_controller.dart';
+import 'package:plezy/session/app_session_models.dart';
 import 'package:plezy/theme/mono_theme.dart';
 import 'package:plezy/utils/platform_detector.dart';
 import 'package:plezy/widgets/lan_pair_prompt_host.dart';
@@ -26,15 +24,17 @@ import 'package:provider/provider.dart';
 import '../test_helpers/prefs.dart';
 
 class _PromptHarness {
-  _PromptHarness({required this.db, required this.sync});
+  _PromptHarness({required this.db, required this.lan, required this.appSession});
 
   final AppDatabase db;
-  final SyncAndScanCoordinator sync;
+  final LanPairingService lan;
+  final AppSessionController appSession;
 
   Future<void> dispose(WidgetTester tester) async {
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump();
-    sync.dispose();
+    lan.dispose();
+    appSession.dispose();
     await db.close();
   }
 }
@@ -42,20 +42,18 @@ class _PromptHarness {
 Future<_PromptHarness> _pumpPromptHost(WidgetTester tester) async {
   await SettingsService.getInstance();
   final db = AppDatabase.forTesting(NativeDatabase.memory());
-  final repo = LibraryRepository(db);
-  final mountManager = MountManager(MountRegistry(db));
-  final sync = SyncAndScanCoordinator(
-    db: db,
-    repo: repo,
-    mountManager: mountManager,
-    enableLanUdp: false,
-    autoStartLanService: false,
-  );
+  final identityStore = LanIdentityStore(db);
+  final lan = LanPairingService(identityStore: identityStore, enableUdpBroadcast: false);
+  final appSession = AppSessionController(db: db, identityStore: identityStore)
+    ..debugSetStateForTesting(mode: AppLoginMode.offline);
 
   await tester.pumpWidget(
     TranslationProvider(
-      child: ChangeNotifierProvider<SyncAndScanCoordinator>.value(
-        value: sync,
+      child: MultiProvider(
+        providers: [
+          ChangeNotifierProvider<LanPairingService>.value(value: lan),
+          ChangeNotifierProvider<AppSessionController>.value(value: appSession),
+        ],
         child: InputModeTracker(
           child: MaterialApp(
             theme: monoTheme(MonoPalette.dark),
@@ -78,7 +76,7 @@ Future<_PromptHarness> _pumpPromptHost(WidgetTester tester) async {
     ),
   );
   await tester.pump();
-  return _PromptHarness(db: db, sync: sync);
+  return _PromptHarness(db: db, lan: lan, appSession: appSession);
 }
 
 void main() {
@@ -105,8 +103,8 @@ void main() {
     final harness = await _pumpPromptHost(tester);
     addTearDown(() => harness.dispose(tester));
 
-    final myKp = await SyncCrypto.generateLanIdentityKeyPair();
-    final tvKp = await SyncCrypto.generateLanIdentityKeyPair();
+    final myKp = await LanCrypto.generateLanIdentityKeyPair();
+    final tvKp = await LanCrypto.generateLanIdentityKeyPair();
     final now = DateTime(2026, 11, 16, 20, 0);
     final peerTv = LanDiscoveredPeer(
       deviceId: 'peer-tv',
@@ -115,11 +113,10 @@ void main() {
       host: '192.168.1.40',
       httpPort: 48635,
       pubKeyBase64: tvKp.publicKeyBase64,
-      revision: 1,
       lastSeen: now,
     );
 
-    harness.sync.lanService.debugSeedStateForTesting(
+    harness.lan.debugSeedStateForTesting(
       deviceName: 'Phone-A',
       publicKeyBase64: myKp.publicKeyBase64,
       discovered: [peerTv],
@@ -138,12 +135,14 @@ void main() {
     expect(find.text(t.sync.lanPairButton), findsOneWidget);
   });
 
-  testWidgets('explicit incoming pair request pops dialog even when signed in and closes when trusted', (tester) async {
+  testWidgets('explicit incoming pair request pops dialog even in Self-Hosted mode and closes when trusted', (
+    tester,
+  ) async {
     final harness = await _pumpPromptHost(tester);
     addTearDown(() => harness.dispose(tester));
 
-    final myKp = await SyncCrypto.generateLanIdentityKeyPair();
-    final peerKp = await SyncCrypto.generateLanIdentityKeyPair();
+    final myKp = await LanCrypto.generateLanIdentityKeyPair();
+    final peerKp = await LanCrypto.generateLanIdentityKeyPair();
     final now = DateTime(2026, 11, 16, 20, 10);
     final peer = LanDiscoveredPeer(
       deviceId: 'peer-1',
@@ -152,20 +151,18 @@ void main() {
       host: '192.168.1.55',
       httpPort: 48635,
       pubKeyBase64: peerKp.publicKeyBase64,
-      revision: 1,
       lastSeen: now,
     );
 
-    harness.sync.debugSetSessionForTesting(
-      SyncSessionCredentials(
+    harness.appSession.debugSetStateForTesting(
+      mode: AppLoginMode.selfHosted,
+      selfHostedSession: SelfHostedSession(
         serverUrl: 'http://127.0.0.1:8088',
-        userId: 'u-1',
         username: 'alice',
         accessToken: 'tok-1',
-        masterKey: SyncCrypto.generateMasterKey(),
       ),
     );
-    harness.sync.lanService.debugSeedStateForTesting(
+    harness.lan.debugSeedStateForTesting(
       publicKeyBase64: myKp.publicKeyBase64,
       discovered: [peer],
       incomingRequests: [
@@ -194,7 +191,7 @@ void main() {
     expect(find.text('Cancel (9s)'), findsOneWidget);
 
     // Becoming trusted closes the dialog automatically without waiting for timeout.
-    harness.sync.lanService.debugSeedStateForTesting(
+    harness.lan.debugSeedStateForTesting(
       discovered: [peer],
       trusted: [
         LanTrustedPeer(
@@ -202,7 +199,6 @@ void main() {
           deviceName: 'LivingRoom-TV',
           pubKeyBase64: peerKp.publicKeyBase64,
           sharedKeyBase64: myKp.publicKeyBase64,
-          lastSyncedRevision: 0,
           pairedAtMs: now.millisecondsSinceEpoch,
         ),
       ],
@@ -216,8 +212,8 @@ void main() {
     final harness = await _pumpPromptHost(tester);
     addTearDown(() => harness.dispose(tester));
 
-    final myKp = await SyncCrypto.generateLanIdentityKeyPair();
-    final peerKp = await SyncCrypto.generateLanIdentityKeyPair();
+    final myKp = await LanCrypto.generateLanIdentityKeyPair();
+    final peerKp = await LanCrypto.generateLanIdentityKeyPair();
     final now = DateTime(2026, 11, 16, 20, 15);
     final req = LanPairRequest(
       deviceId: 'peer-req',
@@ -230,7 +226,7 @@ void main() {
       requestedAt: now,
     );
 
-    harness.sync.lanService.debugSeedStateForTesting(publicKeyBase64: myKp.publicKeyBase64, incomingRequests: [req]);
+    harness.lan.debugSeedStateForTesting(publicKeyBase64: myKp.publicKeyBase64, incomingRequests: [req]);
     await tester.pump();
     await tester.pump();
     expect(find.text(t.sync.lanPopupRequestTitle), findsOneWidget);
@@ -256,14 +252,13 @@ void main() {
       HttpOverrides.global = null;
       addTearDown(() => HttpOverrides.global = prevOverrides);
 
-      Future<({AppDatabase db, MountManager mounts, LanPeerSyncService lan})> startPeer(String name) async {
+      Future<({AppDatabase db, LanIdentityStore identityStore, LanPairingService lan})> startPeer(String name) async {
         final db = AppDatabase.forTesting(NativeDatabase.memory());
-        final mounts = MountManager(MountRegistry(db));
-        final syncStore = SyncLocalStore(db);
-        await syncStore.setDeviceName(name);
-        final lan = LanPeerSyncService(syncStore: syncStore, enableUdpBroadcast: false);
-        await lan.start();
-        return (db: db, mounts: mounts, lan: lan);
+        final identityStore = LanIdentityStore(db);
+        await identityStore.setDeviceName(name);
+        final lan = LanPairingService(identityStore: identityStore, enableUdpBroadcast: false);
+        await lan.start(bindHttpPort: 0);
+        return (db: db, identityStore: identityStore, lan: lan);
       }
 
       final devA = await startPeer('Device-A');
@@ -271,8 +266,6 @@ void main() {
       addTearDown(() async {
         devA.lan.dispose();
         devB.lan.dispose();
-        await devA.mounts.dispose();
-        await devB.mounts.dispose();
         await devA.db.close();
         await devB.db.close();
       });
@@ -285,7 +278,6 @@ void main() {
         host: '127.0.0.1',
         httpPort: devB.lan.listeningPort!,
         pubKeyBase64: devB.lan.publicKeyBase64!,
-        revision: 0,
         lastSeen: now,
       );
       final peerAOnB = LanDiscoveredPeer(
@@ -295,7 +287,6 @@ void main() {
         host: '127.0.0.1',
         httpPort: devA.lan.listeningPort!,
         pubKeyBase64: devA.lan.publicKeyBase64!,
-        revision: 0,
         lastSeen: now,
       );
 

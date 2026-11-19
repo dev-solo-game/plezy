@@ -64,6 +64,13 @@ enum RemoteCommandType {
   browseSeason,
   playEpisodeItem,
   requestState,
+
+  searchHostCatalog,
+  hostCatalogSearchResult,
+  browseHostHome,
+  hostHomeResult,
+  browseHostItemChildren,
+  hostItemChildrenResult,
 }
 
 class _RemoteCommandTypeConverter extends IndexedEnumConverter<RemoteCommandType> {

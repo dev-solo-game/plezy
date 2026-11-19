@@ -6,7 +6,7 @@ import 'package:drift/drift.dart';
 import 'package:uuid/uuid.dart';
 
 import '../database/app_database.dart';
-import '../library/sync/deterministic_keys.dart';
+import '../library/deterministic_keys.dart';
 import '../services/credential_vault.dart';
 import '../utils/app_logger.dart';
 import 'storage_mount.dart';

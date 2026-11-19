@@ -10,18 +10,13 @@ import 'library_repository.dart';
 import 'library_scan_service.dart';
 import 'library_scraper.dart';
 import 'library_settings.dart';
-import 'scrapers/bangumi_provider.dart';
 import 'scrapers/scraped_metadata.dart';
-import 'scrapers/scraper_http.dart';
 import 'scrapers/server_metadata_provider.dart';
-import 'scrapers/tmdb_provider.dart';
-import 'sync/sync_local_store.dart';
 
 typedef MetadataEndpointResolver = Future<({String serverUrl, String? accessToken, bool isOfficial})?> Function();
 
-/// Builds a [LibraryScraper] from the saved settings and runs it. One place
-/// for the scan service, the manual-match UI and the retry action to get a
-/// scraper that reflects what the user configured.
+/// Builds a [LibraryScraper] routed through `media_server` public metadata
+/// endpoints and runs library/manual matching and lazy detail hydration.
 class LibraryScrapeRunner {
   LibraryScrapeRunner({
     required AppDatabase database,
@@ -42,7 +37,7 @@ class LibraryScrapeRunner {
   final Map<int, Future<bool>> _inFlightHydrations = {};
 
   /// Returned by [scrapePending] when titles were left waiting because no
-  /// TMDB key is set. The UI turns it into a localized prompt.
+  /// TMDB key is configured on the server.
   static const String noTmdbKey = 'no-tmdb-key';
 
   Future<({String serverUrl, String? accessToken, bool isOfficial})> resolveActiveMetadataEndpoint() async {
@@ -50,7 +45,7 @@ class LibraryScrapeRunner {
     if (resolved != null && resolved.serverUrl.trim().isNotEmpty) {
       return resolved;
     }
-    return (serverUrl: SyncLocalStore.effectiveDefaultOfficialSyncUrl, accessToken: null, isOfficial: true);
+    return (serverUrl: ServerMetadataProvider.defaultOfficialMetadataUrl, accessToken: null, isOfficial: true);
   }
 
   Future<({String serverUrl, bool isOfficial, ServerMetadataConfig config})> checkMetadataServerConnection() async {
@@ -66,8 +61,8 @@ class LibraryScrapeRunner {
   }
 
   /// Lazily fills heavy details (`summary`, `tagline`, `credits`, episode
-  /// overviews) for a synced skeleton item, deduplicating concurrent requests
-  /// for the same show/movie root ID.
+  /// overviews) for an item, deduplicating concurrent requests for the same
+  /// root ID.
   Future<bool> hydrateItemDetailsIfNeeded(int itemId) async {
     final initial = (await _repo.getItem(itemId))?.item;
     if (initial == null) return false;
@@ -88,51 +83,24 @@ class LibraryScrapeRunner {
     }
   }
 
-  /// Runs [action] with a scraper built from the current settings, closing
-  /// its HTTP clients afterwards. Once [isCancelled] turns true the clients
-  /// are closed at once, so a request waiting on a slow or unreachable host
-  /// does not hold the run up.
+  /// Runs [action] with a scraper backed by the official `media_server`
+  /// public metadata endpoint, closing HTTP clients on completion or cancel.
   Future<T> withScraper<T>(
     Future<T> Function(LibraryScraper scraper, ScraperSettings settings) action, {
     bool Function()? isCancelled,
   }) async {
     final current = await settings.loadScraper();
-    final endpoint = resolveMetadataEndpoint == null ? null : await resolveMetadataEndpoint!();
-    final List<MetadataProvider> providers;
-    if (endpoint != null && endpoint.serverUrl.trim().isNotEmpty) {
-      providers = <MetadataProvider>[
-        ServerMetadataProvider(
-          serverUrl: endpoint.serverUrl,
-          source: 'tmdb',
-          language: current.language,
-          accessToken: endpoint.accessToken,
-          onImageBaseDiscovered: onImageBaseUpdated,
-        ),
-        if (current.bangumiEnabled)
-          ServerMetadataProvider(
-            serverUrl: endpoint.serverUrl,
-            source: 'bangumi',
-            language: current.language,
-            accessToken: endpoint.accessToken,
-            onImageBaseDiscovered: onImageBaseUpdated,
-          ),
-      ];
-    } else {
-      providers = <MetadataProvider>[
-        if (current.hasTmdb)
-          TmdbProvider(
-            apiKey: current.tmdbApiKey,
-            language: current.language,
-            apiBase: current.tmdbApiBase,
-            imageBase: current.tmdbImageBase,
-            http: ScraperHttp(proxy: current.proxy),
-          ),
-        if (current.bangumiEnabled)
-          BangumiProvider(
-            http: ScraperHttp(proxy: current.proxy, userAgent: 'local-media-library/1.0 (anime metadata lookup)'),
-          ),
-      ];
-    }
+    final endpoint = await resolveActiveMetadataEndpoint();
+    final providers = <MetadataProvider>[
+      ServerMetadataProvider(
+        serverUrl: endpoint.serverUrl,
+        source: 'all',
+        language: current.language,
+        accessToken: endpoint.accessToken,
+        onImageBaseDiscovered: onImageBaseUpdated,
+      ),
+    ];
+
     void closeAll() {
       for (final provider in providers) {
         provider.close();
@@ -146,6 +114,7 @@ class LibraryScrapeRunner {
             timer.cancel();
             closeAll();
           });
+
     Future<String?> readText(String mountId, String path) async {
       final manager = mounts;
       if (manager == null || !manager.isMountOnline(mountId)) return null;
@@ -179,9 +148,6 @@ class LibraryScrapeRunner {
 
   /// Scrapes everything queued. Returns the outcome including any early-stop
   /// note (or [noTmdbKey]) and whether any titles changed match state.
-  ///
-  /// [retryUnmatched] first puts titles and episode files an earlier run
-  /// could not match back in the queue.
   Future<LibraryScrapeOutcome> scrapePending({
     bool retryUnmatched = false,
     Set<String>? mountIds,
@@ -201,10 +167,7 @@ class LibraryScrapeRunner {
         isCancelled: isCancelled,
         onProgress: onProgress,
       );
-      final usesDirectTmdb = resolveMetadataEndpoint == null;
-      final note = summary.stoppedByMissingKey
-          ? noTmdbKey
-          : (summary.stoppedBy ?? (usesDirectTmdb && summary.skipped > 0 && !current.hasTmdb ? noTmdbKey : null));
+      final note = summary.stoppedByMissingKey ? noTmdbKey : summary.stoppedBy;
       return LibraryScrapeOutcome(note: note, hasChanges: summary.hasChanges);
     }, isCancelled: isCancelled);
   }

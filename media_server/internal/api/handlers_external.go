@@ -1022,7 +1022,11 @@ func (s *Server) handleExtPlaybackInfo(w http.ResponseWriter, r *http.Request, _
 
 // ---------- Media Proxies (Images, Direct Stream, HLS, Subtitles) ----------
 
-func (s *Server) handleExtImage(w http.ResponseWriter, r *http.Request, _ *db.AdminAccount, _ *db.SessionRecord) {
+func (s *Server) handleExtImage(w http.ResponseWriter, r *http.Request) {
+	if !s.authenticateArtworkRequest(r) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
 	_, cli, err := s.extClientByID(r.PathValue("id"), false)
 	if err != nil {
 		writeMappedExtError(w, r, err)

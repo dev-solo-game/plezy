@@ -98,6 +98,8 @@ class TranslationsZh extends Translations with BaseTranslations<AppLocale, Trans
 	@override late final Translations$streamQuality$zh streamQuality = Translations$streamQuality$zh.internal(_root);
 	@override late final Translations$workSkip$zh workSkip = Translations$workSkip$zh.internal(_root);
 	@override late final Translations$sync$zh sync = Translations$sync$zh.internal(_root);
+	@override late final Translations$session$zh session = Translations$session$zh.internal(_root);
+	@override late final Translations$serverAdmin$zh serverAdmin = Translations$serverAdmin$zh.internal(_root);
 }
 
 // Path: app
@@ -2075,8 +2077,22 @@ class Translations$companionRemote$zh extends Translations$companionRemote$en {
 	@override String get openingOnRemote => '正在远端打开…';
 	@override String controllingDevice({required Object name}) => '正在控制：${name}';
 	@override String get stopRemotePlayback => '结束远端播放';
-	@override String get idleControlHint => '当前设备未在播放视频，可在影视详情页或播放器中点击「远端播放」投送到此设备';
+	@override String get idleControlHint => '当前设备未在播放视频。可在「媒体库」中搜索或浏览目标设备上的影视并发起播放，也可从本机接力投送。';
 	@override String get mediaNotFoundOnDevice => '目标设备上未找到该影片的可播放源';
+	@override String get tabControl => '播控';
+	@override String get tabMedia => '媒体库';
+	@override String get tabDpad => '方向键';
+	@override String get browseTargetMedia => '搜索与浏览目标设备影视';
+	@override String get searchTargetHint => '搜索目标设备上的影视…';
+	@override String get targetLibraries => '目标设备媒体库';
+	@override String get noTargetMedia => '目标设备上未找到相关影视';
+	@override String get targetMediaLoadFailed => '无法加载目标设备上的媒体内容';
+	@override String get playOnTarget => '在目标设备播放';
+	@override String get backToBrowse => '返回';
+	@override String get discoverAndPair => '发现与配对设备';
+	@override String get ok => '确认';
+	@override String get dpadControls => '遥控方向键';
+	@override String get quickActions => '快捷导航';
 	@override String get episodes => '选集';
 	@override String seasonNumber({required Object number}) => '第 ${number} 季';
 	@override String get playbackSpeed => '播放速度';
@@ -2673,11 +2689,11 @@ class Translations$storage$zh extends Translations$storage$en {
 	@override String get manualMatch => '手动匹配';
 	@override String get noMatchResults => '没有结果';
 	@override String get mediaSources => '媒体来源';
-	@override String get scraperSettingsDescription => '服务端元数据服务、刮削语言与 Bangumi 偏好';
-	@override String get metadataServiceTitle => '服务端元数据服务';
-	@override String get metadataServiceOfficial => '当前使用官方同步服务器元数据缓存';
-	@override String get metadataServiceSelfHosted => '当前使用自建同步服务器元数据缓存';
-	@override String get metadataServiceManagedHint => 'TMDB API Key、上游代理与图片镜像已统一在同步服务器 Web 管理后台配置，全端免配置共享缓存。';
+	@override String get scraperSettingsDescription => '官方元数据服务与刮削语言偏好';
+	@override String get metadataServiceTitle => '官方元数据服务';
+	@override String get metadataServiceOfficial => '当前使用 TTPlay 官方通用元数据服务';
+	@override String get metadataServiceSelfHosted => '当前使用自建服务器元数据服务';
+	@override String get metadataServiceManagedHint => 'TMDB、豆瓣、Bangumi、代理与图片转发均由官方元数据服务端统一提供，本地免配密钥。';
 	@override String get metadataServerTest => '测试元数据服务';
 	@override String metadataServerTestOk({required Object works, required Object seasons, required Object people}) => '连接正常 · TMDB 已就绪（已缓存 ${works} 部作品、${seasons} 季剧集、${people} 位演职员）';
 	@override String get metadataServerTestNoKey => '已连上服务器，但管理员尚未在 Web 控制台配置 TMDB API Key。';
@@ -2886,8 +2902,166 @@ class Translations$sync$zh extends Translations$sync$en {
 	@override String get initialSyncRestoring => '正在从服务器恢复媒体源与媒体库索引…';
 	@override String get signOutPendingTitle => '仍有未上传变更';
 	@override String signOutPendingBody({required Object count}) => '当前仍有 ${count} 条待上传变更。退出后将随本账号安全归档，并在下次登录时继续上传。确定要退出吗？';
-	@override String get remoteControlHint => '局域网遥控配对与是否登录同步服务器相互独立，任何状态下均可直接配对与控制。';
-	@override String get remoteDevicesSubtitle => '管理局域网遥控配对与被控端开关（不传输媒体库）';
+	@override String get remoteControlHint => '局域网遥控配对与当前是否登录自建服务器无关，离线与自建设备可跨模式互相控制。';
+	@override String get remoteDevicesSubtitle => '管理局域网遥控配对与被控端开关';
+}
+
+// Path: session
+class Translations$session$zh extends Translations$session$en {
+	Translations$session$zh.internal(TranslationsZh root) : this._root = root, super.internal(root);
+
+	final TranslationsZh _root; // ignore: unused_field
+
+	// Translations
+	@override String get modeOfflineTitle => '离线模式（本地）';
+	@override String get modeOfflineDesc => '支持本地目录、SMB、WebDAV 与夸克网盘挂载，通过官方元数据服务直接刮削。';
+	@override String get modeSelfHostedTitle => '自建服务器';
+	@override String get modeSelfHostedDesc => '登录自建的 TTPlay 媒体服务器，观看服务端媒体库、外部关联库并管理挂载源。';
+	@override String get selfHostedLoginTitle => '登录自建服务器';
+	@override String get serverUrlLabel => '服务器地址';
+	@override String get serverUrlHint => '例如 http://192.168.1.10:8090 或 https://media.example.com';
+	@override String get usernameLabel => '用户名';
+	@override String get passwordLabel => '密码';
+	@override String get testServer => '测试连接';
+	@override String get testingServer => '正在连接…';
+	@override String serverConnected({required Object name}) => '已连接到「${name}」';
+	@override String get serverConnectedUnnamed => '服务器连接正常';
+	@override String get signInButton => '登录';
+	@override String get switchMode => '切换模式';
+	@override String get switchToOffline => '切换到离线模式';
+	@override String get menuModeOfflineTitle => '离线模式';
+	@override String menuModeOfflineSubtitle({required Object device}) => '本机：${device}';
+	@override String get menuModeSelfHostedTitle => '自建服务器';
+	@override String menuModeSelfHostedSubtitle({required Object user, required Object server}) => '${user} @ ${server}';
+	@override String get archiveHint => '从离线模式切换为自建后，本机挂载源与媒体库会自动安全归档，切回离线模式即可恢复。';
+	@override String get errInvalidUrl => '请输入有效的 http:// 或 https:// 服务器地址。';
+	@override String get errRequiredField => '请填写此项。';
+	@override String get errUninitializedServer => '该服务器尚未完成网页端初始化配置，请先在网页端设置管理员账号。';
+	@override String get errInvalidCredentials => '用户名或密码错误。';
+	@override String errNetwork({required Object error}) => '连接失败：${error}';
+	@override String errServer({required Object error}) => '服务器返回异常：${error}';
+}
+
+// Path: serverAdmin
+class Translations$serverAdmin$zh extends Translations$serverAdmin$en {
+	Translations$serverAdmin$zh.internal(TranslationsZh root) : this._root = root, super.internal(root);
+
+	final TranslationsZh _root; // ignore: unused_field
+
+	// Translations
+	@override String get sectionTitle => '自建服务器管理';
+	@override String get mountsTitle => '服务端挂载源';
+	@override String get mountsSubtitle => '添加、编辑、扫描与移除服务器存储挂载';
+	@override String get scraperTitle => '服务端刮削与元数据';
+	@override String get scraperSubtitle => '配置 TMDB、兜底数据源、缓存与后台任务';
+	@override String get externalServersTitle => '外部 Emby / Jellyfin';
+	@override String get externalServersSubtitle => '管理服务器代理的外部 Emby / Jellyfin 媒体库';
+	@override String get addMount => '添加挂载源';
+	@override String get editMount => '编辑挂载源';
+	@override String get mountName => '挂载名称';
+	@override String get mountKind => '存储类型';
+	@override String get kindLocal => '服务器本地目录';
+	@override String get kindSmb => 'SMB / CIFS 共享';
+	@override String get kindWebdav => 'WebDAV';
+	@override String get kindQuark => '夸克网盘';
+	@override String get rootPath => '根目录路径';
+	@override String get browseHostDir => '浏览服务器目录';
+	@override String get selectDir => '选择当前目录';
+	@override String get hostHost => '主机地址';
+	@override String get port => '端口';
+	@override String get shareName => '共享名';
+	@override String get domain => '域（可选）';
+	@override String get baseUrl => '服务器地址';
+	@override String get username => '用户名';
+	@override String get password => '密码';
+	@override String get keepSecretHint => '留空则保留当前已保存凭据';
+	@override String get quarkCookie => 'Cookie / PC 会话 JSON';
+	@override String get quarkQrLogin => '扫码登录';
+	@override String get quarkScanQrHint => '请使用夸克手机客户端扫描二维码';
+	@override String get quarkQrExpired => '二维码已过期，请重新获取。';
+	@override String get quarkQrSuccess => '已获取夸克登录凭据。';
+	@override String get enabled => '启用';
+	@override String get testConnection => '测试连接';
+	@override String get testSuccess => '连接测试成功';
+	@override String get scanNow => '扫描';
+	@override String get fullScan => '全量扫描';
+	@override String get scanAll => '全部扫描';
+	@override String get cancelScan => '取消扫描';
+	@override String deleteMountConfirm({required Object name}) => '确认删除挂载源「${name}」并清理关联条目？';
+	@override String get scanStarted => '服务器已开始扫描';
+	@override String get noMounts => '暂未配置服务端挂载源';
+	@override String mountStats({required Object videos, required Object matched}) => '${videos} 个视频 · ${matched} 个已匹配';
+	@override String get taskStatus => '服务器任务状态';
+	@override String scanningCount({required Object count}) => '正在扫描：${count}';
+	@override String scrapingProgress({required Object done, required Object total, required Object title}) => '正在刮削 ${done}/${total}（${title}）';
+	@override String pendingCount({required Object count}) => '待刮削：${count}';
+	@override String unmatchedCount({required Object count}) => '未匹配：${count}';
+	@override String get scrapePending => '刮削待匹配项';
+	@override String get retryUnmatched => '重试未匹配项';
+	@override String get clearCache => '清理元数据缓存';
+	@override String cacheCleared({required Object count}) => '已清理 ${count} 条缓存记录';
+	@override String get tmdbSection => 'TMDB 与核心刮削配置';
+	@override String get tmdbApiKey => 'TMDB API Key';
+	@override String tmdbApiKeySet({required Object masked}) => '已配置 TMDB API Key（${masked}）';
+	@override String get clearKey => '清除已保存 Key';
+	@override String get tmdbApiBase => 'TMDB API 反代地址';
+	@override String get tmdbImageBase => 'TMDB 图片源地址';
+	@override String get metadataProxy => '网络代理地址（HTTP / SOCKS）';
+	@override String get testTmdb => '测试 TMDB';
+	@override String get scraperLang => '刮削首选语言';
+	@override String get preferNfo => '优先读取本地 NFO';
+	@override String get allowFallbackMetadata => 'TMDB 未命中时允许启用兜底元数据';
+	@override String get allowPublicMetadata => '对外开放官方元数据公共查询接口';
+	@override String get proxyImages => '通过服务器代理远程海报';
+	@override String get watchLocalFs => '监听本地文件目录变动';
+	@override String get scanIntervalMin => '定时扫描间隔（分钟，0 为关闭）';
+	@override String get providersSection => '扩展与兜底数据源';
+	@override String get bangumi => 'Bangumi（动画）';
+	@override String get douban => '豆瓣';
+	@override String get anilist => 'AniList';
+	@override String get imdb => 'IMDb';
+	@override String get tvdb => 'TheTVDB';
+	@override String get tvdbApiKey => 'TVDB API Key';
+	@override String get tvdbPin => 'TVDB PIN（可选）';
+	@override String get testProvider => '测试';
+	@override String get customRecognitionWords => '自定义识别 / 屏蔽词';
+	@override String get customRecognitionWordsHint => '每行一条规则或关键词';
+	@override String get saved => '服务器配置已保存';
+	@override String get addExternalServer => '添加外部服务器';
+	@override String get editExternalServer => '编辑外部服务器';
+	@override String get serverKind => '服务器类型';
+	@override String get authMode => '认证方式';
+	@override String get authPassword => '用户名密码登录';
+	@override String get authApiKey => 'API Key 密钥';
+	@override String get apiKey => 'API Key';
+	@override String get userIdOptional => '用户 ID（可选）';
+	@override String get allowInsecureTls => '信任自签名 HTTPS 证书';
+	@override String deleteExternalConfirm({required Object name}) => '确认移除外部服务器「${name}」？';
+	@override String get noExternalServers => '尚未关联任何外部 Emby 或 Jellyfin 服务器';
+	@override String testExternalOk({required Object name, required Object kind}) => '已连接到 ${name}（${kind}）';
+	@override String get manualMatch => '手工匹配';
+	@override String get editMetadata => '编辑元数据';
+	@override String get refreshMetadata => '刷新元数据';
+	@override String get unmatch => '取消匹配';
+	@override String get unmatchConfirm => '确认将此条目退回至服务器未匹配队列？';
+	@override String get refreshSuccess => '已从服务器刷新元数据';
+	@override String get unmatchSuccess => '已在服务器取消匹配';
+	@override String get matchSearchHint => '输入片名或直查 ID（如 tmdb: / douban: / tt...）';
+	@override String get providerAll => '全部已启用源';
+	@override String get mediaTypeMovie => '电影';
+	@override String get mediaTypeShow => '剧集 / 番剧';
+	@override String get targetShelfAuto => '自动归类';
+	@override String get applyMatch => '应用此匹配';
+	@override String get fieldTitle => '标题';
+	@override String get fieldOriginalTitle => '原标题';
+	@override String get fieldYear => '年份';
+	@override String get fieldShelf => '归入分类';
+	@override String get fieldSummary => '简介';
+	@override String get fieldTagline => '宣传语';
+	@override String get fieldStudio => '制作公司';
+	@override String get fieldRating => '评分';
+	@override String get fieldLocked => '锁定元数据（自动重刮不覆盖）';
+	@override String get tvAdminUnsupported => '服务器管理功能仅支持电脑端与手机端。';
 }
 
 // Path: appIcon.names
@@ -3673,12 +3847,12 @@ class Translations$companionRemote$pairing$zh extends Translations$companionRemo
 	@override String get noDevicesHint => '请在桌面端打开 TTPlay，并确保设备连接到同一 Wi-Fi 网络';
 	@override String get availableDevices => '可用设备';
 	@override String get manualConnection => '手动连接';
-	@override String get cryptoInitFailed => '无法启动安全连接。请先启用局域网同步或登录同步服务器。';
+	@override String get cryptoInitFailed => '无法启动局域网安全连接，请先开启或初始化局域网设备发现。';
 	@override String get validationHostRequired => '请输入主机地址';
 	@override String get validationHostFormat => '格式必须为 IP:端口（例如 192.168.1.100:48632）';
 	@override String get connectionTimedOut => '连接超时。请在两台设备上使用同一网络。';
 	@override String get sessionNotFound => '未找到设备。请确认 TTPlay 正在主机上运行。';
-	@override String get authFailed => '认证失败。请先与该设备建立局域网信任，或登录同一同步账号。';
+	@override String get authFailed => '认证失败，请先与该设备建立局域网配对信任。';
 	@override String failedToConnect({required Object error}) => '连接失败：${error}';
 	@override String get tapToTrustAndConnect => '未信任 · 点击发起信任并连接';
 	@override String get waitingForTrust => '正在等待对方设备确认信任…';
@@ -5812,8 +5986,22 @@ extension on TranslationsZh {
 			'companionRemote.openingOnRemote' => '正在远端打开…',
 			'companionRemote.controllingDevice' => ({required Object name}) => '正在控制：${name}',
 			'companionRemote.stopRemotePlayback' => '结束远端播放',
-			'companionRemote.idleControlHint' => '当前设备未在播放视频，可在影视详情页或播放器中点击「远端播放」投送到此设备',
+			'companionRemote.idleControlHint' => '当前设备未在播放视频。可在「媒体库」中搜索或浏览目标设备上的影视并发起播放，也可从本机接力投送。',
 			'companionRemote.mediaNotFoundOnDevice' => '目标设备上未找到该影片的可播放源',
+			'companionRemote.tabControl' => '播控',
+			'companionRemote.tabMedia' => '媒体库',
+			'companionRemote.tabDpad' => '方向键',
+			'companionRemote.browseTargetMedia' => '搜索与浏览目标设备影视',
+			'companionRemote.searchTargetHint' => '搜索目标设备上的影视…',
+			'companionRemote.targetLibraries' => '目标设备媒体库',
+			'companionRemote.noTargetMedia' => '目标设备上未找到相关影视',
+			'companionRemote.targetMediaLoadFailed' => '无法加载目标设备上的媒体内容',
+			'companionRemote.playOnTarget' => '在目标设备播放',
+			'companionRemote.backToBrowse' => '返回',
+			'companionRemote.discoverAndPair' => '发现与配对设备',
+			'companionRemote.ok' => '确认',
+			'companionRemote.dpadControls' => '遥控方向键',
+			'companionRemote.quickActions' => '快捷导航',
 			'companionRemote.episodes' => '选集',
 			'companionRemote.seasonNumber' => ({required Object number}) => '第 ${number} 季',
 			'companionRemote.playbackSpeed' => '播放速度',
@@ -5847,12 +6035,12 @@ extension on TranslationsZh {
 			'companionRemote.pairing.noDevicesHint' => '请在桌面端打开 TTPlay，并确保设备连接到同一 Wi-Fi 网络',
 			'companionRemote.pairing.availableDevices' => '可用设备',
 			'companionRemote.pairing.manualConnection' => '手动连接',
-			'companionRemote.pairing.cryptoInitFailed' => '无法启动安全连接。请先启用局域网同步或登录同步服务器。',
+			'companionRemote.pairing.cryptoInitFailed' => '无法启动局域网安全连接，请先开启或初始化局域网设备发现。',
 			'companionRemote.pairing.validationHostRequired' => '请输入主机地址',
 			'companionRemote.pairing.validationHostFormat' => '格式必须为 IP:端口（例如 192.168.1.100:48632）',
 			'companionRemote.pairing.connectionTimedOut' => '连接超时。请在两台设备上使用同一网络。',
 			'companionRemote.pairing.sessionNotFound' => '未找到设备。请确认 TTPlay 正在主机上运行。',
-			'companionRemote.pairing.authFailed' => '认证失败。请先与该设备建立局域网信任，或登录同一同步账号。',
+			'companionRemote.pairing.authFailed' => '认证失败，请先与该设备建立局域网配对信任。',
 			'companionRemote.pairing.failedToConnect' => ({required Object error}) => '连接失败：${error}',
 			'companionRemote.pairing.tapToTrustAndConnect' => '未信任 · 点击发起信任并连接',
 			'companionRemote.pairing.waitingForTrust' => '正在等待对方设备确认信任…',
@@ -5912,6 +6100,8 @@ extension on TranslationsZh {
 			'videoSettings.audioOutput' => '音频输出',
 			'videoSettings.performanceOverlay' => '性能监控',
 			'videoSettings.audioOutputDolbyAtmos' => 'Dolby Atmos',
+			_ => null,
+		} ?? switch (path) {
 			'videoSettings.audioOutputDolbyAudio' => 'Dolby Audio',
 			'videoSettings.audioOutputSurround' => '环绕声',
 			'videoSettings.audioOutputSpatial' => '空间音频',
@@ -5926,8 +6116,6 @@ extension on TranslationsZh {
 			'performanceOverlay.rawDecoder' => '原始解码器',
 			'performanceOverlay.tunneling' => '隧道',
 			'performanceOverlay.passthrough' => '直通',
-			_ => null,
-		} ?? switch (path) {
 			'performanceOverlay.aspect' => '宽高比',
 			'performanceOverlay.rotation' => '旋转',
 			'performanceOverlay.dvSource' => 'DV 来源',
@@ -6401,11 +6589,11 @@ extension on TranslationsZh {
 			'storage.manualMatch' => '手动匹配',
 			'storage.noMatchResults' => '没有结果',
 			'storage.mediaSources' => '媒体来源',
-			'storage.scraperSettingsDescription' => '服务端元数据服务、刮削语言与 Bangumi 偏好',
-			'storage.metadataServiceTitle' => '服务端元数据服务',
-			'storage.metadataServiceOfficial' => '当前使用官方同步服务器元数据缓存',
-			'storage.metadataServiceSelfHosted' => '当前使用自建同步服务器元数据缓存',
-			'storage.metadataServiceManagedHint' => 'TMDB API Key、上游代理与图片镜像已统一在同步服务器 Web 管理后台配置，全端免配置共享缓存。',
+			'storage.scraperSettingsDescription' => '官方元数据服务与刮削语言偏好',
+			'storage.metadataServiceTitle' => '官方元数据服务',
+			'storage.metadataServiceOfficial' => '当前使用 TTPlay 官方通用元数据服务',
+			'storage.metadataServiceSelfHosted' => '当前使用自建服务器元数据服务',
+			'storage.metadataServiceManagedHint' => 'TMDB、豆瓣、Bangumi、代理与图片转发均由官方元数据服务端统一提供，本地免配密钥。',
 			'storage.metadataServerTest' => '测试元数据服务',
 			'storage.metadataServerTestOk' => ({required Object works, required Object seasons, required Object people}) => '连接正常 · TMDB 已就绪（已缓存 ${works} 部作品、${seasons} 季剧集、${people} 位演职员）',
 			'storage.metadataServerTestNoKey' => '已连上服务器，但管理员尚未在 Web 控制台配置 TMDB API Key。',
@@ -6426,6 +6614,8 @@ extension on TranslationsZh {
 			'storage.hideOffline' => '隐藏离线',
 			'storage.duplicateMount' => ({required Object name}) => '该媒体来源已存在（“${name}”），请直接编辑已有来源。',
 			'storage.addScanFolder' => '添加目录',
+			_ => null,
+		} ?? switch (path) {
 			'storage.allFolders' => '全部目录（扫描整盘）',
 			'streamQuality.preferred' => '首选画质',
 			'streamQuality.localPreference' => '本地媒体库画质',
@@ -6440,8 +6630,6 @@ extension on TranslationsZh {
 			'workSkip.scopeMovie' => '对当前媒体来源中的这部电影生效，所有文件版本共用。',
 			'workSkip.intro' => '跳过片头',
 			'workSkip.introStart' => '片头开始时间',
-			_ => null,
-		} ?? switch (path) {
 			'workSkip.introEnd' => '片头结束时间',
 			'workSkip.credits' => '跳过片尾',
 			'workSkip.creditsDuration' => '片尾时长',
@@ -6589,8 +6777,148 @@ extension on TranslationsZh {
 			'sync.initialSyncRestoring' => '正在从服务器恢复媒体源与媒体库索引…',
 			'sync.signOutPendingTitle' => '仍有未上传变更',
 			'sync.signOutPendingBody' => ({required Object count}) => '当前仍有 ${count} 条待上传变更。退出后将随本账号安全归档，并在下次登录时继续上传。确定要退出吗？',
-			'sync.remoteControlHint' => '局域网遥控配对与是否登录同步服务器相互独立，任何状态下均可直接配对与控制。',
-			'sync.remoteDevicesSubtitle' => '管理局域网遥控配对与被控端开关（不传输媒体库）',
+			'sync.remoteControlHint' => '局域网遥控配对与当前是否登录自建服务器无关，离线与自建设备可跨模式互相控制。',
+			'sync.remoteDevicesSubtitle' => '管理局域网遥控配对与被控端开关',
+			'session.modeOfflineTitle' => '离线模式（本地）',
+			'session.modeOfflineDesc' => '支持本地目录、SMB、WebDAV 与夸克网盘挂载，通过官方元数据服务直接刮削。',
+			'session.modeSelfHostedTitle' => '自建服务器',
+			'session.modeSelfHostedDesc' => '登录自建的 TTPlay 媒体服务器，观看服务端媒体库、外部关联库并管理挂载源。',
+			'session.selfHostedLoginTitle' => '登录自建服务器',
+			'session.serverUrlLabel' => '服务器地址',
+			'session.serverUrlHint' => '例如 http://192.168.1.10:8090 或 https://media.example.com',
+			'session.usernameLabel' => '用户名',
+			'session.passwordLabel' => '密码',
+			'session.testServer' => '测试连接',
+			'session.testingServer' => '正在连接…',
+			'session.serverConnected' => ({required Object name}) => '已连接到「${name}」',
+			'session.serverConnectedUnnamed' => '服务器连接正常',
+			'session.signInButton' => '登录',
+			'session.switchMode' => '切换模式',
+			'session.switchToOffline' => '切换到离线模式',
+			'session.menuModeOfflineTitle' => '离线模式',
+			'session.menuModeOfflineSubtitle' => ({required Object device}) => '本机：${device}',
+			'session.menuModeSelfHostedTitle' => '自建服务器',
+			'session.menuModeSelfHostedSubtitle' => ({required Object user, required Object server}) => '${user} @ ${server}',
+			'session.archiveHint' => '从离线模式切换为自建后，本机挂载源与媒体库会自动安全归档，切回离线模式即可恢复。',
+			'session.errInvalidUrl' => '请输入有效的 http:// 或 https:// 服务器地址。',
+			'session.errRequiredField' => '请填写此项。',
+			'session.errUninitializedServer' => '该服务器尚未完成网页端初始化配置，请先在网页端设置管理员账号。',
+			'session.errInvalidCredentials' => '用户名或密码错误。',
+			'session.errNetwork' => ({required Object error}) => '连接失败：${error}',
+			'session.errServer' => ({required Object error}) => '服务器返回异常：${error}',
+			'serverAdmin.sectionTitle' => '自建服务器管理',
+			'serverAdmin.mountsTitle' => '服务端挂载源',
+			'serverAdmin.mountsSubtitle' => '添加、编辑、扫描与移除服务器存储挂载',
+			'serverAdmin.scraperTitle' => '服务端刮削与元数据',
+			'serverAdmin.scraperSubtitle' => '配置 TMDB、兜底数据源、缓存与后台任务',
+			'serverAdmin.externalServersTitle' => '外部 Emby / Jellyfin',
+			'serverAdmin.externalServersSubtitle' => '管理服务器代理的外部 Emby / Jellyfin 媒体库',
+			'serverAdmin.addMount' => '添加挂载源',
+			'serverAdmin.editMount' => '编辑挂载源',
+			'serverAdmin.mountName' => '挂载名称',
+			'serverAdmin.mountKind' => '存储类型',
+			'serverAdmin.kindLocal' => '服务器本地目录',
+			'serverAdmin.kindSmb' => 'SMB / CIFS 共享',
+			'serverAdmin.kindWebdav' => 'WebDAV',
+			'serverAdmin.kindQuark' => '夸克网盘',
+			'serverAdmin.rootPath' => '根目录路径',
+			'serverAdmin.browseHostDir' => '浏览服务器目录',
+			'serverAdmin.selectDir' => '选择当前目录',
+			'serverAdmin.hostHost' => '主机地址',
+			'serverAdmin.port' => '端口',
+			'serverAdmin.shareName' => '共享名',
+			'serverAdmin.domain' => '域（可选）',
+			'serverAdmin.baseUrl' => '服务器地址',
+			'serverAdmin.username' => '用户名',
+			'serverAdmin.password' => '密码',
+			'serverAdmin.keepSecretHint' => '留空则保留当前已保存凭据',
+			'serverAdmin.quarkCookie' => 'Cookie / PC 会话 JSON',
+			'serverAdmin.quarkQrLogin' => '扫码登录',
+			'serverAdmin.quarkScanQrHint' => '请使用夸克手机客户端扫描二维码',
+			'serverAdmin.quarkQrExpired' => '二维码已过期，请重新获取。',
+			'serverAdmin.quarkQrSuccess' => '已获取夸克登录凭据。',
+			'serverAdmin.enabled' => '启用',
+			'serverAdmin.testConnection' => '测试连接',
+			'serverAdmin.testSuccess' => '连接测试成功',
+			'serverAdmin.scanNow' => '扫描',
+			'serverAdmin.fullScan' => '全量扫描',
+			'serverAdmin.scanAll' => '全部扫描',
+			'serverAdmin.cancelScan' => '取消扫描',
+			'serverAdmin.deleteMountConfirm' => ({required Object name}) => '确认删除挂载源「${name}」并清理关联条目？',
+			'serverAdmin.scanStarted' => '服务器已开始扫描',
+			'serverAdmin.noMounts' => '暂未配置服务端挂载源',
+			'serverAdmin.mountStats' => ({required Object videos, required Object matched}) => '${videos} 个视频 · ${matched} 个已匹配',
+			'serverAdmin.taskStatus' => '服务器任务状态',
+			'serverAdmin.scanningCount' => ({required Object count}) => '正在扫描：${count}',
+			'serverAdmin.scrapingProgress' => ({required Object done, required Object total, required Object title}) => '正在刮削 ${done}/${total}（${title}）',
+			'serverAdmin.pendingCount' => ({required Object count}) => '待刮削：${count}',
+			'serverAdmin.unmatchedCount' => ({required Object count}) => '未匹配：${count}',
+			'serverAdmin.scrapePending' => '刮削待匹配项',
+			'serverAdmin.retryUnmatched' => '重试未匹配项',
+			'serverAdmin.clearCache' => '清理元数据缓存',
+			'serverAdmin.cacheCleared' => ({required Object count}) => '已清理 ${count} 条缓存记录',
+			'serverAdmin.tmdbSection' => 'TMDB 与核心刮削配置',
+			'serverAdmin.tmdbApiKey' => 'TMDB API Key',
+			'serverAdmin.tmdbApiKeySet' => ({required Object masked}) => '已配置 TMDB API Key（${masked}）',
+			'serverAdmin.clearKey' => '清除已保存 Key',
+			'serverAdmin.tmdbApiBase' => 'TMDB API 反代地址',
+			'serverAdmin.tmdbImageBase' => 'TMDB 图片源地址',
+			'serverAdmin.metadataProxy' => '网络代理地址（HTTP / SOCKS）',
+			'serverAdmin.testTmdb' => '测试 TMDB',
+			'serverAdmin.scraperLang' => '刮削首选语言',
+			'serverAdmin.preferNfo' => '优先读取本地 NFO',
+			'serverAdmin.allowFallbackMetadata' => 'TMDB 未命中时允许启用兜底元数据',
+			'serverAdmin.allowPublicMetadata' => '对外开放官方元数据公共查询接口',
+			'serverAdmin.proxyImages' => '通过服务器代理远程海报',
+			'serverAdmin.watchLocalFs' => '监听本地文件目录变动',
+			'serverAdmin.scanIntervalMin' => '定时扫描间隔（分钟，0 为关闭）',
+			'serverAdmin.providersSection' => '扩展与兜底数据源',
+			'serverAdmin.bangumi' => 'Bangumi（动画）',
+			'serverAdmin.douban' => '豆瓣',
+			'serverAdmin.anilist' => 'AniList',
+			'serverAdmin.imdb' => 'IMDb',
+			'serverAdmin.tvdb' => 'TheTVDB',
+			'serverAdmin.tvdbApiKey' => 'TVDB API Key',
+			'serverAdmin.tvdbPin' => 'TVDB PIN（可选）',
+			'serverAdmin.testProvider' => '测试',
+			'serverAdmin.customRecognitionWords' => '自定义识别 / 屏蔽词',
+			'serverAdmin.customRecognitionWordsHint' => '每行一条规则或关键词',
+			'serverAdmin.saved' => '服务器配置已保存',
+			'serverAdmin.addExternalServer' => '添加外部服务器',
+			'serverAdmin.editExternalServer' => '编辑外部服务器',
+			'serverAdmin.serverKind' => '服务器类型',
+			'serverAdmin.authMode' => '认证方式',
+			'serverAdmin.authPassword' => '用户名密码登录',
+			'serverAdmin.authApiKey' => 'API Key 密钥',
+			'serverAdmin.apiKey' => 'API Key',
+			'serverAdmin.userIdOptional' => '用户 ID（可选）',
+			'serverAdmin.allowInsecureTls' => '信任自签名 HTTPS 证书',
+			'serverAdmin.deleteExternalConfirm' => ({required Object name}) => '确认移除外部服务器「${name}」？',
+			'serverAdmin.noExternalServers' => '尚未关联任何外部 Emby 或 Jellyfin 服务器',
+			'serverAdmin.testExternalOk' => ({required Object name, required Object kind}) => '已连接到 ${name}（${kind}）',
+			'serverAdmin.manualMatch' => '手工匹配',
+			'serverAdmin.editMetadata' => '编辑元数据',
+			'serverAdmin.refreshMetadata' => '刷新元数据',
+			'serverAdmin.unmatch' => '取消匹配',
+			'serverAdmin.unmatchConfirm' => '确认将此条目退回至服务器未匹配队列？',
+			'serverAdmin.refreshSuccess' => '已从服务器刷新元数据',
+			'serverAdmin.unmatchSuccess' => '已在服务器取消匹配',
+			'serverAdmin.matchSearchHint' => '输入片名或直查 ID（如 tmdb: / douban: / tt...）',
+			'serverAdmin.providerAll' => '全部已启用源',
+			'serverAdmin.mediaTypeMovie' => '电影',
+			'serverAdmin.mediaTypeShow' => '剧集 / 番剧',
+			'serverAdmin.targetShelfAuto' => '自动归类',
+			'serverAdmin.applyMatch' => '应用此匹配',
+			'serverAdmin.fieldTitle' => '标题',
+			'serverAdmin.fieldOriginalTitle' => '原标题',
+			'serverAdmin.fieldYear' => '年份',
+			'serverAdmin.fieldShelf' => '归入分类',
+			'serverAdmin.fieldSummary' => '简介',
+			'serverAdmin.fieldTagline' => '宣传语',
+			'serverAdmin.fieldStudio' => '制作公司',
+			'serverAdmin.fieldRating' => '评分',
+			'serverAdmin.fieldLocked' => '锁定元数据（自动重刮不覆盖）',
+			'serverAdmin.tvAdminUnsupported' => '服务器管理功能仅支持电脑端与手机端。',
 			_ => null,
 		};
 	}

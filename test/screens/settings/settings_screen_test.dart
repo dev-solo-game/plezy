@@ -11,9 +11,6 @@ import 'package:path_provider_platform_interface/path_provider_platform_interfac
 import 'package:plezy/connection/connection_registry.dart';
 import 'package:plezy/database/app_database.dart';
 import 'package:plezy/i18n/strings.g.dart';
-import 'package:plezy/library/library_repository.dart';
-import 'package:plezy/library/sync/sync_coordinator.dart';
-import 'package:plezy/library/sync/sync_crypto.dart';
 import 'package:plezy/media/media_backend.dart';
 import 'package:plezy/media/media_kind.dart';
 import 'package:plezy/media/media_library.dart';
@@ -29,9 +26,6 @@ import 'package:plezy/providers/seerr_account_provider.dart';
 import 'package:plezy/providers/theme_provider.dart';
 import 'package:plezy/providers/trackers_provider.dart';
 import 'package:plezy/screens/settings/settings_screen.dart';
-import 'package:plezy/screens/storage/sync_qr_scanner_screen.dart';
-import 'package:plezy/storage/mount_manager.dart';
-import 'package:plezy/storage/mount_registry.dart';
 import 'package:plezy/services/background_work_diagnostics_service.dart';
 import 'package:plezy/services/donation_service.dart';
 import 'package:plezy/services/download_storage_service.dart';
@@ -577,77 +571,19 @@ void main() {
     expect(find.text(t.settings.importSettingsSuccess), findsNothing);
   });
 
-  testWidgets('mobile SettingsScreen gates QR scanner on signed-in sync account', (tester) async {
-    final db = AppDatabase.forTesting(NativeDatabase.memory());
-    final mounts = MountManager(MountRegistry(db));
-    final sync = SyncAndScanCoordinator(
-      db: db,
-      repo: LibraryRepository(db),
-      mountManager: mounts,
-      enableLanUdp: false,
-      autoStartLanService: false,
-    );
-    await sync.initialize();
-    addTearDown(() async {
-      sync.dispose();
-      await mounts.dispose();
-      await db.close();
-    });
-
-    final harness = await _pumpSettingsScreen(tester, sync: sync);
+  testWidgets('SettingsScreen displays media, LAN devices, and metadata tiles without legacy sync entries', (
+    tester,
+  ) async {
+    final harness = await _pumpSettingsScreen(tester, platform: TargetPlatform.android);
     addTearDown(() => harness.dispose(tester));
 
-    expect(find.text(t.sync.scanQrTileTitle), findsOneWidget);
-
-    // Signed-out tap shows login requirement dialog instead of pushing scanner.
-    await tester.tap(find.text(t.sync.scanQrTileTitle));
-    await _pumpUi(tester);
-    expect(find.text(t.sync.scanQrRequireLoginTitle), findsOneWidget);
-    expect(find.text(t.sync.goToSyncLogin), findsOneWidget);
-
-    await tester.tap(find.text(t.common.cancel));
-    await _pumpUi(tester);
-
-    // Sign into Self-Hosted Sync -> tapping Scan QR opens SyncQrScannerScreen.
-    sync.debugSetSessionForTesting(
-      SyncSessionCredentials(
-        serverUrl: 'https://nas.example.com:8088',
-        userId: 'u-1',
-        username: 'alice',
-        accessToken: 'tok-1',
-        masterKey: Uint8List.fromList(List<int>.filled(32, 7)),
-        serverKind: SyncServerKind.selfHosted,
-      ),
-    );
-    await _pumpUi(tester);
-
-    await tester.tap(find.text(t.sync.scanQrTileTitle));
-    await _pumpUi(tester);
-    expect(find.byType(SyncQrScannerScreen), findsOneWidget);
-  });
-
-  testWidgets('desktop SettingsScreen hides mobile-only Scan QR tile', (tester) async {
-    final db = AppDatabase.forTesting(NativeDatabase.memory());
-    final mounts = MountManager(MountRegistry(db));
-    final sync = SyncAndScanCoordinator(
-      db: db,
-      repo: LibraryRepository(db),
-      mountManager: mounts,
-      enableLanUdp: false,
-      autoStartLanService: false,
-    );
-    await sync.initialize();
-    addTearDown(() async {
-      sync.dispose();
-      await mounts.dispose();
-      await db.close();
-    });
-
-    final harness = await _pumpSettingsScreen(tester, sync: sync, platform: TargetPlatform.windows);
-    addTearDown(() => harness.dispose(tester));
-
+    expect(find.text(t.storage.title), findsOneWidget);
+    expect(find.text(t.sync.lanDevicesTitle), findsOneWidget);
+    expect(find.text(t.sync.remoteDevicesSubtitle), findsOneWidget);
+    expect(find.text(t.storage.scraperSettings), findsOneWidget);
+    expect(find.text(t.storage.scraperSettingsDescription), findsOneWidget);
     expect(find.text(t.sync.scanQrTileTitle), findsNothing);
-    expect(find.text(t.sync.title), findsOneWidget);
+    expect(find.text(t.sync.title), findsNothing);
   });
 }
 
@@ -734,7 +670,6 @@ Future<_SettingsHarness> _pumpSettingsScreen(
   bool pushSettingsRoute = false,
   List<MediaLibrary> initialLibraries = const [],
   Future<bool> Function(RequireWiFi requirement)? requireWiFiOverride,
-  SyncAndScanCoordinator? sync,
   TargetPlatform platform = TargetPlatform.android,
 }) async {
   tester.view.physicalSize = const Size(1800, 3200);
@@ -831,7 +766,6 @@ Future<_SettingsHarness> _pumpSettingsScreen(
           ChangeNotifierProvider<SeerrAccountProvider>.value(value: seerr),
           ChangeNotifierProvider<DownloadProvider>.value(value: downloadProvider),
           ChangeNotifierProvider<AccountPreferencesController>.value(value: accountPreferences),
-          if (sync != null) ChangeNotifierProvider<SyncAndScanCoordinator>.value(value: sync),
         ],
         child: MaterialApp(
           theme: monoTheme(MonoPalette.dark).copyWith(platform: platform),

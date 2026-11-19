@@ -99,6 +99,8 @@ class Translations with BaseTranslations<AppLocale, Translations> {
 	late final Translations$streamQuality$en streamQuality = Translations$streamQuality$en.internal(_root);
 	late final Translations$workSkip$en workSkip = Translations$workSkip$en.internal(_root);
 	late final Translations$sync$en sync = Translations$sync$en.internal(_root);
+	late final Translations$session$en session = Translations$session$en.internal(_root);
+	late final Translations$serverAdmin$en serverAdmin = Translations$serverAdmin$en.internal(_root);
 }
 
 // Path: app
@@ -5177,11 +5179,53 @@ class Translations$companionRemote$en {
 	/// en: 'Stop Remote Playback'
 	String get stopRemotePlayback => 'Stop Remote Playback';
 
-	/// en: 'Nothing is playing on this device. Start playback from any title's detail page or player.'
-	String get idleControlHint => 'Nothing is playing on this device. Start playback from any title\'s detail page or player.';
+	/// en: 'Nothing is playing on this device. Search or browse media on this device below, or hand off playback from another device.'
+	String get idleControlHint => 'Nothing is playing on this device. Search or browse media on this device below, or hand off playback from another device.';
 
 	/// en: 'Media not available on target device'
 	String get mediaNotFoundOnDevice => 'Media not available on target device';
+
+	/// en: 'Control'
+	String get tabControl => 'Control';
+
+	/// en: 'Media'
+	String get tabMedia => 'Media';
+
+	/// en: 'D-Pad'
+	String get tabDpad => 'D-Pad';
+
+	/// en: 'Browse & Search Device Media'
+	String get browseTargetMedia => 'Browse & Search Device Media';
+
+	/// en: 'Search media on target device...'
+	String get searchTargetHint => 'Search media on target device...';
+
+	/// en: 'Libraries on Device'
+	String get targetLibraries => 'Libraries on Device';
+
+	/// en: 'No media found on target device'
+	String get noTargetMedia => 'No media found on target device';
+
+	/// en: 'Could not load media from target device'
+	String get targetMediaLoadFailed => 'Could not load media from target device';
+
+	/// en: 'Play on device'
+	String get playOnTarget => 'Play on device';
+
+	/// en: 'Back'
+	String get backToBrowse => 'Back';
+
+	/// en: 'Discover & Pair Devices'
+	String get discoverAndPair => 'Discover & Pair Devices';
+
+	/// en: 'OK'
+	String get ok => 'OK';
+
+	/// en: 'Navigation Pad'
+	String get dpadControls => 'Navigation Pad';
+
+	/// en: 'Quick Actions'
+	String get quickActions => 'Quick Actions';
 
 	/// en: 'Episodes'
 	String get episodes => 'Episodes';
@@ -6736,20 +6780,20 @@ class Translations$storage$en {
 	/// en: 'Media sources'
 	String get mediaSources => 'Media sources';
 
-	/// en: 'Server metadata cache, language and Bangumi preferences'
-	String get scraperSettingsDescription => 'Server metadata cache, language and Bangumi preferences';
+	/// en: 'Official metadata service & language preference'
+	String get scraperSettingsDescription => 'Official metadata service & language preference';
 
-	/// en: 'Server Metadata Service'
-	String get metadataServiceTitle => 'Server Metadata Service';
+	/// en: 'Official Metadata Service'
+	String get metadataServiceTitle => 'Official Metadata Service';
 
-	/// en: 'Using Official Sync Server metadata cache'
-	String get metadataServiceOfficial => 'Using Official Sync Server metadata cache';
+	/// en: 'Connected to TTPlay Official Metadata Service'
+	String get metadataServiceOfficial => 'Connected to TTPlay Official Metadata Service';
 
-	/// en: 'Using Self-Hosted Sync Server metadata cache'
-	String get metadataServiceSelfHosted => 'Using Self-Hosted Sync Server metadata cache';
+	/// en: 'Connected to Server Metadata Service'
+	String get metadataServiceSelfHosted => 'Connected to Server Metadata Service';
 
-	/// en: 'TMDB API key, proxy, and image mirror are configured centrally in the sync server Web admin console.'
-	String get metadataServiceManagedHint => 'TMDB API key, proxy, and image mirror are configured centrally in the sync server Web admin console.';
+	/// en: 'TMDB, Douban, Bangumi, proxy, and artwork relay are managed centrally by the official metadata server.'
+	String get metadataServiceManagedHint => 'TMDB, Douban, Bangumi, proxy, and artwork relay are managed centrally by the official metadata server.';
 
 	/// en: 'Test server connection'
 	String get metadataServerTest => 'Test server connection';
@@ -7321,11 +7365,449 @@ class Translations$sync$en {
 	/// en: 'You still have ${count} pending change(s). They will remain archived for this account and upload on your next sign-in. Sign out now?'
 	String signOutPendingBody({required Object count}) => 'You still have ${count} pending change(s). They will remain archived for this account and upload on your next sign-in. Sign out now?';
 
-	/// en: 'LAN remote pairing works independently whether or not you are signed in to a Sync Server.'
-	String get remoteControlHint => 'LAN remote pairing works independently whether or not you are signed in to a Sync Server.';
+	/// en: 'LAN remote pairing works across both Offline and Self-Hosted devices on the same network.'
+	String get remoteControlHint => 'LAN remote pairing works across both Offline and Self-Hosted devices on the same network.';
 
-	/// en: 'LAN remote pairing & receiver settings (no P2P library sync)'
-	String get remoteDevicesSubtitle => 'LAN remote pairing & receiver settings (no P2P library sync)';
+	/// en: 'LAN remote pairing & receiver settings'
+	String get remoteDevicesSubtitle => 'LAN remote pairing & receiver settings';
+}
+
+// Path: session
+class Translations$session$en {
+	Translations$session$en.internal(this._root);
+
+	final Translations _root; // ignore: unused_field
+
+	// Translations
+
+	/// en: 'Offline Mode (Local)'
+	String get modeOfflineTitle => 'Offline Mode (Local)';
+
+	/// en: 'Scan local folders, SMB, WebDAV & Quark mounts with zero setup via the official metadata service.'
+	String get modeOfflineDesc => 'Scan local folders, SMB, WebDAV & Quark mounts with zero setup via the official metadata service.';
+
+	/// en: 'Self-Hosted Server'
+	String get modeSelfHostedTitle => 'Self-Hosted Server';
+
+	/// en: 'Sign in to your TTPlay Media Server to stream server libraries, external servers, and manage sources.'
+	String get modeSelfHostedDesc => 'Sign in to your TTPlay Media Server to stream server libraries, external servers, and manage sources.';
+
+	/// en: 'Sign In to Self-Hosted Server'
+	String get selfHostedLoginTitle => 'Sign In to Self-Hosted Server';
+
+	/// en: 'Server URL'
+	String get serverUrlLabel => 'Server URL';
+
+	/// en: 'e.g. http://192.168.1.10:8090 or https://media.example.com'
+	String get serverUrlHint => 'e.g. http://192.168.1.10:8090 or https://media.example.com';
+
+	/// en: 'Username'
+	String get usernameLabel => 'Username';
+
+	/// en: 'Password'
+	String get passwordLabel => 'Password';
+
+	/// en: 'Test Connection'
+	String get testServer => 'Test Connection';
+
+	/// en: 'Connecting…'
+	String get testingServer => 'Connecting…';
+
+	/// en: 'Connected to ${name}'
+	String serverConnected({required Object name}) => 'Connected to ${name}';
+
+	/// en: 'Server is reachable'
+	String get serverConnectedUnnamed => 'Server is reachable';
+
+	/// en: 'Sign In'
+	String get signInButton => 'Sign In';
+
+	/// en: 'Switch Mode'
+	String get switchMode => 'Switch Mode';
+
+	/// en: 'Switch to Offline Mode'
+	String get switchToOffline => 'Switch to Offline Mode';
+
+	/// en: 'Offline Mode'
+	String get menuModeOfflineTitle => 'Offline Mode';
+
+	/// en: 'This device: ${device}'
+	String menuModeOfflineSubtitle({required Object device}) => 'This device: ${device}';
+
+	/// en: 'Self-Hosted Server'
+	String get menuModeSelfHostedTitle => 'Self-Hosted Server';
+
+	/// en: '${user} @ ${server}'
+	String menuModeSelfHostedSubtitle({required Object user, required Object server}) => '${user} @ ${server}';
+
+	/// en: 'Switching from offline mode safely archives your local library & mounts until you return.'
+	String get archiveHint => 'Switching from offline mode safely archives your local library & mounts until you return.';
+
+	/// en: 'Please enter a valid http:// or https:// server URL.'
+	String get errInvalidUrl => 'Please enter a valid http:// or https:// server URL.';
+
+	/// en: 'This field is required.'
+	String get errRequiredField => 'This field is required.';
+
+	/// en: 'This server has not completed initial Web setup yet.'
+	String get errUninitializedServer => 'This server has not completed initial Web setup yet.';
+
+	/// en: 'Invalid username or password.'
+	String get errInvalidCredentials => 'Invalid username or password.';
+
+	/// en: 'Connection failed: ${error}'
+	String errNetwork({required Object error}) => 'Connection failed: ${error}';
+
+	/// en: 'Server error: ${error}'
+	String errServer({required Object error}) => 'Server error: ${error}';
+}
+
+// Path: serverAdmin
+class Translations$serverAdmin$en {
+	Translations$serverAdmin$en.internal(this._root);
+
+	final Translations _root; // ignore: unused_field
+
+	// Translations
+
+	/// en: 'Self-Hosted Server Management'
+	String get sectionTitle => 'Self-Hosted Server Management';
+
+	/// en: 'Server Mounts'
+	String get mountsTitle => 'Server Mounts';
+
+	/// en: 'Add, edit, scan and remove server storage mounts'
+	String get mountsSubtitle => 'Add, edit, scan and remove server storage mounts';
+
+	/// en: 'Server Scraper & Metadata'
+	String get scraperTitle => 'Server Scraper & Metadata';
+
+	/// en: 'Configure TMDB, fallback scrapers, cache & background jobs'
+	String get scraperSubtitle => 'Configure TMDB, fallback scrapers, cache & background jobs';
+
+	/// en: 'External Emby / Jellyfin'
+	String get externalServersTitle => 'External Emby / Jellyfin';
+
+	/// en: 'Connect external servers proxied separately by your server'
+	String get externalServersSubtitle => 'Connect external servers proxied separately by your server';
+
+	/// en: 'Add Mount'
+	String get addMount => 'Add Mount';
+
+	/// en: 'Edit Mount'
+	String get editMount => 'Edit Mount';
+
+	/// en: 'Mount Name'
+	String get mountName => 'Mount Name';
+
+	/// en: 'Storage Type'
+	String get mountKind => 'Storage Type';
+
+	/// en: 'Server Local Directory'
+	String get kindLocal => 'Server Local Directory';
+
+	/// en: 'SMB / CIFS'
+	String get kindSmb => 'SMB / CIFS';
+
+	/// en: 'WebDAV'
+	String get kindWebdav => 'WebDAV';
+
+	/// en: 'Quark Cloud Drive'
+	String get kindQuark => 'Quark Cloud Drive';
+
+	/// en: 'Root Path'
+	String get rootPath => 'Root Path';
+
+	/// en: 'Browse Server Directory'
+	String get browseHostDir => 'Browse Server Directory';
+
+	/// en: 'Use Current Directory'
+	String get selectDir => 'Use Current Directory';
+
+	/// en: 'Host'
+	String get hostHost => 'Host';
+
+	/// en: 'Port'
+	String get port => 'Port';
+
+	/// en: 'Share Name'
+	String get shareName => 'Share Name';
+
+	/// en: 'Domain (Optional)'
+	String get domain => 'Domain (Optional)';
+
+	/// en: 'Server URL'
+	String get baseUrl => 'Server URL';
+
+	/// en: 'Username'
+	String get username => 'Username';
+
+	/// en: 'Password'
+	String get password => 'Password';
+
+	/// en: 'Leave blank to keep existing secret'
+	String get keepSecretHint => 'Leave blank to keep existing secret';
+
+	/// en: 'Cookie / PC Session JSON'
+	String get quarkCookie => 'Cookie / PC Session JSON';
+
+	/// en: 'QR Code Sign-In'
+	String get quarkQrLogin => 'QR Code Sign-In';
+
+	/// en: 'Scan this QR code with the Quark mobile app'
+	String get quarkScanQrHint => 'Scan this QR code with the Quark mobile app';
+
+	/// en: 'QR code expired. Generate a new one to continue.'
+	String get quarkQrExpired => 'QR code expired. Generate a new one to continue.';
+
+	/// en: 'Quark credentials captured.'
+	String get quarkQrSuccess => 'Quark credentials captured.';
+
+	/// en: 'Enabled'
+	String get enabled => 'Enabled';
+
+	/// en: 'Test Connection'
+	String get testConnection => 'Test Connection';
+
+	/// en: 'Connection succeeded'
+	String get testSuccess => 'Connection succeeded';
+
+	/// en: 'Scan Now'
+	String get scanNow => 'Scan Now';
+
+	/// en: 'Full Scan'
+	String get fullScan => 'Full Scan';
+
+	/// en: 'Scan All'
+	String get scanAll => 'Scan All';
+
+	/// en: 'Cancel Scan'
+	String get cancelScan => 'Cancel Scan';
+
+	/// en: 'Delete mount "${name}" and prune orphaned server items?'
+	String deleteMountConfirm({required Object name}) => 'Delete mount "${name}" and prune orphaned server items?';
+
+	/// en: 'Scan started on server'
+	String get scanStarted => 'Scan started on server';
+
+	/// en: 'No server mounts configured yet'
+	String get noMounts => 'No server mounts configured yet';
+
+	/// en: '${videos} videos · ${matched} matched'
+	String mountStats({required Object videos, required Object matched}) => '${videos} videos · ${matched} matched';
+
+	/// en: 'Server Tasks'
+	String get taskStatus => 'Server Tasks';
+
+	/// en: 'Active scans: ${count}'
+	String scanningCount({required Object count}) => 'Active scans: ${count}';
+
+	/// en: 'Scraping ${done}/${total} (${title})'
+	String scrapingProgress({required Object done, required Object total, required Object title}) => 'Scraping ${done}/${total} (${title})';
+
+	/// en: 'Pending scrape: ${count}'
+	String pendingCount({required Object count}) => 'Pending scrape: ${count}';
+
+	/// en: 'Unmatched: ${count}'
+	String unmatchedCount({required Object count}) => 'Unmatched: ${count}';
+
+	/// en: 'Scrape Pending'
+	String get scrapePending => 'Scrape Pending';
+
+	/// en: 'Retry Unmatched'
+	String get retryUnmatched => 'Retry Unmatched';
+
+	/// en: 'Clear Cache'
+	String get clearCache => 'Clear Cache';
+
+	/// en: 'Cleared ${count} cached record(s)'
+	String cacheCleared({required Object count}) => 'Cleared ${count} cached record(s)';
+
+	/// en: 'TMDB & Core Scraper'
+	String get tmdbSection => 'TMDB & Core Scraper';
+
+	/// en: 'TMDB API Key'
+	String get tmdbApiKey => 'TMDB API Key';
+
+	/// en: 'TMDB API Key configured (${masked})'
+	String tmdbApiKeySet({required Object masked}) => 'TMDB API Key configured (${masked})';
+
+	/// en: 'Clear saved key'
+	String get clearKey => 'Clear saved key';
+
+	/// en: 'TMDB API Base URL'
+	String get tmdbApiBase => 'TMDB API Base URL';
+
+	/// en: 'TMDB Image Base URL'
+	String get tmdbImageBase => 'TMDB Image Base URL';
+
+	/// en: 'HTTP / SOCKS Proxy'
+	String get metadataProxy => 'HTTP / SOCKS Proxy';
+
+	/// en: 'Test TMDB'
+	String get testTmdb => 'Test TMDB';
+
+	/// en: 'Metadata Language'
+	String get scraperLang => 'Metadata Language';
+
+	/// en: 'Prefer local NFO files'
+	String get preferNfo => 'Prefer local NFO files';
+
+	/// en: 'Allow fallback providers when TMDB misses'
+	String get allowFallbackMetadata => 'Allow fallback providers when TMDB misses';
+
+	/// en: 'Serve public metadata API for offline clients'
+	String get allowPublicMetadata => 'Serve public metadata API for offline clients';
+
+	/// en: 'Proxy remote artwork through server'
+	String get proxyImages => 'Proxy remote artwork through server';
+
+	/// en: 'Watch local filesystem directories'
+	String get watchLocalFs => 'Watch local filesystem directories';
+
+	/// en: 'Periodic Scan Interval (minutes, 0 = off)'
+	String get scanIntervalMin => 'Periodic Scan Interval (minutes, 0 = off)';
+
+	/// en: 'Auxiliary & Fallback Providers'
+	String get providersSection => 'Auxiliary & Fallback Providers';
+
+	/// en: 'Bangumi (Anime)'
+	String get bangumi => 'Bangumi (Anime)';
+
+	/// en: 'Douban'
+	String get douban => 'Douban';
+
+	/// en: 'AniList'
+	String get anilist => 'AniList';
+
+	/// en: 'IMDb'
+	String get imdb => 'IMDb';
+
+	/// en: 'TheTVDB'
+	String get tvdb => 'TheTVDB';
+
+	/// en: 'TVDB API Key'
+	String get tvdbApiKey => 'TVDB API Key';
+
+	/// en: 'TVDB PIN (Optional)'
+	String get tvdbPin => 'TVDB PIN (Optional)';
+
+	/// en: 'Test'
+	String get testProvider => 'Test';
+
+	/// en: 'Custom Recognition / Shield Words'
+	String get customRecognitionWords => 'Custom Recognition / Shield Words';
+
+	/// en: 'One rule or keyword per line'
+	String get customRecognitionWordsHint => 'One rule or keyword per line';
+
+	/// en: 'Settings saved to server'
+	String get saved => 'Settings saved to server';
+
+	/// en: 'Add External Server'
+	String get addExternalServer => 'Add External Server';
+
+	/// en: 'Edit External Server'
+	String get editExternalServer => 'Edit External Server';
+
+	/// en: 'Server Type'
+	String get serverKind => 'Server Type';
+
+	/// en: 'Authentication'
+	String get authMode => 'Authentication';
+
+	/// en: 'Username & Password'
+	String get authPassword => 'Username & Password';
+
+	/// en: 'API Key'
+	String get authApiKey => 'API Key';
+
+	/// en: 'API Key'
+	String get apiKey => 'API Key';
+
+	/// en: 'User ID (Optional)'
+	String get userIdOptional => 'User ID (Optional)';
+
+	/// en: 'Allow self-signed HTTPS certificates'
+	String get allowInsecureTls => 'Allow self-signed HTTPS certificates';
+
+	/// en: 'Remove external server "${name}"?'
+	String deleteExternalConfirm({required Object name}) => 'Remove external server "${name}"?';
+
+	/// en: 'No external Emby or Jellyfin servers connected'
+	String get noExternalServers => 'No external Emby or Jellyfin servers connected';
+
+	/// en: 'Connected to ${name} (${kind})'
+	String testExternalOk({required Object name, required Object kind}) => 'Connected to ${name} (${kind})';
+
+	/// en: 'Manual Match'
+	String get manualMatch => 'Manual Match';
+
+	/// en: 'Edit Metadata'
+	String get editMetadata => 'Edit Metadata';
+
+	/// en: 'Refresh Metadata'
+	String get refreshMetadata => 'Refresh Metadata';
+
+	/// en: 'Unmatch'
+	String get unmatch => 'Unmatch';
+
+	/// en: 'Move this item back to unmatched titles on the server?'
+	String get unmatchConfirm => 'Move this item back to unmatched titles on the server?';
+
+	/// en: 'Metadata refreshed from server'
+	String get refreshSuccess => 'Metadata refreshed from server';
+
+	/// en: 'Item unmatched on server'
+	String get unmatchSuccess => 'Item unmatched on server';
+
+	/// en: 'Title or direct ID (tmdb:..., douban:..., tt...)'
+	String get matchSearchHint => 'Title or direct ID (tmdb:..., douban:..., tt...)';
+
+	/// en: 'All Enabled'
+	String get providerAll => 'All Enabled';
+
+	/// en: 'Movie'
+	String get mediaTypeMovie => 'Movie';
+
+	/// en: 'TV / Series'
+	String get mediaTypeShow => 'TV / Series';
+
+	/// en: 'Auto Classify'
+	String get targetShelfAuto => 'Auto Classify';
+
+	/// en: 'Apply Match'
+	String get applyMatch => 'Apply Match';
+
+	/// en: 'Title'
+	String get fieldTitle => 'Title';
+
+	/// en: 'Original Title'
+	String get fieldOriginalTitle => 'Original Title';
+
+	/// en: 'Year'
+	String get fieldYear => 'Year';
+
+	/// en: 'Target Shelf'
+	String get fieldShelf => 'Target Shelf';
+
+	/// en: 'Summary'
+	String get fieldSummary => 'Summary';
+
+	/// en: 'Tagline'
+	String get fieldTagline => 'Tagline';
+
+	/// en: 'Studio'
+	String get fieldStudio => 'Studio';
+
+	/// en: 'Rating'
+	String get fieldRating => 'Rating';
+
+	/// en: 'Lock metadata against auto-rescrape'
+	String get fieldLocked => 'Lock metadata against auto-rescrape';
+
+	/// en: 'Server administration is only available on PC and mobile devices.'
+	String get tvAdminUnsupported => 'Server administration is only available on PC and mobile devices.';
 }
 
 // Path: appIcon.names
@@ -8977,8 +9459,8 @@ class Translations$companionRemote$pairing$en {
 	/// en: 'Manual Connection'
 	String get manualConnection => 'Manual Connection';
 
-	/// en: 'Couldn't start secure connection. Enable LAN sync or sign in to a sync server first.'
-	String get cryptoInitFailed => 'Couldn\'t start secure connection. Enable LAN sync or sign in to a sync server first.';
+	/// en: 'Couldn't start secure LAN connection. Enable LAN discovery or wait for LAN pairing initialization.'
+	String get cryptoInitFailed => 'Couldn\'t start secure LAN connection. Enable LAN discovery or wait for LAN pairing initialization.';
 
 	/// en: 'Please enter host address'
 	String get validationHostRequired => 'Please enter host address';
@@ -8992,8 +9474,8 @@ class Translations$companionRemote$pairing$en {
 	/// en: 'Device not found. Make sure TTPlay is running on the host.'
 	String get sessionNotFound => 'Device not found. Make sure TTPlay is running on the host.';
 
-	/// en: 'Authentication failed. Trust this device on your LAN or sign in to the same sync account.'
-	String get authFailed => 'Authentication failed. Trust this device on your LAN or sign in to the same sync account.';
+	/// en: 'Authentication failed. Pair and trust this device on your LAN first.'
+	String get authFailed => 'Authentication failed. Pair and trust this device on your LAN first.';
 
 	/// en: 'Failed to connect: ${error}'
 	String failedToConnect({required Object error}) => 'Failed to connect: ${error}';
@@ -11302,8 +11784,22 @@ extension on Translations {
 			'companionRemote.openingOnRemote' => 'Opening on remote device...',
 			'companionRemote.controllingDevice' => ({required Object name}) => 'Controlling: ${name}',
 			'companionRemote.stopRemotePlayback' => 'Stop Remote Playback',
-			'companionRemote.idleControlHint' => 'Nothing is playing on this device. Start playback from any title\'s detail page or player.',
+			'companionRemote.idleControlHint' => 'Nothing is playing on this device. Search or browse media on this device below, or hand off playback from another device.',
 			'companionRemote.mediaNotFoundOnDevice' => 'Media not available on target device',
+			'companionRemote.tabControl' => 'Control',
+			'companionRemote.tabMedia' => 'Media',
+			'companionRemote.tabDpad' => 'D-Pad',
+			'companionRemote.browseTargetMedia' => 'Browse & Search Device Media',
+			'companionRemote.searchTargetHint' => 'Search media on target device...',
+			'companionRemote.targetLibraries' => 'Libraries on Device',
+			'companionRemote.noTargetMedia' => 'No media found on target device',
+			'companionRemote.targetMediaLoadFailed' => 'Could not load media from target device',
+			'companionRemote.playOnTarget' => 'Play on device',
+			'companionRemote.backToBrowse' => 'Back',
+			'companionRemote.discoverAndPair' => 'Discover & Pair Devices',
+			'companionRemote.ok' => 'OK',
+			'companionRemote.dpadControls' => 'Navigation Pad',
+			'companionRemote.quickActions' => 'Quick Actions',
 			'companionRemote.episodes' => 'Episodes',
 			'companionRemote.seasonNumber' => ({required Object number}) => 'Season ${number}',
 			'companionRemote.playbackSpeed' => 'Playback Speed',
@@ -11337,12 +11833,12 @@ extension on Translations {
 			'companionRemote.pairing.noDevicesHint' => 'Open TTPlay on desktop and use the same Wi-Fi',
 			'companionRemote.pairing.availableDevices' => 'Available Devices',
 			'companionRemote.pairing.manualConnection' => 'Manual Connection',
-			'companionRemote.pairing.cryptoInitFailed' => 'Couldn\'t start secure connection. Enable LAN sync or sign in to a sync server first.',
+			'companionRemote.pairing.cryptoInitFailed' => 'Couldn\'t start secure LAN connection. Enable LAN discovery or wait for LAN pairing initialization.',
 			'companionRemote.pairing.validationHostRequired' => 'Please enter host address',
 			'companionRemote.pairing.validationHostFormat' => 'Format must be IP:port (e.g., 192.168.1.100:48632)',
 			'companionRemote.pairing.connectionTimedOut' => 'Connection timed out. Use the same network on both devices.',
 			'companionRemote.pairing.sessionNotFound' => 'Device not found. Make sure TTPlay is running on the host.',
-			'companionRemote.pairing.authFailed' => 'Authentication failed. Trust this device on your LAN or sign in to the same sync account.',
+			'companionRemote.pairing.authFailed' => 'Authentication failed. Pair and trust this device on your LAN first.',
 			'companionRemote.pairing.failedToConnect' => ({required Object error}) => 'Failed to connect: ${error}',
 			'companionRemote.pairing.tapToTrustAndConnect' => 'Untrusted · Tap to trust & connect',
 			'companionRemote.pairing.waitingForTrust' => 'Waiting for host to confirm trust...',
@@ -11395,6 +11891,8 @@ extension on Translations {
 			'videoSettings.hdrUnsupported' => 'HDR isn\'t available here — this desktop compositor or video output can\'t carry it.',
 			'videoSettings.hdrToneMapping' => 'HDR Tone Mapping',
 			'videoSettings.hdrToneMappingCompositor' => 'Compositor',
+			_ => null,
+		} ?? switch (path) {
 			'videoSettings.hdrToneMappingCompositorDescription' => 'Pass the source\'s HDR metadata through and let the desktop compositor map it.',
 			'videoSettings.hdrToneMappingPlayer' => 'Player',
 			'videoSettings.hdrToneMappingPlayerDescription' => 'Map to the display\'s peak brightness in the player, then tell the compositor the result.',
@@ -11409,8 +11907,6 @@ extension on Translations {
 			'videoSettings.audioNormalization' => 'Normalize Loudness',
 			'videoSettings.audioNormalizationDisablesPassthrough' => 'Decodes audio to PCM; passthrough is off while this is on',
 			'performanceOverlay.color' => 'Color',
-			_ => null,
-		} ?? switch (path) {
 			'performanceOverlay.performance' => 'Performance',
 			'performanceOverlay.buffer' => 'Buffer',
 			'performanceOverlay.app' => 'App',
@@ -11892,11 +12388,11 @@ extension on Translations {
 			'storage.manualMatch' => 'Match manually',
 			'storage.noMatchResults' => 'No results',
 			'storage.mediaSources' => 'Media sources',
-			'storage.scraperSettingsDescription' => 'Server metadata cache, language and Bangumi preferences',
-			'storage.metadataServiceTitle' => 'Server Metadata Service',
-			'storage.metadataServiceOfficial' => 'Using Official Sync Server metadata cache',
-			'storage.metadataServiceSelfHosted' => 'Using Self-Hosted Sync Server metadata cache',
-			'storage.metadataServiceManagedHint' => 'TMDB API key, proxy, and image mirror are configured centrally in the sync server Web admin console.',
+			'storage.scraperSettingsDescription' => 'Official metadata service & language preference',
+			'storage.metadataServiceTitle' => 'Official Metadata Service',
+			'storage.metadataServiceOfficial' => 'Connected to TTPlay Official Metadata Service',
+			'storage.metadataServiceSelfHosted' => 'Connected to Server Metadata Service',
+			'storage.metadataServiceManagedHint' => 'TMDB, Douban, Bangumi, proxy, and artwork relay are managed centrally by the official metadata server.',
 			'storage.metadataServerTest' => 'Test server connection',
 			'storage.metadataServerTestOk' => ({required Object works, required Object seasons, required Object people}) => 'Connected · TMDB ready (cache: ${works} works, ${seasons} seasons, ${people} people)',
 			'storage.metadataServerTestNoKey' => 'Connected to server, but TMDB API key is not configured yet in the Web admin console.',
@@ -11909,6 +12405,8 @@ extension on Translations {
 			'storage.excludePaths' => 'Excluded folders (optional)',
 			'storage.excludePathsHelp' => 'Ignore folders such as backups or recordings (e.g. /Photos).',
 			'storage.statusOnline' => 'Online',
+			_ => null,
+		} ?? switch (path) {
 			'storage.statusFallback' => 'Fallback online',
 			'storage.statusOffline' => 'Offline',
 			'storage.offlineMountsHidden' => ({required Object count}) => 'Hidden ${count} offline mount(s)',
@@ -11923,8 +12421,6 @@ extension on Translations {
 			'streamQuality.noneForFile' => 'This file has no transcoded qualities yet; it plays the original',
 			'streamQuality.original' => 'Original',
 			'streamQuality.superHd' => 'Full HD',
-			_ => null,
-		} ?? switch (path) {
 			'streamQuality.high' => 'HD',
 			'streamQuality.normal' => 'SD',
 			'streamQuality.low' => 'Low',
@@ -12080,8 +12576,148 @@ extension on Translations {
 			'sync.initialSyncRestoring' => 'Restoring media sources & library from server…',
 			'sync.signOutPendingTitle' => 'Unsynced Offline Changes',
 			'sync.signOutPendingBody' => ({required Object count}) => 'You still have ${count} pending change(s). They will remain archived for this account and upload on your next sign-in. Sign out now?',
-			'sync.remoteControlHint' => 'LAN remote pairing works independently whether or not you are signed in to a Sync Server.',
-			'sync.remoteDevicesSubtitle' => 'LAN remote pairing & receiver settings (no P2P library sync)',
+			'sync.remoteControlHint' => 'LAN remote pairing works across both Offline and Self-Hosted devices on the same network.',
+			'sync.remoteDevicesSubtitle' => 'LAN remote pairing & receiver settings',
+			'session.modeOfflineTitle' => 'Offline Mode (Local)',
+			'session.modeOfflineDesc' => 'Scan local folders, SMB, WebDAV & Quark mounts with zero setup via the official metadata service.',
+			'session.modeSelfHostedTitle' => 'Self-Hosted Server',
+			'session.modeSelfHostedDesc' => 'Sign in to your TTPlay Media Server to stream server libraries, external servers, and manage sources.',
+			'session.selfHostedLoginTitle' => 'Sign In to Self-Hosted Server',
+			'session.serverUrlLabel' => 'Server URL',
+			'session.serverUrlHint' => 'e.g. http://192.168.1.10:8090 or https://media.example.com',
+			'session.usernameLabel' => 'Username',
+			'session.passwordLabel' => 'Password',
+			'session.testServer' => 'Test Connection',
+			'session.testingServer' => 'Connecting…',
+			'session.serverConnected' => ({required Object name}) => 'Connected to ${name}',
+			'session.serverConnectedUnnamed' => 'Server is reachable',
+			'session.signInButton' => 'Sign In',
+			'session.switchMode' => 'Switch Mode',
+			'session.switchToOffline' => 'Switch to Offline Mode',
+			'session.menuModeOfflineTitle' => 'Offline Mode',
+			'session.menuModeOfflineSubtitle' => ({required Object device}) => 'This device: ${device}',
+			'session.menuModeSelfHostedTitle' => 'Self-Hosted Server',
+			'session.menuModeSelfHostedSubtitle' => ({required Object user, required Object server}) => '${user} @ ${server}',
+			'session.archiveHint' => 'Switching from offline mode safely archives your local library & mounts until you return.',
+			'session.errInvalidUrl' => 'Please enter a valid http:// or https:// server URL.',
+			'session.errRequiredField' => 'This field is required.',
+			'session.errUninitializedServer' => 'This server has not completed initial Web setup yet.',
+			'session.errInvalidCredentials' => 'Invalid username or password.',
+			'session.errNetwork' => ({required Object error}) => 'Connection failed: ${error}',
+			'session.errServer' => ({required Object error}) => 'Server error: ${error}',
+			'serverAdmin.sectionTitle' => 'Self-Hosted Server Management',
+			'serverAdmin.mountsTitle' => 'Server Mounts',
+			'serverAdmin.mountsSubtitle' => 'Add, edit, scan and remove server storage mounts',
+			'serverAdmin.scraperTitle' => 'Server Scraper & Metadata',
+			'serverAdmin.scraperSubtitle' => 'Configure TMDB, fallback scrapers, cache & background jobs',
+			'serverAdmin.externalServersTitle' => 'External Emby / Jellyfin',
+			'serverAdmin.externalServersSubtitle' => 'Connect external servers proxied separately by your server',
+			'serverAdmin.addMount' => 'Add Mount',
+			'serverAdmin.editMount' => 'Edit Mount',
+			'serverAdmin.mountName' => 'Mount Name',
+			'serverAdmin.mountKind' => 'Storage Type',
+			'serverAdmin.kindLocal' => 'Server Local Directory',
+			'serverAdmin.kindSmb' => 'SMB / CIFS',
+			'serverAdmin.kindWebdav' => 'WebDAV',
+			'serverAdmin.kindQuark' => 'Quark Cloud Drive',
+			'serverAdmin.rootPath' => 'Root Path',
+			'serverAdmin.browseHostDir' => 'Browse Server Directory',
+			'serverAdmin.selectDir' => 'Use Current Directory',
+			'serverAdmin.hostHost' => 'Host',
+			'serverAdmin.port' => 'Port',
+			'serverAdmin.shareName' => 'Share Name',
+			'serverAdmin.domain' => 'Domain (Optional)',
+			'serverAdmin.baseUrl' => 'Server URL',
+			'serverAdmin.username' => 'Username',
+			'serverAdmin.password' => 'Password',
+			'serverAdmin.keepSecretHint' => 'Leave blank to keep existing secret',
+			'serverAdmin.quarkCookie' => 'Cookie / PC Session JSON',
+			'serverAdmin.quarkQrLogin' => 'QR Code Sign-In',
+			'serverAdmin.quarkScanQrHint' => 'Scan this QR code with the Quark mobile app',
+			'serverAdmin.quarkQrExpired' => 'QR code expired. Generate a new one to continue.',
+			'serverAdmin.quarkQrSuccess' => 'Quark credentials captured.',
+			'serverAdmin.enabled' => 'Enabled',
+			'serverAdmin.testConnection' => 'Test Connection',
+			'serverAdmin.testSuccess' => 'Connection succeeded',
+			'serverAdmin.scanNow' => 'Scan Now',
+			'serverAdmin.fullScan' => 'Full Scan',
+			'serverAdmin.scanAll' => 'Scan All',
+			'serverAdmin.cancelScan' => 'Cancel Scan',
+			'serverAdmin.deleteMountConfirm' => ({required Object name}) => 'Delete mount "${name}" and prune orphaned server items?',
+			'serverAdmin.scanStarted' => 'Scan started on server',
+			'serverAdmin.noMounts' => 'No server mounts configured yet',
+			'serverAdmin.mountStats' => ({required Object videos, required Object matched}) => '${videos} videos · ${matched} matched',
+			'serverAdmin.taskStatus' => 'Server Tasks',
+			'serverAdmin.scanningCount' => ({required Object count}) => 'Active scans: ${count}',
+			'serverAdmin.scrapingProgress' => ({required Object done, required Object total, required Object title}) => 'Scraping ${done}/${total} (${title})',
+			'serverAdmin.pendingCount' => ({required Object count}) => 'Pending scrape: ${count}',
+			'serverAdmin.unmatchedCount' => ({required Object count}) => 'Unmatched: ${count}',
+			'serverAdmin.scrapePending' => 'Scrape Pending',
+			'serverAdmin.retryUnmatched' => 'Retry Unmatched',
+			'serverAdmin.clearCache' => 'Clear Cache',
+			'serverAdmin.cacheCleared' => ({required Object count}) => 'Cleared ${count} cached record(s)',
+			'serverAdmin.tmdbSection' => 'TMDB & Core Scraper',
+			'serverAdmin.tmdbApiKey' => 'TMDB API Key',
+			'serverAdmin.tmdbApiKeySet' => ({required Object masked}) => 'TMDB API Key configured (${masked})',
+			'serverAdmin.clearKey' => 'Clear saved key',
+			'serverAdmin.tmdbApiBase' => 'TMDB API Base URL',
+			'serverAdmin.tmdbImageBase' => 'TMDB Image Base URL',
+			'serverAdmin.metadataProxy' => 'HTTP / SOCKS Proxy',
+			'serverAdmin.testTmdb' => 'Test TMDB',
+			'serverAdmin.scraperLang' => 'Metadata Language',
+			'serverAdmin.preferNfo' => 'Prefer local NFO files',
+			'serverAdmin.allowFallbackMetadata' => 'Allow fallback providers when TMDB misses',
+			'serverAdmin.allowPublicMetadata' => 'Serve public metadata API for offline clients',
+			'serverAdmin.proxyImages' => 'Proxy remote artwork through server',
+			'serverAdmin.watchLocalFs' => 'Watch local filesystem directories',
+			'serverAdmin.scanIntervalMin' => 'Periodic Scan Interval (minutes, 0 = off)',
+			'serverAdmin.providersSection' => 'Auxiliary & Fallback Providers',
+			'serverAdmin.bangumi' => 'Bangumi (Anime)',
+			'serverAdmin.douban' => 'Douban',
+			'serverAdmin.anilist' => 'AniList',
+			'serverAdmin.imdb' => 'IMDb',
+			'serverAdmin.tvdb' => 'TheTVDB',
+			'serverAdmin.tvdbApiKey' => 'TVDB API Key',
+			'serverAdmin.tvdbPin' => 'TVDB PIN (Optional)',
+			'serverAdmin.testProvider' => 'Test',
+			'serverAdmin.customRecognitionWords' => 'Custom Recognition / Shield Words',
+			'serverAdmin.customRecognitionWordsHint' => 'One rule or keyword per line',
+			'serverAdmin.saved' => 'Settings saved to server',
+			'serverAdmin.addExternalServer' => 'Add External Server',
+			'serverAdmin.editExternalServer' => 'Edit External Server',
+			'serverAdmin.serverKind' => 'Server Type',
+			'serverAdmin.authMode' => 'Authentication',
+			'serverAdmin.authPassword' => 'Username & Password',
+			'serverAdmin.authApiKey' => 'API Key',
+			'serverAdmin.apiKey' => 'API Key',
+			'serverAdmin.userIdOptional' => 'User ID (Optional)',
+			'serverAdmin.allowInsecureTls' => 'Allow self-signed HTTPS certificates',
+			'serverAdmin.deleteExternalConfirm' => ({required Object name}) => 'Remove external server "${name}"?',
+			'serverAdmin.noExternalServers' => 'No external Emby or Jellyfin servers connected',
+			'serverAdmin.testExternalOk' => ({required Object name, required Object kind}) => 'Connected to ${name} (${kind})',
+			'serverAdmin.manualMatch' => 'Manual Match',
+			'serverAdmin.editMetadata' => 'Edit Metadata',
+			'serverAdmin.refreshMetadata' => 'Refresh Metadata',
+			'serverAdmin.unmatch' => 'Unmatch',
+			'serverAdmin.unmatchConfirm' => 'Move this item back to unmatched titles on the server?',
+			'serverAdmin.refreshSuccess' => 'Metadata refreshed from server',
+			'serverAdmin.unmatchSuccess' => 'Item unmatched on server',
+			'serverAdmin.matchSearchHint' => 'Title or direct ID (tmdb:..., douban:..., tt...)',
+			'serverAdmin.providerAll' => 'All Enabled',
+			'serverAdmin.mediaTypeMovie' => 'Movie',
+			'serverAdmin.mediaTypeShow' => 'TV / Series',
+			'serverAdmin.targetShelfAuto' => 'Auto Classify',
+			'serverAdmin.applyMatch' => 'Apply Match',
+			'serverAdmin.fieldTitle' => 'Title',
+			'serverAdmin.fieldOriginalTitle' => 'Original Title',
+			'serverAdmin.fieldYear' => 'Year',
+			'serverAdmin.fieldShelf' => 'Target Shelf',
+			'serverAdmin.fieldSummary' => 'Summary',
+			'serverAdmin.fieldTagline' => 'Tagline',
+			'serverAdmin.fieldStudio' => 'Studio',
+			'serverAdmin.fieldRating' => 'Rating',
+			'serverAdmin.fieldLocked' => 'Lock metadata against auto-rescrape',
+			'serverAdmin.tvAdminUnsupported' => 'Server administration is only available on PC and mobile devices.',
 			_ => null,
 		};
 	}

@@ -96,6 +96,7 @@ class TranslationsZhHant extends TranslationsZh with BaseTranslations<AppLocale,
 	@override late final _Translations$addServer$zh_Hant addServer = _Translations$addServer$zh_Hant._(_root);
 	@override late final _Translations$deepLinks$zh_Hant deepLinks = _Translations$deepLinks$zh_Hant._(_root);
 	@override late final _Translations$storage$zh_Hant storage = _Translations$storage$zh_Hant._(_root);
+	@override late final _Translations$session$zh_Hant session = _Translations$session$zh_Hant._(_root);
 	@override late final _Translations$streamQuality$zh_Hant streamQuality = _Translations$streamQuality$zh_Hant._(_root);
 }
 
@@ -2644,9 +2645,45 @@ class _Translations$storage$zh_Hant extends Translations$storage$zh {
 	@override String get manualMatch => '手動匹配';
 	@override String get noMatchResults => '沒有結果';
 	@override String get mediaSources => '媒體來源';
-	@override String get scraperSettingsDescription => 'TMDB key、語言與刮削代理';
+	@override String get scraperSettingsDescription => '官方中繼資料服務與刮削語言偏好';
 	@override String get addScanFolder => '新增目錄';
 	@override String get allFolders => '全部目錄（掃描整盤）';
+}
+
+// Path: session
+class _Translations$session$zh_Hant extends Translations$session$zh {
+	_Translations$session$zh_Hant._(TranslationsZhHant root) : this._root = root, super.internal(root);
+
+	final TranslationsZhHant _root; // ignore: unused_field
+
+	// Translations
+	@override String get modeOfflineTitle => '離線模式（本機）';
+	@override String get modeOfflineDesc => '支援本機目錄、SMB、WebDAV 與網盤掛載，透過官方中繼資料服務直接刮削。';
+	@override String get modeSelfHostedTitle => '自建伺服器';
+	@override String get modeSelfHostedDesc => '登入自建的 TTPlay 媒體伺服器，觀看伺服器媒體庫、外部關聯庫並管理掛載來源。';
+	@override String get selfHostedLoginTitle => '登入自建伺服器';
+	@override String get serverUrlLabel => '伺服器位址';
+	@override String get serverUrlHint => '例如 http://192.168.1.10:8090 或 https://media.example.com';
+	@override String get usernameLabel => '使用者名稱';
+	@override String get passwordLabel => '密碼';
+	@override String get testServer => '測試連線';
+	@override String get testingServer => '正在連線…';
+	@override String serverConnected({required Object name}) => '已連線至「${name}」';
+	@override String get serverConnectedUnnamed => '伺服器連線正常';
+	@override String get signInButton => '登入';
+	@override String get switchMode => '切換模式';
+	@override String get switchToOffline => '切換至離線模式';
+	@override String get menuModeOfflineTitle => '離線模式';
+	@override String menuModeOfflineSubtitle({required Object device}) => '本機：${device}';
+	@override String get menuModeSelfHostedTitle => '自建伺服器';
+	@override String menuModeSelfHostedSubtitle({required Object user, required Object server}) => '${user} @ ${server}';
+	@override String get archiveHint => '從離線模式切換為自建後，本機掛載來源與媒體庫會自動安全封存，切回離線模式即可恢復。';
+	@override String get errInvalidUrl => '請輸入有效的 http:// 或 https:// 伺服器位址。';
+	@override String get errRequiredField => '請填寫此項。';
+	@override String get errUninitializedServer => '此伺服器尚未完成網頁端初始化設定，請先於網頁端設定管理員帳號。';
+	@override String get errInvalidCredentials => '使用者名稱或密碼錯誤。';
+	@override String errNetwork({required Object error}) => '連線失敗：${error}';
+	@override String errServer({required Object error}) => '伺服器回傳異常：${error}';
 }
 
 // Path: streamQuality
@@ -6141,9 +6178,36 @@ extension on TranslationsZhHant {
 			'storage.manualMatch' => '手動匹配',
 			'storage.noMatchResults' => '沒有結果',
 			'storage.mediaSources' => '媒體來源',
-			'storage.scraperSettingsDescription' => 'TMDB key、語言與刮削代理',
+			'storage.scraperSettingsDescription' => '官方中繼資料服務與刮削語言偏好',
 			'storage.addScanFolder' => '新增目錄',
 			'storage.allFolders' => '全部目錄（掃描整盤）',
+			'session.modeOfflineTitle' => '離線模式（本機）',
+			'session.modeOfflineDesc' => '支援本機目錄、SMB、WebDAV 與網盤掛載，透過官方中繼資料服務直接刮削。',
+			'session.modeSelfHostedTitle' => '自建伺服器',
+			'session.modeSelfHostedDesc' => '登入自建的 TTPlay 媒體伺服器，觀看伺服器媒體庫、外部關聯庫並管理掛載來源。',
+			'session.selfHostedLoginTitle' => '登入自建伺服器',
+			'session.serverUrlLabel' => '伺服器位址',
+			'session.serverUrlHint' => '例如 http://192.168.1.10:8090 或 https://media.example.com',
+			'session.usernameLabel' => '使用者名稱',
+			'session.passwordLabel' => '密碼',
+			'session.testServer' => '測試連線',
+			'session.testingServer' => '正在連線…',
+			'session.serverConnected' => ({required Object name}) => '已連線至「${name}」',
+			'session.serverConnectedUnnamed' => '伺服器連線正常',
+			'session.signInButton' => '登入',
+			'session.switchMode' => '切換模式',
+			'session.switchToOffline' => '切換至離線模式',
+			'session.menuModeOfflineTitle' => '離線模式',
+			'session.menuModeOfflineSubtitle' => ({required Object device}) => '本機：${device}',
+			'session.menuModeSelfHostedTitle' => '自建伺服器',
+			'session.menuModeSelfHostedSubtitle' => ({required Object user, required Object server}) => '${user} @ ${server}',
+			'session.archiveHint' => '從離線模式切換為自建後，本機掛載來源與媒體庫會自動安全封存，切回離線模式即可恢復。',
+			'session.errInvalidUrl' => '請輸入有效的 http:// 或 https:// 伺服器位址。',
+			'session.errRequiredField' => '請填寫此項。',
+			'session.errUninitializedServer' => '此伺服器尚未完成網頁端初始化設定，請先於網頁端設定管理員帳號。',
+			'session.errInvalidCredentials' => '使用者名稱或密碼錯誤。',
+			'session.errNetwork' => ({required Object error}) => '連線失敗：${error}',
+			'session.errServer' => ({required Object error}) => '伺服器回傳異常：${error}',
 			'streamQuality.preferred' => '偏好畫質',
 			'streamQuality.localPreference' => '本機媒體庫畫質',
 			'streamQuality.noneForFile' => '這個檔案暫時沒有轉碼畫質，會播放原畫',

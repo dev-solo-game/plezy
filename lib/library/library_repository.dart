@@ -7,7 +7,7 @@ import 'package:drift/drift.dart';
 import '../database/app_database.dart';
 import 'media_probe.dart';
 import 'library_watch_state_store.dart';
-import 'sync/deterministic_keys.dart';
+import 'deterministic_keys.dart';
 
 /// String ids persisted in the library tables.
 abstract final class LibraryKinds {
@@ -532,6 +532,7 @@ class LibraryRepository {
     String? tmdbId,
     String? bangumiId,
     String? imdbId,
+    String? doubanId,
   }) async {
     final items = _db.libraryItems;
     final Expression<bool> idMatch;
@@ -539,6 +540,8 @@ class LibraryRepository {
       idMatch = items.tmdbId.equals(tmdbId);
     } else if (bangumiId != null) {
       idMatch = items.bangumiId.equals(bangumiId);
+    } else if (doubanId != null) {
+      idMatch = items.doubanId.equals(doubanId);
     } else if (imdbId != null) {
       idMatch = items.imdbId.equals(imdbId);
     } else {

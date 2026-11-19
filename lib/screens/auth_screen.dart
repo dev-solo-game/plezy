@@ -11,7 +11,6 @@ import '../focus/focusable_button.dart';
 import '../focus/key_event_utils.dart';
 import '../i18n/strings.g.dart';
 import '../library/local_library_client.dart';
-import '../library/sync/sync_coordinator.dart';
 import '../media/ids.dart';
 import '../navigation/profile_session_screen.dart';
 import '../profiles/active_profile_binder.dart';
@@ -19,40 +18,14 @@ import '../profiles/active_profile_provider.dart';
 import '../profiles/profile.dart';
 import '../profiles/profile_registry.dart';
 import '../providers/multi_server_provider.dart';
+import '../session/app_session_controller.dart';
+import '../ttplay/ttplay_session_binder.dart';
 import '../widgets/app_icon.dart';
-import 'storage/sync_settings_screen.dart';
+import 'auth/self_hosted_login_screen.dart';
 
-/// Populates localized shelf and sort titles on [local] from `t.storage`.
-void configureLocalLibraryClientLabels(LocalLibraryClient local) {
-  local
-    ..serverName = t.storage.localLibraryName
-    ..shelfTitles = {
-      'movie': t.storage.content.movie,
-      'show': t.storage.content.show,
-      'anime': t.storage.content.anime,
-      'variety': t.storage.content.variety,
-      'documentary': t.storage.content.documentary,
-      'pending': t.storage.unmatchedTitles,
-    }
-    ..sortTitles = {
-      'title': t.storage.sortTitle,
-      'year': t.storage.sortYear,
-      'releaseDate': t.storage.sortReleaseDate,
-      'rating': t.storage.sortRating,
-      'addedAt': t.storage.sortAddedAt,
-      'lastPlayed': t.storage.sortLastPlayed,
-    }
-    ..recentlyAddedAllTitle = t.discover.recentlyAdded
-    ..recentlyAddedTitle = t.storage.recentlyAdded(shelf: '{shelf}')
-    ..continueWatchingTitle = t.storage.continueWatching;
-}
-
-/// Initial mode selection & sync onboarding screen.
-///
-/// Offers three explicit synchronization modes:
-/// 1) Local Mode (no sync server),
-/// 2) Official Sync Server (zero-URL configuration), or
-/// 3) Self-Hosted Sync Server (custom Go server URL).
+/// Initial dual-mode onboarding screen:
+/// 1) Offline / Local mode (local mounts + official public metadata service)
+/// 2) Self-Hosted Server mode (login to ttplay-server)
 class AuthScreen extends StatefulWidget {
   const AuthScreen({
     super.key,
@@ -84,9 +57,17 @@ class _AuthScreenState extends State<AuthScreen> {
     _errorMessage = widget.initialErrorMessage;
   }
 
-  SyncAndScanCoordinator? _maybeCoordinator() {
+  AppSessionController? _maybeSession() {
     try {
-      return context.read<SyncAndScanCoordinator>();
+      return context.read<AppSessionController?>();
+    } on ProviderNotFoundException {
+      return null;
+    }
+  }
+
+  TtplaySessionBinder? _maybeTtplayBinder() {
+    try {
+      return context.read<TtplaySessionBinder?>();
     } on ProviderNotFoundException {
       return null;
     }
@@ -109,15 +90,25 @@ class _AuthScreenState extends State<AuthScreen> {
     }
   }
 
-  Future<void> _ensureLocalSessionReady() async {
-    final local = context.read<LocalLibraryClient?>();
-    final multiServer = context.read<MultiServerProvider?>();
-    if (local != null && multiServer != null) {
-      configureLocalLibraryClientLabels(local);
-      await local.refreshMounts();
+  Future<void> _ensureLocalSessionReady({required bool includeLocalLibrary}) async {
+    final ttplayBinder = _maybeTtplayBinder();
+    if (ttplayBinder != null) {
+      await ttplayBinder.syncFromSession(refreshExternalServers: !includeLocalLibrary);
       if (!mounted) return;
-      multiServer.serverManager.registerLocalLibrary(local);
-      multiServer.addToVisibleServerIds(ServerId(LocalLibraryClient.localServerId));
+    } else {
+      final local = context.read<LocalLibraryClient?>();
+      final multiServer = context.read<MultiServerProvider?>();
+      if (local != null && multiServer != null) {
+        if (includeLocalLibrary) {
+          configureLocalLibraryClientLabels(local);
+          await local.refreshMounts();
+          if (!mounted) return;
+          multiServer.serverManager.registerLocalLibrary(local);
+          multiServer.addToVisibleServerIds(ServerId(LocalLibraryClient.localServerId));
+        } else {
+          multiServer.serverManager.unregisterLocalLibrary();
+        }
+      }
     }
 
     final activeProfile = context.read<ActiveProfileProvider?>();
@@ -159,8 +150,8 @@ class _AuthScreenState extends State<AuthScreen> {
     }
   }
 
-  Future<void> _enterProfileSession() async {
-    await _ensureLocalSessionReady();
+  Future<void> _enterProfileSession({required bool includeLocalLibrary}) async {
+    await _ensureLocalSessionReady(includeLocalLibrary: includeLocalLibrary);
     if (!mounted) return;
     final page = widget.sessionBuilder?.call(context) ?? const ProfileSessionScreen();
     unawaited(
@@ -177,28 +168,31 @@ class _AuthScreenState extends State<AuthScreen> {
     );
   }
 
-  Future<void> _selectLocalLanMode() async {
+  Future<void> _selectOfflineMode() async {
     if (_busy || !await _prepareDatabaseRecoveryForSignIn() || !mounted) return;
     setState(() => _busy = true);
     try {
-      await _maybeCoordinator()?.selectLocalMode();
+      await _maybeSession()?.selectOfflineMode();
       if (!mounted) return;
-      await _enterProfileSession();
+      await _enterProfileSession(includeLocalLibrary: true);
+    } catch (e) {
+      if (mounted) setState(() => _errorMessage = '$e');
     } finally {
       if (mounted) setState(() => _busy = false);
     }
   }
 
-  Future<void> _openCloudSyncLogin(SyncServerKind kind) async {
+  Future<void> _openSelfHostedLogin() async {
     if (_busy || !await _prepareDatabaseRecoveryForSignIn() || !mounted) return;
+    final existingUrl = _maybeSession()?.selfHostedSession?.serverUrl;
     final signedIn = await Navigator.of(context).push<bool>(
-      MaterialPageRoute<bool>(builder: (_) => SyncSettingsScreen(onboardingMode: true, initialServerKind: kind)),
+      MaterialPageRoute<bool>(builder: (_) => SelfHostedLoginScreen(initialServerUrl: existingUrl)),
     );
     if (!mounted) return;
-    if (signedIn == true || _maybeCoordinator()?.isSignedIn == true) {
+    if (signedIn == true || _maybeSession()?.isSelfHosted == true) {
       setState(() => _busy = true);
       try {
-        await _enterProfileSession();
+        await _enterProfileSession(includeLocalLibrary: false);
       } finally {
         if (mounted) setState(() => _busy = false);
       }
@@ -265,49 +259,33 @@ class _AuthScreenState extends State<AuthScreen> {
         FocusableButton(
           autofocus: true,
           useBackgroundFocus: true,
-          onPressed: _busy ? null : () => unawaited(_selectLocalLanMode()),
+          onPressed: _busy ? null : () => unawaited(_selectOfflineMode()),
           child: FilledButton.icon(
-            onPressed: _busy ? null : () => unawaited(_selectLocalLanMode()),
+            onPressed: _busy ? null : () => unawaited(_selectOfflineMode()),
             style: FilledButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16)),
             icon: const AppIcon(Symbols.devices_rounded, size: 20),
-            label: Text(t.sync.modeLanTitle),
+            label: Text(t.session.modeOfflineTitle),
           ),
         ),
-        const SizedBox(height: 4),
+        const SizedBox(height: 6),
         Text(
-          t.sync.modeLanDesc,
+          t.session.modeOfflineDesc,
           style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
           textAlign: TextAlign.center,
         ),
-        const SizedBox(height: 14),
+        const SizedBox(height: 18),
         FocusableButton(
-          onPressed: _busy ? null : () => unawaited(_openCloudSyncLogin(SyncServerKind.official)),
-          child: FilledButton.tonalIcon(
-            onPressed: _busy ? null : () => unawaited(_openCloudSyncLogin(SyncServerKind.official)),
-            style: FilledButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16)),
-            icon: const AppIcon(Symbols.cloud_sync_rounded, size: 20),
-            label: Text(t.sync.modeOfficialTitle),
-          ),
-        ),
-        const SizedBox(height: 4),
-        Text(
-          t.sync.modeOfficialDesc,
-          style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
-          textAlign: TextAlign.center,
-        ),
-        const SizedBox(height: 14),
-        FocusableButton(
-          onPressed: _busy ? null : () => unawaited(_openCloudSyncLogin(SyncServerKind.selfHosted)),
+          onPressed: _busy ? null : () => unawaited(_openSelfHostedLogin()),
           child: OutlinedButton.icon(
-            onPressed: _busy ? null : () => unawaited(_openCloudSyncLogin(SyncServerKind.selfHosted)),
+            onPressed: _busy ? null : () => unawaited(_openSelfHostedLogin()),
             style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16)),
             icon: const AppIcon(Symbols.dns_rounded, size: 20),
-            label: Text(t.sync.modeSelfHostedTitle),
+            label: Text(t.session.modeSelfHostedTitle),
           ),
         ),
-        const SizedBox(height: 4),
+        const SizedBox(height: 6),
         Text(
-          t.sync.modeSelfHostedDesc,
+          t.session.modeSelfHostedDesc,
           style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
           textAlign: TextAlign.center,
         ),

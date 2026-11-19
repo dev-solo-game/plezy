@@ -37,10 +37,13 @@ class ScrapedTitle {
   const ScrapedTitle({
     required this.source,
     required this.title,
+    this.externalId,
     this.tmdbId,
     this.imdbId,
     this.tvdbId,
     this.bangumiId,
+    this.doubanId,
+    this.anilistId,
     this.originalTitle,
     this.aliases = const [],
     this.year,
@@ -61,13 +64,16 @@ class ScrapedTitle {
     this.category,
   });
 
-  /// `'nfo'`, `'tmdb'` or `'bangumi'`.
+  /// `'nfo'`, `'tmdb'`, `'bangumi'`, `'douban'`, `'anilist'`, ...
   final String source;
   final String title;
+  final String? externalId;
   final String? tmdbId;
   final String? imdbId;
   final String? tvdbId;
   final String? bangumiId;
+  final String? doubanId;
+  final String? anilistId;
   final String? originalTitle;
   final List<String> aliases;
   final int? year;
@@ -91,6 +97,16 @@ class ScrapedTitle {
   /// The shelf this title belongs on, one of `LibraryTypes.shelves`, when
   /// the source can tell. Null leaves it to the title being a movie or a show.
   final String? category;
+
+  String? get primaryId => switch (source) {
+    'tmdb' => tmdbId ?? externalId,
+    'bangumi' => bangumiId ?? externalId,
+    'douban' => doubanId ?? externalId,
+    'anilist' => anilistId ?? externalId,
+    'imdb' => imdbId ?? externalId,
+    'tvdb' => tvdbId ?? externalId,
+    _ => externalId ?? tmdbId ?? bangumiId ?? doubanId ?? anilistId ?? imdbId ?? tvdbId,
+  };
 }
 
 class ScrapedEpisode {

@@ -102,6 +102,7 @@ import '../utils/snackbar_helper.dart';
 import '../utils/stream_buffer_sizing.dart';
 import '../models/companion_remote/remote_playback_models.dart';
 import '../media/work_skip_settings.dart';
+import '../services/companion_remote/remote_host_catalog_handler.dart';
 import '../services/companion_remote/remote_playback_launcher.dart';
 import '../services/work_skip_settings_store.dart';
 import '../storage/mount_manager.dart';

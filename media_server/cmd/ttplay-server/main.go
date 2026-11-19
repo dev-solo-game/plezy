@@ -48,6 +48,7 @@ func main() {
 	tmdbImageBase := flag.String("tmdb-image-base", os.Getenv("MEDIA_TMDB_IMAGE_BASE"), "Default TMDB image base URL")
 	metadataProxy := flag.String("metadata-proxy", os.Getenv("MEDIA_METADATA_PROXY"), "HTTP/SOCKS5 proxy for TMDB/Bangumi and artwork proxy")
 	bangumiEnabled := flag.String("bangumi-enabled", os.Getenv("MEDIA_BANGUMI_ENABLED"), "Default bangumi_enabled ('true' or 'false')")
+	allowPublicMetadata := flag.String("allow-public-metadata", os.Getenv("MEDIA_ALLOW_PUBLIC_METADATA"), "Default allow_public_metadata ('true' or 'false')")
 	webDir := flag.String("web-dir", os.Getenv("MEDIA_WEB_DIR"), "Optional path to web static directory (defaults to ./web/dist or ./web next to executable)")
 	logLevel := flag.String("log-level", envOr("MEDIA_LOG_LEVEL", "debug"), "Server log level (debug, info, warn, error)")
 	flag.Parse()
@@ -81,6 +82,17 @@ func main() {
 	}
 	if err := store.SeedDefaultSettingsIfAbsent(*tmdbAPIKey, *tmdbAPIBase, *tmdbImageBase, *metadataProxy, bgmPtr); err != nil {
 		log.Fatalf("seed settings: %v", err)
+	}
+	var pubPtr *bool
+	if raw := strings.TrimSpace(*allowPublicMetadata); raw != "" {
+		parsed, pErr := strconv.ParseBool(raw)
+		if pErr != nil {
+			log.Fatalf("invalid -allow-public-metadata value %q: %v", raw, pErr)
+		}
+		pubPtr = &parsed
+	}
+	if err := store.SeedPublicMetadataIfAbsent(pubPtr); err != nil {
+		log.Fatalf("seed public metadata setting: %v", err)
 	}
 
 	authSvc := auth.NewService(store)

@@ -7,7 +7,6 @@ import 'package:plezy/database/app_database.dart';
 import 'package:plezy/i18n/strings.g.dart';
 import 'package:plezy/library/library_repository.dart';
 import 'package:plezy/library/local_library_client.dart';
-import 'package:plezy/library/sync/sync_coordinator.dart';
 import 'package:plezy/media/ids.dart';
 import 'package:plezy/navigation/profile_session_screen.dart';
 import 'package:plezy/profiles/active_profile_binder.dart';
@@ -22,14 +21,17 @@ import 'package:plezy/providers/discover_provider.dart';
 import 'package:plezy/providers/download_provider.dart';
 import 'package:plezy/providers/multi_server_provider.dart';
 import 'package:plezy/providers/playback_state_provider.dart';
+import 'package:plezy/screens/auth/self_hosted_login_screen.dart';
 import 'package:plezy/screens/auth_screen.dart';
 import 'package:plezy/screens/profile/profile_teardown.dart';
-import 'package:plezy/screens/storage/sync_settings_screen.dart';
 import 'package:plezy/services/credential_vault.dart';
 import 'package:plezy/services/multi_server_manager.dart';
 import 'package:plezy/services/offline_watch_sync_service.dart';
 import 'package:plezy/services/storage_service.dart';
 import 'package:plezy/services/system_shelf_service.dart';
+import 'package:plezy/session/app_session_controller.dart';
+import 'package:plezy/session/app_session_models.dart';
+import 'package:plezy/session/app_session_store.dart';
 import 'package:plezy/storage/mount_manager.dart';
 import 'package:plezy/storage/mount_registry.dart';
 import 'package:provider/provider.dart';
@@ -95,115 +97,69 @@ void main() {
     SystemShelfService().debugReset();
   });
 
-  testWidgets('AuthScreen offers Local, Official, and Self-Hosted sync modes without Plex', (tester) async {
+  testWidgets('AuthScreen offers Offline and Self-Hosted modes without Plex or legacy sync', (tester) async {
     await tester.pumpWidget(TranslationProvider(child: const MaterialApp(home: AuthScreen(initializeServices: false))));
     await tester.pump();
 
-    expect(find.text(t.sync.modeLanTitle), findsOneWidget);
-    expect(find.text(t.sync.modeOfficialTitle), findsOneWidget);
-    expect(find.text(t.sync.modeSelfHostedTitle), findsOneWidget);
+    expect(find.text(t.session.modeOfflineTitle), findsOneWidget);
+    expect(find.text(t.session.modeSelfHostedTitle), findsOneWidget);
     expect(find.text(t.auth.connectToMediaBrowser(product: 'Jellyfin')), findsNothing);
     expect(find.text(t.auth.connectToMediaBrowser(product: 'Emby')), findsNothing);
     expect(find.text(t.storage.title), findsNothing);
     expect(find.text(t.auth.signInWithPlex), findsNothing);
   });
 
-  testWidgets('tapping Official Sync mode opens SyncSettingsScreen with Server URL hidden', (tester) async {
-    final db = AppDatabase.forTesting(NativeDatabase.memory());
-    final repo = LibraryRepository(db);
-    final manager = MountManager(MountRegistry(db));
-    final sync = SyncAndScanCoordinator(
-      db: db,
-      repo: repo,
-      mountManager: manager,
-      enableLanUdp: false,
-      autoStartLanService: false,
-    );
-    addTearDown(() async {
-      sync.dispose();
-      await manager.dispose();
-      await db.close();
-    });
-
-    await tester.pumpWidget(
-      ChangeNotifierProvider<SyncAndScanCoordinator>.value(
-        value: sync,
-        child: TranslationProvider(child: const MaterialApp(home: AuthScreen(initializeServices: false))),
-      ),
-    );
-    await tester.pump();
-
-    await tester.tap(find.text(t.sync.modeOfficialTitle));
-    await tester.pumpAndSettle();
-
-    expect(find.byType(SyncSettingsScreen), findsOneWidget);
-    expect(find.text(t.sync.register), findsOneWidget);
-    expect(find.text(t.sync.serverUrl), findsNothing);
-    expect(find.text(t.sync.testConnection), findsNothing);
-  });
-
-  testWidgets('tapping Self-Hosted Sync mode opens SyncSettingsScreen with Server URL and Test Connection', (
+  testWidgets('tapping Self-Hosted mode opens SelfHostedLoginScreen with Server URL and Test Connection', (
     tester,
   ) async {
     final db = AppDatabase.forTesting(NativeDatabase.memory());
-    final repo = LibraryRepository(db);
     final manager = MountManager(MountRegistry(db));
-    final sync = SyncAndScanCoordinator(
-      db: db,
-      repo: repo,
-      mountManager: manager,
-      enableLanUdp: false,
-      autoStartLanService: false,
-    );
+    final appSession = AppSessionController(db: db, mountManager: manager);
     addTearDown(() async {
-      sync.dispose();
+      appSession.dispose();
       await manager.dispose();
       await db.close();
     });
 
     await tester.pumpWidget(
-      ChangeNotifierProvider<SyncAndScanCoordinator>.value(
-        value: sync,
+      ChangeNotifierProvider<AppSessionController>.value(
+        value: appSession,
         child: TranslationProvider(child: const MaterialApp(home: AuthScreen(initializeServices: false))),
       ),
     );
     await tester.pump();
 
-    await tester.tap(find.text(t.sync.modeSelfHostedTitle));
+    await tester.tap(find.text(t.session.modeSelfHostedTitle));
     await tester.pumpAndSettle();
 
-    expect(find.byType(SyncSettingsScreen), findsOneWidget);
-    expect(find.text(t.sync.serverUrl), findsOneWidget);
-    expect(find.text(t.sync.testConnection), findsOneWidget);
-    expect(find.text(t.sync.register), findsOneWidget);
+    expect(find.byType(SelfHostedLoginScreen), findsOneWidget);
+    expect(find.text(t.session.serverUrlLabel), findsOneWidget);
+    expect(find.text(t.session.testServer), findsOneWidget);
+    expect(find.text(t.session.usernameLabel), findsOneWidget);
+    expect(find.text(t.session.passwordLabel), findsOneWidget);
+    expect(find.text(t.session.signInButton), findsOneWidget);
   });
 
-  test('selecting Local/LAN mode completes onboarding without requiring a server', () async {
+  test('selecting Offline mode persists AppLoginMode.offline without requiring a server', () async {
     final db = AppDatabase.forTesting(NativeDatabase.memory());
-    final repo = LibraryRepository(db);
     final manager = MountManager(MountRegistry(db));
-    final sync = SyncAndScanCoordinator(
-      db: db,
-      repo: repo,
-      mountManager: manager,
-      enableLanUdp: false,
-      autoStartLanService: false,
-    );
+    final appSession = AppSessionController(db: db, mountManager: manager);
     addTearDown(() async {
-      sync.dispose();
+      appSession.dispose();
       await manager.dispose();
       await db.close();
     });
 
-    await sync.initialize();
-    expect(await sync.syncStore.isOnboardingCompleted(), isFalse);
+    await appSession.initialize();
+    expect(appSession.hasSelectedMode, isFalse);
 
-    await sync.selectLanMode(startService: false);
-    expect(sync.syncMode, SyncMode.localOnly);
-    expect(await sync.syncStore.isOnboardingCompleted(), isTrue);
+    await appSession.selectOfflineMode();
+    expect(appSession.isOffline, isTrue);
+    expect(appSession.hasSelectedMode, isTrue);
+    expect((await AppSessionStore(db).load()).mode, AppLoginMode.offline);
   });
 
-  testWidgets('logout preserves local library, profile, and media sources, and re-entering Local/LAN loads Discover', (
+  testWidgets('logout preserves local library, profile, and media sources, and re-entering Offline loads Discover', (
     tester,
   ) async {
     final db = AppDatabase.forTesting(NativeDatabase.memory());
@@ -238,13 +194,7 @@ void main() {
       pinPrompt: (_, {String? errorMessage}) async => null,
     );
     final offlineWatch = OfflineWatchSyncService(database: db, serverManager: serverManager);
-    final sync = SyncAndScanCoordinator(
-      db: db,
-      repo: repo,
-      mountManager: manager,
-      enableLanUdp: false,
-      autoStartLanService: false,
-    );
+    final appSession = AppSessionController(db: db, mountManager: manager);
     final downloads = _TestDownloads();
     final companion = _TestCompanion();
     final playback = _TestPlayback();
@@ -255,7 +205,7 @@ void main() {
       binder.dispose();
       await activeProfile.resetForTesting();
       activeProfile.dispose();
-      sync.dispose();
+      appSession.dispose();
       offlineWatch.dispose();
       multiServer.dispose();
       serverManager.dispose();
@@ -277,7 +227,7 @@ void main() {
     await activeProfile.activate(localProfile);
 
     serverManager.registerLocalLibrary(localClient);
-    await sync.selectLanMode(startService: false);
+    await appSession.selectOfflineMode();
     binder.start();
     await binder.rebindActive();
 
@@ -298,7 +248,7 @@ void main() {
         ChangeNotifierProvider<PlaybackStateProvider>.value(value: playback),
         ChangeNotifierProvider<OfflineWatchSyncService>.value(value: offlineWatch),
         Provider<LocalLibraryClient>.value(value: localClient),
-        ChangeNotifierProvider<SyncAndScanCoordinator>.value(value: sync),
+        ChangeNotifierProvider<AppSessionController>.value(value: appSession),
       ],
       child: TranslationProvider(
         child: MaterialApp(key: appKey, home: home),
@@ -321,9 +271,9 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byType(AuthScreen), findsOneWidget);
-    expect(sync.isSignedIn, isFalse);
-    expect(sync.onboardingCompleted, isFalse);
-    expect(await sync.syncStore.hasExplicitOnboardingState(), isTrue);
+    expect(appSession.hasSelectedMode, isFalse);
+    expect(appSession.explicitlyLoggedOut, isTrue);
+    expect((await AppSessionStore(db).load()).explicitlyLoggedOut, isTrue);
     expect(serverManager.isServerOnline(ServerId(LocalLibraryClient.localServerId)), isTrue);
     expect((await profileRegistry.list()).map((p) => p.id), [localProfile.id]);
     expect((await connectionRegistry.list()).map((c) => c.id), [jfConn.id]);
@@ -349,7 +299,7 @@ void main() {
     );
     await tester.pump();
 
-    await tester.tap(find.text(t.sync.modeLanTitle));
+    await tester.tap(find.text(t.session.modeOfflineTitle));
     await tester.pumpAndSettle();
 
     expect(find.text('session-ready'), findsOneWidget);

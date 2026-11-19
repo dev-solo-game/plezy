@@ -57,12 +57,13 @@ import 'general_settings_screen.dart';
 import 'keyboard_shortcuts_screen.dart';
 import '../../connection/connection_registry.dart';
 import '../../connection/connection.dart';
-import '../../library/sync/sync_coordinator.dart';
 import '../storage/lan_devices_screen.dart';
 import '../storage/mounts_screen.dart';
 import '../storage/scraper_settings_screen.dart';
-import '../storage/sync_qr_scanner_screen.dart';
-import '../storage/sync_settings_screen.dart';
+import '../ttplay_admin/ttplay_admin_guard.dart';
+import '../ttplay_admin/ttplay_external_servers_screen.dart';
+import '../ttplay_admin/ttplay_mounts_screen.dart';
+import '../ttplay_admin/ttplay_scraper_settings_screen.dart';
 import 'logs_screen.dart';
 import 'playback_settings_screen.dart';
 import 'services_settings_screen.dart';
@@ -120,7 +121,6 @@ class _SettingsScreenState extends State<SettingsScreen> with FocusableTab, Moun
   static const _kAutoHidePerformanceOverlay = 'auto_hide_performance_overlay';
   static const _kViewLogs = 'view_logs';
   static const _kStorageMounts = 'storage_mounts';
-  static const _kScanQrLogin = 'scan_qr_login';
   static const _kScraperSettings = 'scraper_settings';
 
   /// Whether any Plex/Jellyfin/Emby connection is stored. Their settings
@@ -217,6 +217,10 @@ class _SettingsScreenState extends State<SettingsScreen> with FocusableTab, Moun
   }
 
   Widget _buildContent(BuildContext sheetContext, {required bool hasLibraries}) {
+    final appSession = maybeWatchAppSession(sheetContext);
+    final isSelfHosted = appSession?.isSelfHosted == true;
+    final isTv = PlatformDetector.isTV();
+
     return Scaffold(
       body: Focus(
         onKeyEvent: _handleKeyEvent,
@@ -246,19 +250,25 @@ class _SettingsScreenState extends State<SettingsScreen> with FocusableTab, Moun
                     ],
                   ),
 
-                  _buildMediaSourcesSection(),
-                  const SizedBox(height: 16),
-                  SettingsGroup(
-                    children: [
-                      SettingNavigationTile(
-                        focusNode: _focusTracker.get(_kScraperSettings),
-                        icon: Symbols.travel_explore_rounded,
-                        title: t.storage.scraperSettings,
-                        subtitle: t.storage.scraperSettingsDescription,
-                        destinationBuilder: (_) => const ScraperSettingsScreen(),
-                      ),
-                    ],
-                  ),
+                  if (isSelfHosted) ...[
+                    if (!isTv) _buildSelfHostedAdminSection(),
+                    const SizedBox(height: 16),
+                    SettingsGroup(children: [_buildLanDevicesTile()]),
+                  ] else ...[
+                    _buildMediaSourcesSection(),
+                    const SizedBox(height: 16),
+                    SettingsGroup(
+                      children: [
+                        SettingNavigationTile(
+                          focusNode: _focusTracker.get(_kScraperSettings),
+                          icon: Symbols.travel_explore_rounded,
+                          title: t.storage.scraperSettings,
+                          subtitle: t.storage.scraperSettingsDescription,
+                          destinationBuilder: (_) => const ScraperSettingsScreen(),
+                        ),
+                      ],
+                    ),
+                  ],
 
                   // Server connections only matter to installs that still have some.
                   if (_hasServerConnections) _buildConnectionsSection(sheetContext),
@@ -383,20 +393,45 @@ class _SettingsScreenState extends State<SettingsScreen> with FocusableTab, Moun
     );
   }
 
+  Widget _buildLanDevicesTile() {
+    return SettingNavigationTile(
+      icon: Symbols.devices_rounded,
+      title: t.sync.lanDevicesTitle,
+      subtitle: t.sync.remoteDevicesSubtitle,
+      destinationBuilder: (_) => const LanDevicesScreen(),
+    );
+  }
+
+  Widget _buildSelfHostedAdminSection() {
+    return SettingsGroup(
+      title: t.serverAdmin.sectionTitle,
+      children: [
+        SettingNavigationTile(
+          focusNode: _focusTracker.get(_kStorageMounts),
+          icon: Symbols.hard_drive_rounded,
+          title: t.serverAdmin.mountsTitle,
+          subtitle: t.serverAdmin.mountsSubtitle,
+          destinationBuilder: (_) => const TtplayMountsScreen(),
+        ),
+        SettingNavigationTile(
+          focusNode: _focusTracker.get(_kScraperSettings),
+          icon: Symbols.travel_explore_rounded,
+          title: t.serverAdmin.scraperTitle,
+          subtitle: t.serverAdmin.scraperSubtitle,
+          destinationBuilder: (_) => const TtplayScraperSettingsScreen(),
+        ),
+        SettingNavigationTile(
+          icon: Symbols.dns_rounded,
+          title: t.serverAdmin.externalServersTitle,
+          subtitle: t.serverAdmin.externalServersSubtitle,
+          destinationBuilder: (_) => const TtplayExternalServersScreen(),
+        ),
+      ],
+    );
+  }
+
   Widget _buildMediaSourcesSection() {
     final active = context.watch<ActiveProfileProvider?>()?.active;
-    SyncAndScanCoordinator? sync;
-    try {
-      sync = context.watch<SyncAndScanCoordinator>();
-    } on ProviderNotFoundException catch (_) {}
-    final sess = sync?.session;
-    final syncSubtitle = sync == null || sess == null
-        ? (sync == null ? t.sync.subtitle : t.sync.lanSettingsSubtitle(count: sync.lanService.trustedPeers.length))
-        : (sess.serverKind == SyncServerKind.official
-              ? t.sync.officialSettingsSubtitle(name: sess.username)
-              : t.sync.selfHostedSettingsSubtitle(name: sess.username));
-
-    final showMobileScanTile = PlatformDetector.isMobile(context);
 
     return SettingsGroup(
       title: t.storage.mediaSources,
@@ -408,26 +443,7 @@ class _SettingsScreenState extends State<SettingsScreen> with FocusableTab, Moun
           subtitle: t.storage.description,
           destinationBuilder: (context) => const MountsScreen(),
         ),
-        SettingNavigationTile(
-          icon: Symbols.cloud_sync_rounded,
-          title: t.sync.title,
-          subtitle: syncSubtitle,
-          destinationBuilder: (_) => const SyncSettingsScreen(),
-        ),
-        if (showMobileScanTile)
-          SettingNavigationTile(
-            focusNode: _focusTracker.get(_kScanQrLogin),
-            icon: Symbols.qr_code_scanner_rounded,
-            title: t.sync.scanQrTileTitle,
-            subtitle: sync?.isSignedIn == true ? t.sync.scanQrTileSignedInSubtitle : t.sync.scanQrTileSignedOutSubtitle,
-            onTap: () => unawaited(_handleMobileQrScanTap(sync)),
-          ),
-        SettingNavigationTile(
-          icon: Symbols.devices_rounded,
-          title: t.sync.lanDevicesTitle,
-          subtitle: t.sync.remoteDevicesSubtitle,
-          destinationBuilder: (_) => const LanDevicesScreen(),
-        ),
+        _buildLanDevicesTile(),
         SettingNavigationTile(
           icon: Symbols.dns_rounded,
           title: 'Emby / Jellyfin',
@@ -438,27 +454,6 @@ class _SettingsScreenState extends State<SettingsScreen> with FocusableTab, Moun
         ),
       ],
     );
-  }
-
-  Future<void> _handleMobileQrScanTap(SyncAndScanCoordinator? sync) async {
-    if (sync == null || !sync.isSignedIn) {
-      final goLogin = await showDialog<bool>(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          title: Text(t.sync.scanQrRequireLoginTitle),
-          content: Text(t.sync.scanQrRequireLoginBody),
-          actions: [
-            TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: Text(t.common.cancel)),
-            FilledButton(onPressed: () => Navigator.of(ctx).pop(true), child: Text(t.sync.goToSyncLogin)),
-          ],
-        ),
-      );
-      if (goLogin == true && mounted) {
-        await Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const SyncSettingsScreen()));
-      }
-      return;
-    }
-    await Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const SyncQrScannerScreen()));
   }
 
   Widget _buildConnectionsSection(BuildContext context) {

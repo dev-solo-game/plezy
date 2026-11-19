@@ -88,8 +88,14 @@ import 'library/local_library_client.dart';
 import 'library/library_scan_service.dart';
 import 'library/library_scanner.dart';
 import 'library/scrapers/tmdb_provider.dart';
-import 'library/sync/sync_coordinator.dart';
-import 'library/sync/sync_local_store.dart';
+import 'library/scrapers/server_metadata_provider.dart';
+import 'library/local_workspace_archive.dart';
+import 'services/companion_remote/lan_identity_store.dart';
+import 'services/companion_remote/lan_pairing_service.dart';
+import 'session/app_session_controller.dart';
+import 'session/app_session_models.dart';
+import 'session/app_session_store.dart';
+import 'ttplay/ttplay_session_binder.dart';
 import 'storage/http_range_reader.dart';
 import 'storage/mount_manager.dart';
 import 'storage/mount_registry.dart';
@@ -913,6 +919,8 @@ enum StartupSessionMode { recoveryRequired, onboardingRequired, readyForHome }
 final class StartupSessionBootstrap {
   StartupSessionBootstrap._({
     required this.mode,
+    this.loginMode,
+    this.selfHostedSession,
     this.initialMounts = const [],
     this.initialConnections = const [],
     this.connections,
@@ -935,6 +943,8 @@ final class StartupSessionBootstrap {
        );
 
   StartupSessionBootstrap.readyForHome({
+    AppLoginMode? loginMode,
+    SelfHostedSession? selfHostedSession,
     required List<StorageMount> initialMounts,
     required List<Connection> initialConnections,
     required ConnectionRegistry connections,
@@ -945,6 +955,8 @@ final class StartupSessionBootstrap {
     required bool shouldGuideToMounts,
   }) : this._(
          mode: StartupSessionMode.readyForHome,
+         loginMode: loginMode,
+         selfHostedSession: selfHostedSession,
          initialMounts: initialMounts,
          initialConnections: initialConnections,
          connections: connections,
@@ -956,6 +968,8 @@ final class StartupSessionBootstrap {
        );
 
   final StartupSessionMode mode;
+  final AppLoginMode? loginMode;
+  final SelfHostedSession? selfHostedSession;
   final List<StorageMount> initialMounts;
   final List<Connection> initialConnections;
   final ConnectionRegistry? connections;
@@ -999,39 +1013,32 @@ Future<StartupSessionBootstrap> resolveStartupSessionBootstrap({
 
   final connRegistry = ConnectionRegistry(appDatabase, includePlex: plexSupportEnabled);
   final mountRegistry = MountRegistry(appDatabase);
-  final syncStore = SyncLocalStore(appDatabase);
+  final sessionStore = AppSessionStore(appDatabase);
+  final identityStore = LanIdentityStore(appDatabase);
 
   final (
     initialMounts,
     initialConnections,
-    onboardingDoneRaw,
-    hasExplicitOnboarding,
-    syncSession,
+    sessionState,
     trustedPeers,
     existingLibraryRow,
   ) = await (
     mountRegistry.list(),
     connRegistry.list(),
-    syncStore.isOnboardingCompleted(),
-    syncStore.hasExplicitOnboardingState(),
-    syncStore.loadSession(),
-    syncStore.loadTrustedLanPeers(),
+    sessionStore.load(),
+    identityStore.loadTrustedLanPeers(),
     appDatabase.customSelect('SELECT 1 FROM library_items LIMIT 1').getSingleOrNull(),
   ).wait;
 
-  final hasSyncSession = syncSession != null;
-  var onboardingDone = onboardingDoneRaw;
-  if (!onboardingDone &&
-      !hasExplicitOnboarding &&
-      (initialMounts.isNotEmpty || initialConnections.isNotEmpty || hasSyncSession)) {
-    await syncStore.setOnboardingCompleted(true);
-    if (!hasSyncSession) {
-      await syncStore.setSyncMode(SyncMode.localOnly);
-    }
-    onboardingDone = true;
+  var effectiveMode = sessionState.mode;
+  if (effectiveMode == null &&
+      !sessionState.explicitlyLoggedOut &&
+      (initialMounts.isNotEmpty || initialConnections.isNotEmpty)) {
+    await sessionStore.saveOfflineMode();
+    effectiveMode = AppLoginMode.offline;
   }
 
-  if (!onboardingDone) {
+  if (effectiveMode == null) {
     return StartupSessionBootstrap.onboardingRequired(
       initialMounts: initialMounts,
       initialConnections: initialConnections,
@@ -1072,15 +1079,17 @@ Future<StartupSessionBootstrap> resolveStartupSessionBootstrap({
       (activeProfileProvider.active == null && activeProfileProvider.profiles.isNotEmpty) ||
       activeProfileProvider.requiresSelectionOnOpen(settings);
   final shouldGuideToMounts =
+      effectiveMode == AppLoginMode.offline &&
       initialMounts.isEmpty &&
       initialConnections.isEmpty &&
-      !hasSyncSession &&
       trustedPeers.isEmpty &&
       existingLibraryRow == null;
 
   AndroidExitDiagnostics.markStartupPhase(AndroidStartupPhase.credentialsLoaded);
 
   return StartupSessionBootstrap.readyForHome(
+    loginMode: effectiveMode,
+    selfHostedSession: effectiveMode == AppLoginMode.selfHosted ? sessionState.selfHosted : null,
     initialMounts: initialMounts,
     initialConnections: initialConnections,
     connections: connRegistry,
@@ -1569,7 +1578,10 @@ class _MainAppState extends State<MainApp> with WidgetsBindingObserver {
   late final LibraryScrapeRunner _libraryScrapeRunner;
   late final LocalLibraryClient _localLibraryClient;
   late final LibraryScanService _libraryScanService;
-  SyncAndScanCoordinator? _syncCoordinator;
+  late final LanIdentityStore _lanIdentityStore;
+  late final LanPairingService _lanPairingService;
+  late final AppSessionController _appSessionController;
+  late final TtplaySessionBinder _ttplaySessionBinder;
   late final DownloadManagerService _downloadManager;
   late final OfflineWatchSyncService _offlineWatchSyncService;
   late final ConnectionRegistry _connections;
@@ -1642,17 +1654,8 @@ class _MainAppState extends State<MainApp> with WidgetsBindingObserver {
       repository: _libraryRepository,
       settings: _librarySettingsStore,
       mounts: _mountManager,
-      resolveMetadataEndpoint: () async {
-        final sess = _syncCoordinator?.session ?? await SyncLocalStore(_appDatabase).loadSession();
-        if (sess != null) {
-          return (
-            serverUrl: sess.serverUrl,
-            accessToken: sess.accessToken,
-            isOfficial: sess.serverKind == SyncServerKind.official,
-          );
-        }
-        return (serverUrl: SyncLocalStore.effectiveDefaultOfficialSyncUrl, accessToken: null, isOfficial: true);
-      },
+      resolveMetadataEndpoint: () async =>
+          (serverUrl: ServerMetadataProvider.defaultOfficialMetadataUrl, accessToken: null, isOfficial: true),
       onImageBaseUpdated: (imageBase) {
         final trimmed = imageBase.trim();
         if (trimmed.isNotEmpty) {
@@ -1680,11 +1683,42 @@ class _MainAppState extends State<MainApp> with WidgetsBindingObserver {
     );
     _mountManager.onReachabilityChanged = _libraryScanService.notifyLibraryChanged;
 
-    if (bootstrap != null && bootstrap.isReadyForHome) {
+    _lanIdentityStore = LanIdentityStore(_appDatabase);
+    _lanPairingService = LanPairingService(
+      identityStore: _lanIdentityStore,
+      enableUdpBroadcast: widget.enableBackgroundSyncServices,
+    );
+    _appSessionController = AppSessionController(
+      db: _appDatabase,
+      archive: LocalWorkspaceArchive(_appDatabase),
+      mountManager: _mountManager,
+      scanService: _libraryScanService,
+      identityStore: _lanIdentityStore,
+      initialMode: bootstrap?.loginMode,
+      initialSelfHostedSession: bootstrap?.selfHostedSession,
+    );
+    _ttplaySessionBinder = TtplaySessionBinder(
+      sessionController: _appSessionController,
+      serverManager: _serverManager,
+      localLibraryClient: _localLibraryClient,
+    );
+    if (bootstrap?.loginMode != null) {
+      unawaited(_appSessionController.initialize());
+    }
+
+    if (bootstrap != null &&
+        bootstrap.isReadyForHome &&
+        bootstrap.loginMode == AppLoginMode.selfHosted &&
+        bootstrap.selfHostedSession != null) {
+      _ttplaySessionBinder.seedSelfHostedSynchronously(bootstrap.selfHostedSession!);
+      AndroidExitDiagnostics.markStartupPhase(AndroidStartupPhase.mainScreen);
+    } else if (bootstrap != null && bootstrap.isReadyForHome && bootstrap.loginMode != AppLoginMode.selfHosted) {
       configureLocalLibraryClientLabels(_localLibraryClient);
       _localLibraryClient.seedMounts(bootstrap.initialMounts);
       _serverManager.registerLocalLibrary(_localLibraryClient);
       _libraryScanService.onLibraryChanged ??= () => unawaited(_localLibraryClient.refreshMounts());
+      AndroidExitDiagnostics.markStartupPhase(AndroidStartupPhase.mainScreen);
+    } else if (bootstrap != null && bootstrap.isReadyForHome) {
       AndroidExitDiagnostics.markStartupPhase(AndroidStartupPhase.mainScreen);
     }
 
@@ -1721,6 +1755,8 @@ class _MainAppState extends State<MainApp> with WidgetsBindingObserver {
         _mountManager.startReachabilityMonitor();
         unawaited(_mountManager.proxy.start());
         unawaited(_libraryScrapeRunner.checkMetadataServerConnection().then<void>((_) {}, onError: (_) {}));
+        unawaited(_appSessionController.initialize());
+        unawaited(_lanPairingService.start());
       }
       unawaited(OrientationHelper.restoreDefaultOrientations());
       unawaited(DeepLinkService.instance.fetchInitialLink());
@@ -1736,7 +1772,9 @@ class _MainAppState extends State<MainApp> with WidgetsBindingObserver {
             ).pruneUnreferencedJellyfinConnections(),
           );
         }
-        if (widget.enableBackgroundSyncServices) {
+        if (widget.enableBackgroundSyncServices && bootstrap.loginMode == AppLoginMode.selfHosted) {
+          unawaited(_ttplaySessionBinder.syncFromSession(refreshExternalServers: true));
+        } else if (widget.enableBackgroundSyncServices && bootstrap.loginMode != AppLoginMode.selfHosted) {
           unawaited(
             () async {
               if (await _librarySettingsStore.namingVersion() < LibraryScanner.namingVersion) {
@@ -1823,6 +1861,9 @@ class _MainAppState extends State<MainApp> with WidgetsBindingObserver {
       _offlineWatchSyncService.stopBackgroundSync(),
       ?_autoDeleteRun?.future,
     ]);
+    _lanPairingService.dispose();
+    _ttplaySessionBinder.dispose();
+    _appSessionController.dispose();
     await _appDatabase.close();
   }
 
@@ -1838,6 +1879,9 @@ class _MainAppState extends State<MainApp> with WidgetsBindingObserver {
     }
     _libraryScanService.dispose();
     if (_shutdownFuture == null) {
+      _lanPairingService.dispose();
+      _ttplaySessionBinder.dispose();
+      _appSessionController.dispose();
       _libraryEventService.dispose();
       _downloadManager.dispose();
       _serverManager.dispose();
@@ -2010,7 +2054,6 @@ class _MainAppState extends State<MainApp> with WidgetsBindingObserver {
         // App came back to foreground - trigger sync check
         _offlineWatchSyncService.onAppResumed();
         unawaited(TrackerCoordinator.instance.flushWriteQueue());
-        unawaited(_syncCoordinator?.onAppResumed() ?? Future<void>.value());
         // Re-arm the per-server library push channels torn down on pause
         // (and any that exhausted their reconnect attempts).
         _libraryEventService.resume();
@@ -2081,43 +2124,10 @@ class _MainAppState extends State<MainApp> with WidgetsBindingObserver {
         Provider<LibraryScrapeRunner>.value(value: _libraryScrapeRunner),
         Provider<LocalLibraryClient>.value(value: _localLibraryClient),
         ChangeNotifierProvider<LibraryScanService>.value(value: _libraryScanService),
-        ChangeNotifierProvider<SyncAndScanCoordinator>(
-          lazy: false,
-          create: (context) {
-            final coordinator = SyncAndScanCoordinator(
-              db: _appDatabase,
-              repo: _libraryRepository,
-              mountManager: _mountManager,
-              scanService: _libraryScanService,
-              isTvDevice: TvDetectionService.isTVSync(),
-              enableLanUdp: widget.enableBackgroundSyncServices,
-              autoStartLanService: widget.enableBackgroundSyncServices,
-              onMountsChanged: _localLibraryClient.refreshMounts,
-            );
-            _syncCoordinator = coordinator;
-            _libraryScanService.onScopedCatalogChanged = (mountIds, {directoryPrefixes, allowTombstones = true}) =>
-                unawaited(
-                  coordinator.onCatalogChanged(
-                    mountIds: mountIds,
-                    directoryPrefixes: directoryPrefixes,
-                    allowTombstones: allowTombstones,
-                  ),
-                );
-            _localLibraryClient.onSyncOutboxEnqueued = () => unawaited(coordinator.onPlaybackOutboxQueued());
-            if (widget.enableBackgroundSyncServices) {
-              unawaited(
-                WidgetsBinding.instance.endOfFrame.then((_) async {
-                  if (!mounted) return;
-                  await coordinator.initialize();
-                  if (mounted && coordinator.isSignedIn) {
-                    unawaited(coordinator.syncNow());
-                  }
-                }),
-              );
-            }
-            return coordinator;
-          },
-        ),
+        Provider<LanIdentityStore>.value(value: _lanIdentityStore),
+        ChangeNotifierProvider<LanPairingService>.value(value: _lanPairingService),
+        ChangeNotifierProvider<AppSessionController>.value(value: _appSessionController),
+        ChangeNotifierProvider<TtplaySessionBinder>.value(value: _ttplaySessionBinder),
         Provider<ConnectionRegistry>.value(value: _connections),
         Provider<ProfileRegistry>(create: (_) => ProfileRegistry(_appDatabase)),
         Provider<ProfileConnectionRegistry>.value(value: _profileConnections),
@@ -2144,6 +2154,7 @@ class _MainAppState extends State<MainApp> with WidgetsBindingObserver {
           create: (context) {
             _serverManager.onJellyfinConnectionUpdated = context.read<ConnectionRegistry>().upsert;
             final provider = MultiServerProvider(_serverManager, _aggregationService);
+            _ttplaySessionBinder.attachMultiServerProvider(provider);
             final bootstrap = widget.sessionBootstrap;
             if (bootstrap != null &&
                 bootstrap.isReadyForHome &&
@@ -2153,6 +2164,7 @@ class _MainAppState extends State<MainApp> with WidgetsBindingObserver {
               provider.setVisibleServerIds(<String>{
                 if (_serverManager.registeredServerIds.contains(LocalLibraryClient.localServerId))
                   LocalLibraryClient.localServerId,
+                ..._serverManager.selfHostedServerIds,
               }, notify: false);
             }
             return provider;
@@ -2700,6 +2712,8 @@ class _SetupScreenState extends State<SetupScreen> with MountedSetStateMixin {
     // through `context` after async gaps trip the use_build_context_synchronously
     // lint, and reading early is safe because the registry is a singleton.
     final connectionRegistry = context.read<ConnectionRegistry>();
+    final appSession = context.read<AppSessionController>();
+    final mountRegistry = context.read<MountManager>().registry;
     final List<Connection> allConnections;
     try {
       allConnections = await connectionRegistry.list();
@@ -2717,39 +2731,36 @@ class _SetupScreenState extends State<SetupScreen> with MountedSetStateMixin {
       return;
     }
 
-    // The local library needs no sign-in: with or without server
-    // connections, startup goes on to the library.
-    try {
-      await _prepareLocalLibrary();
-    } catch (e, st) {
-      appLogger.e('Setup: failed to prepare the local library', error: e, stackTrace: st);
-    }
-
-    if (!mounted) return;
-
-    final syncCoordinator = context.read<SyncAndScanCoordinator>();
-    final mountRegistry = context.read<MountManager>().registry;
-    await syncCoordinator.initialize();
+    await appSession.initialize();
     if (!mounted) return;
 
     final hasInitialMounts = (await mountRegistry.list()).isNotEmpty;
     if (!mounted) return;
-    final onboardingDone = await syncCoordinator.syncStore.isOnboardingCompleted();
-    if (!mounted) return;
-    if (!onboardingDone) {
-      final hasExplicitOnboarding = await syncCoordinator.syncStore.hasExplicitOnboardingState();
-      if (!mounted) return;
-      if (!hasExplicitOnboarding && (hasInitialMounts || allConnections.isNotEmpty || syncCoordinator.isSignedIn)) {
-        await syncCoordinator.syncStore.setOnboardingCompleted(true);
-        if (!syncCoordinator.isSignedIn) {
-          await syncCoordinator.selectLocalMode();
-        }
+    if (!appSession.hasSelectedMode) {
+      if (!appSession.explicitlyLoggedOut && (hasInitialMounts || allConnections.isNotEmpty)) {
+        await appSession.selectOfflineMode();
       } else {
         unawaited(Navigator.pushReplacement(context, fadeRoute(const AuthScreen())));
         return;
       }
     }
     if (!mounted) return;
+
+    if (appSession.isOffline) {
+      try {
+        await _prepareLocalLibrary();
+      } catch (e, st) {
+        appLogger.e('Setup: failed to prepare the local library', error: e, stackTrace: st);
+      }
+      if (!mounted) return;
+    } else if (appSession.isSelfHosted) {
+      try {
+        await context.read<TtplaySessionBinder>().syncFromSession(refreshExternalServers: true);
+      } catch (e, st) {
+        appLogger.e('Setup: failed to prepare the self-hosted session', error: e, stackTrace: st);
+      }
+      if (!mounted) return;
+    }
 
     if (mounted) {
       setState(() {

@@ -3,9 +3,9 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:clock/clock.dart';
 import 'package:crypto/crypto.dart';
 import '../database/app_database.dart';
+import '../i18n/strings.g.dart';
 import '../media/artist_discography.dart';
 import '../media/download_resolution.dart';
 import '../media/ids.dart';
@@ -55,16 +55,30 @@ import 'media_probe.dart';
 import 'scrapers/bangumi_provider.dart';
 import 'scrapers/tmdb_image_url.dart';
 import 'scrapers/tmdb_provider.dart';
-import 'sync/sync_local_store.dart';
 
-class _PlaybackSyncSession {
-  _PlaybackSyncSession({required this.lastPosMs, required this.lastReportWallMs, required this.lastOutboxWallMs});
-
-  int lastPosMs;
-  int lastReportWallMs;
-  int lastOutboxWallMs;
-  bool wasPaused = false;
-  Timer? seekDebounce;
+/// Populates localized shelf and sort titles on [local] from `t.storage`.
+void configureLocalLibraryClientLabels(LocalLibraryClient local) {
+  local
+    ..serverName = t.storage.localLibraryName
+    ..shelfTitles = {
+      'movie': t.storage.content.movie,
+      'show': t.storage.content.show,
+      'anime': t.storage.content.anime,
+      'variety': t.storage.content.variety,
+      'documentary': t.storage.content.documentary,
+      'pending': t.storage.unmatchedTitles,
+    }
+    ..sortTitles = {
+      'title': t.storage.sortTitle,
+      'year': t.storage.sortYear,
+      'releaseDate': t.storage.sortReleaseDate,
+      'rating': t.storage.sortRating,
+      'addedAt': t.storage.sortAddedAt,
+      'lastPlayed': t.storage.sortLastPlayed,
+    }
+    ..recentlyAddedAllTitle = t.discover.recentlyAdded
+    ..recentlyAddedTitle = t.storage.recentlyAdded(shelf: '{shelf}')
+    ..continueWatchingTitle = t.storage.continueWatching;
 }
 
 /// The local media library, presented to the app as a media server.
@@ -78,7 +92,6 @@ class LocalLibraryClient implements MediaServerClient {
     required MountManager mounts,
     this.scrapeRunner,
     this.seekDebounceDuration = const Duration(seconds: 3),
-    this.onSyncOutboxEnqueued,
   }) : _repo = repository,
        _mountManager = mounts;
 
@@ -104,10 +117,7 @@ class LocalLibraryClient implements MediaServerClient {
   final MountManager _mountManager;
   LibraryScrapeRunner? scrapeRunner;
   final Duration seekDebounceDuration;
-  void Function()? onSyncOutboxEnqueued;
   String tmdbImageBase = TmdbProvider.defaultImageBase;
-  late final SyncLocalStore _syncStore = SyncLocalStore(_repo.database);
-  final Map<int, _PlaybackSyncSession> _playbackSyncSessions = {};
   Map<String, StorageMount> _mountsById = const {};
   bool _closed = false;
 
@@ -183,10 +193,6 @@ class LocalLibraryClient implements MediaServerClient {
   @override
   void close() {
     _closed = true;
-    for (final session in _playbackSyncSessions.values) {
-      session.seekDebounce?.cancel();
-    }
-    _playbackSyncSessions.clear();
   }
 
   @override
@@ -767,22 +773,11 @@ class LocalLibraryClient implements MediaServerClient {
 
   // ─── Watch state ───────────────────────────────────────────────────────
 
-  Future<void> _enqueueProgress(int id) async {
-    await _syncStore.enqueueWatchProgressForItemId(id);
-    onSyncOutboxEnqueued?.call();
-  }
-
-  Future<void> _enqueuePrefs(int id) async {
-    await _syncStore.enqueueWorkPrefsForItemId(id);
-    onSyncOutboxEnqueued?.call();
-  }
-
   @override
   Future<void> markWatched(MediaItem item) async {
     final id = _id(item.id);
     if (id == null) return;
     await _repo.markWatched(id, watched: true);
-    await _enqueueProgress(id);
   }
 
   @override
@@ -790,7 +785,6 @@ class LocalLibraryClient implements MediaServerClient {
     final id = _id(item.id);
     if (id == null) return;
     await _repo.markWatched(id, watched: false);
-    await _enqueueProgress(id);
   }
 
   @override
@@ -798,8 +792,6 @@ class LocalLibraryClient implements MediaServerClient {
     final id = _id(item.id);
     if (id == null) return;
     await _repo.hideFromContinueWatching(id);
-    await _enqueueProgress(id);
-    await _enqueuePrefs(id);
   }
 
   @override
@@ -810,7 +802,6 @@ class LocalLibraryClient implements MediaServerClient {
     final id = _id(item.id);
     if (id == null) return;
     await _repo.setFavorite(id, favorite: isFavorite);
-    await _enqueuePrefs(id);
   }
 
   @override
@@ -824,18 +815,7 @@ class LocalLibraryClient implements MediaServerClient {
     String? mediaSourceId,
     int? audioStreamIndex,
     int? subtitleStreamIndex,
-  }) async {
-    await _saveProgress(itemId, position, duration);
-    final id = _id(itemId);
-    if (id == null) return;
-    _playbackSyncSessions.remove(id)?.seekDebounce?.cancel();
-    final now = clock.now().millisecondsSinceEpoch;
-    _playbackSyncSessions[id] = _PlaybackSyncSession(
-      lastPosMs: position.inMilliseconds,
-      lastReportWallMs: now,
-      lastOutboxWallMs: now,
-    );
-  }
+  }) => _saveProgress(itemId, position, duration);
 
   @override
   Future<void> reportPlaybackProgress({
@@ -849,54 +829,7 @@ class LocalLibraryClient implements MediaServerClient {
     String? mediaSourceId,
     int? audioStreamIndex,
     int? subtitleStreamIndex,
-  }) async {
-    await _saveProgress(itemId, position, duration);
-    final id = _id(itemId);
-    if (id == null) return;
-
-    final now = clock.now().millisecondsSinceEpoch;
-    final posMs = position.inMilliseconds;
-    final session = _playbackSyncSessions.putIfAbsent(
-      id,
-      () => _PlaybackSyncSession(lastPosMs: posMs, lastReportWallMs: now, lastOutboxWallMs: now),
-    );
-
-    if (isPaused && !session.wasPaused) {
-      session.seekDebounce?.cancel();
-      session.seekDebounce = null;
-      session.wasPaused = true;
-      session.lastPosMs = posMs;
-      session.lastReportWallMs = now;
-      session.lastOutboxWallMs = now;
-      await _enqueueProgress(id);
-      return;
-    }
-    if (!isPaused) session.wasPaused = false;
-
-    final wallDelta = now - session.lastReportWallMs;
-    final expectedAdvance = isPaused ? 0 : wallDelta;
-    final drift = (posMs - session.lastPosMs) - expectedAdvance;
-    session.lastPosMs = posMs;
-    session.lastReportWallMs = now;
-
-    if (drift.abs() >= 15000) {
-      session.seekDebounce?.cancel();
-      session.seekDebounce = Timer(seekDebounceDuration, () {
-        session.seekDebounce = null;
-        if (_closed) return;
-        session.lastOutboxWallMs = clock.now().millisecondsSinceEpoch;
-        unawaited(_enqueueProgress(id));
-      });
-      return;
-    }
-
-    if (!isPaused && (now - session.lastOutboxWallMs) >= 90000) {
-      session.seekDebounce?.cancel();
-      session.seekDebounce = null;
-      session.lastOutboxWallMs = now;
-      await _enqueueProgress(id);
-    }
-  }
+  }) => _saveProgress(itemId, position, duration);
 
   @override
   Future<void> reportPlaybackStopped({
@@ -909,33 +842,10 @@ class LocalLibraryClient implements MediaServerClient {
     int? audioStreamIndex,
     int? subtitleStreamIndex,
     PlaybackReportMetadata report = const PlaybackReportMetadata.live(),
-  }) async {
-    await _saveProgress(itemId, position, duration);
-    final id = _id(itemId);
-    if (id == null) return;
-    _playbackSyncSessions.remove(id)?.seekDebounce?.cancel();
-    await _enqueueProgress(id);
-  }
-
-  /// Flushes every active playback session's latest progress into the sync
-  /// outbox and wakes the sync coordinator immediately (e.g. before app suspend).
-  Future<void> flushActivePlaybackToOutbox() async {
-    if (_closed || _playbackSyncSessions.isEmpty) return;
-    final activeIds = _playbackSyncSessions.keys.toList(growable: false);
-    for (final id in activeIds) {
-      final session = _playbackSyncSessions[id];
-      if (session == null) continue;
-      session.seekDebounce?.cancel();
-      session.seekDebounce = null;
-      session.lastOutboxWallMs = clock.now().millisecondsSinceEpoch;
-      await _syncStore.enqueueWatchProgressForItemId(id);
-    }
-    if (activeIds.isNotEmpty) {
-      onSyncOutboxEnqueued?.call();
-    }
-  }
+  }) => _saveProgress(itemId, position, duration);
 
   Future<void> _saveProgress(String itemId, Duration position, Duration? duration) async {
+    if (_closed) return;
     final id = _id(itemId);
     if (id == null) return;
     await _repo.setProgress(id, positionMs: position.inMilliseconds, durationMs: duration?.inMilliseconds);
@@ -993,17 +903,6 @@ class LocalLibraryClient implements MediaServerClient {
   Future<List<CollectionMembership>> fetchCollectionMemberships(Set<String> itemIds, {AbortController? abort}) async =>
       const [];
 
-  Future<void> _enqueueList(int id) async {
-    await _syncStore.enqueueListById(id);
-    onSyncOutboxEnqueued?.call();
-  }
-
-  Future<void> _enqueueDeletedListRow(LibraryListRow? row) async {
-    if (row == null) return;
-    await _syncStore.enqueueDeletedList(kind: row.kind, title: row.title, tmdbId: row.tmdbId);
-    onSyncOutboxEnqueued?.call();
-  }
-
   @override
   Future<String?> createCollection({
     required String libraryId,
@@ -1013,7 +912,6 @@ class LocalLibraryClient implements MediaServerClient {
   }) async {
     final id = await _repo.createList(kind: lib.LibraryListKinds.collection, title: title);
     await addToCollection(collectionId: '$id', items: items);
-    await _enqueueList(id);
     return '$_collectionPrefix$id';
   }
 
@@ -1024,7 +922,6 @@ class LocalLibraryClient implements MediaServerClient {
       final itemId = _id(item.id);
       if (itemId != null) await _repo.addToList(id, itemId);
     }
-    await _enqueueList(id);
     return true;
   }
 
@@ -1033,7 +930,6 @@ class LocalLibraryClient implements MediaServerClient {
     final itemId = _id(item.id);
     if (id == null || itemId == null) return false;
     await _repo.removeFromList(id, itemId);
-    await _enqueueList(id);
     return true;
   }
 
@@ -1049,9 +945,7 @@ class LocalLibraryClient implements MediaServerClient {
   Future<bool> deleteCollection(MediaItem collection) async {
     final id = _listId(collection.id);
     if (id == null) return false;
-    final existing = (await _repo.lists(lib.LibraryListKinds.collection)).where((l) => l.id == id).firstOrNull;
     await _repo.deleteList(id);
-    await _enqueueDeletedListRow(existing);
     return true;
   }
 
@@ -1109,7 +1003,6 @@ class LocalLibraryClient implements MediaServerClient {
   Future<MediaPlaylist?> createPlaylist({required String title, required List<MediaItem> items}) async {
     final id = await _repo.createList(kind: lib.LibraryListKinds.playlist, title: title);
     await _addToList('$id', items);
-    await _enqueueList(id);
     return fetchPlaylistMetadata('$id');
   }
 
@@ -1121,9 +1014,7 @@ class LocalLibraryClient implements MediaServerClient {
   Future<bool> deletePlaylist(MediaPlaylist playlist) async {
     final id = _listId(playlist.id);
     if (id == null) return false;
-    final existing = (await _repo.lists(lib.LibraryListKinds.playlist)).where((l) => l.id == id).firstOrNull;
     await _repo.deleteList(id);
-    await _enqueueDeletedListRow(existing);
     return true;
   }
 

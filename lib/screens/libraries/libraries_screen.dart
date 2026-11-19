@@ -9,6 +9,7 @@ import '../../focus/focusable_action_bar.dart';
 import '../../focus/dpad_navigator.dart';
 import '../../focus/input_mode_tracker.dart';
 import '../../library/local_library_client.dart';
+import '../../ttplay/ttplay_server_client.dart';
 import '../../mixins/tab_navigation_mixin.dart';
 import '../../mixins/tab_visibility_aware.dart';
 import '../../storage/mount_manager.dart';
@@ -44,8 +45,14 @@ import 'tabs/base_library_tab.dart';
 
 enum LibraryTabType { recommended, browse, collections, playlists, genres }
 
+bool _isPendingLibrary(MediaLibrary library) =>
+    LocalLibraryClient.isPendingLibrary(library) || TtplayServerClient.isPendingLibrary(library);
+
+bool _isPendingGlobalKey(String? key) =>
+    key == LocalLibraryClient.pendingLibraryGlobalKey || key == TtplayServerClient.pendingLibraryGlobalKey;
+
 List<LibraryTabType> visibleLibraryTabs(MediaLibrary library) {
-  if (LocalLibraryClient.isPendingLibrary(library)) return const [LibraryTabType.browse];
+  if (_isPendingLibrary(library)) return const [LibraryTabType.browse];
   if (library.isShared) return [LibraryTabType.browse, LibraryTabType.playlists];
   // Genres filter the library's own type; only movie and show libraries
   // browse a type both backends tag with genres.
@@ -830,7 +837,7 @@ class _LibrariesScreenState extends State<LibrariesScreen>
         ? allLibraries.where((lib) => lib.globalKey == _selectedLibraryGlobalKey).firstOrNull
         : null;
 
-    final isPendingLibrary = selectedLibrary != null && LocalLibraryClient.isPendingLibrary(selectedLibrary);
+    final isPendingLibrary = selectedLibrary != null && _isPendingLibrary(selectedLibrary);
     final useSideNavigation = PlatformDetector.shouldUseSideNavigation(context);
     final showMobileTabsRow = selectedLibrary != null && !useSideNavigation && _hasTabStrip;
     final currentTabIndex = _visibleTabs.isEmpty ? 0 : tabController.index.clamp(0, _visibleTabs.length - 1).toInt();
@@ -1136,15 +1143,16 @@ class _LibrariesScreenState extends State<LibrariesScreen>
     } else {
       if (_selectedLibraryGlobalKey == null) {
         _scheduleInitializeWithLibraries();
-      } else if (_selectedLibraryGlobalKey == LocalLibraryClient.pendingLibraryGlobalKey && !_pendingFallbackScheduled) {
+      } else if (_isPendingGlobalKey(_selectedLibraryGlobalKey) && !_pendingFallbackScheduled) {
+        final pendingKey = _selectedLibraryGlobalKey;
         _pendingFallbackScheduled = true;
         WidgetsBinding.instance.addPostFrameCallback((_) {
           _pendingFallbackScheduled = false;
           if (!mounted) return;
-          if (_selectedLibraryGlobalKey != LocalLibraryClient.pendingLibraryGlobalKey) return;
+          if (_selectedLibraryGlobalKey != pendingKey) return;
           final currentAll = context.read<LibrariesProvider>().libraries;
           final currentHidden = context.read<HiddenLibrariesProvider>().hiddenLibraryKeys;
-          final stillExists = currentAll.any((lib) => lib.globalKey == LocalLibraryClient.pendingLibraryGlobalKey);
+          final stillExists = currentAll.any((lib) => lib.globalKey == pendingKey);
           if (stillExists) return;
           final nextVisible = currentAll.where((lib) => !currentHidden.contains(lib.globalKey)).toList();
           if (nextVisible.isNotEmpty) {

@@ -55,6 +55,7 @@ import '../services/settings_service.dart';
 import '../providers/offline_mode_provider.dart';
 import '../services/companion_remote/companion_remote_host_controller.dart';
 import '../services/companion_remote/companion_remote_receiver.dart';
+import '../services/companion_remote/remote_host_catalog_handler.dart';
 import '../services/companion_remote/remote_playback_launcher.dart';
 import '../services/fullscreen_state_manager.dart';
 import '../providers/companion_remote_provider.dart';
@@ -81,7 +82,9 @@ import 'profile/profile_switch_screen.dart';
 import 'video_player_screen.dart';
 import '../library/library_scan_service.dart';
 import '../library/local_library_client.dart';
-import '../library/sync/sync_coordinator.dart';
+import '../services/companion_remote/lan_identity_store.dart';
+import '../services/companion_remote/lan_pairing_service.dart';
+import '../session/app_session_controller.dart';
 import 'profile/profile_teardown.dart';
 
 /// Provides access to the main screen's focus control.
@@ -930,7 +933,7 @@ class _MainScreenState extends State<MainScreen>
   bool _companionRemoteSetup = false;
   bool _autoStartingCompanionRemote = false;
   CompanionRemoteProvider? _companionRemoteForCleanup;
-  SyncAndScanCoordinator? _syncForCompanionRemote;
+  LanPairingService? _lanForCompanionRemote;
 
   @override
   void didChangeDependencies() {
@@ -992,31 +995,48 @@ class _MainScreenState extends State<MainScreen>
     final companionRemote = context.read<CompanionRemoteProvider>();
     _companionRemoteForCleanup = companionRemote;
     companionRemote.onPlayMediaRequested = (target) => launchRemoteMediaTarget(context: context, target: target);
+    companionRemote.onSearchHostCatalog = (query, limit) =>
+        RemoteHostCatalogHandler(context.read<MultiServerProvider>().serverManager).searchCatalog(query, limit: limit);
+    companionRemote.onBrowseHostHome = () => RemoteHostCatalogHandler(
+      context.read<MultiServerProvider>().serverManager,
+    ).browseHome(continueWatchingTitle: t.discover.continueWatching);
+    companionRemote.onBrowseHostItemChildren = (serverId, itemId, kind) => RemoteHostCatalogHandler(
+      context.read<MultiServerProvider>().serverManager,
+    ).browseItemChildren(serverId: serverId, itemId: itemId, kind: kind);
     try {
-      final sync = Provider.of<SyncAndScanCoordinator?>(context, listen: false);
-      if (sync != null && !identical(_syncForCompanionRemote, sync)) {
-        _syncForCompanionRemote?.removeListener(_onSyncChangedForCompanionRemote);
-        _syncForCompanionRemote = sync;
-        companionRemote.bindSyncCoordinator(sync);
-        sync.addListener(_onSyncChangedForCompanionRemote);
+      final lan = Provider.of<LanPairingService?>(context, listen: false);
+      LanIdentityStore? identityStore;
+      try {
+        identityStore = Provider.of<LanIdentityStore?>(context, listen: false);
+      } on ProviderNotFoundException {
+        identityStore = null;
+      }
+      if (lan != null && !identical(_lanForCompanionRemote, lan)) {
+        _lanForCompanionRemote?.removeListener(_onLanChangedForCompanionRemote);
+        _lanForCompanionRemote = lan;
+        companionRemote.bindLanPairing(lan, identityStore: identityStore);
+        lan.addListener(_onLanChangedForCompanionRemote);
+        if (lan.isRunning) {
+          _onLanChangedForCompanionRemote();
+        }
       }
     } on ProviderNotFoundException {
-      // Tests without SyncAndScanCoordinator don't wire sync auto-start.
+      // Tests without LanPairingService don't wire LAN auto-start.
     }
     companionRemote.onCommandReceived = (command) {
       if (mounted) {
         CompanionRemoteReceiver.instance.handleCommand(command, context);
       }
     };
-    if (!_isOffline) {
-      unawaited(
-        ensureCompanionRemoteCryptoFromContext(context).then((ready) {
-          if (ready && mounted) companionRemote.startPassiveDiscovery();
-        }).catchError((Object e) {
-          appLogger.d('CompanionRemote: Initial crypto setup deferred', error: e);
-        }),
-      );
-    }
+    unawaited(
+      ensureCompanionRemoteCryptoFromContext(context)
+          .then((ready) {
+            if (ready && mounted) companionRemote.startPassiveDiscovery();
+          })
+          .catchError((Object e) {
+            appLogger.d('CompanionRemote: Initial crypto setup deferred', error: e);
+          }),
+    );
 
     final receiver = CompanionRemoteReceiver.instance;
     receiver.navigationOwner = this;
@@ -1057,10 +1077,16 @@ class _MainScreenState extends State<MainScreen>
     };
   }
 
-  void _onSyncChangedForCompanionRemote() {
-    if (!mounted || _isOffline || _autoStartingCompanionRemote) return;
-    final sync = _syncForCompanionRemote;
-    if (sync == null || (!sync.isSignedIn && !sync.onboardingCompleted)) return;
+  void _onLanChangedForCompanionRemote() {
+    if (!mounted || _autoStartingCompanionRemote) return;
+    final lan = _lanForCompanionRemote;
+    AppSessionController? appSession;
+    try {
+      appSession = Provider.of<AppSessionController?>(context, listen: false);
+    } on ProviderNotFoundException {
+      appSession = null;
+    }
+    if ((lan == null || !lan.isRunning) && !(appSession?.hasSelectedMode ?? false)) return;
     final companionRemote = context.read<CompanionRemoteProvider>();
     if (companionRemote.isHostServerRunning) return;
     unawaited(_autoStartCompanionRemoteServer());
@@ -1094,8 +1120,8 @@ class _MainScreenState extends State<MainScreen>
     _multiServerProvider?.removeListener(_handleLiveTvChanged);
     _catalogSourcesProvider?.removeListener(_handleCatalogSourcesChanged);
     _showExploreTabListenable?.removeListener(_handleCatalogSourcesChanged);
-    _syncForCompanionRemote?.removeListener(_onSyncChangedForCompanionRemote);
-    _syncForCompanionRemote = null;
+    _lanForCompanionRemote?.removeListener(_onLanChangedForCompanionRemote);
+    _lanForCompanionRemote = null;
     if (_bindingSettleListener != null) {
       _activeProfileForListener?.removeListener(_bindingSettleListener!);
     }
@@ -1114,6 +1140,9 @@ class _MainScreenState extends State<MainScreen>
       if (_companionRemoteForCleanup?.onPlayMediaRequested != null) {
         _companionRemoteForCleanup!.onPlayMediaRequested = null;
       }
+      _companionRemoteForCleanup?.onSearchHostCatalog = null;
+      _companionRemoteForCleanup?.onBrowseHostHome = null;
+      _companionRemoteForCleanup?.onBrowseHostItemChildren = null;
       _companionRemoteForCleanup = null;
       final receiver = CompanionRemoteReceiver.instance;
       if (identical(receiver.navigationOwner, this)) {
@@ -1150,13 +1179,13 @@ class _MainScreenState extends State<MainScreen>
     if (!_libraryUpdateReady || !mounted || !_canScheduleLibraryUpdates || _checkingLibraryUpdates) return;
     final scans = context.read<LibraryScanService?>();
     if (scans == null) return;
-    SyncAndScanCoordinator? sync;
+    AppSessionController? appSession;
     try {
-      sync = Provider.of<SyncAndScanCoordinator?>(context, listen: false);
+      appSession = Provider.of<AppSessionController?>(context, listen: false);
     } on ProviderNotFoundException {
-      sync = null;
+      appSession = null;
     }
-    if (sync != null && !await sync.shouldAllowAutomaticIncrementalScan()) {
+    if (appSession != null && !appSession.isOffline) {
       if (mounted && _canScheduleLibraryUpdates) {
         _libraryUpdateTimer?.cancel();
         _libraryUpdateTimer = Timer(LibraryScanService.automaticInterval, _checkLibraryUpdates);

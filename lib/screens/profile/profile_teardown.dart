@@ -9,7 +9,8 @@ import '../../database/app_database.dart';
 import '../../database/download_collection_operations.dart';
 import '../../database/download_operations.dart';
 import '../../i18n/strings.g.dart';
-import '../../library/sync/sync_coordinator.dart';
+import '../../session/app_session_controller.dart';
+import '../../ttplay/ttplay_session_binder.dart';
 import '../../profiles/active_profile_binder.dart';
 import '../../profiles/active_profile_provider.dart';
 import '../../profiles/plex_home_service.dart';
@@ -353,7 +354,8 @@ Future<void> logoutAllProfiles(BuildContext context) async {
   final scope = SessionTeardownScope.of(context);
   final companionRemote = context.read<CompanionRemoteProvider>();
   final playbackState = context.read<PlaybackStateProvider>();
-  final syncCoordinator = context.read<SyncAndScanCoordinator?>();
+  final appSession = context.read<AppSessionController?>();
+  final ttplayBinder = context.read<TtplaySessionBinder?>();
 
   final activeOwner = scope.active.activeId;
   if (activeOwner != null) {
@@ -361,7 +363,8 @@ Future<void> logoutAllProfiles(BuildContext context) async {
   }
 
   await companionRemote.resetForLogout();
-  await syncCoordinator?.logoutToModeSelection();
+  await appSession?.logoutToModeSelection();
+  await ttplayBinder?.syncFromSession();
 
   // Disconnect live remote media-server sockets while preserving the
   // always-on LocalLibraryClient, local profiles, mounts, and configured

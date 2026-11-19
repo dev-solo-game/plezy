@@ -5,9 +5,8 @@ import 'package:material_symbols_icons/symbols.dart';
 import 'package:provider/provider.dart';
 
 import '../../i18n/strings.g.dart';
-import '../../library/sync/lan_peer_sync_service.dart';
-import '../../library/sync/sync_coordinator.dart';
-import '../../library/sync/sync_local_store.dart';
+import '../../services/companion_remote/lan_identity_store.dart';
+import '../../services/companion_remote/lan_pairing_service.dart';
 import '../../services/settings_service.dart';
 import '../../widgets/app_icon.dart';
 import '../../widgets/setting_tile.dart';
@@ -33,8 +32,7 @@ class LanDevicesScreen extends StatelessWidget {
   }
 }
 
-/// Reusable LAN discovery & pairing panel shared between [LanDevicesScreen] and
-/// [SyncSettingsScreen].
+/// Standalone LAN discovery & pairing panel shown in [LanDevicesScreen].
 class LanDevicesPanel extends StatefulWidget {
   const LanDevicesPanel({super.key, this.standalone = false});
 
@@ -48,7 +46,7 @@ class _LanDevicesPanelState extends State<LanDevicesPanel> {
   String? _statusMessage;
   String? _error;
 
-  Future<void> _requestLanPair(LanPeerSyncService lan, LanDiscoveredPeer peer) async {
+  Future<void> _requestLanPair(LanPairingService lan, LanDiscoveredPeer peer) async {
     setState(() {
       _error = null;
       _statusMessage = null;
@@ -61,7 +59,7 @@ class _LanDevicesPanelState extends State<LanDevicesPanel> {
     }
   }
 
-  Future<void> _acceptLanPair(LanPeerSyncService lan, LanPairRequest req) async {
+  Future<void> _acceptLanPair(LanPairingService lan, LanPairRequest req) async {
     setState(() {
       _error = null;
       _statusMessage = null;
@@ -75,9 +73,9 @@ class _LanDevicesPanelState extends State<LanDevicesPanel> {
 
   @override
   Widget build(BuildContext context) {
-    final sync = context.watch<SyncAndScanCoordinator?>();
+    final lan = context.watch<LanPairingService?>();
     final theme = Theme.of(context);
-    if (sync == null) {
+    if (lan == null) {
       return Card(
         child: Padding(
           padding: const EdgeInsets.all(16),
@@ -86,7 +84,6 @@ class _LanDevicesPanelState extends State<LanDevicesPanel> {
       );
     }
 
-    final lan = sync.lanService;
     final trusted = lan.trustedPeers;
     final discoveredIds = {for (final p in lan.discoveredPeers) p.deviceId};
     final trustedIds = {for (final p in trusted) p.deviceId};
@@ -175,7 +172,10 @@ class _LanDevicesPanelState extends State<LanDevicesPanel> {
                     ),
                     const SizedBox(width: 8),
                     Expanded(
-                      child: Text('${t.sync.lanDevicesTitle} (${lan.deviceName})', style: theme.textTheme.titleMedium),
+                      child: Text(
+                        '${t.sync.lanDevicesTitle} (${lan.deviceName ?? 'TTPlay'})',
+                        style: theme.textTheme.titleMedium,
+                      ),
                     ),
                   ],
                 ),
@@ -227,7 +227,7 @@ class _LanDevicesPanelState extends State<LanDevicesPanel> {
     ];
   }
 
-  Widget _buildStatusCard(LanPeerSyncService lan, ThemeData theme) {
+  Widget _buildStatusCard(LanPairingService lan, ThemeData theme) {
     final running = lan.isRunning;
     return Card(
       child: Padding(
@@ -245,7 +245,10 @@ class _LanDevicesPanelState extends State<LanDevicesPanel> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Text(t.sync.menuModeLanSubtitle(device: lan.deviceName), style: theme.textTheme.titleMedium),
+                  Text(
+                    t.sync.menuModeLanSubtitle(device: lan.deviceName ?? 'TTPlay'),
+                    style: theme.textTheme.titleMedium,
+                  ),
                   const SizedBox(height: 4),
                   Text(
                     running ? t.sync.lanDiscoveryRunning : t.sync.lanDiscoveryStopped,
@@ -264,7 +267,7 @@ class _LanDevicesPanelState extends State<LanDevicesPanel> {
     );
   }
 
-  List<Widget> _buildRequestsSection(LanPeerSyncService lan, List<LanPairRequest> requests, ThemeData theme) => [
+  List<Widget> _buildRequestsSection(LanPairingService lan, List<LanPairRequest> requests, ThemeData theme) => [
     Text(t.sync.lanRequestsTitle, style: theme.textTheme.titleSmall),
     const SizedBox(height: 4),
     for (final req in requests)
@@ -283,7 +286,7 @@ class _LanDevicesPanelState extends State<LanDevicesPanel> {
   ];
 
   List<Widget> _buildTrustedSection(
-    LanPeerSyncService lan,
+    LanPairingService lan,
     List<LanTrustedPeer> trusted,
     Set<String> discoveredIds,
     ThemeData theme,
@@ -331,7 +334,7 @@ class _LanDevicesPanelState extends State<LanDevicesPanel> {
   ];
 
   List<Widget> _buildNearbySection(
-    LanPeerSyncService lan,
+    LanPairingService lan,
     List<LanDiscoveredPeer> nearby,
     int totalDiscoveredCount,
     String myPub,

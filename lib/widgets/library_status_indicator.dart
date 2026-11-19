@@ -6,43 +6,19 @@ import '../i18n/strings.g.dart';
 import '../library/library_scan_service.dart';
 import '../library/library_scrape_runner.dart';
 import '../library/library_settings.dart';
-import '../library/sync/sync_coordinator.dart';
-import '../library/sync/sync_models.dart';
 import '../screens/storage/scraper_settings_screen.dart';
 import 'app_icon.dart';
 
-/// Formats a localized status line for an active [SyncProgress].
-String? formatSyncProgressDetail(Translations translations, SyncProgress progress) {
-  final syncStrings = translations.sync;
-  return switch (progress.phase) {
-    SyncPhase.idle => null,
-    SyncPhase.connecting || SyncPhase.pulling =>
-      progress.processed > 0 ? syncStrings.phaseApplyingCount(count: progress.processed) : syncStrings.phaseFetching,
-    SyncPhase.applying =>
-      progress.total > 0
-          ? syncStrings.phaseApplyingProgress(done: progress.processed, total: progress.total)
-          : (progress.processed > 0
-                ? syncStrings.phaseApplyingCount(count: progress.processed)
-                : syncStrings.phaseApplying),
-    SyncPhase.pushing =>
-      progress.total > 0
-          ? syncStrings.phasePushingProgress(done: progress.processed, total: progress.total)
-          : syncStrings.phasePushing,
-    SyncPhase.probingMounts => syncStrings.phaseProbingMounts,
-  };
-}
-
-/// Compact top-bar indicator displaying active sync progress, local library scan
-/// or scrape progress, or the latest sync/scan failure.
+/// Compact top-bar indicator displaying local library scan or scrape progress,
+/// or the latest scan/scrape failure.
 class LibraryStatusIndicator extends StatelessWidget {
   const LibraryStatusIndicator({super.key});
 
   @override
   Widget build(BuildContext context) {
     final scans = context.watch<LibraryScanService?>();
-    final sync = context.watch<SyncAndScanCoordinator?>();
 
-    final status = _resolveStatus(scans, sync);
+    final status = _resolveStatus(scans);
     if (status == null) return const SizedBox.shrink();
 
     final theme = Theme.of(context);
@@ -88,22 +64,7 @@ class LibraryStatusIndicator extends StatelessWidget {
 
   static ({String inlineText, String tooltip, bool failed, bool isNoTmdbKey})? _resolveStatus(
     LibraryScanService? scans,
-    SyncAndScanCoordinator? sync,
   ) {
-    final syncProgress = sync?.progress;
-    if (sync != null && syncProgress != null && syncProgress.isActive) {
-      final label = sync.isSignedIn ? t.sync.progressCloud : t.sync.progressLan;
-      final detail = sync.isRestoringMounts
-          ? t.sync.initialSyncRestoring
-          : (formatSyncProgressDetail(t, syncProgress) ?? '');
-      return (
-        inlineText: detail.isEmpty ? label : '$label · $detail',
-        tooltip: detail.isEmpty ? label : '$label\n$detail',
-        failed: false,
-        isNoTmdbKey: false,
-      );
-    }
-
     final job = scans?.update;
     final files = job?.filesSeen ?? scans?.standaloneScanFiles;
     final scanError = scans?.updateError;
@@ -173,17 +134,6 @@ class LibraryStatusIndicator extends StatelessWidget {
           ? t.storage.scrapingProgress(done: scrapeStatus.done, total: scrapeStatus.total)
           : t.storage.scraping;
       return (inlineText: detail, tooltip: '${t.storage.scrapeTitle} · $detail', failed: false, isNoTmdbKey: false);
-    }
-
-    final syncError = sync?.lastError;
-    if (sync != null && syncError != null && syncError.isNotEmpty) {
-      final label = sync.isSignedIn ? t.sync.progressCloud : t.sync.progressLan;
-      return (
-        inlineText: '$label · ${t.common.error}',
-        tooltip: '$label\n$syncError',
-        failed: true,
-        isNoTmdbKey: false,
-      );
     }
 
     if (scanError != null) {

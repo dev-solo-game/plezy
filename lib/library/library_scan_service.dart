@@ -645,6 +645,26 @@ class LibraryScanService extends ChangeNotifier {
     }
   }
 
+  /// Cancels every running update, per-mount scan, and background scrape and
+  /// waits for active workers to unwind.
+  Future<void> cancelAll() async {
+    _update?.cancel.cancel();
+    cancelScrape();
+    for (final token in _running.values) {
+      token.cancel();
+    }
+    for (final id in List<String>.of(_running.keys)) {
+      final done = _scanCompleters[id];
+      if (done != null) {
+        await done.future;
+      }
+    }
+    final job = _update;
+    if (job != null && !job._finished.isCompleted) {
+      await job._finished.future;
+    }
+  }
+
   /// Looks up every title waiting for metadata. Only the metadata sources
   /// are asked; no mount is read. A call while a run is going makes it run
   /// once more afterwards, so titles added meanwhile are not missed.

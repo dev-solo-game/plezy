@@ -482,7 +482,11 @@ func (s *Server) handleSubtitle(w http.ResponseWriter, r *http.Request) {
 	stream.ServeSubtitle(w, r, drv, entry, format)
 }
 
-func (s *Server) handleLocalArtwork(w http.ResponseWriter, r *http.Request, _ *db.AdminAccount, _ *db.SessionRecord) {
+func (s *Server) handleLocalArtwork(w http.ResponseWriter, r *http.Request) {
+	if !s.authenticateArtworkRequest(r) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
 	mountID := r.PathValue("mount_id")
 	rawPath := strings.TrimSpace(r.URL.Query().Get("path"))
 	if rawPath == "" {
@@ -526,10 +530,14 @@ func (s *Server) handleLocalArtwork(w http.ResponseWriter, r *http.Request, _ *d
 }
 
 func (s *Server) handleRemoteArtwork(w http.ResponseWriter, r *http.Request) {
-	if _, _, err := s.authenticateRequest(r); err != nil {
+	if !s.authenticateArtworkRequest(r) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
+	s.serveRemoteArtwork(w, r)
+}
+
+func (s *Server) serveRemoteArtwork(w http.ResponseWriter, r *http.Request) {
 	src := strings.TrimSpace(r.URL.Query().Get("src"))
 	size := strings.TrimSpace(r.URL.Query().Get("size"))
 	cfg := s.Store.GetServerSettings()

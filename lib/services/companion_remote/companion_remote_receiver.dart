@@ -209,6 +209,12 @@ class CompanionRemoteReceiver {
       case RemoteCommandType.deviceInfo:
       case RemoteCommandType.disconnect:
       case RemoteCommandType.syncState:
+      case RemoteCommandType.searchHostCatalog:
+      case RemoteCommandType.hostCatalogSearchResult:
+      case RemoteCommandType.browseHostHome:
+      case RemoteCommandType.hostHomeResult:
+      case RemoteCommandType.browseHostItemChildren:
+      case RemoteCommandType.hostItemChildrenResult:
         break;
 
       case RemoteCommandType.qualitySettings:
@@ -255,6 +261,12 @@ bool _isPlayerCommand(RemoteCommandType type) => switch (type) {
   RemoteCommandType.disconnect ||
   RemoteCommandType.syncState ||
   RemoteCommandType.requestState ||
+  RemoteCommandType.searchHostCatalog ||
+  RemoteCommandType.hostCatalogSearchResult ||
+  RemoteCommandType.browseHostHome ||
+  RemoteCommandType.hostHomeResult ||
+  RemoteCommandType.browseHostItemChildren ||
+  RemoteCommandType.hostItemChildrenResult ||
   RemoteCommandType.playMedia ||
   RemoteCommandType.seekTo ||
   RemoteCommandType.setRate ||
@@ -293,6 +305,12 @@ bool _isViewerInput(RemoteCommandType type) => switch (type) {
   RemoteCommandType.disconnect ||
   RemoteCommandType.syncState ||
   RemoteCommandType.requestState ||
+  RemoteCommandType.searchHostCatalog ||
+  RemoteCommandType.hostCatalogSearchResult ||
+  RemoteCommandType.browseHostHome ||
+  RemoteCommandType.hostHomeResult ||
+  RemoteCommandType.browseHostItemChildren ||
+  RemoteCommandType.hostItemChildrenResult ||
   RemoteCommandType.playMedia ||
   RemoteCommandType.seekTo ||
   RemoteCommandType.setRate ||

@@ -87,16 +87,20 @@ func (s *Server) handleUnmatched(w http.ResponseWriter, r *http.Request, _ *db.A
 	})
 }
 
-func (s *Server) handleScrapeSearch(w http.ResponseWriter, r *http.Request, _ *db.AdminAccount, _ *db.SessionRecord) {
-	q := strings.TrimSpace(r.URL.Query().Get("q"))
-	kind := strings.TrimSpace(r.URL.Query().Get("kind"))
-	provider := strings.TrimSpace(r.URL.Query().Get("provider"))
-	year, _ := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("year")))
-	refresh := r.URL.Query().Get("refresh") == "1" || strings.EqualFold(r.URL.Query().Get("refresh"), "true")
-	if kind == "" {
+func (s *Server) searchMetadataCandidates(
+	ctx context.Context,
+	q, kind, provider string,
+	year int,
+	lang string,
+	refresh bool,
+) ([]metadata.Candidate, error) {
+	cfg := s.Store.GetServerSettings()
+	if strings.TrimSpace(kind) == "" {
 		kind = "movie"
 	}
-	cfg := s.Store.GetServerSettings()
+	if strings.TrimSpace(lang) == "" {
+		lang = cfg.ScraperLang
+	}
 
 	// Direct external ID or URL lookup (e.g. tt1234567, douban:36283066, tmdb:230311, bgm:400602)
 	if directProv, directID, kindHint, ok := library.ParseManualDirectID(q); ok {
@@ -104,47 +108,45 @@ func (s *Server) handleScrapeSearch(w http.ResponseWriter, r *http.Request, _ *d
 		if kindHint != "" {
 			effKind = kindHint
 		}
-		work, err := s.Meta.GetWork(r.Context(), directProv, effKind, directID, cfg.ScraperLang, refresh)
+		work, err := s.Meta.GetWork(ctx, directProv, effKind, directID, lang, refresh)
 		if err != nil && kindHint == "" {
 			altKind := "show"
 			if effKind == "show" {
 				altKind = "movie"
 			}
-			if w2, err2 := s.Meta.GetWork(r.Context(), directProv, altKind, directID, cfg.ScraperLang, refresh); err2 == nil {
+			if w2, err2 := s.Meta.GetWork(ctx, directProv, altKind, directID, lang, refresh); err2 == nil {
 				work = w2
 				err = nil
 				effKind = altKind
 			}
 		}
 		if err != nil {
-			writeMappedError(w, r, err)
-			return
+			return nil, err
 		}
 
 		results := make([]metadata.Candidate, 0, 2)
 		if directProv != "tmdb" && cfg.TmdbAPIKey != "" {
 			if work.TmdbID != nil && *work.TmdbID != "" {
-				if tw, tErr := s.Meta.GetWork(r.Context(), "tmdb", effKind, *work.TmdbID, cfg.ScraperLang, refresh); tErr == nil {
+				if tw, tErr := s.Meta.GetWork(ctx, "tmdb", effKind, *work.TmdbID, lang, refresh); tErr == nil {
 					results = append(results, candidateFromWork(tw))
 				}
 			} else if work.ImdbID != nil && *work.ImdbID != "" {
-				if c, _, fErr := s.Meta.FindByExternalID(r.Context(), "imdb_id", *work.ImdbID, effKind, cfg.ScraperLang, refresh); fErr == nil && c != nil {
+				if c, _, fErr := s.Meta.FindByExternalID(ctx, "imdb_id", *work.ImdbID, effKind, lang, refresh); fErr == nil && c != nil {
 					results = append(results, *c)
 				}
 			} else if work.TvdbID != nil && *work.TvdbID != "" {
-				if c, _, fErr := s.Meta.FindByExternalID(r.Context(), "tvdb_id", *work.TvdbID, effKind, cfg.ScraperLang, refresh); fErr == nil && c != nil {
+				if c, _, fErr := s.Meta.FindByExternalID(ctx, "tvdb_id", *work.TvdbID, effKind, lang, refresh); fErr == nil && c != nil {
 					results = append(results, *c)
 				}
 			}
 		}
 		results = append(results, candidateFromWork(work))
-		writeJSON(w, r, http.StatusOK, map[string]any{"code": 0, "results": results})
-		return
+		return results, nil
 	}
 
 	var providers []string
-	if provider != "" {
-		providers = []string{provider}
+	if provider != "" && !strings.EqualFold(provider, "all") {
+		providers = []string{strings.ToLower(provider)}
 	} else {
 		if cfg.TmdbAPIKey != "" {
 			providers = append(providers, "tmdb")
@@ -167,8 +169,7 @@ func (s *Server) handleScrapeSearch(w http.ResponseWriter, r *http.Request, _ *d
 	}
 
 	if len(providers) == 0 {
-		writeJSON(w, r, http.StatusOK, map[string]any{"code": 0, "results": []metadata.Candidate{}})
-		return
+		return []metadata.Candidate{}, nil
 	}
 
 	perProv := make([][]metadata.Candidate, len(providers))
@@ -178,13 +179,13 @@ func (s *Server) handleScrapeSearch(w http.ResponseWriter, r *http.Request, _ *d
 		wg.Add(1)
 		go func(idx int, prov string) {
 			defer wg.Done()
-			searchCtx := r.Context()
+			searchCtx := ctx
 			if prov != "tmdb" {
 				var cancel context.CancelFunc
 				searchCtx, cancel = context.WithTimeout(searchCtx, 8*time.Second)
 				defer cancel()
 			}
-			cands, err := s.Meta.Search(searchCtx, prov, kind, q, year, cfg.ScraperLang, refresh)
+			cands, err := s.Meta.Search(searchCtx, prov, kind, q, year, lang, refresh)
 			if err != nil {
 				errs[idx] = err
 				return
@@ -204,7 +205,21 @@ func (s *Server) handleScrapeSearch(w http.ResponseWriter, r *http.Request, _ *d
 		results = append(results, perProv[i]...)
 	}
 	if len(results) == 0 && lastErr != nil {
-		writeMappedError(w, r, lastErr)
+		return nil, lastErr
+	}
+	return results, nil
+}
+
+func (s *Server) handleScrapeSearch(w http.ResponseWriter, r *http.Request, _ *db.AdminAccount, _ *db.SessionRecord) {
+	q := strings.TrimSpace(r.URL.Query().Get("q"))
+	kind := strings.TrimSpace(r.URL.Query().Get("kind"))
+	provider := strings.TrimSpace(r.URL.Query().Get("provider"))
+	year, _ := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("year")))
+	refresh := r.URL.Query().Get("refresh") == "1" || strings.EqualFold(r.URL.Query().Get("refresh"), "true")
+
+	results, err := s.searchMetadataCandidates(r.Context(), q, kind, provider, year, "", refresh)
+	if err != nil {
+		writeMappedError(w, r, err)
 		return
 	}
 	writeJSON(w, r, http.StatusOK, map[string]any{"code": 0, "results": results})

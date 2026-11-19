@@ -519,3 +519,241 @@ class RemoteOnlineDevice {
 
   String get key => '${host.authContextId}:${host.clientId}';
 }
+
+class RemoteCatalogItem {
+  const RemoteCatalogItem({
+    required this.serverId,
+    this.serverName,
+    required this.itemId,
+    required this.kind,
+    required this.title,
+    this.subtitle,
+    this.seriesTitle,
+    this.year,
+    this.seasonNumber,
+    this.episodeNumber,
+    this.thumbUrl,
+    this.durationMs,
+    this.viewOffsetMs,
+    this.watched = false,
+  });
+
+  final String serverId;
+  final String? serverName;
+  final String itemId;
+  final String kind; // 'movie' | 'show' | 'season' | 'episode'
+  final String title;
+  final String? subtitle;
+  final String? seriesTitle;
+  final int? year;
+  final int? seasonNumber;
+  final int? episodeNumber;
+  final String? thumbUrl;
+  final int? durationMs;
+  final int? viewOffsetMs;
+  final bool watched;
+
+  bool get isContainer => kind == 'show' || kind == 'season';
+
+  RemoteMediaTarget toRemoteMediaTarget() => RemoteMediaTarget(
+    kind: kind,
+    title: title,
+    seriesTitle: seriesTitle,
+    posterUrl: thumbUrl,
+    seasonNumber: seasonNumber,
+    episodeNumber: episodeNumber,
+    positionMs: viewOffsetMs,
+    remoteServerId: serverId,
+    remoteItemId: itemId,
+  );
+
+  Map<String, dynamic> toJson() => {
+    'serverId': serverId,
+    if (serverName != null) 'serverName': serverName,
+    'itemId': itemId,
+    'kind': kind,
+    'title': title,
+    if (subtitle != null) 'subtitle': subtitle,
+    if (seriesTitle != null) 'seriesTitle': seriesTitle,
+    if (year != null) 'year': year,
+    if (seasonNumber != null) 'seasonNumber': seasonNumber,
+    if (episodeNumber != null) 'episodeNumber': episodeNumber,
+    if (thumbUrl != null) 'thumbUrl': thumbUrl,
+    if (durationMs != null) 'durationMs': durationMs,
+    if (viewOffsetMs != null) 'viewOffsetMs': viewOffsetMs,
+    if (watched) 'watched': true,
+  };
+
+  factory RemoteCatalogItem.fromJson(Map<String, dynamic> json) => RemoteCatalogItem(
+    serverId: json['serverId'] as String? ?? '',
+    serverName: json['serverName'] as String?,
+    itemId: json['itemId'] as String? ?? '',
+    kind: json['kind'] as String? ?? 'movie',
+    title: json['title'] as String? ?? '',
+    subtitle: json['subtitle'] as String?,
+    seriesTitle: json['seriesTitle'] as String?,
+    year: (json['year'] as num?)?.toInt(),
+    seasonNumber: (json['seasonNumber'] as num?)?.toInt(),
+    episodeNumber: (json['episodeNumber'] as num?)?.toInt(),
+    thumbUrl: json['thumbUrl'] as String?,
+    durationMs: (json['durationMs'] as num?)?.toInt(),
+    viewOffsetMs: (json['viewOffsetMs'] as num?)?.toInt(),
+    watched: json['watched'] == true,
+  );
+}
+
+class RemoteCatalogHub {
+  const RemoteCatalogHub({
+    required this.id,
+    required this.title,
+    this.serverId,
+    this.serverName,
+    this.items = const [],
+  });
+
+  final String id;
+  final String title;
+  final String? serverId;
+  final String? serverName;
+  final List<RemoteCatalogItem> items;
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'title': title,
+    if (serverId != null) 'serverId': serverId,
+    if (serverName != null) 'serverName': serverName,
+    'items': [for (final item in items) item.toJson()],
+  };
+
+  factory RemoteCatalogHub.fromJson(Map<String, dynamic> json) => RemoteCatalogHub(
+    id: json['id'] as String? ?? '',
+    title: json['title'] as String? ?? '',
+    serverId: json['serverId'] as String?,
+    serverName: json['serverName'] as String?,
+    items: [
+      if (json['items'] is List)
+        for (final raw in json['items'] as List)
+          if (raw is Map) RemoteCatalogItem.fromJson(Map<String, dynamic>.from(raw)),
+    ],
+  );
+}
+
+class RemoteCatalogLibrary {
+  const RemoteCatalogLibrary({
+    required this.serverId,
+    this.serverName,
+    required this.libraryId,
+    required this.title,
+    required this.kind,
+  });
+
+  final String serverId;
+  final String? serverName;
+  final String libraryId;
+  final String title;
+  final String kind;
+
+  Map<String, dynamic> toJson() => {
+    'serverId': serverId,
+    if (serverName != null) 'serverName': serverName,
+    'libraryId': libraryId,
+    'title': title,
+    'kind': kind,
+  };
+
+  factory RemoteCatalogLibrary.fromJson(Map<String, dynamic> json) => RemoteCatalogLibrary(
+    serverId: json['serverId'] as String? ?? '',
+    serverName: json['serverName'] as String?,
+    libraryId: json['libraryId'] as String? ?? '',
+    title: json['title'] as String? ?? '',
+    kind: json['kind'] as String? ?? 'unknown',
+  );
+}
+
+class RemoteHostSearchResponse {
+  const RemoteHostSearchResponse({required this.query, this.items = const [], this.error});
+
+  final String query;
+  final List<RemoteCatalogItem> items;
+  final String? error;
+
+  Map<String, dynamic> toJson() => {
+    'query': query,
+    'items': [for (final item in items) item.toJson()],
+    if (error != null) 'error': error,
+  };
+
+  factory RemoteHostSearchResponse.fromJson(Map<String, dynamic> json) => RemoteHostSearchResponse(
+    query: json['query'] as String? ?? '',
+    items: [
+      if (json['items'] is List)
+        for (final raw in json['items'] as List)
+          if (raw is Map) RemoteCatalogItem.fromJson(Map<String, dynamic>.from(raw)),
+    ],
+    error: json['error'] as String?,
+  );
+}
+
+class RemoteHostHomeResponse {
+  const RemoteHostHomeResponse({this.hubs = const [], this.libraries = const [], this.error});
+
+  final List<RemoteCatalogHub> hubs;
+  final List<RemoteCatalogLibrary> libraries;
+  final String? error;
+
+  Map<String, dynamic> toJson() => {
+    'hubs': [for (final hub in hubs) hub.toJson()],
+    'libraries': [for (final lib in libraries) lib.toJson()],
+    if (error != null) 'error': error,
+  };
+
+  factory RemoteHostHomeResponse.fromJson(Map<String, dynamic> json) => RemoteHostHomeResponse(
+    hubs: [
+      if (json['hubs'] is List)
+        for (final raw in json['hubs'] as List)
+          if (raw is Map) RemoteCatalogHub.fromJson(Map<String, dynamic>.from(raw)),
+    ],
+    libraries: [
+      if (json['libraries'] is List)
+        for (final raw in json['libraries'] as List)
+          if (raw is Map) RemoteCatalogLibrary.fromJson(Map<String, dynamic>.from(raw)),
+    ],
+    error: json['error'] as String?,
+  );
+}
+
+class RemoteHostChildrenResponse {
+  const RemoteHostChildrenResponse({
+    required this.serverId,
+    required this.itemId,
+    this.title,
+    this.items = const [],
+    this.error,
+  });
+
+  final String serverId;
+  final String itemId;
+  final String? title;
+  final List<RemoteCatalogItem> items;
+  final String? error;
+
+  Map<String, dynamic> toJson() => {
+    'serverId': serverId,
+    'itemId': itemId,
+    if (title != null) 'title': title,
+    'items': [for (final item in items) item.toJson()],
+    if (error != null) 'error': error,
+  };
+
+  factory RemoteHostChildrenResponse.fromJson(Map<String, dynamic> json) => RemoteHostChildrenResponse(
+    serverId: json['serverId'] as String? ?? '',
+    itemId: json['itemId'] as String? ?? '',
+    title: json['title'] as String?,
+    items: [
+      if (json['items'] is List)
+        for (final raw in json['items'] as List)
+          if (raw is Map) RemoteCatalogItem.fromJson(Map<String, dynamic>.from(raw)),
+    ],
+    error: json['error'] as String?,
+  );
+}

@@ -8,6 +8,8 @@ import '../profiles/active_profile_provider.dart';
 import '../profiles/profile_connection_registry.dart';
 import '../profiles/profile_connection.dart';
 import '../library/local_library_client.dart';
+import '../ttplay/ttplay_external_server_client.dart';
+import '../ttplay/ttplay_server_client.dart';
 import '../utils/global_key_utils.dart';
 import 'dart:io' show Platform;
 
@@ -912,10 +914,16 @@ class SideNavigationRailState extends State<SideNavigationRail> with MountedSetS
     };
     for (final lib in allLibraries) {
       final serverId = lib.serverId;
-      if (serverId != null && serverId != LocalLibraryClient.localServerId) {
-        // Persisted bindings are authoritative for MediaBrowser servers; do
-        // not expose a previous profile's libraries during a rebind.
-        if (_hasProfileScope && lib.backend.usesMediaBrowserApi && !_remoteSources.containsKey(serverId)) {
+      if (serverId != null &&
+          serverId != LocalLibraryClient.localServerId &&
+          serverId != TtplayServerClient.primaryServerId) {
+        // Persisted bindings are authoritative for local MediaBrowser servers;
+        // external servers proxied by ttplay-server (`ttplay-ext:*`) are
+        // scoped by the active self-hosted session rather than profile bindings.
+        if (_hasProfileScope &&
+            lib.backend.usesMediaBrowserApi &&
+            !TtplayExternalServerClient.isExternalServerId(serverId) &&
+            !_remoteSources.containsKey(serverId)) {
           continue;
         }
         _remoteSources.putIfAbsent(serverId, () => (name: lib.serverName ?? serverId, backend: lib.backend));
@@ -1373,7 +1381,9 @@ class SideNavigationRailState extends State<SideNavigationRail> with MountedSetS
         : parseGlobalKey(widget.selectedLibraryKey!)?.serverId;
     final isLibrariesTabSelected =
         widget.selectedTab == NavigationTabId.libraries &&
-        (selectedServerId == null || selectedServerId.toString() == LocalLibraryClient.localServerId);
+        (selectedServerId == null ||
+            selectedServerId.toString() == LocalLibraryClient.localServerId ||
+            selectedServerId.toString() == TtplayServerClient.primaryServerId);
     final allEmpty = visibleRows.isEmpty && hiddenLibraryCount == 0;
     final headerLabelColor = isLibrariesTabSelected ? t.text : t.textMuted;
 

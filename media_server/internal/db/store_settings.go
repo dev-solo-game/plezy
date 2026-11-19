@@ -237,6 +237,7 @@ func (s *Store) GetServerSettings() ServerSettings {
 		TvdbPinSet:              tvdbPin != "",
 		TvdbPinMasked:           MaskSecret(tvdbPin),
 		TvdbPin:                 tvdbPin,
+		AllowPublicMetadata:     s.GetSettingBool("allow_public_metadata", true),
 		AllowFallbackMetadata:   s.GetSettingBool("allow_fallback_metadata", true),
 		CustomRecognitionWords:  s.GetSetting("custom_recognition_words", ""),
 		ProxyImages:             s.GetSettingBool("proxy_images", true),
@@ -346,6 +347,11 @@ func (s *Store) UpdateServerSettings(req ServerSettingsUpdate) (ServerSettings, 
 	if err := s.setSecretSetting("tvdb_pin_enc", "", req.TvdbPin, req.ClearTvdbPin); err != nil {
 		return ServerSettings{}, err
 	}
+	if req.AllowPublicMetadata != nil {
+		if err := s.SetSettingBool("allow_public_metadata", *req.AllowPublicMetadata); err != nil {
+			return ServerSettings{}, err
+		}
+	}
 	if req.AllowFallbackMetadata != nil {
 		if err := s.SetSettingBool("allow_fallback_metadata", *req.AllowFallbackMetadata); err != nil {
 			return ServerSettings{}, err
@@ -443,6 +449,20 @@ func (s *Store) SeedDefaultSettingsIfAbsent(tmdbKey, tmdbAPIBase, tmdbImageBase,
 		if err == sql.ErrNoRows {
 			_ = s.SetSettingBool("bangumi_enabled", *bangumiEnabled)
 		}
+	}
+	return nil
+}
+
+// SeedPublicMetadataIfAbsent applies the initial allow_public_metadata flag when no
+// explicit row exists yet in server_settings.
+func (s *Store) SeedPublicMetadataIfAbsent(allow *bool) error {
+	if allow == nil {
+		return nil
+	}
+	var existing string
+	err := s.db.QueryRow(`SELECT value FROM server_settings WHERE key = 'allow_public_metadata'`).Scan(&existing)
+	if err == sql.ErrNoRows {
+		return s.SetSettingBool("allow_public_metadata", *allow)
 	}
 	return nil
 }

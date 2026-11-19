@@ -5,8 +5,6 @@ import 'package:flutter/widgets.dart';
 import '../connection/connection.dart';
 import '../connection/connection_registry.dart';
 import '../i18n/strings.g.dart';
-import '../library/sync/lan_peer_sync_service.dart';
-import '../library/sync/sync_coordinator.dart';
 import '../models/companion_remote/remote_command.dart';
 import '../models/companion_remote/remote_playback_models.dart';
 import '../models/companion_remote/remote_session.dart';
@@ -19,6 +17,8 @@ import '../profiles/profile_connection_registry.dart';
 import '../services/companion_remote/companion_remote_peer_service.dart';
 import '../services/companion_remote/companion_remote_receiver.dart';
 import '../services/companion_remote/lan_discovery_service.dart';
+import '../services/companion_remote/lan_identity_store.dart';
+import '../services/companion_remote/lan_pairing_service.dart';
 import '../services/companion_remote/remote_auth_context.dart';
 import '../services/companion_remote/remote_auth_service.dart';
 import '../utils/app_logger.dart';
@@ -26,8 +26,8 @@ import '../utils/device_identity.dart';
 import '../utils/serial_future_queue.dart';
 import '../mixins/disposable_change_notifier_mixin.dart';
 
-export '../library/sync/lan_peer_sync_service.dart' show LanDiscoveredPeer;
 export '../services/companion_remote/lan_discovery_service.dart' show DiscoveredHost;
+export '../services/companion_remote/lan_pairing_service.dart' show LanDiscoveredPeer;
 
 class CompanionRemoteTrustCancelledException implements Exception {
   const CompanionRemoteTrustCancelledException();
@@ -123,15 +123,17 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
   bool _lanStandbyReady = false;
   int? _hostServerPort;
   String? _cryptoProfileId;
+  String _myDeviceId = '';
   Completer<void>? _pendingTrustCancel;
 
   // Profile-scoped & app-scoped services watched so a running host's crypto
-  // identity tracks home-user, connection, LAN-trust, and sync-account changes.
+  // identity tracks home-user, connection, and LAN-trust changes.
   ConnectionRegistry? _boundConnections;
   ActiveProfileProvider? _boundActiveProfile;
   ProfileConnectionRegistry? _boundProfileConnections;
   PlexHomeService? _boundPlexHome;
-  SyncAndScanCoordinator? _boundSync;
+  LanPairingService? _boundLan;
+  LanIdentityStore? _boundLanIdentity;
   final List<StreamSubscription<void>> _profileServiceSubs = [];
   bool _authRefreshScheduled = false;
 
@@ -154,8 +156,14 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
   StreamSubscription<RemotePeerError>? _hostErrorSubscription;
   StreamSubscription<RemoteSessionStatus>? _hostStatusSubscription;
 
+  int _catalogRequestSeq = 0;
+  final Map<String, Completer<Map<String, dynamic>>> _pendingCatalogRequests = {};
+
   CommandReceivedCallback? onCommandReceived;
   Future<bool> Function(RemoteMediaTarget target)? onPlayMediaRequested;
+  Future<RemoteHostSearchResponse> Function(String query, int limit)? onSearchHostCatalog;
+  Future<RemoteHostHomeResponse> Function()? onBrowseHostHome;
+  Future<RemoteHostChildrenResponse> Function(String serverId, String itemId, String? kind)? onBrowseHostItemChildren;
 
   bool get isInSession => isRemote || _hostConnectedDevice != null;
   bool get isHost => isHostServerRunning;
@@ -183,7 +191,7 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
     safeNotifyListeners();
   }
 
-  /// Bind the profile-scoped services (and optional sync coordinator) whose
+  /// Bind the profile-scoped services (and optional LAN pairing service) whose
   /// changes must keep a running host's crypto identity current: a removed home
   /// user, revoked borrowed connection, or revoked LAN trust has to stop
   /// controlling an already-broadcasting host.
@@ -192,10 +200,11 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
     required ActiveProfileProvider activeProfile,
     required ProfileConnectionRegistry profileConnections,
     required PlexHomeService plexHome,
-    SyncAndScanCoordinator? sync,
+    LanPairingService? lan,
+    LanIdentityStore? identityStore,
   }) {
-    if (sync != null) {
-      bindSyncCoordinator(sync);
+    if (lan != null || identityStore != null) {
+      bindLanPairing(lan, identityStore: identityStore);
     }
     if (_boundActiveProfile != null) return;
     _boundConnections = connections;
@@ -209,16 +218,21 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
     activeProfile.addListener(_scheduleAuthContextRefresh);
   }
 
-  /// Bind the app-scoped [SyncAndScanCoordinator] so LAN P2P trust changes and
-  /// Sync Server sessions automatically drive companion remote discovery/host auth.
-  void bindSyncCoordinator(SyncAndScanCoordinator? sync) {
-    if (identical(_boundSync, sync)) return;
-    _boundSync?.removeListener(_onBoundSyncChanged);
-    _boundSync = sync;
-    _boundSync?.addListener(_onBoundSyncChanged);
+  /// Bind the app-scoped [LanPairingService] so LAN P2P trust changes
+  /// automatically drive companion remote discovery/host auth.
+  void bindLanPairing(LanPairingService? lan, {LanIdentityStore? identityStore}) {
+    if (identityStore != null) {
+      _boundLanIdentity = identityStore;
+    } else if (lan != null) {
+      _boundLanIdentity ??= lan.identityStore;
+    }
+    if (identical(_boundLan, lan)) return;
+    _boundLan?.removeListener(_onBoundLanChanged);
+    _boundLan = lan;
+    _boundLan?.addListener(_onBoundLanChanged);
   }
 
-  void _onBoundSyncChanged() {
+  void _onBoundLanChanged() {
     if (isDisposed) return;
     if (isHostServerRunning || isCryptoReady) {
       _scheduleAuthContextRefresh();
@@ -227,9 +241,9 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
   }
 
   /// Coalesce a burst of stream events into a single rebuild. Only an active
-  /// host or initialized sync-bound discovery view needs live identity updates.
+  /// host or initialized LAN-bound discovery view needs live identity updates.
   void _scheduleAuthContextRefresh() {
-    if (!isHostServerRunning && !(isCryptoReady && _boundSync != null)) return;
+    if (!isHostServerRunning && !(isCryptoReady && _boundLan != null)) return;
     if (_authRefreshScheduled) return;
     _authRefreshScheduled = true;
     scheduleMicrotask(() {
@@ -243,13 +257,14 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
     final activeProfile = _boundActiveProfile;
     final profileConnections = _boundProfileConnections;
     final plexHome = _boundPlexHome;
-    final sync = _boundSync;
+    final lan = _boundLan;
+    final identityStore = _boundLanIdentity;
     final hasProfileServices = connections != null && activeProfile != null && profileConnections != null;
-    if (!hasProfileServices && sync == null) {
+    if (!hasProfileServices && lan == null) {
       return;
     }
     final wasHostRunning = isHostServerRunning;
-    if (!wasHostRunning && !(isCryptoReady && sync != null)) return;
+    if (!wasHostRunning && !(isCryptoReady && lan != null)) return;
 
     await _serializeLifecycle(() async {
       if (isDisposed) return;
@@ -260,7 +275,8 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
         activeProfile: activeProfile,
         profileConnections: profileConnections,
         plexHomeForConnection: plexHome?.materializePlexHomeForConnection,
-        sync: sync,
+        lan: lan,
+        identityStore: identityStore,
       );
       // Unchanged identities leave the host running (no restart). When they
       // change across profile switches, the rebuild tore the host down — bring it
@@ -281,9 +297,13 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
 
   bool get isCryptoReady => _authContexts.isNotEmpty || _lanStandbyReady;
 
-  /// Ensure crypto is initialized for Sync Server / LAN P2P without requiring
-  /// profile services (useful for sync-first flows and unit tests).
-  Future<bool> ensureSyncCryptoReady(SyncAndScanCoordinator sync, {void Function()? checkCurrent}) {
+  /// Ensure crypto is initialized for LAN P2P without requiring profile services
+  /// (useful for mode-decoupled LAN pairing flows and unit tests).
+  Future<bool> ensureLanCryptoReady(
+    LanPairingService lan, {
+    LanIdentityStore? identityStore,
+    void Function()? checkCurrent,
+  }) {
     return _serializeLifecycle(
       () => _ensureCryptoReadyLocked(
         null,
@@ -291,14 +311,15 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
         activeProfile: _boundActiveProfile,
         profileConnections: _boundProfileConnections,
         plexHomeForConnection: _boundPlexHome?.materializePlexHomeForConnection,
-        sync: sync,
+        lan: lan,
+        identityStore: identityStore,
         checkCurrent: checkCurrent,
       ),
     );
   }
 
   /// Ensure crypto is initialized for every remote identity attached to the
-  /// active profile and/or active sync coordinator. Serialized against host
+  /// active profile and/or bound LAN pairing service. Serialized against host
   /// start/stop so a live refresh and a user-driven start can't interleave.
   /// Returns true if crypto is ready (already initialized or just initialized).
   Future<bool> ensureCryptoReady(
@@ -309,7 +330,8 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
     ActivePlexIdentity? identity,
     PlexAccountConnection? account,
     PlexHomeResolver? plexHomeForConnection,
-    SyncAndScanCoordinator? sync,
+    LanPairingService? lan,
+    LanIdentityStore? identityStore,
     void Function()? checkCurrent,
   }) {
     return _serializeLifecycle(
@@ -321,7 +343,8 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
         identity: identity,
         account: account,
         plexHomeForConnection: plexHomeForConnection,
-        sync: sync,
+        lan: lan,
+        identityStore: identityStore,
         checkCurrent: checkCurrent,
       ),
     );
@@ -335,25 +358,41 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
     ActivePlexIdentity? identity,
     PlexAccountConnection? account,
     PlexHomeResolver? plexHomeForConnection,
-    SyncAndScanCoordinator? sync,
+    LanPairingService? lan,
+    LanIdentityStore? identityStore,
     void Function()? checkCurrent,
   }) async {
     checkCurrent?.call();
-    final effectiveSync = sync ?? _boundSync;
-    if (effectiveSync != null) {
-      bindSyncCoordinator(effectiveSync);
-      await effectiveSync.initialize();
+    final effectiveLan = lan ?? _boundLan;
+    final effectiveIdentity = identityStore ?? _boundLanIdentity ?? effectiveLan?.identityStore;
+    if (effectiveLan != null || effectiveIdentity != null) {
+      bindLanPairing(effectiveLan, identityStore: effectiveIdentity);
+    }
+
+    if (effectiveIdentity != null) {
+      final customName = await effectiveIdentity.getCustomDeviceName();
       checkCurrent?.call();
-      final customName = await effectiveSync.syncStore.getCustomDeviceName();
       if (customName != null && customName.isNotEmpty) {
         _deviceName = customName;
       } else if (!isMeaningfulDeviceName(_deviceName) || _deviceName == t.companionRemote.unknownDevice) {
-        final fallbackName = (await effectiveSync.syncStore.getDeviceName()).trim();
+        final fallbackName = (await effectiveIdentity.getDeviceName()).trim();
+        checkCurrent?.call();
         if (isMeaningfulDeviceName(fallbackName)) {
           _deviceName = fallbackName;
         }
       }
-      checkCurrent?.call();
+      if (effectiveLan?.deviceId case final lanId? when lanId.isNotEmpty) {
+        _myDeviceId = lanId;
+      } else {
+        _myDeviceId = await effectiveIdentity.getOrCreateDeviceId();
+        checkCurrent?.call();
+      }
+    } else if (effectiveLan != null) {
+      final lanName = effectiveLan.deviceName?.trim();
+      if (lanName != null && isMeaningfulDeviceName(lanName)) {
+        _deviceName = lanName;
+      }
+      _myDeviceId = effectiveLan.deviceId ?? '';
     }
 
     Profile? profile;
@@ -363,8 +402,8 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
       profile = activeProfile.active;
     }
 
-    if (profile == null && effectiveSync == null) {
-      appLogger.w('CompanionRemote: Cannot init crypto — no active profile');
+    if (profile == null && effectiveLan == null) {
+      appLogger.w('CompanionRemote: Cannot init crypto — no active profile or LAN pairing service');
       return false;
     }
 
@@ -377,42 +416,24 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
     }
 
     var nextLanStandby = false;
-    if (effectiveSync != null) {
+    if (effectiveLan != null) {
       final auth = RemoteAuthService.instance;
-      final session = effectiveSync.session;
-      if (session != null) {
-        final myDeviceId = effectiveSync.deviceId.isNotEmpty
-            ? effectiveSync.deviceId
-            : (await effectiveSync.syncStore.getOrCreateDeviceId());
-        checkCurrent?.call();
-        addUniqueContext(
-          await auth.createCloudSyncAuthContext(
-            myDeviceId: myDeviceId,
-            serverUrl: session.serverUrl,
-            userId: session.userId,
-            masterKey: session.masterKey,
-          ),
-        );
-      }
-
-      if (effectiveSync.onboardingCompleted ||
-          effectiveSync.isSignedIn ||
-          effectiveSync.lanService.isRunning ||
-          effectiveSync.lanService.trustedPeers.isNotEmpty) {
-        if (!effectiveSync.lanService.isRunning && effectiveSync.autoStartLanService) {
-          await effectiveSync.lanService.start();
-          checkCurrent?.call();
-        }
-        final lanDeviceId = effectiveSync.lanService.deviceId;
+      if (effectiveLan.isRunning ||
+          effectiveLan.trustedPeers.isNotEmpty ||
+          effectiveIdentity != null) {
+        final lanDeviceId = effectiveLan.deviceId;
         final myDeviceId = (lanDeviceId != null && lanDeviceId.isNotEmpty)
             ? lanDeviceId
-            : (effectiveSync.deviceId.isNotEmpty
-                  ? effectiveSync.deviceId
-                  : await effectiveSync.syncStore.getOrCreateDeviceId());
+            : (_myDeviceId.isNotEmpty
+                  ? _myDeviceId
+                  : (await effectiveIdentity?.getOrCreateDeviceId() ?? ''));
+        if (myDeviceId.isNotEmpty) {
+          _myDeviceId = myDeviceId;
+        }
         checkCurrent?.call();
-        final lanPeers = effectiveSync.lanService.isRunning
-            ? effectiveSync.lanService.trustedPeers
-            : await effectiveSync.syncStore.loadTrustedLanPeers();
+        final lanPeers = effectiveLan.isRunning
+            ? effectiveLan.trustedPeers
+            : (await effectiveIdentity?.loadTrustedLanPeers() ?? effectiveLan.trustedPeers);
         checkCurrent?.call();
         for (final trusted in lanPeers) {
           addUniqueContext(
@@ -423,7 +444,7 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
             ),
           );
         }
-        nextLanStandby = effectiveSync.lanService.isRunning || effectiveSync.autoStartLanService;
+        nextLanStandby = effectiveLan.isRunning;
       }
     }
 
@@ -445,7 +466,7 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
       checkCurrent?.call();
     }
 
-    final nextProfileKey = profile?.id ?? '__sync__';
+    final nextProfileKey = profile?.id ?? '__lan__';
 
     if (nextContexts.isEmpty && !nextLanStandby) {
       if (isCryptoReady) await _prepareForCryptoRebuild();
@@ -457,12 +478,12 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
         _lanStandbyReady == nextLanStandby &&
         _sameAuthContexts(_authContexts, nextContexts)) {
       if (isHostServerRunning && _hostServerPort != null) {
-        effectiveSync?.lanService.setAdvertisedRemotePort(nextLanStandby ? _hostServerPort : null);
+        effectiveLan?.setAdvertisedRemotePort(nextLanStandby ? _hostServerPort : null);
       }
       return true;
     }
 
-    // When only the auth context set (e.g., LAN peer trusted/revoked or sync mode switch)
+    // When only the auth context set (e.g., LAN peer trusted/revoked)
     // changed within the same profile scope, hot-update in place instead of closing
     // the host listening port or disturbing unaffected outbound sessions.
     if (_cryptoProfileId == nextProfileKey && _cryptoProfileId != null) {
@@ -472,7 +493,7 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
         await _hostPeerService!.updateHostAuthContexts(nextContexts);
         checkCurrent?.call();
         final port = _hostServerPort;
-        effectiveSync?.lanService.setAdvertisedRemotePort(nextLanStandby ? port : null);
+        effectiveLan?.setAdvertisedRemotePort(nextLanStandby ? port : null);
         if (nextContexts.isEmpty) {
           await _discoveryService?.stopBroadcasting();
         } else if (port != null && _hostServerAddresses.isNotEmpty) {
@@ -868,7 +889,7 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
       }
       _hostServerAddresses = result.addresses;
       _hostServerPort = result.port;
-      _boundSync?.lanService.setAdvertisedRemotePort(_lanStandbyReady ? result.port : null);
+      _boundLan?.setAdvertisedRemotePort(_lanStandbyReady ? result.port : null);
 
       _hostSession = RemoteSession(
         role: RemoteSessionRole.host,
@@ -903,7 +924,7 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
       appLogger.e('CompanionRemote: Failed to start host server', error: e);
       _hostServerAddresses = const [];
       _hostServerPort = null;
-      _boundSync?.lanService.setAdvertisedRemotePort(null);
+      _boundLan?.setAdvertisedRemotePort(null);
       _hostSession = RemoteSession(
         role: RemoteSessionRole.host,
         status: RemoteSessionStatus.error,
@@ -928,7 +949,7 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
       await _discoveryService?.stopBroadcasting();
       _hostServerAddresses = const [];
       _hostServerPort = null;
-      _boundSync?.lanService.setAdvertisedRemotePort(null);
+      _boundLan?.setAdvertisedRemotePort(null);
 
       if (identical(_hostPeerService, peer)) {
         _hostPeerService = null;
@@ -950,7 +971,7 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
   }
 
   bool _isSelfHost(DiscoveredHost host) {
-    final myDeviceId = _boundSync?.deviceId ?? '';
+    final myDeviceId = _boundLan?.deviceId ?? _myDeviceId;
     if (myDeviceId.isNotEmpty && host.clientId == myDeviceId) return true;
     for (final ctx in _authContexts) {
       if (ctx.id == host.authContextId && ctx.clientIdentifier.isNotEmpty && ctx.clientIdentifier == host.clientId) {
@@ -982,10 +1003,8 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
 
   /// Discovered LAN peers that are already trusted and advertising a remote host port.
   List<DiscoveredHost> get trustedLanRemoteHosts {
-    final sync = _boundSync;
-    if (sync == null) return const [];
-    final lan = sync.lanService;
-    if (!lan.isRunning) return const [];
+    final lan = _boundLan;
+    if (lan == null || !lan.isRunning) return const [];
     final result = <DiscoveredHost>[];
     for (final peer in lan.discoveredPeers) {
       final remotePort = peer.remotePort;
@@ -1075,9 +1094,9 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
   Future<void> refreshOnlineDeviceStatuses() async {
     if (isDisposed) return;
     startPassiveDiscovery();
-    final sync = _boundSync;
-    if (sync != null && sync.lanService.isRunning) {
-      await sync.lanService.probeTrustedPeers();
+    final lan = _boundLan;
+    if (lan != null && lan.isRunning) {
+      await lan.probeTrustedPeers();
       if (isDisposed) return;
     }
     final hosts = onlineTrustedHosts;
@@ -1155,10 +1174,8 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
 
   /// Discovered nearby LAN P2P peers running a remote server that have not yet been trusted.
   List<LanDiscoveredPeer> get untrustedLanRemotePeers {
-    final sync = _boundSync;
-    if (sync == null) return const [];
-    final lan = sync.lanService;
-    if (!lan.isRunning) return const [];
+    final lan = _boundLan;
+    if (lan == null || !lan.isRunning) return const [];
     final knownBeaconClientIds = {
       for (final host in _beaconHosts)
         if (host.clientId.isNotEmpty) host.clientId,
@@ -1175,7 +1192,7 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
 
   /// 4-digit SAS verification code between this device and [peer], if LAN P2P is initialized.
   String? pairingCodeForLanPeer(LanDiscoveredPeer peer) {
-    final myPub = _boundSync?.lanService.publicKeyBase64;
+    final myPub = _boundLan?.publicKeyBase64;
     if (myPub == null || myPub.isEmpty) return null;
     return peer.pairingCodeFor(myPub);
   }
@@ -1195,8 +1212,8 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
     LanDiscoveredPeer peer, {
     Duration trustTimeout = const Duration(seconds: 20),
   }) async {
-    final sync = _boundSync;
-    if (sync == null) {
+    final lan = _boundLan;
+    if (lan == null) {
       throw RemotePeerError(type: RemotePeerErrorType.authFailed, message: t.companionRemote.pairing.cryptoInitFailed);
     }
     final initialRemotePort = peer.remotePort;
@@ -1207,7 +1224,6 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
       );
     }
 
-    final lan = sync.lanService;
     if (!lan.isRunning) {
       await lan.start();
     }
@@ -1273,7 +1289,8 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
         activeProfile: _boundActiveProfile,
         profileConnections: _boundProfileConnections,
         plexHomeForConnection: _boundPlexHome?.materializePlexHomeForConnection,
-        sync: sync,
+        lan: lan,
+        identityStore: _boundLanIdentity,
       ),
     );
     if (isDisposed) return;
@@ -1539,10 +1556,17 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
           if (command.data != null) {
             unawaited(_handlePlayMediaRequest(RemoteMediaTarget.fromJson(command.data!)));
           }
+        } else if (command.type == RemoteCommandType.searchHostCatalog ||
+            command.type == RemoteCommandType.browseHostHome ||
+            command.type == RemoteCommandType.browseHostItemChildren) {
+          unawaited(_handleHostCatalogCommand(peer, hostGeneration, command));
         } else if (command.type != RemoteCommandType.ping &&
             command.type != RemoteCommandType.pong &&
             command.type != RemoteCommandType.ack &&
-            command.type != RemoteCommandType.syncState) {
+            command.type != RemoteCommandType.syncState &&
+            command.type != RemoteCommandType.hostCatalogSearchResult &&
+            command.type != RemoteCommandType.hostHomeResult &&
+            command.type != RemoteCommandType.hostItemChildrenResult) {
           onCommandReceived?.call(command);
         }
       },
@@ -1614,6 +1638,10 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
           _handleRemoteDeviceInfo(command);
         } else if (command.type == RemoteCommandType.syncState) {
           _handleSyncState(command);
+        } else if (command.type == RemoteCommandType.hostCatalogSearchResult ||
+            command.type == RemoteCommandType.hostHomeResult ||
+            command.type == RemoteCommandType.hostItemChildrenResult) {
+          _handleCatalogResponse(command);
         }
       },
       onError: (Object error) {
@@ -1751,7 +1779,178 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
     }
   }
 
+  void _failPendingCatalogRequests(String reason) {
+    if (_pendingCatalogRequests.isEmpty) return;
+    final pending = Map<String, Completer<Map<String, dynamic>>>.of(_pendingCatalogRequests);
+    _pendingCatalogRequests.clear();
+    for (final completer in pending.values) {
+      if (!completer.isCompleted) {
+        completer.completeError(StateError(reason));
+      }
+    }
+  }
+
+  void _handleCatalogResponse(RemoteCommand command) {
+    final data = command.data;
+    if (data == null) return;
+    final requestId = data['requestId'] as String?;
+    if (requestId == null || requestId.isEmpty) return;
+    final completer = _pendingCatalogRequests.remove(requestId);
+    if (completer != null && !completer.isCompleted) {
+      completer.complete(Map<String, dynamic>.from(data));
+    }
+  }
+
+  Future<void> _handleHostCatalogCommand(
+    CompanionRemotePeerService peer,
+    int hostGeneration,
+    RemoteCommand command,
+  ) async {
+    final data = command.data ?? const <String, dynamic>{};
+    final requestId = data['requestId'] as String?;
+
+    late final RemoteCommandType responseType;
+    late final Map<String, dynamic> payload;
+
+    switch (command.type) {
+      case RemoteCommandType.searchHostCatalog:
+        responseType = RemoteCommandType.hostCatalogSearchResult;
+        final query = data['query'] as String? ?? '';
+        final limit = (data['limit'] as num?)?.toInt() ?? 40;
+        final handler = onSearchHostCatalog;
+        if (handler == null) {
+          payload = RemoteHostSearchResponse(query: query, error: 'Host catalog unavailable').toJson();
+        } else {
+          try {
+            payload = (await handler(query, limit)).toJson();
+          } catch (e) {
+            payload = RemoteHostSearchResponse(query: query, error: '$e').toJson();
+          }
+        }
+      case RemoteCommandType.browseHostHome:
+        responseType = RemoteCommandType.hostHomeResult;
+        final handler = onBrowseHostHome;
+        if (handler == null) {
+          payload = const RemoteHostHomeResponse(error: 'Host catalog unavailable').toJson();
+        } else {
+          try {
+            payload = (await handler()).toJson();
+          } catch (e) {
+            payload = RemoteHostHomeResponse(error: '$e').toJson();
+          }
+        }
+      case RemoteCommandType.browseHostItemChildren:
+        responseType = RemoteCommandType.hostItemChildrenResult;
+        final serverId = data['serverId'] as String? ?? '';
+        final itemId = data['itemId'] as String? ?? '';
+        final kind = data['kind'] as String?;
+        final handler = onBrowseHostItemChildren;
+        if (handler == null) {
+          payload = RemoteHostChildrenResponse(
+            serverId: serverId,
+            itemId: itemId,
+            error: 'Host catalog unavailable',
+          ).toJson();
+        } else {
+          try {
+            payload = (await handler(serverId, itemId, kind)).toJson();
+          } catch (e) {
+            payload = RemoteHostChildrenResponse(serverId: serverId, itemId: itemId, error: '$e').toJson();
+          }
+        }
+      default:
+        return;
+    }
+
+    if (!_ownsHostPeer(peer, hostGeneration) || isDisposed) return;
+    peer.sendCommand(
+      RemoteCommand(
+        type: responseType,
+        data: {if (requestId != null && requestId.isNotEmpty) 'requestId': requestId, ...payload},
+      ),
+    );
+  }
+
+  Future<Map<String, dynamic>> _sendCatalogRequest(
+    RemoteCommandType type,
+    Map<String, dynamic> payload, {
+    Duration timeout = const Duration(seconds: 10),
+  }) async {
+    final peer = _remotePeerService;
+    if (peer == null || !isConnected) {
+      throw StateError('CompanionRemote: Not connected to host');
+    }
+    final requestId = 'req_${++_catalogRequestSeq}';
+    final completer = Completer<Map<String, dynamic>>();
+    _pendingCatalogRequests[requestId] = completer;
+    try {
+      peer.sendCommand(RemoteCommand(type: type, data: {'requestId': requestId, ...payload}));
+      return await completer.future.timeout(timeout);
+    } finally {
+      _pendingCatalogRequests.remove(requestId);
+    }
+  }
+
+  Future<RemoteHostSearchResponse> searchHostCatalog(
+    String query, {
+    int limit = 40,
+    Duration timeout = const Duration(seconds: 10),
+  }) async {
+    final trimmed = query.trim();
+    if (trimmed.isEmpty) {
+      return const RemoteHostSearchResponse(query: '', items: []);
+    }
+    final data = await _sendCatalogRequest(
+      RemoteCommandType.searchHostCatalog,
+      {'query': trimmed, 'limit': limit},
+      timeout: timeout,
+    );
+    return RemoteHostSearchResponse.fromJson(data);
+  }
+
+  Future<RemoteHostHomeResponse> fetchHostHome({Duration timeout = const Duration(seconds: 10)}) async {
+    final data = await _sendCatalogRequest(RemoteCommandType.browseHostHome, const {}, timeout: timeout);
+    return RemoteHostHomeResponse.fromJson(data);
+  }
+
+  Future<RemoteHostChildrenResponse> fetchHostItemChildren({
+    required String serverId,
+    required String itemId,
+    String? kind,
+    Duration timeout = const Duration(seconds: 10),
+  }) async {
+    final data = await _sendCatalogRequest(
+      RemoteCommandType.browseHostItemChildren,
+      {'serverId': serverId, 'itemId': itemId, 'kind': ?kind},
+      timeout: timeout,
+    );
+    return RemoteHostChildrenResponse.fromJson(data);
+  }
+
+  void playHostCatalogItem(RemoteCatalogItem item) {
+    if (_remotePeerService == null || !isConnected) {
+      appLogger.w('CompanionRemote: Cannot play catalog item - not connected');
+      return;
+    }
+    _remotePlayerSnapshot = RemotePlayerSnapshot(
+      active: true,
+      stage: 'opening',
+      mediaKind: item.kind,
+      title: item.title,
+      seriesTitle: item.seriesTitle,
+      seasonNumber: item.seasonNumber,
+      episodeNumber: item.episodeNumber,
+      posterUrl: item.thumbUrl,
+      positionMs: item.viewOffsetMs ?? 0,
+      updatedAtMs: DateTime.now().millisecondsSinceEpoch,
+    );
+    _isPlayerActive = true;
+    safeNotifyListeners();
+    sendCommand(RemoteCommandType.playMedia, data: item.toRemoteMediaTarget().toJson());
+  }
+
   void _cleanupRemoteSubscriptions() {
+    _failPendingCatalogRequests('Remote session disconnected');
     _remoteCommandSubscription?.cancel();
     _remoteCommandSubscription = null;
     _remoteDeviceConnectedSubscription?.cancel();
@@ -1998,6 +2197,7 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
   }
 
   Future<void> leaveSession() async {
+    _failPendingCatalogRequests('Left remote session');
     final leavingGeneration = _remoteGeneration;
     _markIntentionalDisconnect(_remotePeerService, leavingGeneration);
     _markIntentionalDisconnect(_pendingRemotePeer, leavingGeneration);
@@ -2021,6 +2221,7 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
 
   @override
   void dispose() {
+    _failPendingCatalogRequests('CompanionRemoteProvider disposed');
     WidgetsBinding.instance.removeObserver(this);
     _remoteGeneration++;
     _hostGeneration++;
@@ -2029,10 +2230,10 @@ class CompanionRemoteProvider with ChangeNotifier, DisposableChangeNotifierMixin
     _reconnectTimer = null;
     cancelPendingTrust();
     if (_hostServerPort != null) {
-      _boundSync?.lanService.setAdvertisedRemotePort(null);
+      _boundLan?.setAdvertisedRemotePort(null);
       _hostServerPort = null;
     }
-    _boundSync?.removeListener(_onBoundSyncChanged);
+    _boundLan?.removeListener(_onBoundLanChanged);
     final currentRemote = _remotePeerService;
     final pendingRemote = _pendingRemotePeer;
     final currentHost = _hostPeerService;

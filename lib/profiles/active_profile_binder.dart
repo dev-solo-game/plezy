@@ -203,6 +203,7 @@ class ActiveProfileBinder {
     multiServerProvider.setVisibleServerIds(<String>{
       if (serverManager.registeredServerIds.contains(LocalLibraryClient.localServerId))
         LocalLibraryClient.localServerId,
+      ...serverManager.selfHostedServerIds,
     }, notify: notify);
     activeProfile.addListener(_onActiveProfileChanged);
   }
@@ -448,8 +449,9 @@ class ActiveProfileBinder {
           if (connectionsById[pc.connectionId] case JellyfinConnection(:final id)) id,
       };
       for (final serverId in serverManager.registeredServerIds) {
-        if (serverId == LocalLibraryClient.localServerId) {
-          // Not tied to any connection: every profile sees the local library.
+        if (serverId == LocalLibraryClient.localServerId || serverManager.isSelfHostedServer(serverId)) {
+          // Not tied to any connection: every profile sees the active
+          // workspace server (local library or self-hosted ttplay-server).
           visibleServerIds.add(serverId);
           continue;
         }
@@ -1257,16 +1259,16 @@ class ActiveProfileBinder {
   }
 
   void _clearBoundServers() {
-    var hasLocalLibrary = false;
+    final preserved = <String>{};
     for (final serverId in serverManager.registeredServerIds) {
-      if (serverId == LocalLibraryClient.localServerId) {
-        hasLocalLibrary = true;
+      if (serverId == LocalLibraryClient.localServerId || serverManager.isSelfHostedServer(serverId)) {
+        preserved.add(serverId);
         continue;
       }
       serverManager.removeServer(ServerId(serverId));
     }
     multiServerProvider.setExpectedVisibleServerIds(<String>{});
-    multiServerProvider.setVisibleServerIds(<String>{if (hasLocalLibrary) LocalLibraryClient.localServerId});
+    multiServerProvider.setVisibleServerIds(preserved);
   }
 
   void dispose() {

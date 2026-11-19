@@ -85,6 +85,7 @@ type ServerSettings struct {
 	TvdbPinSet              bool    `json:"tvdb_pin_set"`
 	TvdbPinMasked           string  `json:"tvdb_pin_masked"`
 	TvdbPin                 string  `json:"-"`
+	AllowPublicMetadata     bool    `json:"allow_public_metadata"`
 	AllowFallbackMetadata   bool    `json:"allow_fallback_metadata"`
 	CustomRecognitionWords  string  `json:"custom_recognition_words"`
 	ProxyImages             bool    `json:"proxy_images"`
@@ -122,6 +123,7 @@ type ServerSettingsUpdate struct {
 	ClearTvdbAPIKey         bool     `json:"clear_tvdb_api_key,omitempty"`
 	TvdbPin                 *string  `json:"tvdb_pin,omitempty"`
 	ClearTvdbPin            bool     `json:"clear_tvdb_pin,omitempty"`
+	AllowPublicMetadata     *bool    `json:"allow_public_metadata,omitempty"`
 	AllowFallbackMetadata   *bool    `json:"allow_fallback_metadata,omitempty"`
 	CustomRecognitionWords  *string  `json:"custom_recognition_words,omitempty"`
 	ProxyImages             *bool    `json:"proxy_images,omitempty"`

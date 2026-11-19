@@ -122,29 +122,6 @@ class RemoteAuthService {
     return secretKey.extractBytes();
   }
 
-  /// Derive a deterministic companion remote secret for same-account Cloud Sync
-  /// devices from their Go Sync Server URL, user ID, and 32-byte E2EE [masterKey].
-  Future<List<int>> deriveCloudSyncSecret({
-    required String serverUrl,
-    required String userId,
-    required List<int> masterKey,
-  }) async {
-    final normalizedUrl = serverUrl.trim().replaceAll(RegExp(r'/+$'), '').toLowerCase();
-    final normalizedUserId = userId.trim().toLowerCase();
-
-    final buf = BytesWriter();
-    _writeLengthPrefixed(buf, utf8.encode('cloud-sync'));
-    _writeLengthPrefixed(buf, utf8.encode(normalizedUrl));
-    _writeLengthPrefixed(buf, utf8.encode(normalizedUserId));
-
-    final secretKey = await _hkdf.deriveKey(
-      secretKey: SecretKey(masterKey),
-      nonce: utf8.encode('plezy-remote-v2'),
-      info: buf.toBytes(),
-    );
-    return secretKey.extractBytes();
-  }
-
   Future<RemoteAuthContext> createLanPeerAuthContext({
     required String myDeviceId,
     required String peerDeviceId,
@@ -160,30 +137,6 @@ class RemoteAuthService {
       clientIdentifier: myDeviceId,
       userUuid: myDeviceId,
       allowedUserUuids: [peerDeviceId, myDeviceId],
-    );
-  }
-
-  Future<RemoteAuthContext> createCloudSyncAuthContext({
-    required String myDeviceId,
-    required String serverUrl,
-    required String userId,
-    required List<int> masterKey,
-  }) async {
-    final normalizedUserId = userId.trim().toLowerCase();
-    final homeSecret = await deriveCloudSyncSecret(
-      serverUrl: serverUrl,
-      userId: normalizedUserId,
-      masterKey: masterKey,
-    );
-    return RemoteAuthContext(
-      id: computeAuthContextId(homeSecret),
-      backend: 'cloud_sync',
-      connectionId: 'cloud:$normalizedUserId',
-      homeSecret: homeSecret,
-      discoveryKey: await deriveDiscoveryKey(homeSecret),
-      clientIdentifier: myDeviceId,
-      userUuid: normalizedUserId,
-      allowedUserUuids: [normalizedUserId],
     );
   }
 

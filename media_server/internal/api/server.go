@@ -41,6 +41,8 @@ type Server struct {
 	bgMu      sync.Mutex
 	bgProbing map[int64]bool
 	bgPeople  map[int64]bool
+	pubRateMu sync.Mutex
+	pubRate   map[string]*ipRateBucket
 }
 
 func (s *Server) SetWebDir(dir string) {
@@ -76,6 +78,7 @@ func NewServer(
 		QuarkQR:     quark.NewQrManagerWithDevice(deviceProvider),
 		bgProbing:   make(map[int64]bool),
 		bgPeople:    make(map[int64]bool),
+		pubRate:     make(map[string]*ipRateBucket),
 	}
 	s.Mux = s.buildMux()
 	return s
@@ -87,6 +90,15 @@ func (s *Server) buildMux() http.Handler {
 	// Health & bootstrap
 	mux.HandleFunc("GET /healthz", s.handleHealth)
 	mux.HandleFunc("GET /api/v1/public/bootstrap", s.handleBootstrap)
+
+	// Generic public metadata & recognition service (for offline clients)
+	mux.HandleFunc("GET /api/v1/public/metadata/config", s.requirePublicMetadata(s.handlePublicMetadataConfig))
+	mux.HandleFunc("GET /api/v1/public/metadata/search", s.requirePublicMetadata(s.handlePublicMetadataSearch))
+	mux.HandleFunc("POST /api/v1/public/metadata/identify", s.requirePublicMetadata(s.handlePublicMetadataIdentify))
+	mux.HandleFunc("GET /api/v1/public/metadata/work/{provider}/{kind}/{id}", s.requirePublicMetadata(s.handlePublicMetadataWork))
+	mux.HandleFunc("GET /api/v1/public/metadata/season/{provider}/{id}/{season}", s.requirePublicMetadata(s.handlePublicMetadataSeason))
+	mux.HandleFunc("POST /api/v1/public/metadata/batch", s.requirePublicMetadata(s.handlePublicMetadataBatch))
+	mux.HandleFunc("GET /api/v1/public/metadata/artwork", s.requirePublicMetadata(s.handlePublicMetadataArtwork))
 
 	// Auth
 	mux.HandleFunc("POST /api/v1/auth/setup", s.handleAuthSetup)
@@ -172,7 +184,7 @@ func (s *Server) buildMux() http.Handler {
 	mux.HandleFunc("GET /api/v1/stream/variant/{file_id}/{variant_id}/{filename}", s.handleStreamVariant)
 	mux.HandleFunc("GET /api/v1/stream/hls-seg", s.handleStreamHLSSeg)
 	mux.HandleFunc("GET /api/v1/subtitles/{file_id}", s.handleSubtitle)
-	mux.HandleFunc("GET /api/v1/artwork/local/{mount_id}", s.requireAuth(s.handleLocalArtwork))
+	mux.HandleFunc("GET /api/v1/artwork/local/{mount_id}", s.handleLocalArtwork)
 	mux.HandleFunc("GET /api/v1/artwork/remote", s.handleRemoteArtwork)
 
 	// External Emby / Jellyfin servers
@@ -190,7 +202,7 @@ func (s *Server) buildMux() http.Handler {
 	mux.HandleFunc("POST /api/v1/ext/{id}/items/{item_id}/watched", s.requireAuth(s.handleExtWatched))
 	mux.HandleFunc("POST /api/v1/ext/{id}/playback/report", s.requireAuth(s.handleExtPlaybackReport))
 	mux.HandleFunc("GET /api/v1/ext/{id}/playback/{item_id}", s.requireAuth(s.handleExtPlaybackInfo))
-	mux.HandleFunc("GET /api/v1/ext/{id}/image/{item_id}/{image_type}", s.requireAuth(s.handleExtImage))
+	mux.HandleFunc("GET /api/v1/ext/{id}/image/{item_id}/{image_type}", s.handleExtImage)
 	mux.HandleFunc("GET /api/v1/ext/{id}/stream/{item_id}/{filename}", s.handleExtStream)
 	mux.HandleFunc("HEAD /api/v1/ext/{id}/stream/{item_id}/{filename}", s.handleExtStream)
 	mux.HandleFunc("GET /api/v1/ext/{id}/hls/{item_id}/master.m3u8", s.handleExtHLSMaster)
@@ -261,7 +273,8 @@ func (s *Server) withRequestLogging(next http.Handler) http.Handler {
 				strings.HasPrefix(p, "/api/v1/system/logs"),
 				strings.HasPrefix(p, "/api/v1/ext/"),
 				strings.HasPrefix(p, "/api/v1/stream/"),
-				strings.HasPrefix(p, "/api/v1/artwork/"):
+				strings.HasPrefix(p, "/api/v1/artwork/"),
+				strings.HasPrefix(p, "/api/v1/public/metadata/artwork"):
 				return
 			}
 			if r.Method != http.MethodPost && r.Method != http.MethodPut && r.Method != http.MethodDelete {
@@ -426,6 +439,18 @@ func (s *Server) extractToken(r *http.Request) string {
 
 func (s *Server) authenticateRequest(r *http.Request) (*db.AdminAccount, *db.SessionRecord, error) {
 	return s.Auth.Authenticate(s.extractToken(r))
+}
+
+func (s *Server) authenticateArtworkRequest(r *http.Request) bool {
+	if _, _, err := s.authenticateRequest(r); err == nil {
+		return true
+	}
+	if tok := strings.TrimSpace(r.URL.Query().Get("token")); tok != "" {
+		if _, _, err := s.Auth.Authenticate(tok); err == nil {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) requireAuth(next func(http.ResponseWriter, *http.Request, *db.AdminAccount, *db.SessionRecord)) http.HandlerFunc {

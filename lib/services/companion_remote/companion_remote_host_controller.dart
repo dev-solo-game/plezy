@@ -2,13 +2,14 @@ import 'package:flutter/widgets.dart';
 import 'package:provider/provider.dart';
 
 import '../../connection/connection_registry.dart';
-import '../../library/sync/sync_coordinator.dart';
 import '../../profiles/active_plex_identity.dart';
 import '../../profiles/active_profile_provider.dart';
 import '../../profiles/plex_home_service.dart';
 import '../../profiles/profile_connection_registry.dart';
 import '../../providers/companion_remote_provider.dart';
 import '../../utils/app_logger.dart';
+import 'lan_identity_store.dart';
+import 'lan_pairing_service.dart';
 
 T? _readOptional<T>(BuildContext context) {
   try {
@@ -18,17 +19,18 @@ T? _readOptional<T>(BuildContext context) {
   }
 }
 
-/// Resolves the active sync session / LAN peer trust / profile identities and
-/// primes companion-remote crypto with them, returning whether crypto ended up ready.
+/// Resolves the active LAN peer trust & profile identities and primes
+/// companion-remote crypto with them, returning whether crypto ended up ready.
 ///
 /// Optional lifetime checks let an explicit settings mutation stop before a
 /// stale async resolution commits crypto or starts a replacement session.
 Future<bool> ensureCompanionRemoteCryptoFromContext(BuildContext context, {void Function()? checkCurrent}) async {
   checkCurrent?.call();
   final companionRemote = context.read<CompanionRemoteProvider>();
-  final sync = _readOptional<SyncAndScanCoordinator>(context);
-  if (sync != null) {
-    companionRemote.bindSyncCoordinator(sync);
+  final lan = _readOptional<LanPairingService>(context);
+  final identityStore = _readOptional<LanIdentityStore>(context);
+  if (lan != null) {
+    companionRemote.bindLanPairing(lan, identityStore: identityStore);
   }
 
   final connections = _readOptional<ConnectionRegistry>(context);
@@ -37,8 +39,8 @@ Future<bool> ensureCompanionRemoteCryptoFromContext(BuildContext context, {void 
   final plexHome = _readOptional<PlexHomeService>(context);
 
   if (connections == null || activeProfile == null || profileConnections == null || plexHome == null) {
-    if (sync == null) return false;
-    return companionRemote.ensureSyncCryptoReady(sync, checkCurrent: checkCurrent);
+    if (lan == null) return false;
+    return companionRemote.ensureLanCryptoReady(lan, identityStore: identityStore, checkCurrent: checkCurrent);
   }
 
   final identity = await resolveActivePlexIdentity(
@@ -56,7 +58,8 @@ Future<bool> ensureCompanionRemoteCryptoFromContext(BuildContext context, {void 
     profileConnections: profileConnections,
     identity: identity,
     plexHomeForConnection: plexHome.materializePlexHomeForConnection,
-    sync: sync,
+    lan: lan,
+    identityStore: identityStore,
     checkCurrent: checkCurrent,
   );
 }

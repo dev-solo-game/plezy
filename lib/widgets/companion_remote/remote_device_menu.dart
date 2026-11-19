@@ -14,6 +14,8 @@ import '../../theme/mono_tokens.dart';
 import '../../utils/formatters.dart';
 import '../app_icon.dart';
 
+const Object _openDiscoverySentinel = Object();
+
 /// Opens a live-updating popover showing all online trusted/same-account
 /// devices, their current playback title/progress, inline play/pause, and
 /// navigation into [RemoteControlScreen].
@@ -31,17 +33,23 @@ Future<void> showRemoteDevicesStatusMenu(BuildContext buttonContext) async {
     unawaited(provider.refreshOnlineDeviceStatuses());
   }
 
-  final selectedDevice = await Navigator.of(buttonContext, rootNavigator: false).push<RemoteOnlineDevice>(
-    _AnchoredRemoteMenuRoute<RemoteOnlineDevice>(
+  final selection = await Navigator.of(buttonContext, rootNavigator: false).push<Object>(
+    _AnchoredRemoteMenuRoute<Object>(
       anchorRect: anchor,
       builder: (_) => const _RemoteDeviceMenuContent(isPickerMode: false),
     ),
   );
 
-  if (selectedDevice == null || !buttonContext.mounted) return;
-  await Navigator.of(buttonContext).push(
-    MaterialPageRoute<void>(builder: (_) => RemoteControlScreen(initialHost: selectedDevice.host)),
-  );
+  if (selection == null || !buttonContext.mounted) return;
+  if (identical(selection, _openDiscoverySentinel)) {
+    await Navigator.of(buttonContext).push(MaterialPageRoute<void>(builder: (_) => const RemoteControlScreen()));
+    return;
+  }
+  if (selection is RemoteOnlineDevice) {
+    await Navigator.of(buttonContext).push(
+      MaterialPageRoute<void>(builder: (_) => RemoteControlScreen(initialHost: selection.host)),
+    );
+  }
 }
 
 /// Opens a popover allowing the user to pick an online trusted/same-account
@@ -235,10 +243,18 @@ class _RemoteDeviceMenuContentState extends State<_RemoteDeviceMenuContent> {
                       style: theme.textTheme.bodySmall?.copyWith(color: tokens(context).textMuted),
                       textAlign: TextAlign.center,
                     ),
+                    if (!widget.isPickerMode) ...[
+                      const SizedBox(height: 14),
+                      FilledButton.tonalIcon(
+                        onPressed: () => Navigator.of(context).pop(_openDiscoverySentinel),
+                        icon: const AppIcon(Symbols.add_link_rounded, size: 18),
+                        label: Text(t.companionRemote.discoverAndPair),
+                      ),
+                    ],
                   ],
                 ),
               )
-            else
+            else ...[
               Flexible(
                 child: ListView.separated(
                   shrinkWrap: true,
@@ -265,6 +281,19 @@ class _RemoteDeviceMenuContentState extends State<_RemoteDeviceMenuContent> {
                   },
                 ),
               ),
+              if (!widget.isPickerMode) ...[
+                const Divider(height: 1),
+                ListTile(
+                  dense: true,
+                  leading: AppIcon(Symbols.add_link_rounded, size: 18, color: colorScheme.primary),
+                  title: Text(
+                    t.companionRemote.discoverAndPair,
+                    style: theme.textTheme.bodySmall?.copyWith(fontWeight: FontWeight.w600, color: colorScheme.primary),
+                  ),
+                  onTap: () => Navigator.of(context).pop(_openDiscoverySentinel),
+                ),
+              ],
+            ],
           ],
         );
       },

@@ -1,11 +1,11 @@
-import 'dart:convert';
+﻿import 'dart:convert';
 
 import 'package:crypto/crypto.dart';
 import 'package:unorm_dart/unorm_dart.dart' as unorm;
 import 'package:uuid/uuid.dart';
 
-import '../../storage/drivers/quark_pc_session.dart';
-import '../../storage/storage_mount.dart';
+import '../storage/drivers/quark_pc_session.dart';
+import '../storage/storage_mount.dart';
 
 /// Generates normalized paths and deterministic identifiers shared across
 /// devices so local Drift rows can be mapped cleanly onto sync entities.

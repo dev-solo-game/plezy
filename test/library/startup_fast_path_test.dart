@@ -14,11 +14,9 @@ import 'package:plezy/library/library_repository.dart';
 import 'package:plezy/library/library_scanner.dart';
 import 'package:plezy/library/library_settings.dart';
 import 'package:plezy/library/local_library_client.dart';
-import 'package:plezy/library/sync/sync_local_store.dart';
-import 'package:plezy/library/sync/sync_mapper.dart';
+import 'package:plezy/session/app_session_models.dart';
+import 'package:plezy/session/app_session_store.dart';
 import 'package:plezy/main.dart';
-import 'package:plezy/media/work_identity.dart';
-import 'package:plezy/media/work_skip_settings.dart';
 import 'package:plezy/navigation/profile_session_screen.dart';
 import 'package:plezy/profiles/active_profile_binder.dart';
 import 'package:plezy/profiles/active_profile_provider.dart';
@@ -38,7 +36,6 @@ import 'package:plezy/services/offline_watch_sync_service.dart';
 import 'package:plezy/services/settings_service.dart';
 import 'package:plezy/services/storage_service.dart';
 import 'package:plezy/services/system_shelf_service.dart';
-import 'package:plezy/services/work_skip_settings_store.dart';
 import 'package:plezy/storage/mount_manager.dart';
 import 'package:plezy/storage/mount_registry.dart';
 import 'package:plezy/storage/storage_mount.dart';
@@ -87,177 +84,48 @@ void main() {
     SystemShelfService().debugReset();
   });
 
-  test(
-    'SyncMapper persisted DB signatures skip cold-start reconciliation and isolate state vs catalog deltas',
-    () async {
-      final db = AppDatabase.forTesting(NativeDatabase.memory());
-      final repo = LibraryRepository(db);
-      final mountManager = MountManager(MountRegistry(db));
-      final syncStore = SyncLocalStore(db);
-      final workSkipStore = WorkSkipSettingsStore(db);
+  test('Legacy mounts auto-migrate to offline mode once while explicit logout stays on AuthScreen', () async {
+    final db = AppDatabase.forTesting(NativeDatabase.memory());
+    final storage = await StorageService.getInstance();
+    final settings = await SettingsService.getInstance();
+    final store = AppSessionStore(db);
 
-      addTearDown(() async {
-        await mountManager.dispose();
-        await db.close();
-      });
+    await MountRegistry(db).upsert(
+      const StorageMount(
+        id: 'mount-legacy-1',
+        kind: StorageKind.webdav,
+        displayName: 'Legacy NAS',
+        config: {MountKeys.baseUrl: 'http://192.168.1.20/dav'},
+      ),
+    );
 
-      await mountManager.registry.upsert(
-        const StorageMount(
-          id: 'mount-dav-1',
-          kind: StorageKind.webdav,
-          displayName: 'Media NAS',
-          config: {MountKeys.baseUrl: 'http://192.168.1.20/dav'},
-        ),
-      );
-      final movieId = await repo.insertItem(
-        LibraryItemsCompanion.insert(
-          kind: LibraryKinds.movie,
-          libraryType: LibraryTypes.movie,
-          title: 'Inception',
-          sortTitle: 'inception',
-          tmdbId: const Value('27205'),
-          metadataSource: const Value('tmdb'),
-          scrapedAt: const Value(1000),
-          addedAt: 1000,
-          updatedAt: 1000,
-        ),
-      );
-      final movieFileId = await repo.upsertFile(
-        mountId: 'mount-dav-1',
-        path: '/Movies/Inception.mkv',
-        role: LibraryFileRoles.video,
-        scanId: 1,
-        size: 2048000,
-        modifiedAt: 1000,
-      );
-      await repo.linkFile(movieFileId, movieId);
-      await repo.updateFile(movieFileId, const LibraryFilesCompanion(matchState: Value(LibraryMatchStates.matched)));
+    final migratedBootstrap = await resolveStartupSessionBootstrap(
+      appDatabase: db,
+      storage: storage,
+      settings: settings,
+      databaseRecoveryOutcome: TvosDatabaseRecoveryOutcome.notApplicable,
+    );
+    expect(migratedBootstrap.mode, StartupSessionMode.readyForHome);
+    expect(migratedBootstrap.loginMode, AppLoginMode.offline);
+    expect((await store.load()).mode, AppLoginMode.offline);
+    await migratedBootstrap.dispose();
 
-      final showId = await repo.insertItem(
-        LibraryItemsCompanion.insert(
-          kind: LibraryKinds.show,
-          libraryType: LibraryTypes.show,
-          title: 'Severance',
-          sortTitle: 'severance',
-          tmdbId: const Value('95396'),
-          metadataSource: const Value('tmdb'),
-          scrapedAt: const Value(1000),
-          addedAt: 1000,
-          updatedAt: 1000,
-        ),
-      );
-      final seasonId = await repo.insertItem(
-        LibraryItemsCompanion.insert(
-          kind: LibraryKinds.season,
-          libraryType: LibraryTypes.show,
-          parentId: Value(showId),
-          showId: Value(showId),
-          seasonNumber: const Value(1),
-          title: 'Season 1',
-          sortTitle: 'season 1',
-          addedAt: 1000,
-          updatedAt: 1000,
-        ),
-      );
-      final epId = await repo.insertItem(
-        LibraryItemsCompanion.insert(
-          kind: LibraryKinds.episode,
-          libraryType: LibraryTypes.show,
-          parentId: Value(seasonId),
-          showId: Value(showId),
-          seasonNumber: const Value(1),
-          episodeNumber: const Value(1),
-          title: 'Good News About Hell',
-          sortTitle: 'good news about hell',
-          scrapedAt: const Value(1000),
-          addedAt: 1000,
-          updatedAt: 1000,
-        ),
-      );
-      final epFileId = await repo.upsertFile(
-        mountId: 'mount-dav-1',
-        path: '/Shows/Severance/S01E01.mkv',
-        role: LibraryFileRoles.video,
-        scanId: 1,
-        size: 1024000,
-        modifiedAt: 1000,
-      );
-      await repo.linkFile(epFileId, epId);
-      await repo.updateFile(epFileId, const LibraryFilesCompanion(matchState: Value(LibraryMatchStates.matched)));
+    // Clear back to explicit logged-out state; existing mounts must NOT override explicit logout.
+    await store.clearMode();
+    final loadedAfterLogout = await store.load();
+    expect(loadedAfterLogout.mode, isNull);
+    expect(loadedAfterLogout.explicitlyLoggedOut, isTrue);
 
-      await repo.setProgress(movieId, positionMs: 120000, durationMs: 7200000);
-      await workSkipStore.save(
-        const WorkIdentity(
-          source: WorkIdentity.localSource,
-          kind: LibraryKinds.show,
-          provider: 'tmdb',
-          externalId: '95396',
-        ),
-        const WorkSkipSettings(introEnabled: true, introStartMs: 0, introEndMs: 90000),
-        syncToOutbox: false,
-      );
-
-      final mapper1 = SyncMapper(db: db, repo: repo, syncStore: syncStore, mountManager: mountManager);
-      final initialTouched = await mapper1.ensureJournalUpToDate();
-      expect(initialTouched, greaterThan(0));
-      final revAfterBootstrap = await syncStore.getLocalLanRevision();
-      final savedSigs1 = await syncStore.getReconciledSignatures();
-      expect(savedSigs1.catalogSig, isNotNull);
-      expect(savedSigs1.stateSig, isNotNull);
-
-      // Cold restart simulation: fresh SyncMapper instance with empty in-memory signature cache.
-      final mapper2 = SyncMapper(db: db, repo: repo, syncStore: SyncLocalStore(db), mountManager: mountManager);
-      final coldRestartTouched = await mapper2.ensureJournalUpToDate();
-      expect(coldRestartTouched, 0);
-      expect(await syncStore.getLocalLanRevision(), revAfterBootstrap);
-
-      // Mutate only watch progress -> only stateSig changes, catalogSig remains identical.
-      await Future<void>.delayed(const Duration(milliseconds: 5));
-      await repo.setProgress(movieId, positionMs: 240000, durationMs: 7200000);
-      final mapper3 = SyncMapper(db: db, repo: repo, syncStore: SyncLocalStore(db), mountManager: mountManager);
-      final stateOnlyTouched = await mapper3.ensureJournalUpToDate();
-      expect(stateOnlyTouched, 1);
-      expect(await syncStore.getLocalLanRevision(), revAfterBootstrap + 1);
-      final savedSigsAfterState = await syncStore.getReconciledSignatures();
-      expect(savedSigsAfterState.catalogSig, savedSigs1.catalogSig);
-      expect(savedSigsAfterState.stateSig, isNot(savedSigs1.stateSig));
-
-      // Another cold restart after state update -> immediate 0-work skip.
-      final mapper4 = SyncMapper(db: db, repo: repo, syncStore: SyncLocalStore(db), mountManager: mountManager);
-      expect(await mapper4.ensureJournalUpToDate(), 0);
-
-      // Add a new catalog movie + file -> catalogSig changes and reconciles the new items.
-      await Future<void>.delayed(const Duration(milliseconds: 5));
-      final movie2Id = await repo.insertItem(
-        LibraryItemsCompanion.insert(
-          kind: LibraryKinds.movie,
-          libraryType: LibraryTypes.movie,
-          title: 'Interstellar',
-          sortTitle: 'interstellar',
-          tmdbId: const Value('157336'),
-          metadataSource: const Value('tmdb'),
-          scrapedAt: const Value(2000),
-          addedAt: 2000,
-          updatedAt: 2000,
-        ),
-      );
-      final movie2FileId = await repo.upsertFile(
-        mountId: 'mount-dav-1',
-        path: '/Movies/Interstellar.mkv',
-        role: LibraryFileRoles.video,
-        scanId: 2,
-        size: 4096000,
-        modifiedAt: 2000,
-      );
-      await repo.linkFile(movie2FileId, movie2Id);
-      await repo.updateFile(movie2FileId, const LibraryFilesCompanion(matchState: Value(LibraryMatchStates.matched)));
-
-      final mapper5 = SyncMapper(db: db, repo: repo, syncStore: SyncLocalStore(db), mountManager: mountManager);
-      expect(await mapper5.ensureJournalUpToDate(), greaterThanOrEqualTo(2));
-      final savedSigsAfterCatalog = await syncStore.getReconciledSignatures();
-      expect(savedSigsAfterCatalog.catalogSig, isNot(savedSigsAfterState.catalogSig));
-    },
-  );
+    final loggedOutBootstrap = await resolveStartupSessionBootstrap(
+      appDatabase: db,
+      storage: storage,
+      settings: settings,
+      databaseRecoveryOutcome: TvosDatabaseRecoveryOutcome.notApplicable,
+    );
+    expect(loggedOutBootstrap.mode, StartupSessionMode.onboardingRequired);
+    await loggedOutBootstrap.dispose();
+    await db.close();
+  });
 
   testWidgets('Fresh install and explicit logout still route to AuthScreen mode picker', (tester) async {
     final db = AppDatabase.forTesting(NativeDatabase.memory());
@@ -285,15 +153,14 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byType(AuthScreen), findsOneWidget);
-    expect(find.text(t.sync.modeLanTitle), findsOneWidget);
-    expect(find.text(t.sync.modeOfficialTitle), findsOneWidget);
-    expect(find.text(t.sync.modeSelfHostedTitle), findsOneWidget);
+    expect(find.text(t.session.modeOfflineTitle), findsOneWidget);
+    expect(find.text(t.session.modeSelfHostedTitle), findsOneWidget);
 
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pumpAndSettle();
     await freshBootstrap.dispose();
 
-    // Even when mounts exist, an explicit logout (`sync_onboarding_done == 'false'`) must keep AuthScreen.
+    // Even when mounts exist, an explicit logout (no active mode in AppSessionStore) must keep AuthScreen.
     await MountRegistry(db).upsert(
       const StorageMount(
         id: 'm1',
@@ -302,7 +169,7 @@ void main() {
         config: {MountKeys.baseUrl: 'http://192.168.1.30/dav'},
       ),
     );
-    await SyncLocalStore(db).setOnboardingCompleted(false);
+    await AppSessionStore(db).clearMode();
 
     final loggedOutBootstrap = await resolveStartupSessionBootstrap(
       appDatabase: db,
@@ -330,7 +197,7 @@ void main() {
         config: {MountKeys.baseUrl: 'http://192.168.1.40/dav'},
       ),
     );
-    await SyncLocalStore(db).setOnboardingCompleted(true);
+    await AppSessionStore(db).saveOfflineMode();
 
     final movieId = await repo.insertItem(
       LibraryItemsCompanion.insert(
