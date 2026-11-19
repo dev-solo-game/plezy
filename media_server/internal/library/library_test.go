@@ -282,4 +282,13 @@ func TestEndToEndScanProbeScrapeAndManualMatch(t *testing.T) {
 	if err != nil || fixed.LibraryType != db.ShelfDocumentary || !fixed.Locked {
 		t.Fatalf("unexpected manual match result: %+v err=%v", fixed, err)
 	}
+
+	// Verify Coordinator background scrape worker reacts to Scanner.SetOnPendingAdded signal
+	coord := NewCoordinator(store, stMgr, metaSvc, hub)
+	coord.Start()
+	defer coord.Stop()
+	snap := coord.TaskStatus()
+	if snap.UnmatchedCount != 0 {
+		t.Fatalf("expected 0 unmatched after manual match, got %d", snap.UnmatchedCount)
+	}
 }

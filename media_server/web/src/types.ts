@@ -385,13 +385,248 @@ export interface ScanProgressEvent {
   status: string;
   directories_done: number;
   files_seen: number;
+  videos_found?: number;
   current_path: string;
   error?: string;
+  updated_at?: number;
 }
 
 export interface ScrapeProgressEvent {
+  status: string;
   done: number;
   total: number;
+  matched?: number;
+  unmatched?: number;
+  merged?: number;
+  skipped?: number;
+  title?: string;
+  message?: string;
+  updated_at?: number;
+}
+
+export interface TaskStatusSnapshot {
+  scans: ScanProgressEvent[];
+  scrape: ScrapeProgressEvent;
+  pending_scrape: number;
+  unmatched_count: number;
+}
+
+export interface InspectTableInfo {
+  name: string;
+  label: string;
+  group: 'cache' | 'library';
+  description: string;
+  row_count: number;
+  columns: string[];
+  json_cols?: string[];
+  time_cols?: string[];
+  pk_cols?: string[];
+  clear_scope?: 'works' | 'seasons' | 'people' | 'search';
+  deletable: boolean;
+}
+
+export interface ImageCacheSummary {
+  files: number;
+  bytes: number;
+}
+
+export interface InspectTablePage {
+  table: InspectTableInfo;
+  total: number;
+  offset: number;
+  limit: number;
+  rows: Array<Record<string, unknown>>;
+}
+
+export type ExternalServerKind = 'emby' | 'jellyfin';
+export type ExternalServerAuthMode = 'password' | 'apikey';
+
+export interface ExternalServerRecord {
+  id: string;
+  name: string;
+  kind: ExternalServerKind;
+  base_url: string;
+  auth_mode: ExternalServerAuthMode;
+  username: string;
+  user_id: string;
+  device_id: string;
+  server_id: string;
+  server_version: string;
+  allow_insecure_tls: boolean;
+  has_token: boolean;
+  enabled: boolean;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface ExternalServerTestResult {
+  ok: boolean;
+  server_name: string;
+  server_id: string;
+  version: string;
+  product_name?: string;
+  detected_kind?: string;
+  effective_base_url: string;
+  user_id: string;
+  username: string;
+  latency_ms: number;
+}
+
+export interface ExtView {
+  id: string;
+  name: string;
+  collection_type?: string;
+  image_url?: string;
+}
+
+export interface ExtItem {
+  id: string;
+  kind: 'movie' | 'show' | 'season' | 'episode' | 'boxset' | 'playlist' | 'video';
+  raw_type?: string;
   title: string;
-  status: string;
+  original_title?: string;
+  year?: number;
+  premiere_date?: string;
+  overview?: string;
+  rating?: number;
+  official_rating?: string;
+  runtime_ms?: number;
+  season_number?: number;
+  episode_number?: number;
+  series_id?: string;
+  series_name?: string;
+  season_id?: string;
+  poster_url?: string;
+  backdrop_url?: string;
+  thumb_url?: string;
+  watched: boolean;
+  favorite: boolean;
+  position_ms?: number;
+  unplayed_count?: number;
+  child_count?: number;
+  quality_badge?: string;
+  hdr_badge?: string;
+  genres?: string[];
+  tagline?: string;
+  studios?: string[];
+}
+
+export interface ExtMediaStream {
+  index: number;
+  type: string; // Video | Audio | Subtitle
+  codec?: string;
+  language?: string;
+  display_title?: string;
+  title?: string;
+  is_default?: boolean;
+  is_forced?: boolean;
+  is_external?: boolean;
+  is_text_subtitle?: boolean;
+  delivery_url?: string;
+  width?: number;
+  height?: number;
+  video_range?: string;
+  channels?: number;
+  bit_rate?: number;
+}
+
+export interface ExtMediaSource {
+  id: string;
+  name?: string;
+  container?: string;
+  path?: string;
+  size?: number;
+  bitrate?: number;
+  runtime_ms?: number;
+  supports_direct_play: boolean;
+  supports_direct_stream: boolean;
+  supports_transcoding: boolean;
+  transcoding_url?: string;
+  direct_stream_url?: string;
+  video_codec?: string;
+  width?: number;
+  height?: number;
+  hdr_format?: string;
+  browser_compatible: boolean;
+  compat_warning?: string;
+  streams?: ExtMediaStream[];
+}
+
+export interface ExtPerson {
+  id?: string;
+  name: string;
+  role?: string;
+  type?: string;
+  photo_url?: string;
+}
+
+export interface ExtItemDetail {
+  item: ExtItem;
+  show?: ExtItem;
+  seasons?: ExtItem[];
+  episodes?: ExtItem[];
+  on_deck_episode?: ExtItem;
+  children?: ExtItem[];
+  media_sources?: ExtMediaSource[];
+  people?: ExtPerson[];
+  similar?: ExtItem[];
+}
+
+export interface ExtLatestGroup {
+  view: ExtView;
+  items: ExtItem[];
+}
+
+export interface ExtHomePayload {
+  views: ExtView[];
+  resume: ExtItem[];
+  latest_by_view: ExtLatestGroup[];
+}
+
+export interface ExtSearchResult {
+  movies: ExtItem[];
+  shows: ExtItem[];
+  episodes: ExtItem[];
+  collections: ExtItem[];
+}
+
+export interface ExtPlaybackVersion {
+  source_id: string;
+  label: string;
+  container?: string;
+  video_codec?: string;
+  width?: number;
+  height?: number;
+  hdr_format?: string;
+  size?: number;
+  bitrate?: number;
+  browser_compatible: boolean;
+  compat_warning?: string;
+  stream_url: string;
+  stream_token: string;
+  variants: PlaybackVariant[];
+  streams?: ExtMediaStream[];
+}
+
+export interface ExtPlaybackSubtitle {
+  index: number;
+  file_name: string;
+  language?: string;
+  ext: string;
+  vtt_url: string;
+}
+
+export interface ExtPlaybackInfo {
+  server: ExternalServerRecord;
+  item: ExtItem;
+  show?: ExtItem;
+  episodes?: ExtItem[];
+  prev_episode?: ExtItem;
+  next_episode?: ExtItem;
+  play_session_id?: string;
+  selected_source_id: string;
+  resume_position_ms: number;
+  versions: ExtPlaybackVersion[];
+  subtitles: ExtPlaybackSubtitle[];
+  external_players: Record<string, string>;
 }

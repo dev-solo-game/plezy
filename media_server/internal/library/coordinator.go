@@ -16,6 +16,13 @@ import (
 	"plezy/media_server/internal/storage"
 )
 
+type TaskStatusSnapshot struct {
+	Scans          []ScanSnapshot `json:"scans"`
+	Scrape         ScrapeSnapshot `json:"scrape"`
+	PendingScrape  int64          `json:"pending_scrape"`
+	UnmatchedCount int64          `json:"unmatched_count"`
+}
+
 type Coordinator struct {
 	Store   *db.Store
 	Storage *storage.Manager
@@ -28,6 +35,11 @@ type Coordinator struct {
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
 
+	scrapeSig     chan struct{}
+	scrapeFlagMu  sync.Mutex
+	pendingRetry  bool
+	pendingRefresh bool
+
 	watchMu  sync.Mutex
 	watcher  *fsnotify.Watcher
 	watched  map[string]string // os dir -> mountID
@@ -37,21 +49,27 @@ type Coordinator struct {
 func NewCoordinator(store *db.Store, st *storage.Manager, meta *metadata.Service, hub *events.Hub) *Coordinator {
 	scanner := NewScanner(store, st, hub)
 	scraper := NewScraper(store, meta, st, hub)
-	return &Coordinator{
-		Store:    store,
-		Storage:  st,
-		Meta:     meta,
-		Hub:      hub,
-		Scanner:  scanner,
-		Scraper:  scraper,
-		watched:  make(map[string]string),
-		debounce: make(map[string]*time.Timer),
+	c := &Coordinator{
+		Store:     store,
+		Storage:   st,
+		Meta:      meta,
+		Hub:       hub,
+		Scanner:   scanner,
+		Scraper:   scraper,
+		scrapeSig: make(chan struct{}, 1),
+		watched:   make(map[string]string),
+		debounce:  make(map[string]*time.Timer),
 	}
+	scanner.SetOnPendingAdded(c.NotifyScrape)
+	return c
 }
 
 func (c *Coordinator) Start() {
 	_ = c.Store.ResetStaleRunningScans()
 	c.ctx, c.cancel = context.WithCancel(context.Background())
+
+	c.wg.Add(1)
+	go c.scrapeWorkerLoop()
 
 	if w, err := fsnotify.NewWatcher(); err == nil {
 		c.watchMu.Lock()
@@ -64,6 +82,11 @@ func (c *Coordinator) Start() {
 
 	c.wg.Add(1)
 	go c.schedulerLoop()
+
+	// Resume any pending scrapes left from a prior server run.
+	if c.Scraper.PendingScrapeCount() > 0 {
+		c.NotifyScrape()
+	}
 }
 
 func (c *Coordinator) Stop() {
@@ -83,6 +106,79 @@ func (c *Coordinator) Stop() {
 	c.wg.Wait()
 }
 
+func (c *Coordinator) NotifyScrape() {
+	if c.ctx == nil {
+		return
+	}
+	select {
+	case c.scrapeSig <- struct{}{}:
+	default:
+	}
+}
+
+func (c *Coordinator) scrapeWorkerLoop() {
+	defer c.wg.Done()
+	for {
+		select {
+		case <-c.ctx.Done():
+			return
+		case <-c.scrapeSig:
+			for {
+				c.scrapeFlagMu.Lock()
+				retry := c.pendingRetry
+				refresh := c.pendingRefresh
+				c.pendingRetry = false
+				c.pendingRefresh = false
+				c.scrapeFlagMu.Unlock()
+
+				_, _ = c.Scraper.ScrapePending(c.ctx, retry, refresh)
+
+				c.scrapeFlagMu.Lock()
+				moreFlags := c.pendingRetry || c.pendingRefresh
+				c.scrapeFlagMu.Unlock()
+				if !moreFlags && c.Scraper.PendingScrapeCount() == 0 {
+					break
+				}
+				if c.ctx.Err() != nil {
+					return
+				}
+				// Stop hot-looping if scrape paused because of missing TMDB key
+				if st := c.Scraper.CurrentStatus(); st.Status == "warning" && !moreFlags {
+					break
+				}
+			}
+		}
+	}
+}
+
+func (c *Coordinator) WaitOrRunScrapeSync(ctx context.Context, retryUnmatched, refreshAll bool) (ScrapeSummary, error) {
+	sum, err := c.Scraper.ScrapePending(ctx, retryUnmatched, refreshAll)
+	if err != nil && strings.Contains(err.Error(), "already running") {
+		ticker := time.NewTicker(80 * time.Millisecond)
+		defer ticker.Stop()
+		for c.Scraper.IsRunning() {
+			select {
+			case <-ctx.Done():
+				return ScrapeSummary{}, ctx.Err()
+			case <-ticker.C:
+			}
+		}
+		return c.Scraper.ScrapePending(ctx, retryUnmatched, refreshAll)
+	}
+	return sum, err
+}
+
+func (c *Coordinator) TaskStatus() TaskStatusSnapshot {
+	var unmatched int64
+	_ = c.Store.DB().QueryRow(`SELECT COUNT(*) FROM media_items WHERE library_type = 'pending' AND kind IN ('movie','show')`).Scan(&unmatched)
+	return TaskStatusSnapshot{
+		Scans:          c.Scanner.ActiveScans(),
+		Scrape:         c.Scraper.CurrentStatus(),
+		PendingScrape:  c.Scraper.PendingScrapeCount(),
+		UnmatchedCount: unmatched,
+	}
+}
+
 func (c *Coordinator) TriggerMountScanAsync(mountID string, full bool) {
 	if c.ctx == nil {
 		return
@@ -95,8 +191,8 @@ func (c *Coordinator) TriggerMountScanAsync(mountID string, full bool) {
 			return
 		}
 		if res.Videos > 0 || res.AddedPending {
+			c.NotifyScrape()
 			c.Scanner.ProbePendingFiles(c.ctx, 100)
-			_, _ = c.Scraper.ScrapePending(c.ctx, false, false)
 		}
 	}()
 }
@@ -126,8 +222,8 @@ func (c *Coordinator) TriggerScanAllAsync(full bool) {
 			}
 		}
 		if anyAdded {
+			c.NotifyScrape()
 			c.Scanner.ProbePendingFiles(c.ctx, 150)
-			_, _ = c.Scraper.ScrapePending(c.ctx, false, false)
 		}
 	}()
 }
@@ -136,11 +232,15 @@ func (c *Coordinator) TriggerScrapeAsync(retryUnmatched, refreshAll bool) {
 	if c.ctx == nil {
 		return
 	}
-	c.wg.Add(1)
-	go func() {
-		defer c.wg.Done()
-		_, _ = c.Scraper.ScrapePending(c.ctx, retryUnmatched, refreshAll)
-	}()
+	c.scrapeFlagMu.Lock()
+	if retryUnmatched {
+		c.pendingRetry = true
+	}
+	if refreshAll {
+		c.pendingRefresh = true
+	}
+	c.scrapeFlagMu.Unlock()
+	c.NotifyScrape()
 }
 
 func (c *Coordinator) RefreshWatchers() {

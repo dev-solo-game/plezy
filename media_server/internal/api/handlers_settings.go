@@ -30,6 +30,9 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request, _ 
 	if req.WatchLocalFS != nil {
 		s.Coordinator.RefreshWatchers()
 	}
+	if req.TmdbAPIKey != nil || (req.BangumiEnabled != nil && *req.BangumiEnabled) {
+		s.Coordinator.NotifyScrape()
+	}
 	writeJSON(w, r, http.StatusOK, map[string]any{
 		"code":        0,
 		"settings":    updated,

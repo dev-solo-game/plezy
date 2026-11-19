@@ -1,33 +1,31 @@
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import { useParams } from 'react-router-dom';
 import { User } from 'lucide-react';
 import { api, artworkUrl } from '../api/client';
+import { useSWRQuery } from '../api/queryCache';
 import { MediaCard } from '../components/MediaCard';
+import { DetailSkeleton } from '../components/Skeletons';
 import { useApp } from '../contexts/AppContext';
 import type { MediaItem, Person } from '../types';
 
 export const PersonPage: React.FC = () => {
   const { id } = useParams();
-  const { toast } = useApp();
-  const [person, setPerson] = useState<Person | null>(null);
-  const [items, setItems] = useState<MediaItem[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { libraryVersion, toast } = useApp();
+  const personId = Number(id);
 
-  useEffect(() => {
-    setLoading(true);
-    api
-      .getPerson(Number(id))
-      .then((res) => {
-        setPerson(res.detail.person);
-        setItems(res.detail.items || []);
-      })
-      .catch((err) => toast((err as Error).message, 'error'))
-      .finally(() => setLoading(false));
-  }, [id, toast]);
+  const { data, showSkeleton } = useSWRQuery<{ person: Person; items: MediaItem[] }>(
+    personId ? `person:${personId}` : null,
+    () => api.getPerson(personId).then((r) => r.detail),
+    {
+      deps: [libraryVersion],
+      onError: (err) => toast(err.message, 'error'),
+    }
+  );
 
-  if (loading) return <div className="muted">加载中...</div>;
-  if (!person) return null;
+  if (showSkeleton) return <DetailSkeleton />;
+  if (!data) return null;
 
+  const { person, items } = data;
   const photo = artworkUrl(person.photo_source, 'w500');
 
   return (
@@ -37,6 +35,7 @@ export const PersonPage: React.FC = () => {
           <img
             src={photo}
             alt={person.name}
+            decoding="async"
             style={{ width: 150, height: 210, objectFit: 'cover', borderRadius: 14 }}
           />
         ) : (

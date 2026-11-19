@@ -5,11 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"io/fs"
 	"mime"
 	"net/http"
 	"path"
 	"strings"
+	"sync"
 	"time"
 
 	"plezy/media_server/internal/auth"
@@ -35,6 +35,15 @@ type Server struct {
 	HLS         *stream.HLSProxy
 	QuarkQR     *quark.QrManager
 	Mux         http.Handler
+
+	webDir    string
+	bgMu      sync.Mutex
+	bgProbing map[int64]bool
+	bgPeople  map[int64]bool
+}
+
+func (s *Server) SetWebDir(dir string) {
+	s.webDir = strings.TrimSpace(dir)
 }
 
 func NewServer(
@@ -45,8 +54,15 @@ func NewServer(
 	hub *events.Hub,
 	coord *library.Coordinator,
 ) *Server {
+	deviceProvider := func() quark.PcDevice {
+		ut, mach := store.GetOrCreateQuarkPcDevice(func() (string, string) {
+			d := quark.GeneratePcDevice()
+			return d.Utdid, d.Machine
+		})
+		return quark.PcDevice{Utdid: ut, Machine: mach}
+	}
 	stMgr.RegisterFactory("quark", func(cfg storage.MountConfig, cb func(string, string)) (storage.Driver, error) {
-		return quark.NewDriver(cfg, cb)
+		return quark.NewDriverWithDevice(cfg, cb, deviceProvider)
 	})
 	s := &Server{
 		Store:       store,
@@ -56,7 +72,9 @@ func NewServer(
 		Hub:         hub,
 		Coordinator: coord,
 		HLS:         stream.NewHLSProxy(store.Vault().StreamSigningKey()),
-		QuarkQR:     quark.NewQrManager(),
+		QuarkQR:     quark.NewQrManagerWithDevice(deviceProvider),
+		bgProbing:   make(map[int64]bool),
+		bgPeople:    make(map[int64]bool),
 	}
 	s.Mux = s.buildMux()
 	return s
@@ -87,6 +105,9 @@ func (s *Server) buildMux() http.Handler {
 	mux.HandleFunc("POST /api/v1/settings/test-tmdb", s.requireAuth(s.handleTestTmdb))
 	mux.HandleFunc("POST /api/v1/settings/clear-cache", s.requireAuth(s.handleClearMetaCache))
 	mux.HandleFunc("GET /api/v1/system/overview", s.requireAuth(s.handleSystemOverview))
+	mux.HandleFunc("GET /api/v1/metadata/tables", s.requireAuth(s.handleListMetadataTables))
+	mux.HandleFunc("GET /api/v1/metadata/tables/{table}", s.requireAuth(s.handleQueryMetadataTable))
+	mux.HandleFunc("DELETE /api/v1/metadata/tables/{table}/row", s.requireAuth(s.handleDeleteMetadataCacheRow))
 
 	// Mounts, host filesystem browser, Quark QR
 	mux.HandleFunc("GET /api/v1/mounts", s.requireAuth(s.handleListMounts))
@@ -103,6 +124,7 @@ func (s *Server) buildMux() http.Handler {
 	mux.HandleFunc("GET /api/v1/quark/qr/poll", s.requireAuth(s.handleQuarkQrPoll))
 
 	// Scan, scrape, unmatched & metadata edit
+	mux.HandleFunc("GET /api/v1/tasks/status", s.requireAuth(s.handleTaskStatus))
 	mux.HandleFunc("POST /api/v1/tasks/scan-all", s.requireAuth(s.handleScanAll))
 	mux.HandleFunc("POST /api/v1/mounts/{id}/scan", s.requireAuth(s.handleScanMount))
 	mux.HandleFunc("POST /api/v1/mounts/{id}/cancel-scan", s.requireAuth(s.handleCancelScan))
@@ -147,6 +169,28 @@ func (s *Server) buildMux() http.Handler {
 	mux.HandleFunc("GET /api/v1/subtitles/{file_id}", s.handleSubtitle)
 	mux.HandleFunc("GET /api/v1/artwork/local/{mount_id}", s.requireAuth(s.handleLocalArtwork))
 	mux.HandleFunc("GET /api/v1/artwork/remote", s.handleRemoteArtwork)
+
+	// External Emby / Jellyfin servers
+	mux.HandleFunc("GET /api/v1/ext-servers", s.requireAuth(s.handleListExternalServers))
+	mux.HandleFunc("POST /api/v1/ext-servers", s.requireAuth(s.handleCreateExternalServer))
+	mux.HandleFunc("POST /api/v1/ext-servers/test", s.requireAuth(s.handleTestExternalServer))
+	mux.HandleFunc("PUT /api/v1/ext-servers/{id}", s.requireAuth(s.handleUpdateExternalServer))
+	mux.HandleFunc("DELETE /api/v1/ext-servers/{id}", s.requireAuth(s.handleDeleteExternalServer))
+
+	mux.HandleFunc("GET /api/v1/ext/{id}/home", s.requireAuth(s.handleExtHome))
+	mux.HandleFunc("GET /api/v1/ext/{id}/items", s.requireAuth(s.handleExtItems))
+	mux.HandleFunc("GET /api/v1/ext/{id}/items/{item_id}", s.requireAuth(s.handleExtItemDetail))
+	mux.HandleFunc("GET /api/v1/ext/{id}/search", s.requireAuth(s.handleExtSearch))
+	mux.HandleFunc("POST /api/v1/ext/{id}/items/{item_id}/favorite", s.requireAuth(s.handleExtFavorite))
+	mux.HandleFunc("POST /api/v1/ext/{id}/items/{item_id}/watched", s.requireAuth(s.handleExtWatched))
+	mux.HandleFunc("POST /api/v1/ext/{id}/playback/report", s.requireAuth(s.handleExtPlaybackReport))
+	mux.HandleFunc("GET /api/v1/ext/{id}/playback/{item_id}", s.requireAuth(s.handleExtPlaybackInfo))
+	mux.HandleFunc("GET /api/v1/ext/{id}/image/{item_id}/{image_type}", s.requireAuth(s.handleExtImage))
+	mux.HandleFunc("GET /api/v1/ext/{id}/stream/{item_id}/{filename}", s.handleExtStream)
+	mux.HandleFunc("HEAD /api/v1/ext/{id}/stream/{item_id}/{filename}", s.handleExtStream)
+	mux.HandleFunc("GET /api/v1/ext/{id}/hls/{item_id}/master.m3u8", s.handleExtHLSMaster)
+	mux.HandleFunc("GET /api/v1/ext/{id}/hls-proxy", s.handleExtHLSProxy)
+	mux.HandleFunc("GET /api/v1/ext/{id}/subtitles/{item_id}/{source_id}/{index}", s.handleExtSubtitle)
 
 	// Embedded SPA static files
 	mux.HandleFunc("GET /", s.handleSPA)
@@ -219,7 +263,11 @@ func (s *Server) handleSPA(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, r, http.StatusNotFound, "not found")
 		return
 	}
-	dist := web.DistFS()
+	dist, _ := web.ResolveDiskFS(s.webDir)
+	if dist == nil {
+		http.Error(w, "Web UI files not found under ./web/dist or ./web", http.StatusNotFound)
+		return
+	}
 	reqPath := strings.TrimPrefix(path.Clean("/"+r.URL.Path), "/")
 	if reqPath == "" {
 		reqPath = "index.html"
@@ -258,6 +306,8 @@ func (s *Server) handleSPA(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Cache-Control", "no-store")
 		} else if strings.HasPrefix(name, "assets/") {
 			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		} else {
+			w.Header().Set("Cache-Control", "no-cache")
 		}
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(data)
@@ -354,5 +404,3 @@ func writeMappedError(w http.ResponseWriter, r *http.Request, err error) {
 		writeErr(w, r, http.StatusInternalServerError, err.Error())
 	}
 }
-
-var _ fs.FS = web.DistFS()

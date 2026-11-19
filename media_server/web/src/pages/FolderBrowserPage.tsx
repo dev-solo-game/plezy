@@ -1,64 +1,65 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Film, Folder, Play, RefreshCw } from 'lucide-react';
+import { ArrowLeft, Film, Folder, RefreshCw } from 'lucide-react';
 import { api, formatBytes, mountKindLabel } from '../api/client';
+import { useSWRQuery } from '../api/queryCache';
+import { CardListSkeleton, TableSkeleton } from '../components/Skeletons';
 import { useApp } from '../contexts/AppContext';
 import type { MountBrowseEntry, MountRecord } from '../types';
 
+interface FolderListing {
+  path: string;
+  parent: string;
+  entries: MountBrowseEntry[];
+}
+
 export const FolderBrowserPage: React.FC = () => {
   const navigate = useNavigate();
-  const { toast } = useApp();
+  const { libraryVersion, toast } = useApp();
 
-  const [mounts, setMounts] = useState<MountRecord[]>([]);
   const [selectedMountId, setSelectedMountId] = useState('');
   const [currentPath, setCurrentPath] = useState('/');
-  const [parentPath, setParentPath] = useState('/');
-  const [entries, setEntries] = useState<MountBrowseEntry[]>([]);
-  const [loading, setLoading] = useState(true);
+
+  const {
+    data: mounts = [],
+    showSkeleton: showMountsSkeleton,
+  } = useSWRQuery<MountRecord[]>('mounts', () => api.listMounts().then((r) => r.mounts || []), {
+    deps: [libraryVersion],
+    onError: (err) => toast(err.message, 'error'),
+  });
 
   useEffect(() => {
-    api
-      .listMounts()
-      .then((res) => {
-        const list = res.mounts || [];
-        setMounts(list);
-        if (list.length > 0) {
-          setSelectedMountId(list[0].id);
-        } else {
-          setLoading(false);
-        }
-      })
-      .catch((err) => {
-        toast((err as Error).message, 'error');
-        setLoading(false);
-      });
-  }, [toast]);
+    if (mounts.length > 0 && (!selectedMountId || !mounts.some((m) => m.id === selectedMountId))) {
+      setSelectedMountId(mounts[0].id);
+      setCurrentPath('/');
+    }
+  }, [mounts, selectedMountId]);
 
-  const browse = useCallback(
-    async (mid: string, p: string) => {
-      if (!mid) return;
-      setLoading(true);
-      try {
-        const res = await api.browseMount(mid, p);
-        setCurrentPath(res.path || '/');
-        setParentPath(res.parent || '/');
-        setEntries(res.entries || []);
-      } catch (err) {
-        toast((err as Error).message, 'error');
-      } finally {
-        setLoading(false);
-      }
-    },
-    [toast]
+  const browseKey = selectedMountId ? `browse:${selectedMountId}:${currentPath}` : null;
+  const {
+    data: dirData,
+    showSkeleton: showDirSkeleton,
+    isStaleData,
+  } = useSWRQuery<FolderListing>(
+    browseKey,
+    () =>
+      api.browseMount(selectedMountId, currentPath).then((res) => ({
+        path: res.path || '/',
+        parent: res.parent || '/',
+        entries: res.entries || [],
+      })),
+    {
+      enabled: Boolean(selectedMountId),
+      keepPreviousData: true,
+      onError: (err) => toast(err.message, 'error'),
+    }
   );
 
-  useEffect(() => {
-    if (selectedMountId) {
-      void browse(selectedMountId, '/');
-    }
-  }, [selectedMountId, browse]);
+  if (showMountsSkeleton) {
+    return <CardListSkeleton />;
+  }
 
-  if (mounts.length === 0 && !loading) {
+  if (mounts.length === 0) {
     return (
       <div className="card-box" style={{ textAlign: 'center', padding: 48 }}>
         <p className="muted">还没有存储挂载源</p>
@@ -68,6 +69,10 @@ export const FolderBrowserPage: React.FC = () => {
       </div>
     );
   }
+
+  const entries = dirData?.entries || [];
+  const activePath = dirData?.path || currentPath;
+  const parentPath = dirData?.parent || '/';
 
   return (
     <div>
@@ -91,7 +96,10 @@ export const FolderBrowserPage: React.FC = () => {
             key={m.id}
             type="button"
             className={`chip ${selectedMountId === m.id ? 'active' : ''}`}
-            onClick={() => setSelectedMountId(m.id)}
+            onClick={() => {
+              setSelectedMountId(m.id);
+              setCurrentPath('/');
+            }}
           >
             <span>{m.name}</span>
             <span className="muted-sm">({mountKindLabel(m.kind)})</span>
@@ -109,27 +117,25 @@ export const FolderBrowserPage: React.FC = () => {
           }}
         >
           <div className="flex-row">
-            {currentPath !== '/' && (
-              <button type="button" className="btn btn-sm" onClick={() => void browse(selectedMountId, parentPath)}>
+            {activePath !== '/' && (
+              <button type="button" className="btn btn-sm" onClick={() => setCurrentPath(parentPath)}>
                 <ArrowLeft size={14} />
                 返回上级
               </button>
             )}
-            <span style={{ fontFamily: 'monospace', fontSize: 13 }}>{currentPath}</span>
+            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 13 }}>{activePath}</span>
           </div>
           <span className="muted-sm">{entries.length} 项</span>
         </div>
 
-        {loading ? (
-          <div style={{ padding: 28 }} className="muted">
-            读取目录中...
-          </div>
+        {showDirSkeleton && !dirData ? (
+          <TableSkeleton />
         ) : entries.length === 0 ? (
           <div style={{ padding: 36, textAlign: 'center' }} className="muted">
             空目录
           </div>
         ) : (
-          <table className="data-table">
+          <table className={`data-table ${isStaleData ? 'stale-dim' : ''}`}>
             <thead>
               <tr>
                 <th>名称</th>
@@ -147,7 +153,7 @@ export const FolderBrowserPage: React.FC = () => {
                         type="button"
                         className="nav-item"
                         style={{ padding: '4px 6px', display: 'inline-flex', width: 'auto' }}
-                        onClick={() => void browse(selectedMountId, entry.path)}
+                        onClick={() => setCurrentPath(entry.path)}
                       >
                         <Folder size={16} style={{ color: 'var(--accent)' }} />
                         <span>{entry.name}</span>
@@ -188,7 +194,6 @@ export const FolderBrowserPage: React.FC = () => {
                           className="btn btn-primary btn-sm"
                           onClick={() => navigate(`/play/file/${entry.file_id}`)}
                         >
-                          <Play size={13} fill="currentColor" />
                           播放
                         </button>
                       </div>

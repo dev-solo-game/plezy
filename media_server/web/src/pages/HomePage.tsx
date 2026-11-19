@@ -1,33 +1,27 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { AlertCircle, ChevronRight, HardDrive, Info, Play, Plus, RefreshCw, Settings } from 'lucide-react';
 import { api, artworkUrl, shelfLabel } from '../api/client';
+import { useSWRQuery } from '../api/queryCache';
 import { MediaCard } from '../components/MediaCard';
+import { HomeSkeleton } from '../components/Skeletons';
 import { useApp } from '../contexts/AppContext';
 import type { HomePayload } from '../types';
 
 export const HomePage: React.FC = () => {
   const navigate = useNavigate();
   const { libraryVersion, setUnmatchedCount, toast } = useApp();
-  const [home, setHome] = useState<HomePayload | null>(null);
-  const [loading, setLoading] = useState(true);
   const [heroIdx, setHeroIdx] = useState(0);
 
-  const load = useCallback(async () => {
-    try {
-      const res = await api.getHome();
-      setHome(res.home);
-      setUnmatchedCount(res.home.unmatched_count || 0);
-    } catch (err) {
-      toast((err as Error).message, 'error');
-    } finally {
-      setLoading(false);
-    }
-  }, [setUnmatchedCount, toast]);
-
-  useEffect(() => {
-    void load();
-  }, [load, libraryVersion]);
+  const {
+    data: home,
+    showSkeleton,
+    reload,
+  } = useSWRQuery<HomePayload>('home', () => api.getHome().then((r) => r.home), {
+    deps: [libraryVersion],
+    onSuccess: (h) => setUnmatchedCount(h.unmatched_count || 0),
+    onError: (err) => toast(err.message, 'error'),
+  });
 
   useEffect(() => {
     const heroes = home?.hero || [];
@@ -41,14 +35,14 @@ export const HomePage: React.FC = () => {
   const handleHideContinue = async (itemId: number) => {
     try {
       await api.hideContinue(itemId);
-      await load();
+      await reload();
     } catch (err) {
       toast((err as Error).message, 'error');
     }
   };
 
-  if (loading) {
-    return <div className="muted">正在加载媒体库首页...</div>;
+  if (showSkeleton) {
+    return <HomeSkeleton />;
   }
 
   if (!home) {
@@ -117,6 +111,7 @@ export const HomePage: React.FC = () => {
           {artworkUrl(activeHero.backdrop_source || activeHero.poster_source, 'original') && (
             <img
               className="hero-bg"
+              decoding="async"
               src={artworkUrl(activeHero.backdrop_source || activeHero.poster_source, 'original')}
               alt={activeHero.title}
             />
@@ -184,7 +179,7 @@ export const HomePage: React.FC = () => {
                 key={item.id}
                 item={item}
                 landscape
-                onUpdated={load}
+                onUpdated={() => void reload()}
                 onHideContinue={handleHideContinue}
               />
             ))}
@@ -202,7 +197,7 @@ export const HomePage: React.FC = () => {
           </div>
           <div className="h-scroll-row">
             {home.recent_all.map((item) => (
-              <MediaCard key={item.id} item={item} onUpdated={load} />
+              <MediaCard key={item.id} item={item} onUpdated={() => void reload()} />
             ))}
           </div>
         </section>
@@ -224,7 +219,7 @@ export const HomePage: React.FC = () => {
             </div>
             <div className="h-scroll-row">
               {shelf.items.map((item) => (
-                <MediaCard key={item.id} item={item} onUpdated={load} />
+                <MediaCard key={item.id} item={item} onUpdated={() => void reload()} />
               ))}
             </div>
           </section>

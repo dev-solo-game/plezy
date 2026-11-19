@@ -1,7 +1,8 @@
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Check, Eye, EyeOff, Film, Heart, Play, X } from 'lucide-react';
 import { api, artworkUrl, formatDurationMs, mountKindLabel } from '../api/client';
+import { prefetchItemDetail } from '../api/prefetch';
 import { useApp } from '../contexts/AppContext';
 import type { MediaItem } from '../types';
 
@@ -34,6 +35,30 @@ export const MediaCard: React.FC<MediaCardProps> = ({ item, landscape, onUpdated
     topRightBadge === 'DV' ? 'dv' : topRightBadge === '4K' ? 'k4' : '';
 
   const targetDetailId = isEpisode && item.show_id ? item.show_id : item.id;
+  const hoverTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (hoverTimerRef.current !== null) {
+        window.clearTimeout(hoverTimerRef.current);
+      }
+    };
+  }, []);
+
+  const schedulePrefetch = () => {
+    if (hoverTimerRef.current !== null) return;
+    hoverTimerRef.current = window.setTimeout(() => {
+      hoverTimerRef.current = null;
+      prefetchItemDetail(targetDetailId);
+    }, 80);
+  };
+
+  const cancelPrefetch = () => {
+    if (hoverTimerRef.current !== null) {
+      window.clearTimeout(hoverTimerRef.current);
+      hoverTimerRef.current = null;
+    }
+  };
 
   const displayTitle = isEpisode && item.show_title ? item.show_title : item.title;
   const subtitleLeft = isEpisode
@@ -71,6 +96,9 @@ export const MediaCard: React.FC<MediaCardProps> = ({ item, landscape, onUpdated
     <div
       className={`media-card ${landscape ? 'landscape' : ''}`}
       onClick={() => navigate(`/item/${targetDetailId}`)}
+      onMouseEnter={schedulePrefetch}
+      onMouseLeave={cancelPrefetch}
+      onFocus={() => prefetchItemDetail(targetDetailId)}
       role="button"
       tabIndex={0}
       onKeyDown={(e) => {
@@ -79,7 +107,7 @@ export const MediaCard: React.FC<MediaCardProps> = ({ item, landscape, onUpdated
     >
       <div className="media-thumb">
         {imgUrl ? (
-          <img src={imgUrl} alt={displayTitle} loading="lazy" />
+          <img src={imgUrl} alt={displayTitle} loading="lazy" decoding="async" />
         ) : (
           <div className="media-fallback">
             <Film size={26} />

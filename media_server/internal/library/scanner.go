@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"path"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -97,22 +98,75 @@ type queuedDir struct {
 	ID   string `json:"i,omitempty"`
 }
 
+type ScanSnapshot struct {
+	MountID         string `json:"mount_id"`
+	MountName       string `json:"mount_name"`
+	Status          string `json:"status"`
+	DirectoriesDone int    `json:"directories_done"`
+	FilesSeen       int    `json:"files_seen"`
+	VideosFound     int    `json:"videos_found"`
+	CurrentPath     string `json:"current_path"`
+	Error           string `json:"error,omitempty"`
+	UpdatedAt       int64  `json:"updated_at"`
+}
+
 type Scanner struct {
 	store   *db.Store
 	storage *storage.Manager
 	hub     *events.Hub
 
-	cancelMu sync.Mutex
-	cancels  map[string]context.CancelFunc
+	cancelMu       sync.Mutex
+	cancels        map[string]context.CancelFunc
+	statusMu       sync.RWMutex
+	activeScans    map[string]ScanSnapshot
+	onPendingAdded func()
 }
 
 func NewScanner(store *db.Store, st *storage.Manager, hub *events.Hub) *Scanner {
 	return &Scanner{
-		store:   store,
-		storage: st,
-		hub:     hub,
-		cancels: make(map[string]context.CancelFunc),
+		store:       store,
+		storage:     st,
+		hub:         hub,
+		cancels:     make(map[string]context.CancelFunc),
+		activeScans: make(map[string]ScanSnapshot),
 	}
+}
+
+func (s *Scanner) SetOnPendingAdded(fn func()) {
+	s.statusMu.Lock()
+	s.onPendingAdded = fn
+	s.statusMu.Unlock()
+}
+
+func (s *Scanner) notifyPendingAdded() {
+	s.statusMu.RLock()
+	fn := s.onPendingAdded
+	s.statusMu.RUnlock()
+	if fn != nil {
+		fn()
+	}
+}
+
+func (s *Scanner) ActiveScans() []ScanSnapshot {
+	s.statusMu.RLock()
+	out := make([]ScanSnapshot, 0, len(s.activeScans))
+	for _, snap := range s.activeScans {
+		out = append(out, snap)
+	}
+	s.statusMu.RUnlock()
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].MountName != out[j].MountName {
+			return out[i].MountName < out[j].MountName
+		}
+		return out[i].MountID < out[j].MountID
+	})
+	return out
+}
+
+func (s *Scanner) clearActiveScan(mountID string) {
+	s.statusMu.Lock()
+	delete(s.activeScans, mountID)
+	s.statusMu.Unlock()
 }
 
 func (s *Scanner) CancelMount(mountID string) {
@@ -124,19 +178,29 @@ func (s *Scanner) CancelMount(mountID string) {
 	}
 }
 
-func (s *Scanner) publishProgress(mountID, mountName, status string, dirsDone, filesSeen int, currentPath, errMsg string) {
-	if s.hub == nil {
-		return
+func (s *Scanner) publishProgress(mountID, mountName, status string, dirsDone, filesSeen, videosFound int, currentPath, errMsg string) {
+	snap := ScanSnapshot{
+		MountID:         mountID,
+		MountName:       mountName,
+		Status:          status,
+		DirectoriesDone: dirsDone,
+		FilesSeen:       filesSeen,
+		VideosFound:     videosFound,
+		CurrentPath:     currentPath,
+		Error:           errMsg,
+		UpdatedAt:       time.Now().UnixMilli(),
 	}
-	s.hub.Publish("scan_progress", map[string]any{
-		"mount_id":         mountID,
-		"mount_name":       mountName,
-		"status":           status,
-		"directories_done": dirsDone,
-		"files_seen":       filesSeen,
-		"current_path":     currentPath,
-		"error":            errMsg,
-	})
+	s.statusMu.Lock()
+	if status == "running" {
+		s.activeScans[mountID] = snap
+	} else {
+		delete(s.activeScans, mountID)
+	}
+	s.statusMu.Unlock()
+
+	if s.hub != nil {
+		s.hub.Publish("scan_progress", snap)
+	}
 }
 
 func (s *Scanner) ScanMount(ctx context.Context, mountID string, fullRestart bool) (ScanResult, error) {
@@ -158,6 +222,7 @@ func (s *Scanner) ScanMount(ctx context.Context, mountID string, fullRestart boo
 		s.cancelMu.Lock()
 		delete(s.cancels, mountID)
 		s.cancelMu.Unlock()
+		s.clearActiveScan(mountID)
 	}()
 
 	drv, err := s.storage.DriverFor(storage.MountConfig{
@@ -271,7 +336,7 @@ func (s *Scanner) scanFull(
 		pj := encodeQueue(queue)
 		st.PendingJSON = &pj
 		_ = s.store.SaveScanState(st)
-		s.publishProgress(m.ID, m.Name, "failed", dirsDone, filesSeen, "", msg)
+		s.publishProgress(m.ID, m.Name, "failed", dirsDone, filesSeen, videos, "", msg)
 	}
 
 	for len(queue) > 0 {
@@ -280,13 +345,13 @@ func (s *Scanner) scanFull(
 			pj := encodeQueue(queue)
 			st.PendingJSON = &pj
 			_ = s.store.SaveScanState(st)
-			s.publishProgress(m.ID, m.Name, "cancelled", dirsDone, filesSeen, "", "")
+			s.publishProgress(m.ID, m.Name, "cancelled", dirsDone, filesSeen, videos, "", "")
 			return ScanResult{Videos: videos, Cancelled: true}, nil
 		}
 
 		dir := queue[len(queue)-1]
 		queue = queue[:len(queue)-1]
-		s.publishProgress(m.ID, m.Name, "running", dirsDone, filesSeen, dir.Path, "")
+		s.publishProgress(m.ID, m.Name, "running", dirsDone, filesSeen, videos, dir.Path, "")
 
 		var parent *storage.Entry
 		if dir.ID != "" {
@@ -325,6 +390,7 @@ func (s *Scanner) scanFull(
 		videos += recVideos
 		if addedPend {
 			anyPending = true
+			s.notifyPendingAdded()
 		}
 		filesSeen += len(allowedFiles)
 		dirsDone++
@@ -332,6 +398,7 @@ func (s *Scanner) scanFull(
 		pj := encodeQueue(queue)
 		st.PendingJSON = &pj
 		_ = s.store.SaveScanState(st)
+		s.publishProgress(m.ID, m.Name, "running", dirsDone, filesSeen, videos, dir.Path, "")
 	}
 
 	removed, err := s.finalizeScan(m.ID, scanID)
@@ -351,7 +418,7 @@ func (s *Scanner) scanFull(
 	}
 	_ = s.store.SaveScanState(st)
 
-	s.publishProgress(m.ID, m.Name, "completed", dirsDone, filesSeen, "", "")
+	s.publishProgress(m.ID, m.Name, "completed", dirsDone, filesSeen, videos, "", "")
 	if s.hub != nil && (videos > 0 || removed > 0 || anyPending) {
 		s.hub.Publish("library_changed", map[string]any{"mount_id": m.ID})
 	}
@@ -442,7 +509,7 @@ func (s *Scanner) scanQuarkIncremental(
 				changed[row.Entry.ID] = row
 			}
 		}
-		s.publishProgress(m.ID, m.Name, "running", 0, len(changed), storage.RootPath, "")
+		s.publishProgress(m.ID, m.Name, "running", 0, len(changed), 0, storage.RootPath, "")
 		if len(items) < 100 || (lastTS > 0 && lastTS < threshold) {
 			break
 		}
@@ -499,7 +566,7 @@ func (s *Scanner) scanQuarkIncremental(
 			}
 		}
 		listings[dPath] = allowed
-		s.publishProgress(m.ID, m.Name, "running", len(listings), len(changed), dPath, "")
+		s.publishProgress(m.ID, m.Name, "running", len(listings), len(changed), 0, dPath, "")
 	}
 
 	removed := 0
@@ -525,6 +592,7 @@ func (s *Scanner) scanQuarkIncremental(
 		videos += v
 		if pend {
 			anyPending = true
+			s.notifyPendingAdded()
 		}
 	}
 	if removed > 0 || len(listings) > 0 {
@@ -539,7 +607,7 @@ func (s *Scanner) scanQuarkIncremental(
 	st.QuarkCheckpoint = &cp
 	_ = s.store.SaveScanState(st)
 
-	s.publishProgress(m.ID, m.Name, "completed", len(listings), len(changed), "", "")
+	s.publishProgress(m.ID, m.Name, "completed", len(listings), len(changed), videos, "", "")
 	if s.hub != nil && (videos > 0 || removed > 0 || anyPending) {
 		s.hub.Publish("library_changed", map[string]any{"mount_id": m.ID})
 	}

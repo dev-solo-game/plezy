@@ -1,19 +1,18 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { ArrowDownUp, Grid3X3, LayoutGrid, Rows3 } from 'lucide-react';
 import { api, shelfLabel } from '../api/client';
+import { libraryQueryKey } from '../api/prefetch';
+import { useSWRQuery } from '../api/queryCache';
+import { CustomSelect } from '../components/CustomSelect';
 import { MediaCard } from '../components/MediaCard';
+import { GridSkeleton } from '../components/Skeletons';
 import { useApp } from '../contexts/AppContext';
 import type { LibraryFacets, MediaItem } from '../types';
 
 export const LibraryBrowsePage: React.FC<{ favoritesOnly?: boolean }> = ({ favoritesOnly = false }) => {
   const { shelf = 'all' } = useParams();
   const { libraryVersion, toast } = useApp();
-
-  const [items, setItems] = useState<MediaItem[]>([]);
-  const [total, setTotal] = useState(0);
-  const [facets, setFacets] = useState<LibraryFacets | null>(null);
-  const [loading, setLoading] = useState(true);
 
   const [mountId, setMountId] = useState('');
   const [genreId, setGenreId] = useState('');
@@ -24,53 +23,75 @@ export const LibraryBrowsePage: React.FC<{ favoritesOnly?: boolean }> = ({ favor
   const [sort, setSort] = useState('added_at');
   const [order, setOrder] = useState<'asc' | 'desc'>('desc');
   const [density, setDensity] = useState<'compact' | 'normal' | 'comfortable'>('normal');
-  const [offset, setOffset] = useState(0);
+  const [extraItems, setExtraItems] = useState<MediaItem[]>([]);
+  const [loadingMore, setLoadingMore] = useState(false);
   const limit = 48;
 
+  const shelfFilter = favoritesOnly || shelf === 'all' ? '' : shelf;
+
   useEffect(() => {
-    setOffset(0);
     setGenreId('');
     setYear('');
     setLetter('');
-    api
-      .getLibraryFacets(favoritesOnly || shelf === 'all' ? '' : shelf)
-      .then((res) => setFacets(res.facets))
-      .catch(() => {});
-  }, [shelf, favoritesOnly, libraryVersion]);
+    setExtraItems([]);
+  }, [shelf, favoritesOnly]);
 
-  const loadItems = useCallback(
-    async (nextOffset: number, append: boolean) => {
-      if (!append) setLoading(true);
-      try {
-        const res = await api.getLibraryItems({
-          shelf: favoritesOnly || shelf === 'all' ? '' : shelf,
-          favorite: favoritesOnly ? '1' : undefined,
-          mount_id: mountId,
-          genre_id: genreId,
-          year,
-          quality,
-          watched,
-          letter,
-          sort,
-          order,
-          offset: nextOffset,
-          limit,
-        });
-        setTotal(res.total);
-        setItems((prev) => (append ? [...prev, ...(res.items || [])] : res.items || []));
-      } catch (err) {
-        toast((err as Error).message, 'error');
-      } finally {
-        setLoading(false);
-      }
-    },
-    [favoritesOnly, shelf, mountId, genreId, year, quality, watched, letter, sort, order, toast]
-  );
+  const queryParams = {
+    shelf: shelfFilter,
+    favorite: favoritesOnly ? '1' : undefined,
+    mount_id: mountId,
+    genre_id: genreId,
+    year,
+    quality,
+    watched,
+    letter,
+    sort,
+    order,
+    offset: 0,
+    limit,
+  };
+  const browseKey = libraryQueryKey(queryParams);
 
   useEffect(() => {
-    void loadItems(0, false);
-    setOffset(0);
-  }, [loadItems, libraryVersion]);
+    setExtraItems([]);
+  }, [browseKey]);
+
+  const { data: facets } = useSWRQuery<LibraryFacets>(
+    `facets:${shelfFilter}`,
+    () => api.getLibraryFacets(shelfFilter).then((r) => r.facets),
+    { deps: [libraryVersion], keepPreviousData: true }
+  );
+
+  const {
+    data: page,
+    showSkeleton,
+    isStaleData,
+    reload,
+  } = useSWRQuery(browseKey, () => api.getLibraryItems(queryParams), {
+    deps: [libraryVersion],
+    keepPreviousData: true,
+    onError: (err) => toast(err.message, 'error'),
+  });
+
+  const items = [...(page?.items || []), ...extraItems];
+  const total = page?.total ?? 0;
+
+  const handleLoadMore = async () => {
+    if (loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const nextOffset = items.length;
+      const res = await api.getLibraryItems({
+        ...queryParams,
+        offset: nextOffset,
+      });
+      setExtraItems((prev) => [...prev, ...(res.items || [])]);
+    } catch (err) {
+      toast((err as Error).message, 'error');
+    } finally {
+      setLoadingMore(false);
+    }
+  };
 
   const azList = facets?.letters && facets.letters.length > 0 ? facets.letters : 'ABCDEFGHIJKLMNOPQRSTUVWXYZ#'.split('');
 
@@ -83,14 +104,20 @@ export const LibraryBrowsePage: React.FC<{ favoritesOnly?: boolean }> = ({ favor
         </h2>
 
         <div className="flex-row">
-          <select className="select" style={{ width: 130, padding: '6px 10px', fontSize: 13 }} value={sort} onChange={(e) => setSort(e.target.value)}>
-            <option value="added_at">入库时间</option>
-            <option value="title">标题</option>
-            <option value="year">年份</option>
-            <option value="release_date">上映日期</option>
-            <option value="rating">评分</option>
-            <option value="last_played">最近播放</option>
-          </select>
+          <CustomSelect
+            compact
+            value={sort}
+            onChange={setSort}
+            style={{ width: 136 }}
+            options={[
+              { value: 'added_at', label: '入库时间' },
+              { value: 'title', label: '标题' },
+              { value: 'year', label: '年份' },
+              { value: 'release_date', label: '上映日期' },
+              { value: 'rating', label: '评分' },
+              { value: 'last_played', label: '最近播放' },
+            ]}
+          />
 
           <button
             type="button"
@@ -118,32 +145,38 @@ export const LibraryBrowsePage: React.FC<{ favoritesOnly?: boolean }> = ({ favor
 
       {/* Filter Toolbar */}
       <div className="card-box" style={{ padding: 14, marginBottom: 20, display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center' }}>
-        <select className="select" style={{ width: 150, padding: '6px 10px', fontSize: 13 }} value={mountId} onChange={(e) => setMountId(e.target.value)}>
-          <option value="">全部挂载源</option>
-          {(facets?.mounts || []).map((m) => (
-            <option key={m.id} value={m.id}>
-              {m.name}
-            </option>
-          ))}
-        </select>
+        <CustomSelect
+          compact
+          value={mountId}
+          onChange={setMountId}
+          style={{ width: 156 }}
+          options={[
+            { value: '', label: '全部挂载源' },
+            ...(facets?.mounts || []).map((m) => ({ value: m.id, label: m.name })),
+          ]}
+        />
 
-        <select className="select" style={{ width: 140, padding: '6px 10px', fontSize: 13 }} value={genreId} onChange={(e) => setGenreId(e.target.value)}>
-          <option value="">全部流派</option>
-          {(facets?.genres || []).map((g) => (
-            <option key={g.id} value={String(g.id)}>
-              {g.name} ({g.count})
-            </option>
-          ))}
-        </select>
+        <CustomSelect
+          compact
+          value={genreId}
+          onChange={setGenreId}
+          style={{ width: 148 }}
+          options={[
+            { value: '', label: '全部流派' },
+            ...(facets?.genres || []).map((g) => ({ value: String(g.id), label: `${g.name} (${g.count})` })),
+          ]}
+        />
 
-        <select className="select" style={{ width: 112, padding: '6px 10px', fontSize: 13 }} value={year} onChange={(e) => setYear(e.target.value)}>
-          <option value="">全部年份</option>
-          {(facets?.years || []).map((y) => (
-            <option key={y} value={String(y)}>
-              {y}
-            </option>
-          ))}
-        </select>
+        <CustomSelect
+          compact
+          value={year}
+          onChange={setYear}
+          style={{ width: 118 }}
+          options={[
+            { value: '', label: '全部年份' },
+            ...(facets?.years || []).map((y) => ({ value: String(y), label: String(y) })),
+          ]}
+        />
 
         <div className="flex-row" style={{ gap: 6 }}>
           {(
@@ -183,17 +216,17 @@ export const LibraryBrowsePage: React.FC<{ favoritesOnly?: boolean }> = ({ favor
 
       <div className="browse-with-az">
         <div className="browse-main">
-          {loading ? (
-            <div className="muted">加载片库中...</div>
+          {showSkeleton && items.length === 0 ? (
+            <GridSkeleton />
           ) : items.length === 0 ? (
             <div className="card-box muted" style={{ textAlign: 'center', padding: 48 }}>
               当前筛选条件下没有找到媒体内容
             </div>
           ) : (
             <>
-              <div className={`poster-grid ${density === 'normal' ? '' : density}`}>
+              <div className={`poster-grid ${density === 'normal' ? '' : density} ${isStaleData ? 'stale-dim' : ''}`}>
                 {items.map((item) => (
-                  <MediaCard key={item.id} item={item} onUpdated={() => void loadItems(0, false)} />
+                  <MediaCard key={item.id} item={item} onUpdated={() => void reload()} />
                 ))}
               </div>
 
@@ -202,13 +235,10 @@ export const LibraryBrowsePage: React.FC<{ favoritesOnly?: boolean }> = ({ favor
                   <button
                     type="button"
                     className="btn"
-                    onClick={() => {
-                      const next = offset + limit;
-                      setOffset(next);
-                      void loadItems(next, true);
-                    }}
+                    disabled={loadingMore}
+                    onClick={() => void handleLoadMore()}
                   >
-                    加载更多（已显示 {items.length} / {total}）
+                    {loadingMore ? '获取中...' : `加载更多（已显示 ${items.length} / ${total}）`}
                   </button>
                 </div>
               )}

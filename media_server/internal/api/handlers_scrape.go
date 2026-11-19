@@ -11,6 +11,13 @@ import (
 	"plezy/media_server/internal/metadata"
 )
 
+func (s *Server) handleTaskStatus(w http.ResponseWriter, r *http.Request, _ *db.AdminAccount, _ *db.SessionRecord) {
+	writeJSON(w, r, http.StatusOK, map[string]any{
+		"code":   0,
+		"status": s.Coordinator.TaskStatus(),
+	})
+}
+
 func (s *Server) handleScanAll(w http.ResponseWriter, r *http.Request, _ *db.AdminAccount, _ *db.SessionRecord) {
 	full := r.URL.Query().Get("full") == "1" || strings.EqualFold(r.URL.Query().Get("full"), "true")
 	s.Coordinator.TriggerScanAllAsync(full)
@@ -32,7 +39,7 @@ func (s *Server) handleScanMount(w http.ResponseWriter, r *http.Request, _ *db.A
 		}
 		if res.Videos > 0 || res.AddedPending {
 			s.Coordinator.Scanner.ProbePendingFiles(r.Context(), 50)
-			_, _ = s.Coordinator.Scraper.ScrapePending(r.Context(), false, false)
+			_, _ = s.Coordinator.WaitOrRunScrapeSync(r.Context(), false, false)
 		}
 		writeJSON(w, r, http.StatusOK, map[string]any{"code": 0, "result": res})
 		return
@@ -51,7 +58,7 @@ func (s *Server) handleScrapeAll(w http.ResponseWriter, r *http.Request, _ *db.A
 	retryUnmatched := r.URL.Query().Get("retry_unmatched") == "1" || strings.EqualFold(r.URL.Query().Get("retry_unmatched"), "true")
 	refreshAll := r.URL.Query().Get("refresh_all") == "1" || strings.EqualFold(r.URL.Query().Get("refresh_all"), "true")
 	if r.URL.Query().Get("sync") == "1" {
-		sum, err := s.Coordinator.Scraper.ScrapePending(r.Context(), retryUnmatched, refreshAll)
+		sum, err := s.Coordinator.WaitOrRunScrapeSync(r.Context(), retryUnmatched, refreshAll)
 		if err != nil {
 			writeMappedError(w, r, err)
 			return

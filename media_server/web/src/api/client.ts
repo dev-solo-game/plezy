@@ -1,8 +1,20 @@
 import type {
   BootstrapInfo,
   CacheStats,
+  ExternalServerAuthMode,
+  ExternalServerKind,
+  ExternalServerRecord,
+  ExternalServerTestResult,
+  ExtHomePayload,
+  ExtItem,
+  ExtItemDetail,
+  ExtPlaybackInfo,
+  ExtSearchResult,
   HomePayload,
   HostDirEntry,
+  ImageCacheSummary,
+  InspectTableInfo,
+  InspectTablePage,
   ItemDetail,
   LibraryFacets,
   MediaItem,
@@ -17,6 +29,7 @@ import type {
   ServerSettingsUpdate,
   SessionRecord,
   SystemOverview,
+  TaskStatusSnapshot,
   UnmatchedEntry,
   WorkPrefs,
 } from '../types';
@@ -127,6 +140,17 @@ export function mountKindLabel(kind?: string): string {
   }
 }
 
+export function extServerKindLabel(kind?: string): string {
+  switch (kind) {
+    case 'emby':
+      return 'Emby';
+    case 'jellyfin':
+      return 'Jellyfin';
+    default:
+      return kind || '媒体服务器';
+  }
+}
+
 export const api = {
   bootstrap: () => req<BootstrapInfo>('/api/v1/public/bootstrap'),
 
@@ -174,6 +198,21 @@ export const api = {
       body: JSON.stringify({ scope }),
     }),
 
+  listMetadataTables: () =>
+    req<{ tables: InspectTableInfo[]; image_cache: ImageCacheSummary }>('/api/v1/metadata/tables'),
+
+  queryMetadataTable: (table: string, q = '', limit = 30, offset = 0) => {
+    const p = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+    if (q.trim()) p.set('q', q.trim());
+    return req<InspectTablePage>(`/api/v1/metadata/tables/${encodeURIComponent(table)}?${p.toString()}`);
+  },
+
+  deleteMetadataCacheRow: (table: string, pk: Record<string, string>) =>
+    req<{ deleted: number }>(`/api/v1/metadata/tables/${encodeURIComponent(table)}/row`, {
+      method: 'DELETE',
+      body: JSON.stringify({ pk }),
+    }),
+
   systemOverview: () => req<{ overview: SystemOverview; cache_stats: CacheStats }>('/api/v1/system/overview'),
 
   listMounts: () => req<{ mounts: MountRecord[] }>('/api/v1/mounts'),
@@ -208,10 +247,31 @@ export const api = {
       `/api/v1/mounts/${encodeURIComponent(id)}/quark-account`
     ),
 
+  quarkAccountPreview: (body: { id?: string; mode?: string; secret?: string }) =>
+    req<{ account: { nickname?: string; member_type: string; used_bytes: number; total_bytes: number } }>(
+      '/api/v1/quark/account-preview',
+      { method: 'POST', body: JSON.stringify(body) }
+    ),
+
   browseHostFS: (path?: string) =>
     req<{ current: string; parent: string; dirs: HostDirEntry[] }>(
       `/api/v1/fs/browse${path ? `?path=${encodeURIComponent(path)}` : ''}`
     ),
+
+  browseMountPreview: (body: {
+    id?: string;
+    kind: MountKind;
+    config: Record<string, unknown>;
+    secrets?: Record<string, string>;
+    path?: string;
+    parent_id?: string;
+  }) =>
+    req<{
+      path: string;
+      parent: string;
+      dirs: Array<{ path: string; name: string; is_dir: boolean; id?: string }>;
+      file_count: number;
+    }>('/api/v1/mounts/browse-preview', { method: 'POST', body: JSON.stringify(body) }),
 
   browseMount: (mountId: string, path?: string) =>
     req<{
@@ -247,6 +307,8 @@ export const api = {
       `/api/v1/tasks/scrape?retry_unmatched=${retryUnmatched ? '1' : '0'}&refresh_all=${refreshAll ? '1' : '0'}`,
       { method: 'POST' }
     ),
+
+  getTaskStatus: () => req<{ status: TaskStatusSnapshot }>('/api/v1/tasks/status'),
 
   listUnmatched: (limit = 50, offset = 0) =>
     req<{ items: UnmatchedEntry[]; total: number }>(`/api/v1/library/unmatched?limit=${limit}&offset=${offset}`),
@@ -362,4 +424,123 @@ export const api = {
     ),
 
   getPlaybackInfoFile: (fileId: number) => req<PlaybackInfo>(`/api/v1/playback/file/${fileId}`),
+
+  // External Emby / Jellyfin servers
+  listExternalServers: () => req<{ servers: ExternalServerRecord[] }>('/api/v1/ext-servers'),
+
+  testExternalServer: (body: {
+    id?: string;
+    kind: ExternalServerKind;
+    base_url: string;
+    auth_mode: ExternalServerAuthMode;
+    username?: string;
+    password?: string;
+    api_key?: string;
+    user_id?: string;
+    allow_insecure_tls?: boolean;
+  }) => req<ExternalServerTestResult>('/api/v1/ext-servers/test', { method: 'POST', body: JSON.stringify(body) }),
+
+  createExternalServer: (body: {
+    name?: string;
+    kind: ExternalServerKind;
+    base_url: string;
+    auth_mode: ExternalServerAuthMode;
+    username?: string;
+    password?: string;
+    api_key?: string;
+    user_id?: string;
+    allow_insecure_tls?: boolean;
+    enabled?: boolean;
+  }) => req<{ server: ExternalServerRecord }>('/api/v1/ext-servers', { method: 'POST', body: JSON.stringify(body) }),
+
+  updateExternalServer: (
+    id: string,
+    body: {
+      name?: string;
+      kind?: ExternalServerKind;
+      base_url?: string;
+      auth_mode?: ExternalServerAuthMode;
+      username?: string;
+      password?: string;
+      api_key?: string;
+      user_id?: string;
+      allow_insecure_tls?: boolean;
+      enabled?: boolean;
+    }
+  ) =>
+    req<{ server: ExternalServerRecord }>(`/api/v1/ext-servers/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    }),
+
+  deleteExternalServer: (id: string) =>
+    req<{ status: string }>(`/api/v1/ext-servers/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+
+  extGetHome: (serverId: string) =>
+    req<{ server: ExternalServerRecord; home: ExtHomePayload }>(
+      `/api/v1/ext/${encodeURIComponent(serverId)}/home`
+    ),
+
+  extGetItems: (serverId: string, params: Record<string, string | number | boolean | undefined>) => {
+    const p = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) {
+      if (v !== undefined && v !== '' && v !== null) p.set(k, String(v));
+    }
+    return req<{ server: ExternalServerRecord; items: ExtItem[]; total: number; offset: number; limit: number }>(
+      `/api/v1/ext/${encodeURIComponent(serverId)}/items?${p.toString()}`
+    );
+  },
+
+  extGetItemDetail: (serverId: string, itemId: string) =>
+    req<{ server: ExternalServerRecord; detail: ExtItemDetail }>(
+      `/api/v1/ext/${encodeURIComponent(serverId)}/items/${encodeURIComponent(itemId)}`
+    ),
+
+  extSearch: (serverId: string, q: string) =>
+    req<{ server: ExternalServerRecord; results: ExtSearchResult }>(
+      `/api/v1/ext/${encodeURIComponent(serverId)}/search?q=${encodeURIComponent(q)}`
+    ),
+
+  extSetFavorite: (serverId: string, itemId: string, favorite: boolean) =>
+    req<{ favorite: boolean }>(
+      `/api/v1/ext/${encodeURIComponent(serverId)}/items/${encodeURIComponent(itemId)}/favorite`,
+      { method: 'POST', body: JSON.stringify({ favorite }) }
+    ),
+
+  extSetWatched: (serverId: string, itemId: string, watched: boolean) =>
+    req<{ watched: boolean }>(
+      `/api/v1/ext/${encodeURIComponent(serverId)}/items/${encodeURIComponent(itemId)}/watched`,
+      { method: 'POST', body: JSON.stringify({ watched }) }
+    ),
+
+  extReportPlayback: (
+    serverId: string,
+    body: {
+      state: 'start' | 'progress' | 'stop';
+      item_id: string;
+      media_source_id?: string;
+      play_session_id?: string;
+      position_ms: number;
+      is_paused: boolean;
+      play_method?: string;
+    },
+    keepalive = false
+  ) =>
+    fetch(`/api/v1/ext/${encodeURIComponent(serverId)}/playback/report`, {
+      method: 'POST',
+      credentials: 'include',
+      keepalive,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }).then(async (r) => {
+      if (!r.ok) throw new ApiError(r.status, 'failed to report external playback');
+      return r.json();
+    }),
+
+  extGetPlaybackInfo: (serverId: string, itemId: string, sourceId?: string) =>
+    req<ExtPlaybackInfo>(
+      `/api/v1/ext/${encodeURIComponent(serverId)}/playback/${encodeURIComponent(itemId)}${
+        sourceId ? `?source_id=${encodeURIComponent(sourceId)}` : ''
+      }`
+    ),
 };

@@ -2,6 +2,9 @@ package storage
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -177,10 +180,17 @@ func CfgBool(cfg map[string]any, key string, fallback bool) bool {
 // secret-update callback (used for Quark Web cookie rotation).
 type DriverFactory func(cfg MountConfig, onSecretUpdate func(key, val string)) (Driver, error)
 
+const (
+	previewDriverTTL     = 10 * time.Minute
+	maxPreviewDrivers    = 8
+)
+
 // Manager caches live Driver instances per mount and rebuilds them on edit.
 type Manager struct {
 	mu           sync.Mutex
 	drivers      map[string]cachedDriver
+	previewMu    sync.Mutex
+	previews     map[string]cachedDriver
 	factories    map[string]DriverFactory
 	allowedRoots []string
 	onSecretSave func(mountID, key, val string)
@@ -194,6 +204,7 @@ type cachedDriver struct {
 func NewManager(allowedLocalRoots []string, onSecretSave func(mountID, key, val string)) *Manager {
 	m := &Manager{
 		drivers:      make(map[string]cachedDriver),
+		previews:     make(map[string]cachedDriver),
 		factories:    make(map[string]DriverFactory),
 		allowedRoots: allowedLocalRoots,
 		onSecretSave: onSecretSave,
@@ -280,12 +291,107 @@ func (m *Manager) Invalidate(mountID string) {
 	}
 }
 
+func previewCacheKey(cfg MountConfig) string {
+	payload, _ := json.Marshal(struct {
+		Kind    string            `json:"k"`
+		Config  map[string]any    `json:"c"`
+		Secrets map[string]string `json:"s"`
+	}{
+		Kind:    strings.ToLower(strings.TrimSpace(cfg.Kind)),
+		Config:  cfg.Config,
+		Secrets: cfg.Secrets,
+	})
+	sum := sha256.Sum256(payload)
+	return hex.EncodeToString(sum[:])
+}
+
+// PreviewDriver returns a short-lived cached Driver keyed by mount parameters so
+// directory-picker navigation reuses Quark folder/token caches and rate limiters.
+func (m *Manager) PreviewDriver(cfg MountConfig) (Driver, error) {
+	key := previewCacheKey(cfg)
+	now := time.Now()
+	var toClose []Driver
+
+	m.previewMu.Lock()
+	for k, c := range m.previews {
+		if now.Sub(c.createdAt) > previewDriverTTL {
+			delete(m.previews, k)
+			if c.driver != nil {
+				toClose = append(toClose, c.driver)
+			}
+		}
+	}
+	if cached, ok := m.previews[key]; ok {
+		cached.createdAt = now
+		m.previews[key] = cached
+		m.previewMu.Unlock()
+		for _, d := range toClose {
+			_ = d.Close()
+		}
+		return cached.driver, nil
+	}
+	m.previewMu.Unlock()
+	for _, d := range toClose {
+		_ = d.Close()
+	}
+
+	m.mu.Lock()
+	factory, ok := m.factories[strings.ToLower(cfg.Kind)]
+	m.mu.Unlock()
+	if !ok {
+		return nil, NewError(ErrKindUnsupported, "unsupported storage kind: "+cfg.Kind)
+	}
+
+	drv, err := factory(cfg, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var evicted Driver
+	m.previewMu.Lock()
+	if existing, ok := m.previews[key]; ok {
+		m.previewMu.Unlock()
+		_ = drv.Close()
+		return existing.driver, nil
+	}
+	if len(m.previews) >= maxPreviewDrivers {
+		var oldestKey string
+		var oldestTime time.Time
+		for k, c := range m.previews {
+			if oldestKey == "" || c.createdAt.Before(oldestTime) {
+				oldestKey = k
+				oldestTime = c.createdAt
+			}
+		}
+		if oldestKey != "" {
+			evicted = m.previews[oldestKey].driver
+			delete(m.previews, oldestKey)
+		}
+	}
+	m.previews[key] = cachedDriver{driver: drv, createdAt: time.Now()}
+	m.previewMu.Unlock()
+	if evicted != nil {
+		_ = evicted.Close()
+	}
+	return drv, nil
+}
+
 func (m *Manager) CloseAll() {
 	m.mu.Lock()
 	all := m.drivers
 	m.drivers = make(map[string]cachedDriver)
 	m.mu.Unlock()
 	for _, c := range all {
+		if c.driver != nil {
+			_ = c.driver.Close()
+		}
+	}
+
+	m.previewMu.Lock()
+	allPreviews := m.previews
+	m.previews = make(map[string]cachedDriver)
+	m.previewMu.Unlock()
+	for _, c := range allPreviews {
 		if c.driver != nil {
 			_ = c.driver.Close()
 		}

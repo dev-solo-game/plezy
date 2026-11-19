@@ -376,3 +376,37 @@ type SystemOverview struct {
 	Genres      int64 `json:"genres"`
 	DBBytes     int64 `json:"db_bytes"`
 }
+
+type ExternalServerRecord struct {
+	ID               string            `json:"id"`
+	Name             string            `json:"name"`
+	Kind             string            `json:"kind"` // emby | jellyfin
+	BaseURL          string            `json:"base_url"`
+	AuthMode         string            `json:"auth_mode"` // password | apikey
+	Username         string            `json:"username"`
+	UserID           string            `json:"user_id"`
+	DeviceID         string            `json:"device_id"`
+	ServerID         string            `json:"server_id"`
+	ServerVersion    string            `json:"server_version"`
+	AllowInsecureTLS bool              `json:"allow_insecure_tls"`
+	Secrets          map[string]string `json:"-"`
+	HasToken         bool              `json:"has_token"`
+	Enabled          bool              `json:"enabled"`
+	CreatedAt        int64             `json:"created_at"`
+	UpdatedAt        int64             `json:"updated_at"`
+}
+
+type ExternalServerUpdate struct {
+	Name             *string
+	Kind             *string
+	BaseURL          *string
+	AuthMode         *string
+	Username         *string
+	UserID           *string
+	DeviceID         *string
+	ServerID         *string
+	ServerVersion    *string
+	AllowInsecureTLS *bool
+	Secrets          *map[string]string
+	Enabled          *bool
+}

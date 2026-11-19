@@ -3,6 +3,7 @@ import { Check, Loader2, Search, X } from 'lucide-react';
 import { api, artworkUrl } from '../api/client';
 import { useApp } from '../contexts/AppContext';
 import type { ScrapeCandidate } from '../types';
+import { CustomSelect } from './CustomSelect';
 
 interface ManualMatchModalProps {
   itemId: number;
@@ -117,33 +118,35 @@ export const ManualMatchModal: React.FC<ManualMatchModalProps> = ({
                   剧集 / 番剧
                 </button>
                 <span className="muted-sm">|</span>
-                <select
-                  className="select"
-                  style={{ width: 130, padding: '5px 10px', fontSize: 12 }}
+                <CustomSelect
+                  compact
                   value={provider}
-                  onChange={(e) => setProvider(e.target.value as '' | 'tmdb' | 'bangumi')}
-                >
-                  <option value="">全部刮削源</option>
-                  <option value="tmdb">TMDB</option>
-                  <option value="bangumi">Bangumi</option>
-                </select>
+                  onChange={(v) => setProvider(v as '' | 'tmdb' | 'bangumi')}
+                  style={{ width: 136 }}
+                  options={[
+                    { value: '', label: '全部刮削源' },
+                    { value: 'tmdb', label: 'TMDB' },
+                    { value: 'bangumi', label: 'Bangumi' },
+                  ]}
+                />
               </div>
 
               <div className="flex-row">
                 <span className="muted-sm">归入分类：</span>
-                <select
-                  className="select"
-                  style={{ width: 130, padding: '5px 10px', fontSize: 12 }}
+                <CustomSelect
+                  compact
                   value={targetShelf}
-                  onChange={(e) => setTargetShelf(e.target.value)}
-                >
-                  <option value="">自动判断</option>
-                  <option value="movie">电影</option>
-                  <option value="show">剧集</option>
-                  <option value="anime">动漫</option>
-                  <option value="variety">综艺</option>
-                  <option value="documentary">纪录片</option>
-                </select>
+                  onChange={setTargetShelf}
+                  style={{ width: 136 }}
+                  options={[
+                    { value: '', label: '自动判断' },
+                    { value: 'movie', label: '电影' },
+                    { value: 'show', label: '剧集' },
+                    { value: 'anime', label: '动漫' },
+                    { value: 'variety', label: '综艺' },
+                    { value: 'documentary', label: '纪录片' },
+                  ]}
+                />
               </div>
             </div>
           </form>

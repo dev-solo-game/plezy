@@ -1,36 +1,34 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { CheckCircle2, Play, Search, Sparkles } from 'lucide-react';
 import { api, formatBytes, mountKindLabel } from '../api/client';
+import { useSWRQuery } from '../api/queryCache';
 import { ManualMatchModal } from '../components/ManualMatchModal';
+import { CardListSkeleton } from '../components/Skeletons';
 import { useApp } from '../contexts/AppContext';
 import type { UnmatchedEntry } from '../types';
 
 export const UnmatchedPage: React.FC = () => {
   const navigate = useNavigate();
   const { libraryVersion, setUnmatchedCount, toast } = useApp();
-  const [entries, setEntries] = useState<UnmatchedEntry[]>([]);
-  const [total, setTotal] = useState(0);
-  const [loading, setLoading] = useState(true);
   const [matchingEntry, setMatchingEntry] = useState<UnmatchedEntry | null>(null);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await api.listUnmatched(100, 0);
-      setEntries(res.items || []);
-      setTotal(res.total || 0);
-      setUnmatchedCount(res.total || 0);
-    } catch (err) {
-      toast((err as Error).message, 'error');
-    } finally {
-      setLoading(false);
+  const {
+    data,
+    showSkeleton,
+    reload,
+  } = useSWRQuery<{ items: UnmatchedEntry[]; total: number }>(
+    'unmatched',
+    () => api.listUnmatched(100, 0),
+    {
+      deps: [libraryVersion],
+      onSuccess: (res) => setUnmatchedCount(res.total || 0),
+      onError: (err) => toast(err.message, 'error'),
     }
-  }, [setUnmatchedCount, toast]);
+  );
 
-  useEffect(() => {
-    void load();
-  }, [load, libraryVersion]);
+  const entries = data?.items || [];
+  const total = data?.total || 0;
 
   return (
     <div>
@@ -49,8 +47,8 @@ export const UnmatchedPage: React.FC = () => {
         </button>
       </div>
 
-      {loading ? (
-        <div className="muted">加载中...</div>
+      {showSkeleton ? (
+        <CardListSkeleton />
       ) : entries.length === 0 ? (
         <div className="card-box" style={{ textAlign: 'center', padding: 48 }}>
           <CheckCircle2 size={36} style={{ color: 'var(--success)', marginBottom: 10 }} />
@@ -71,7 +69,7 @@ export const UnmatchedPage: React.FC = () => {
                   <span className="tag">{entry.file_count} 个文件</span>
                 </div>
                 {entry.sample_file?.path && (
-                  <div className="muted-sm" style={{ fontFamily: 'monospace', wordBreak: 'break-all' }}>
+                  <div className="muted-sm" style={{ fontFamily: 'var(--font-mono)', wordBreak: 'break-all' }}>
                     {entry.sample_file.path} ({formatBytes(entry.sample_file.size)})
                   </div>
                 )}
@@ -105,7 +103,7 @@ export const UnmatchedPage: React.FC = () => {
           initialKind={matchingEntry.guessed_kind === 'show' ? 'show' : 'movie'}
           initialYear={matchingEntry.guessed_year}
           onClose={() => setMatchingEntry(null)}
-          onMatched={() => void load()}
+          onMatched={() => void reload()}
         />
       )}
     </div>

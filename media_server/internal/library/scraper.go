@@ -10,6 +10,7 @@ import (
 	"math"
 	"strings"
 	"sync"
+	"time"
 	"unicode"
 
 	"plezy/media_server/internal/db"
@@ -29,14 +30,29 @@ type ScrapeSummary struct {
 	StoppedByMissingKey bool   `json:"stopped_by_missing_key,omitempty"`
 }
 
+type ScrapeSnapshot struct {
+	Status    string `json:"status"` // idle | running | completed | warning
+	Done      int    `json:"done"`
+	Total     int    `json:"total"`
+	Matched   int    `json:"matched"`
+	Unmatched int    `json:"unmatched"`
+	Merged    int    `json:"merged"`
+	Skipped   int    `json:"skipped"`
+	Title     string `json:"title,omitempty"`
+	Message   string `json:"message,omitempty"`
+	UpdatedAt int64  `json:"updated_at"`
+}
+
 type Scraper struct {
 	store   *db.Store
 	meta    *metadata.Service
 	storage *storage.Manager
 	hub     *events.Hub
 
-	runMu   sync.Mutex
-	running bool
+	runMu    sync.Mutex
+	running  bool
+	statusMu sync.RWMutex
+	live     ScrapeSnapshot
 }
 
 func NewScraper(store *db.Store, meta *metadata.Service, st *storage.Manager, hub *events.Hub) *Scraper {
@@ -45,6 +61,7 @@ func NewScraper(store *db.Store, meta *metadata.Service, st *storage.Manager, hu
 		meta:    meta,
 		storage: st,
 		hub:     hub,
+		live:    ScrapeSnapshot{Status: "idle"},
 	}
 }
 
@@ -54,16 +71,87 @@ func (sc *Scraper) IsRunning() bool {
 	return sc.running
 }
 
-func (sc *Scraper) publishProgress(done, total int, title string, status string) {
-	if sc.hub == nil {
-		return
+func (sc *Scraper) CurrentStatus() ScrapeSnapshot {
+	sc.statusMu.RLock()
+	defer sc.statusMu.RUnlock()
+	return sc.live
+}
+
+func (sc *Scraper) PendingScrapeCount() int64 {
+	var n int64
+	_ = sc.store.DB().QueryRow(`
+		SELECT COUNT(*) FROM media_items
+		WHERE kind IN ('movie', 'show')
+		  AND locked = 0
+		  AND (
+			(metadata_source IS NULL AND scraped_at IS NULL)
+			OR (metadata_source IS NOT NULL AND kind = 'show' AND EXISTS (
+				SELECT 1 FROM media_items ep
+				JOIN media_files mf ON mf.item_id = ep.id
+				WHERE ep.show_id = media_items.id AND mf.role = 'video' AND mf.match_state = 'pending'
+			))
+		  )`).Scan(&n)
+	return n
+}
+
+func (sc *Scraper) publishSnapshot(snap ScrapeSnapshot) {
+	snap.UpdatedAt = time.Now().UnixMilli()
+	sc.statusMu.Lock()
+	sc.live = snap
+	sc.statusMu.Unlock()
+	if sc.hub != nil {
+		sc.hub.Publish("scrape_progress", snap)
 	}
-	sc.hub.Publish("scrape_progress", map[string]any{
-		"done":   done,
-		"total":  total,
-		"title":  title,
-		"status": status,
-	})
+}
+
+func (sc *Scraper) scrapeQueueQuery(refreshAll bool) ([]struct {
+	ID      int64
+	MaxFile int64
+}, error) {
+	var rows *sql.Rows
+	var err error
+	if refreshAll {
+		rows, err = sc.store.DB().Query(`
+			SELECT id,
+				COALESCE((SELECT MAX(mf.id) FROM media_files mf WHERE mf.role = 'video' AND (mf.item_id = media_items.id OR mf.item_id IN (SELECT ep.id FROM media_items ep WHERE ep.show_id = media_items.id))), 0)
+			FROM media_items
+			WHERE kind IN ('movie', 'show') AND locked = 0
+			ORDER BY id ASC`)
+	} else {
+		rows, err = sc.store.DB().Query(`
+			SELECT id,
+				COALESCE((SELECT MAX(mf.id) FROM media_files mf WHERE mf.role = 'video' AND (mf.item_id = media_items.id OR mf.item_id IN (SELECT ep.id FROM media_items ep WHERE ep.show_id = media_items.id))), 0)
+			FROM media_items
+			WHERE kind IN ('movie', 'show')
+			  AND locked = 0
+			  AND (
+				(metadata_source IS NULL AND scraped_at IS NULL)
+				OR (metadata_source IS NOT NULL AND kind = 'show' AND EXISTS (
+					SELECT 1 FROM media_items ep
+					JOIN media_files mf ON mf.item_id = ep.id
+					WHERE ep.show_id = media_items.id AND mf.role = 'video' AND mf.match_state = 'pending'
+				))
+			  )
+			ORDER BY id ASC`)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var queue []struct {
+		ID      int64
+		MaxFile int64
+	}
+	for rows.Next() {
+		var entry struct {
+			ID      int64
+			MaxFile int64
+		}
+		if rows.Scan(&entry.ID, &entry.MaxFile) == nil {
+			queue = append(queue, entry)
+		}
+	}
+	return queue, nil
 }
 
 func (sc *Scraper) ScrapePending(ctx context.Context, retryUnmatched bool, refreshAll bool) (ScrapeSummary, error) {
@@ -85,75 +173,120 @@ func (sc *Scraper) ScrapePending(ctx context.Context, retryUnmatched bool, refre
 		_, _ = sc.store.DB().Exec(`UPDATE media_files SET match_state = 'pending' WHERE role = 'video' AND match_state = 'unmatched' AND match_locked = 0`)
 	}
 
-	var rows *sql.Rows
-	var err error
-	if refreshAll {
-		rows, err = sc.store.DB().Query(`SELECT id FROM media_items WHERE kind IN ('movie', 'show') AND locked = 0 ORDER BY id ASC`)
-	} else {
-		rows, err = sc.store.DB().Query(`
-			SELECT id FROM media_items
-			WHERE kind IN ('movie', 'show')
-			  AND locked = 0
-			  AND (
-				(metadata_source IS NULL AND scraped_at IS NULL)
-				OR (metadata_source IS NOT NULL AND kind = 'show' AND EXISTS (
-					SELECT 1 FROM media_items ep
-					JOIN media_files mf ON mf.item_id = ep.id
-					WHERE ep.show_id = media_items.id AND mf.role = 'video' AND mf.match_state = 'pending'
-				))
-			  )
-			ORDER BY id ASC`)
-	}
-	if err != nil {
-		return ScrapeSummary{}, err
-	}
-	var queue []int64
-	for rows.Next() {
-		var id int64
-		if rows.Scan(&id) == nil {
-			queue = append(queue, id)
-		}
-	}
-	rows.Close()
-
 	var sum ScrapeSummary
-	for i, itemID := range queue {
-		if ctx.Err() != nil {
+	attemptedMaxFile := make(map[int64]int64)
+	done := 0
+	total := 0
+
+	for {
+		if ctx.Err() != nil || sum.StoppedByMissingKey {
 			break
 		}
-		item, err := sc.store.GetMediaItem(itemID)
+		rawQueue, err := sc.scrapeQueueQuery(refreshAll)
 		if err != nil {
-			sum.Skipped++
-			continue
+			return ScrapeSummary{}, err
 		}
-		sc.publishProgress(i, len(queue), item.Title, "running")
+		var batch []struct {
+			ID      int64
+			MaxFile int64
+		}
+		for _, q := range rawQueue {
+			if prevMax, seen := attemptedMaxFile[q.ID]; seen && q.MaxFile <= prevMax {
+				continue
+			}
+			batch = append(batch, q)
+		}
+		if len(batch) == 0 {
+			break
+		}
+		total += len(batch)
 
-		outcome, sErr := sc.scrapeOne(ctx, item, refreshAll)
-		if sErr != nil {
-			if errors.Is(sErr, metadata.ErrNotConfigured) {
-				sum.StoppedBy = sErr.Error()
-				sum.StoppedByMissingKey = true
+		for _, entry := range batch {
+			if ctx.Err() != nil {
 				break
 			}
-			sum.Skipped++
-			continue
+			attemptedMaxFile[entry.ID] = entry.MaxFile
+
+			item, err := sc.store.GetMediaItem(entry.ID)
+			if err != nil {
+				done++
+				sum.Skipped++
+				continue
+			}
+
+			sc.publishSnapshot(ScrapeSnapshot{
+				Status:    "running",
+				Done:      done,
+				Total:     total,
+				Matched:   sum.Matched,
+				Unmatched: sum.Unmatched,
+				Merged:    sum.Merged,
+				Skipped:   sum.Skipped,
+				Title:     item.Title,
+			})
+
+			outcome, sErr := sc.scrapeOne(ctx, item, refreshAll)
+			done++
+			if sErr != nil {
+				if errors.Is(sErr, metadata.ErrNotConfigured) {
+					sum.StoppedBy = sErr.Error()
+					sum.StoppedByMissingKey = true
+					break
+				}
+				sum.Skipped++
+				continue
+			}
+			switch outcome {
+			case "matched":
+				sum.Matched++
+				if sc.hub != nil {
+					sc.hub.Publish("library_changed", map[string]any{"source": "scraper", "item_id": item.ID})
+				}
+			case "merged":
+				sum.Merged++
+				if sc.hub != nil {
+					sc.hub.Publish("library_changed", map[string]any{"source": "scraper"})
+				}
+			case "unmatched":
+				sum.Unmatched++
+			default:
+				sum.Skipped++
+			}
 		}
-		switch outcome {
-		case "matched":
-			sum.Matched++
-		case "merged":
-			sum.Merged++
-		case "unmatched":
-			sum.Unmatched++
-		default:
-			sum.Skipped++
+
+		// Single pass when refreshing all explicitly; drain loop when scraping pending arrivals.
+		if refreshAll {
+			break
 		}
 	}
 
-	sc.publishProgress(len(queue), len(queue), "", "completed")
-	if sc.hub != nil && (sum.Matched > 0 || sum.Merged > 0) {
-		sc.hub.Publish("library_changed", map[string]any{"source": "scraper"})
+	if sum.StoppedByMissingKey {
+		sc.publishSnapshot(ScrapeSnapshot{
+			Status:    "warning",
+			Done:      done,
+			Total:     total,
+			Matched:   sum.Matched,
+			Unmatched: sum.Unmatched,
+			Merged:    sum.Merged,
+			Skipped:   sum.Skipped,
+			Message:   "未配置 TMDB API Key 且未命中 NFO，请在系统设置中配置后再刮削",
+		})
+	} else if total > 0 {
+		sc.publishSnapshot(ScrapeSnapshot{
+			Status:    "completed",
+			Done:      done,
+			Total:     total,
+			Matched:   sum.Matched,
+			Unmatched: sum.Unmatched,
+			Merged:    sum.Merged,
+			Skipped:   sum.Skipped,
+		})
+	} else {
+		sc.statusMu.Lock()
+		sc.live = ScrapeSnapshot{Status: "idle", UpdatedAt: time.Now().UnixMilli()}
+		sc.statusMu.Unlock()
 	}
+
 	return sum, nil
 }
 

@@ -356,6 +356,24 @@ func (s *Store) initSchema() error {
 			expires_at   INTEGER NOT NULL
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_meta_search_expires ON meta_search_cache(expires_at)`,
+
+		`CREATE TABLE IF NOT EXISTS external_servers (
+			id                 TEXT PRIMARY KEY,
+			name               TEXT NOT NULL,
+			kind               TEXT NOT NULL,
+			base_url           TEXT NOT NULL,
+			auth_mode          TEXT NOT NULL DEFAULT 'password',
+			username           TEXT NOT NULL DEFAULT '',
+			user_id            TEXT NOT NULL DEFAULT '',
+			device_id          TEXT NOT NULL DEFAULT '',
+			server_id          TEXT NOT NULL DEFAULT '',
+			server_version     TEXT NOT NULL DEFAULT '',
+			allow_insecure_tls INTEGER NOT NULL DEFAULT 0,
+			encrypted_secrets  TEXT NOT NULL DEFAULT '',
+			enabled            INTEGER NOT NULL DEFAULT 1,
+			created_at         INTEGER NOT NULL,
+			updated_at         INTEGER NOT NULL
+		)`,
 	}
 
 	for _, stmt := range stmts {

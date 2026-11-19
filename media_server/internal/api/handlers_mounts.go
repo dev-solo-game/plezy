@@ -55,6 +55,12 @@ func (s *Server) handleCreateMount(w http.ResponseWriter, r *http.Request, _ *db
 		writeMappedError(w, r, err)
 		return
 	}
+	if strings.EqualFold(req.Kind, "quark") && req.Secrets["cookie"] != "" {
+		sess := quark.ParsePcSession(req.Secrets["cookie"])
+		if strings.TrimSpace(sess.Device.Utdid) != "" && strings.TrimSpace(sess.Device.Machine) != "" && strings.HasPrefix(strings.TrimSpace(req.Secrets["cookie"]), "{") {
+			s.Store.AdoptQuarkPcDeviceIfAbsent(sess.Device.Utdid, sess.Device.Machine)
+		}
+	}
 	s.Coordinator.RefreshWatchers()
 	if req.AutoScan == nil || *req.AutoScan {
 		s.Coordinator.TriggerMountScanAsync(m.ID, false)

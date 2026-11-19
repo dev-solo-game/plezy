@@ -47,17 +47,17 @@ type playbackSubtitleInfo struct {
 func variantDisplayLabel(id string) string {
 	switch id {
 	case "4k":
-		return "4K 超清 (云转码)"
+		return "4K"
 	case "2k":
-		return "2K 画质 (云转码)"
+		return "2K"
 	case "super":
-		return "超清 1080p (云转码)"
+		return "超清"
 	case "high":
-		return "高清 720p (云转码)"
+		return "高清"
 	case "normal":
-		return "流畅 480p (云转码)"
+		return "标清"
 	case "low":
-		return "极速 360p (云转码)"
+		return "流畅"
 	default:
 		return strings.ToUpper(id)
 	}

@@ -3,6 +3,7 @@ import { Loader2, X } from 'lucide-react';
 import { api } from '../api/client';
 import { useApp } from '../contexts/AppContext';
 import type { WorkPrefs } from '../types';
+import { CustomSelect } from './CustomSelect';
 
 interface WorkSkipModalProps {
   workKey: string;
@@ -117,13 +118,17 @@ export const WorkSkipModal: React.FC<WorkSkipModalProps> = ({ workKey, initialPr
 
           <div className="field">
             <label>作品默认播放倍速</label>
-            <select className="select" value={speed} onChange={(e) => setSpeed(Number(e.target.value))}>
-              <option value={0.75}>0.75x</option>
-              <option value={1}>1.0x（正常）</option>
-              <option value={1.25}>1.25x</option>
-              <option value={1.5}>1.5x</option>
-              <option value={2}>2.0x</option>
-            </select>
+            <CustomSelect
+              value={String(speed)}
+              onChange={(v) => setSpeed(Number(v))}
+              options={[
+                { value: '0.75', label: '0.75x' },
+                { value: '1', label: '1.0x（正常）' },
+                { value: '1.25', label: '1.25x' },
+                { value: '1.5', label: '1.5x' },
+                { value: '2', label: '2.0x' },
+              ]}
+            />
           </div>
         </div>
 

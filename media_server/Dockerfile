@@ -6,13 +6,12 @@ RUN npm ci
 COPY web/ ./
 RUN npm run build
 
-# Stage 2: Build pure-Go static binary
+# Stage 2: Build pure-Go static binary (without embedding web assets)
 FROM golang:1.26-alpine AS go-builder
 WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . ./
-COPY --from=web-builder /app/web/dist ./web/dist
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/ttplay-server ./cmd/ttplay-server
 
 # Stage 3: Minimal runtime image
@@ -20,6 +19,7 @@ FROM alpine:3.20
 RUN apk add --no-cache ca-certificates tzdata
 WORKDIR /data
 COPY --from=go-builder /out/ttplay-server /usr/local/bin/ttplay-server
+COPY --from=web-builder /app/web/dist /usr/local/bin/web/dist
 VOLUME ["/data"]
 EXPOSE 8090
 ENTRYPOINT ["/usr/local/bin/ttplay-server"]

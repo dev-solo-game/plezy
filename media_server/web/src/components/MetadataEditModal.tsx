@@ -3,6 +3,7 @@ import { Loader2, X } from 'lucide-react';
 import { api } from '../api/client';
 import { useApp } from '../contexts/AppContext';
 import type { MediaItem } from '../types';
+import { CustomSelect } from './CustomSelect';
 
 interface MetadataEditModalProps {
   item: MediaItem;
@@ -78,14 +79,18 @@ export const MetadataEditModal: React.FC<MetadataEditModalProps> = ({ item, onCl
             </div>
             <div className="field">
               <label>分类架位</label>
-              <select className="select" value={libraryType} onChange={(e) => setLibraryType(e.target.value)}>
-                <option value="movie">电影</option>
-                <option value="show">剧集</option>
-                <option value="anime">动漫</option>
-                <option value="variety">综艺</option>
-                <option value="documentary">纪录片</option>
-                <option value="pending">待匹配</option>
-              </select>
+              <CustomSelect
+                value={libraryType}
+                onChange={setLibraryType}
+                options={[
+                  { value: 'movie', label: '电影' },
+                  { value: 'show', label: '剧集' },
+                  { value: 'anime', label: '动漫' },
+                  { value: 'variety', label: '综艺' },
+                  { value: 'documentary', label: '纪录片' },
+                  { value: 'pending', label: '待匹配' },
+                ]}
+              />
             </div>
             <div className="field">
               <label>评分 (0-10)</label>

@@ -1,35 +1,60 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Database, Loader2, LogOut, Palette, PlayCircle, Shield, Sparkles, Trash2, Wifi } from 'lucide-react';
 import { api, formatBytes } from '../api/client';
+import type { SettingsBundle } from '../api/prefetch';
+import { getCached, useSWRQuery } from '../api/queryCache';
+import { CustomSelect, RadioCardGroup } from '../components/CustomSelect';
+import { CardListSkeleton } from '../components/Skeletons';
 import { useApp } from '../contexts/AppContext';
-import type { AccentTheme, CacheStats, ServerSettings, SessionRecord, SystemOverview } from '../types';
+import type { AccentTheme, ServerSettings } from '../types';
 
 export const SettingsPage: React.FC = () => {
   const { accentTheme, setAccentTheme, setServerNameLocal, refreshAuth, toast } = useApp();
   const [tab, setTab] = useState<'scraper' | 'playback' | 'appearance' | 'security'>('scraper');
-  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
-  const [settings, setSettings] = useState<ServerSettings | null>(null);
-  const [cacheStats, setCacheStats] = useState<CacheStats | null>(null);
-  const [overview, setOverview] = useState<SystemOverview | null>(null);
-  const [sessions, setSessions] = useState<SessionRecord[]>([]);
+  const initialBundle = getCached<SettingsBundle>('settings:bundle');
+  const hydratedRef = useRef(Boolean(initialBundle));
 
-  // Form states
-  const [serverName, setServerName] = useState('');
+  const {
+    data: bundle,
+    showSkeleton,
+    mutate,
+    reload,
+  } = useSWRQuery<SettingsBundle>(
+    'settings:bundle',
+    async () => {
+      const [sRes, oRes, sesRes] = await Promise.all([
+        api.getSettings(),
+        api.systemOverview(),
+        api.listSessions(),
+      ]);
+      return {
+        settings: sRes.settings,
+        cache_stats: sRes.cache_stats,
+        overview: oRes.overview,
+        sessions: sesRes.sessions || [],
+      };
+    },
+    { onError: (err) => toast(err.message, 'error') }
+  );
+
+  // Form states initialized from cache if present so zero-flicker on mount
+  const initSt = initialBundle?.settings;
+  const [serverName, setServerName] = useState(initSt?.server_name || '');
   const [tmdbKeyInput, setTmdbKeyInput] = useState('');
-  const [tmdbBase, setTmdbBase] = useState('');
-  const [tmdbImageBase, setTmdbImageBase] = useState('');
-  const [proxyUrl, setProxyUrl] = useState('');
-  const [bangumiEnabled, setBangumiEnabled] = useState(true);
-  const [bangumiBase, setBangumiBase] = useState('');
-  const [proxyImages, setProxyImages] = useState(true);
-  const [scraperLang, setScraperLang] = useState('zh-CN');
-  const [preferNfo, setPreferNfo] = useState(true);
-  const [scanIntervalMin, setScanIntervalMin] = useState(60);
-  const [watchLocalFs, setWatchLocalFs] = useState(true);
-  const [webPreferCloud, setWebPreferCloud] = useState(true);
-  const [watchedThreshold, setWatchedThreshold] = useState(0.9);
+  const [tmdbBase, setTmdbBase] = useState(initSt?.tmdb_api_base || '');
+  const [tmdbImageBase, setTmdbImageBase] = useState(initSt?.tmdb_image_base || '');
+  const [proxyUrl, setProxyUrl] = useState(initSt?.metadata_proxy || '');
+  const [bangumiEnabled, setBangumiEnabled] = useState(initSt?.bangumi_enabled ?? true);
+  const [bangumiBase, setBangumiBase] = useState(initSt?.bangumi_api_base || '');
+  const [proxyImages, setProxyImages] = useState(initSt?.proxy_images ?? true);
+  const [scraperLang, setScraperLang] = useState(initSt?.scraper_lang || 'zh-CN');
+  const [preferNfo, setPreferNfo] = useState(initSt?.prefer_nfo ?? true);
+  const [scanIntervalMin, setScanIntervalMin] = useState(initSt?.scan_interval_min ?? 60);
+  const [watchLocalFs, setWatchLocalFs] = useState(initSt?.watch_local_fs ?? true);
+  const [webPreferCloud, setWebPreferCloud] = useState(initSt?.web_prefer_cloud_transcode ?? true);
+  const [watchedThreshold, setWatchedThreshold] = useState(initSt?.watched_threshold ?? 0.9);
   const [testingTmdb, setTestingTmdb] = useState(false);
 
   // Account security states
@@ -37,43 +62,33 @@ export const SettingsPage: React.FC = () => {
   const [oldPassword, setOldPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
 
-  const loadAll = useCallback(async () => {
-    setLoading(true);
-    try {
-      const [sRes, oRes, sesRes] = await Promise.all([
-        api.getSettings(),
-        api.systemOverview(),
-        api.listSessions(),
-      ]);
-      const st = sRes.settings;
-      setSettings(st);
-      setCacheStats(sRes.cache_stats);
-      setOverview(oRes.overview);
-      setSessions(sesRes.sessions || []);
-
-      setServerName(st.server_name);
-      setTmdbBase(st.tmdb_api_base);
-      setTmdbImageBase(st.tmdb_image_base);
-      setProxyUrl(st.metadata_proxy);
-      setBangumiEnabled(st.bangumi_enabled);
-      setBangumiBase(st.bangumi_api_base);
-      setProxyImages(st.proxy_images);
-      setScraperLang(st.scraper_lang || 'zh-CN');
-      setPreferNfo(st.prefer_nfo);
-      setScanIntervalMin(st.scan_interval_min);
-      setWatchLocalFs(st.watch_local_fs);
-      setWebPreferCloud(st.web_prefer_cloud_transcode);
-      setWatchedThreshold(st.watched_threshold);
-    } catch (err) {
-      toast((err as Error).message, 'error');
-    } finally {
-      setLoading(false);
-    }
-  }, [toast]);
+  const applySettingsToForm = (st: ServerSettings) => {
+    setServerName(st.server_name);
+    setTmdbBase(st.tmdb_api_base);
+    setTmdbImageBase(st.tmdb_image_base);
+    setProxyUrl(st.metadata_proxy);
+    setBangumiEnabled(st.bangumi_enabled);
+    setBangumiBase(st.bangumi_api_base);
+    setProxyImages(st.proxy_images);
+    setScraperLang(st.scraper_lang || 'zh-CN');
+    setPreferNfo(st.prefer_nfo);
+    setScanIntervalMin(st.scan_interval_min);
+    setWatchLocalFs(st.watch_local_fs);
+    setWebPreferCloud(st.web_prefer_cloud_transcode);
+    setWatchedThreshold(st.watched_threshold);
+  };
 
   useEffect(() => {
-    void loadAll();
-  }, [loadAll]);
+    if (bundle?.settings && !hydratedRef.current) {
+      hydratedRef.current = true;
+      applySettingsToForm(bundle.settings);
+    }
+  }, [bundle]);
+
+  const settings = bundle?.settings;
+  const cacheStats = bundle?.cache_stats;
+  const overview = bundle?.overview;
+  const sessions = bundle?.sessions || [];
 
   const handleSaveSettings = async (e?: React.FormEvent) => {
     e?.preventDefault();
@@ -96,8 +111,9 @@ export const SettingsPage: React.FC = () => {
         watched_threshold: Number(watchedThreshold),
         accent_theme: accentTheme,
       });
-      setSettings(res.settings);
-      setCacheStats(res.cache_stats);
+      mutate((prev) =>
+        prev ? { ...prev, settings: res.settings, cache_stats: res.cache_stats } : prev
+      );
       setTmdbKeyInput('');
       setServerNameLocal(res.settings.server_name);
       toast('系统配置已保存', 'success');
@@ -111,7 +127,7 @@ export const SettingsPage: React.FC = () => {
   const handleClearTmdbKey = async () => {
     try {
       const res = await api.updateSettings({ clear_tmdb_api_key: true });
-      setSettings(res.settings);
+      mutate((prev) => (prev ? { ...prev, settings: res.settings } : prev));
       toast('已清除 TMDB API Key', 'success');
     } catch (err) {
       toast((err as Error).message, 'error');
@@ -137,7 +153,7 @@ export const SettingsPage: React.FC = () => {
   const handleClearCache = async (scope: 'all' | 'works' | 'seasons' | 'people' | 'search') => {
     try {
       const res = await api.clearMetaCache(scope);
-      setCacheStats(res.cache_stats);
+      mutate((prev) => (prev ? { ...prev, cache_stats: res.cache_stats } : prev));
       toast(`已清理 ${res.deleted} 条元数据缓存`, 'success');
     } catch (err) {
       toast((err as Error).message, 'error');
@@ -156,7 +172,7 @@ export const SettingsPage: React.FC = () => {
       setNewPassword('');
       toast('管理员凭据已修改，其他会话已下线', 'success');
       await refreshAuth();
-      await loadAll();
+      await reload();
     } catch (err) {
       toast((err as Error).message, 'error');
     }
@@ -165,7 +181,9 @@ export const SettingsPage: React.FC = () => {
   const handleRevokeSession = async (tokenId: string) => {
     try {
       await api.revokeSession(tokenId);
-      setSessions((prev) => prev.filter((s) => s.token_id !== tokenId));
+      mutate((prev) =>
+        prev ? { ...prev, sessions: prev.sessions.filter((s) => s.token_id !== tokenId) } : prev
+      );
       toast('会话已踢出下线', 'success');
     } catch (err) {
       toast((err as Error).message, 'error');
@@ -177,7 +195,16 @@ export const SettingsPage: React.FC = () => {
     await refreshAuth();
   };
 
-  if (loading || !settings) return <div className="muted">加载设置中...</div>;
+  if (showSkeleton || !settings) {
+    return (
+      <div>
+        <div className="section-head" style={{ marginTop: 4 }}>
+          <h2 className="section-title">系统设置</h2>
+        </div>
+        <CardListSkeleton count={4} />
+      </div>
+    );
+  }
 
   return (
     <div>
@@ -255,12 +282,16 @@ export const SettingsPage: React.FC = () => {
               </div>
               <div className="field">
                 <label>首选刮削语言</label>
-                <select className="select" value={scraperLang} onChange={(e) => setScraperLang(e.target.value)}>
-                  <option value="zh-CN">简体中文 (zh-CN)</option>
-                  <option value="zh-TW">繁体中文 (zh-TW)</option>
-                  <option value="en-US">English (en-US)</option>
-                  <option value="ja-JP">日本語 (ja-JP)</option>
-                </select>
+                <CustomSelect
+                  value={scraperLang}
+                  onChange={setScraperLang}
+                  options={[
+                    { value: 'zh-CN', label: '简体中文 (zh-CN)' },
+                    { value: 'zh-TW', label: '繁体中文 (zh-TW)' },
+                    { value: 'en-US', label: 'English (en-US)' },
+                    { value: 'ja-JP', label: '日本語 (ja-JP)' },
+                  ]}
+                />
               </div>
               <div className="field">
                 <label>TMDB API Base URL</label>
@@ -367,26 +398,17 @@ export const SettingsPage: React.FC = () => {
             </div>
             <div className="field">
               <label>界面强调色调 (Liquid Glass Accent)</label>
-              <div className="flex-row">
-                {(
-                  [
-                    ['glacier', '冰川蓝 (Glacier)', '#7cc4ff'],
-                    ['neutral', '极简银白 (Neutral)', '#e5e9f0'],
-                    ['ember', '暖琥珀 (Ember)', '#ff9c6e'],
-                    ['plum', '暮夜紫 (Plum)', '#c59bff'],
-                  ] as const
-                ).map(([key, label, dot]) => (
-                  <button
-                    key={key}
-                    type="button"
-                    className={`chip ${accentTheme === key ? 'active' : ''}`}
-                    onClick={() => setAccentTheme(key as AccentTheme)}
-                  >
-                    <span style={{ width: 10, height: 10, borderRadius: '50%', background: dot }} />
-                    {label}
-                  </button>
-                ))}
-              </div>
+              <RadioCardGroup
+                columns={4}
+                value={accentTheme}
+                onChange={(k) => setAccentTheme(k as AccentTheme)}
+                options={[
+                  { value: 'glacier', title: '冰川蓝', description: 'Glacier', colorDot: '#7cc4ff' },
+                  { value: 'neutral', title: '极简银白', description: 'Neutral', colorDot: '#e5e9f0' },
+                  { value: 'ember', title: '暖琥珀', description: 'Ember', colorDot: '#ff9c6e' },
+                  { value: 'plum', title: '暮夜紫', description: 'Plum', colorDot: '#c59bff' },
+                ]}
+              />
             </div>
           </div>
 

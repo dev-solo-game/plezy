@@ -45,6 +45,7 @@ func main() {
 	tmdbImageBase := flag.String("tmdb-image-base", os.Getenv("MEDIA_TMDB_IMAGE_BASE"), "Default TMDB image base URL")
 	metadataProxy := flag.String("metadata-proxy", os.Getenv("MEDIA_METADATA_PROXY"), "HTTP/SOCKS5 proxy for TMDB/Bangumi and artwork proxy")
 	bangumiEnabled := flag.String("bangumi-enabled", os.Getenv("MEDIA_BANGUMI_ENABLED"), "Default bangumi_enabled ('true' or 'false')")
+	webDir := flag.String("web-dir", os.Getenv("MEDIA_WEB_DIR"), "Optional path to web static directory (defaults to ./web/dist or ./web next to executable)")
 	flag.Parse()
 
 	v, err := vault.Open(*dataDir, os.Getenv("MEDIA_MASTER_KEY"))
@@ -90,6 +91,7 @@ func main() {
 	defer coord.Stop()
 
 	srvHandler := api.NewServer(store, authSvc, stMgr, metaSvc, hub, coord)
+	srvHandler.SetWebDir(*webDir)
 
 	ln, err := net.Listen("tcp", *addr)
 	if err != nil {

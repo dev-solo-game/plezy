@@ -84,9 +84,14 @@ type DriverOptions struct {
 	APIBase         string
 	PlayAPIBase     string
 	OnSecretUpdate  func(key, val string)
+	FallbackDevice  *PcDevice
 }
 
 func NewDriver(cfg storage.MountConfig, onSecretUpdate func(key, val string)) (*Driver, error) {
+	return NewDriverWithDevice(cfg, onSecretUpdate, nil)
+}
+
+func NewDriverWithDevice(cfg storage.MountConfig, onSecretUpdate func(key, val string), provider func() PcDevice) (*Driver, error) {
 	secret := cfg.Secrets["cookie"]
 	if strings.TrimSpace(secret) == "" {
 		return nil, storage.NewError(storage.ErrKindUnauthorized, "Quark mount has no credentials")
@@ -104,12 +109,18 @@ func NewDriver(cfg storage.MountConfig, onSecretUpdate func(key, val string)) (*
 	if intervalMs < minIntervalMs {
 		intervalMs = minIntervalMs
 	}
+	var fallback *PcDevice
+	if mode == ModePC && provider != nil {
+		dev := provider()
+		fallback = &dev
+	}
 	return NewDriverWithOptions(DriverOptions{
 		Mode:            mode,
 		Secret:          secret,
 		RootFolderID:    rootID,
 		RequestInterval: time.Duration(intervalMs) * time.Millisecond,
 		OnSecretUpdate:  onSecretUpdate,
+		FallbackDevice:  fallback,
 	})
 }
 
@@ -175,7 +186,7 @@ func NewDriverWithOptions(opts DriverOptions) (*Driver, error) {
 		}
 	}
 	if opts.Mode == ModePC {
-		d.pcSession = ParsePcSession(opts.Secret)
+		d.pcSession = ParsePcSessionWithFallback(opts.Secret, opts.FallbackDevice)
 		if !d.pcSession.IsValid() {
 			return nil, storage.NewError(storage.ErrKindUnauthorized, "invalid Quark PC session")
 		}

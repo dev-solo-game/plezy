@@ -2,6 +2,10 @@ import React from 'react';
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { AppShell } from './components/AppShell';
 import { AppProvider, useApp } from './contexts/AppContext';
+import { ExternalItemDetailPage } from './pages/ExternalItemDetailPage';
+import { ExternalLibraryBrowsePage } from './pages/ExternalLibraryBrowsePage';
+import { ExternalServerHomePage } from './pages/ExternalServerHomePage';
+import { ExternalServersManagePage } from './pages/ExternalServersManagePage';
 import { FolderBrowserPage } from './pages/FolderBrowserPage';
 import { HomePage } from './pages/HomePage';
 import { ItemDetailPage } from './pages/ItemDetailPage';
@@ -9,6 +13,7 @@ import { LibraryBrowsePage } from './pages/LibraryBrowsePage';
 import { ListDetailPage } from './pages/ListDetailPage';
 import { ListsPage } from './pages/ListsPage';
 import { LoginPage } from './pages/LoginPage';
+import { MetadataManagePage } from './pages/MetadataManagePage';
 import { MountsManagePage } from './pages/MountsManagePage';
 import { PersonPage } from './pages/PersonPage';
 import { PlayerPage } from './pages/PlayerPage';
@@ -50,6 +55,7 @@ const AppRoutes: React.FC = () => {
     <Routes>
       <Route path="/play/:itemId" element={<PlayerPage />} />
       <Route path="/play/file/:fileId" element={<PlayerPage />} />
+      <Route path="/play/ext/:serverId/:extItemId" element={<PlayerPage />} />
       <Route
         path="*"
         element={
@@ -65,7 +71,12 @@ const AppRoutes: React.FC = () => {
               <Route path="/person/:id" element={<PersonPage />} />
               <Route path="/item/:id" element={<ItemDetailPage />} />
               <Route path="/manage/mounts" element={<MountsManagePage />} />
+              <Route path="/manage/servers" element={<ExternalServersManagePage />} />
+              <Route path="/ext/:serverId" element={<ExternalServerHomePage />} />
+              <Route path="/ext/:serverId/library/:viewId" element={<ExternalLibraryBrowsePage />} />
+              <Route path="/ext/:serverId/item/:itemId" element={<ExternalItemDetailPage />} />
               <Route path="/manage/unmatched" element={<UnmatchedPage />} />
+              <Route path="/manage/metadata" element={<MetadataManagePage />} />
               <Route path="/settings" element={<SettingsPage />} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>

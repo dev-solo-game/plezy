@@ -41,6 +41,17 @@ type PcSession struct {
 }
 
 func ParsePcSession(secret string) PcSession {
+	return ParsePcSessionWithFallback(secret, nil)
+}
+
+func ParsePcSessionWithFallback(secret string, fallback *PcDevice) PcSession {
+	pickFallback := func() PcDevice {
+		if fallback != nil && strings.TrimSpace(fallback.Utdid) != "" && strings.TrimSpace(fallback.Machine) != "" {
+			return *fallback
+		}
+		return GeneratePcDevice()
+	}
+
 	trimmed := strings.TrimSpace(secret)
 	if strings.HasPrefix(trimmed, "{") {
 		var raw map[string]any
@@ -55,7 +66,7 @@ func ParsePcSession(secret string) PcSession {
 			if ut != "" && mach != "" {
 				s.Device = PcDevice{Utdid: ut, Machine: mach}
 			} else {
-				s.Device = GeneratePcDevice()
+				s.Device = pickFallback()
 			}
 			return s
 		}
@@ -81,7 +92,7 @@ func ParsePcSession(secret string) PcSession {
 		Ticket:   between("token=", "&uid="),
 		UID:      between("&uid=", "&nickname="),
 		Nickname: between("&nickname=", ""),
-		Device:   GeneratePcDevice(),
+		Device:   pickFallback(),
 	}
 }
 

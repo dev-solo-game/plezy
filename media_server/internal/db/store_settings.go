@@ -2,6 +2,7 @@ package db
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"regexp"
@@ -326,4 +327,71 @@ func (s *Store) SeedDefaultSettingsIfAbsent(tmdbKey, tmdbAPIBase, tmdbImageBase,
 		}
 	}
 	return nil
+}
+
+type quarkDeviceJSON struct {
+	Utdid   string `json:"utdid"`
+	Machine string `json:"machine"`
+}
+
+func (s *Store) AdoptQuarkPcDeviceIfAbsent(utdid, machine string) {
+	utdid = strings.TrimSpace(utdid)
+	machine = strings.TrimSpace(machine)
+	if utdid == "" || machine == "" {
+		return
+	}
+	raw, err := json.Marshal(quarkDeviceJSON{Utdid: utdid, Machine: machine})
+	if err != nil {
+		return
+	}
+	_, _ = s.db.Exec(`INSERT OR IGNORE INTO server_settings(key, value) VALUES ('quark_pc_device', ?)`, string(raw))
+}
+
+func (s *Store) GetOrCreateQuarkPcDevice(generate func() (string, string)) (string, string) {
+	readStored := func() (string, string, bool) {
+		raw := strings.TrimSpace(s.GetSetting("quark_pc_device", ""))
+		if raw == "" {
+			return "", "", false
+		}
+		var d quarkDeviceJSON
+		if json.Unmarshal([]byte(raw), &d) == nil && strings.TrimSpace(d.Utdid) != "" && strings.TrimSpace(d.Machine) != "" {
+			return strings.TrimSpace(d.Utdid), strings.TrimSpace(d.Machine), true
+		}
+		return "", "", false
+	}
+
+	if ut, mach, ok := readStored(); ok {
+		return ut, mach
+	}
+
+	// Adopt an existing Quark mount's PC device identity if one already exists.
+	if mounts, err := s.ListMounts(); err == nil {
+		for _, m := range mounts {
+			if m.Kind != "quark" {
+				continue
+			}
+			sec := strings.TrimSpace(m.Secrets["cookie"])
+			if !strings.HasPrefix(sec, "{") {
+				continue
+			}
+			var raw map[string]any
+			if json.Unmarshal([]byte(sec), &raw) == nil {
+				ut, _ := raw["utdid"].(string)
+				mach, _ := raw["machine"].(string)
+				if strings.TrimSpace(ut) != "" && strings.TrimSpace(mach) != "" {
+					s.AdoptQuarkPcDeviceIfAbsent(ut, mach)
+					if storedUt, storedMach, ok := readStored(); ok {
+						return storedUt, storedMach
+					}
+				}
+			}
+		}
+	}
+
+	ut, mach := generate()
+	s.AdoptQuarkPcDeviceIfAbsent(ut, mach)
+	if storedUt, storedMach, ok := readStored(); ok {
+		return storedUt, storedMach
+	}
+	return ut, mach
 }

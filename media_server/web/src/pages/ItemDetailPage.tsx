@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
   BookmarkPlus,
@@ -15,10 +15,12 @@ import {
   User,
 } from 'lucide-react';
 import { api, artworkUrl, formatBytes, formatDurationMs, mountKindLabel, shelfLabel } from '../api/client';
+import { useSWRQuery } from '../api/queryCache';
 import { ListPickerModal } from '../components/ListPickerModal';
 import { ManualMatchModal } from '../components/ManualMatchModal';
 import { MediaCard } from '../components/MediaCard';
 import { MetadataEditModal } from '../components/MetadataEditModal';
+import { DetailSkeleton } from '../components/Skeletons';
 import { WorkSkipModal } from '../components/WorkSkipModal';
 import { useApp } from '../contexts/AppContext';
 import type { ItemDetail, MediaFile } from '../types';
@@ -29,8 +31,6 @@ export const ItemDetailPage: React.FC = () => {
   const { libraryVersion, toast } = useApp();
   const itemId = Number(id);
 
-  const [detail, setDetail] = useState<ItemDetail | null>(null);
-  const [loading, setLoading] = useState(true);
   const [selectedFileId, setSelectedFileId] = useState<number>(0);
   const [selectedSeasonId, setSelectedSeasonId] = useState<number>(0);
   const [externalLinks, setExternalLinks] = useState<Record<string, string> | null>(null);
@@ -40,32 +40,36 @@ export const ItemDetailPage: React.FC = () => {
   const [showSkip, setShowSkip] = useState(false);
   const [showListPicker, setShowListPicker] = useState(false);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await api.getItemDetail(itemId);
-      setDetail(res.detail);
-      if (res.detail.files?.length > 0) {
-        setSelectedFileId(res.detail.files[0].id);
-      }
-      if (res.detail.seasons?.length) {
-        const firstSeasonId =
-          res.detail.on_deck_episode?.parent_id || res.detail.seasons[0].id;
-        setSelectedSeasonId(firstSeasonId);
-      }
-      setExternalLinks(null);
-    } catch (err) {
-      toast((err as Error).message, 'error');
-    } finally {
-      setLoading(false);
+  const {
+    data: detail,
+    showSkeleton,
+    reload,
+  } = useSWRQuery<ItemDetail>(
+    itemId ? `item:${itemId}` : null,
+    () => api.getItemDetail(itemId).then((r) => r.detail),
+    {
+      deps: [libraryVersion],
+      onError: (err) => toast(err.message, 'error'),
     }
-  }, [itemId, toast]);
+  );
 
   useEffect(() => {
-    void load();
-  }, [load, libraryVersion]);
+    setExternalLinks(null);
+    setSelectedFileId(0);
+    setSelectedSeasonId(0);
+  }, [itemId]);
 
-  if (loading) return <div className="muted">加载详情中...</div>;
+  useEffect(() => {
+    if (!detail) return;
+    if (detail.files?.length > 0 && !detail.files.some((f) => f.id === selectedFileId)) {
+      setSelectedFileId(detail.files[0].id);
+    }
+    if (detail.seasons?.length && !detail.seasons.some((s) => s.id === selectedSeasonId)) {
+      setSelectedSeasonId(detail.on_deck_episode?.parent_id || detail.seasons[0].id);
+    }
+  }, [detail, selectedFileId, selectedSeasonId]);
+
+  if (showSkeleton) return <DetailSkeleton />;
   if (!detail) return null;
 
   const { item } = detail;
@@ -87,7 +91,7 @@ export const ItemDetailPage: React.FC = () => {
   const handleToggleFav = async () => {
     try {
       await api.setFavorite(item.id, !isFav);
-      await load();
+      await reload();
     } catch (err) {
       toast((err as Error).message, 'error');
     }
@@ -96,7 +100,7 @@ export const ItemDetailPage: React.FC = () => {
   const handleToggleWatched = async () => {
     try {
       await api.setWatched(item.id, !isWatched);
-      await load();
+      await reload();
     } catch (err) {
       toast((err as Error).message, 'error');
     }
@@ -106,7 +110,7 @@ export const ItemDetailPage: React.FC = () => {
     try {
       await api.refreshItem(item.id);
       toast('已重新刮削刷新', 'success');
-      await load();
+      await reload();
     } catch (err) {
       toast((err as Error).message, 'error');
     }
@@ -117,7 +121,7 @@ export const ItemDetailPage: React.FC = () => {
     try {
       await api.unmatchItem(item.id);
       toast('已退回待匹配队列', 'success');
-      await load();
+      await reload();
     } catch (err) {
       toast((err as Error).message, 'error');
     }
@@ -135,12 +139,12 @@ export const ItemDetailPage: React.FC = () => {
   return (
     <div>
       <section className="detail-hero">
-        {backdrop && <img className="detail-backdrop" src={backdrop} alt={item.title} />}
+        {backdrop && <img className="detail-backdrop" decoding="async" src={backdrop} alt={item.title} />}
         <div className="detail-scrim" />
 
         <div className="detail-inner">
           {poster ? (
-            <img className="detail-poster" src={poster} alt={item.title} />
+            <img className="detail-poster" decoding="async" src={poster} alt={item.title} />
           ) : (
             <div className="detail-poster media-fallback">{item.title}</div>
           )}
@@ -310,7 +314,7 @@ export const ItemDetailPage: React.FC = () => {
 
           {activeFile && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-              <div className="muted-sm" style={{ fontFamily: 'monospace', wordBreak: 'break-all' }}>
+              <div className="muted-sm" style={{ fontFamily: 'var(--font-mono)', wordBreak: 'break-all' }}>
                 [{activeFile.mount_name || activeFile.mount_id}] {activeFile.path}
               </div>
               <div className="flex-row">
@@ -399,6 +403,8 @@ export const ItemDetailPage: React.FC = () => {
                       <img
                         src={epPoster}
                         alt={ep.title}
+                        loading="lazy"
+                        decoding="async"
                         style={{ width: 128, height: 72, objectFit: 'cover', borderRadius: 8, flexShrink: 0 }}
                       />
                     ) : (
@@ -481,6 +487,8 @@ export const ItemDetailPage: React.FC = () => {
                     <img
                       src={photo}
                       alt={c.person.name}
+                      loading="lazy"
+                      decoding="async"
                       style={{ width: 72, height: 72, borderRadius: '50%', objectFit: 'cover', marginBottom: 8 }}
                     />
                   ) : (
@@ -537,7 +545,7 @@ export const ItemDetailPage: React.FC = () => {
           </div>
           <div className="h-scroll-row">
             {detail.similar!.map((s) => (
-              <MediaCard key={s.id} item={s} onUpdated={load} />
+              <MediaCard key={s.id} item={s} onUpdated={() => void reload()} />
             ))}
           </div>
         </section>
@@ -551,12 +559,12 @@ export const ItemDetailPage: React.FC = () => {
           initialYear={item.year}
           initialShelf={item.library_type}
           onClose={() => setShowMatch(false)}
-          onMatched={load}
+          onMatched={() => void reload()}
         />
       )}
 
       {showEdit && (
-        <MetadataEditModal item={item} onClose={() => setShowEdit(false)} onSaved={load} />
+        <MetadataEditModal item={item} onClose={() => setShowEdit(false)} onSaved={() => void reload()} />
       )}
 
       {showSkip && item.work_key && (
@@ -564,7 +572,7 @@ export const ItemDetailPage: React.FC = () => {
           workKey={item.work_key}
           initialPrefs={detail.work_prefs}
           onClose={() => setShowSkip(false)}
-          onSaved={() => void load()}
+          onSaved={() => void reload()}
         />
       )}
 

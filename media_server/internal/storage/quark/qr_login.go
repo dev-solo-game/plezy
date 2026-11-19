@@ -55,17 +55,22 @@ type qrTicket struct {
 }
 
 type QrManager struct {
-	mu           sync.Mutex
-	tickets      map[string]*qrTicket
-	client       *http.Client
-	wsg          *Wsg
-	pcGateway    string
-	webCasBase   string
-	webPanBase   string
-	cookieSuffix string
+	mu             sync.Mutex
+	tickets        map[string]*qrTicket
+	client         *http.Client
+	wsg            *Wsg
+	pcGateway      string
+	webCasBase     string
+	webPanBase     string
+	cookieSuffix   string
+	deviceProvider func() PcDevice
 }
 
 func NewQrManager() *QrManager {
+	return NewQrManagerWithDevice(nil)
+}
+
+func NewQrManagerWithDevice(provider func() PcDevice) *QrManager {
 	tr := http.DefaultTransport.(*http.Transport).Clone()
 	return &QrManager{
 		tickets: make(map[string]*qrTicket),
@@ -76,12 +81,23 @@ func NewQrManager() *QrManager {
 				return http.ErrUseLastResponse
 			},
 		},
-		wsg:          NewWsg(),
-		pcGateway:    "https://access-open.quark.cn/wsg_access",
-		webCasBase:   "https://uop.quark.cn",
-		webPanBase:   "https://pan.quark.cn",
-		cookieSuffix: "quark.cn",
+		wsg:            NewWsg(),
+		pcGateway:      "https://access-open.quark.cn/wsg_access",
+		webCasBase:     "https://uop.quark.cn",
+		webPanBase:     "https://pan.quark.cn",
+		cookieSuffix:   "quark.cn",
+		deviceProvider: provider,
 	}
+}
+
+func (m *QrManager) nextDevice() PcDevice {
+	if m.deviceProvider != nil {
+		dev := m.deviceProvider()
+		if strings.TrimSpace(dev.Utdid) != "" && strings.TrimSpace(dev.Machine) != "" {
+			return dev
+		}
+	}
+	return GeneratePcDevice()
 }
 
 func (m *QrManager) Start(ctx context.Context, modeRaw string) (QrStartResult, error) {
@@ -247,7 +263,7 @@ func (m *QrManager) gatewayCall(ctx context.Context, dev PcDevice, method string
 }
 
 func (m *QrManager) startPC(ctx context.Context) (*qrTicket, error) {
-	dev := GeneratePcDevice()
+	dev := m.nextDevice()
 	res, err := m.gatewayCall(ctx, dev, "cas.getTokenForQrcodeLogin", nil)
 	if err != nil {
 		return nil, err

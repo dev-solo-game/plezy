@@ -1,39 +1,41 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { ArrowDown, ArrowLeft, ArrowUp, Edit3, Play, Trash2 } from 'lucide-react';
 import { api, artworkUrl } from '../api/client';
+import { useSWRQuery } from '../api/queryCache';
+import { CardListSkeleton } from '../components/Skeletons';
 import { useApp } from '../contexts/AppContext';
 import type { MediaList } from '../types';
 
 export const ListDetailPage: React.FC = () => {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { toast } = useApp();
+  const { libraryVersion, toast } = useApp();
   const listId = Number(id);
 
-  const [list, setList] = useState<MediaList | null>(null);
-  const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
   const [title, setTitle] = useState('');
   const [summary, setSummary] = useState('');
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await api.getList(listId);
-      setList(res.list);
-      setTitle(res.list.title);
-      setSummary(res.list.summary || '');
-    } catch (err) {
-      toast((err as Error).message, 'error');
-    } finally {
-      setLoading(false);
+  const {
+    data: list,
+    showSkeleton,
+    reload,
+  } = useSWRQuery<MediaList>(
+    listId ? `list:${listId}` : null,
+    () => api.getList(listId).then((r) => r.list),
+    {
+      deps: [libraryVersion],
+      onError: (err) => toast(err.message, 'error'),
     }
-  }, [listId, toast]);
+  );
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    if (list && !editing) {
+      setTitle(list.title);
+      setSummary(list.summary || '');
+    }
+  }, [list, editing]);
 
   const handleSaveMeta = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -41,7 +43,7 @@ export const ListDetailPage: React.FC = () => {
       await api.updateList(listId, { title: title.trim(), summary: summary.trim() });
       setEditing(false);
       toast('已更新', 'success');
-      await load();
+      await reload();
     } catch (err) {
       toast((err as Error).message, 'error');
     }
@@ -68,7 +70,7 @@ export const ListDetailPage: React.FC = () => {
     ids[target] = tmp;
     try {
       await api.reorderList(listId, ids);
-      await load();
+      await reload();
     } catch (err) {
       toast((err as Error).message, 'error');
     }
@@ -77,13 +79,13 @@ export const ListDetailPage: React.FC = () => {
   const removeItem = async (itemId: number) => {
     try {
       await api.removeListItem(listId, itemId);
-      await load();
+      await reload();
     } catch (err) {
       toast((err as Error).message, 'error');
     }
   };
 
-  if (loading) return <div className="muted">加载中...</div>;
+  if (showSkeleton) return <CardListSkeleton />;
   if (!list) return null;
 
   const items = list.items || [];
@@ -166,6 +168,8 @@ export const ListDetailPage: React.FC = () => {
                     <img
                       src={poster}
                       alt={it.title}
+                      loading="lazy"
+                      decoding="async"
                       style={{ width: 44, height: 64, objectFit: 'cover', borderRadius: 6 }}
                     />
                   )}

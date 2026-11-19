@@ -88,25 +88,54 @@ func (s *Server) handleItemDetail(w http.ResponseWriter, r *http.Request, _ *db.
 		return
 	}
 
-	// Probe unprobed files lazily when viewing item detail
-	probedAny := false
+	// Probe unprobed files asynchronously so detail navigation responds immediately.
+	var unprobedIDs []int64
 	for i := range detail.Files {
 		if detail.Files[i].ProbedAt == nil {
-			pCtx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
-			if updated, pErr := s.Coordinator.Scanner.ProbeFileByID(pCtx, detail.Files[i].ID); pErr == nil {
-				detail.Files[i] = updated
-				probedAny = true
-			}
-			cancel()
+			unprobedIDs = append(unprobedIDs, detail.Files[i].ID)
 		}
 	}
-	if probedAny {
-		if refreshed, err := s.Store.GetItemDetail(itemID); err == nil {
-			detail = refreshed
-		}
+	if len(unprobedIDs) > 0 {
+		s.triggerAsyncFileProbes(itemID, unprobedIDs)
 	}
 
 	writeJSON(w, r, http.StatusOK, map[string]any{"code": 0, "detail": detail})
+}
+
+func (s *Server) triggerAsyncFileProbes(itemID int64, fileIDs []int64) {
+	var queued []int64
+	s.bgMu.Lock()
+	for _, fid := range fileIDs {
+		if !s.bgProbing[fid] {
+			s.bgProbing[fid] = true
+			queued = append(queued, fid)
+		}
+	}
+	s.bgMu.Unlock()
+	if len(queued) == 0 {
+		return
+	}
+	go func() {
+		defer func() {
+			s.bgMu.Lock()
+			for _, fid := range queued {
+				delete(s.bgProbing, fid)
+			}
+			s.bgMu.Unlock()
+		}()
+		changed := false
+		for _, fid := range queued {
+			pCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			_, err := s.Coordinator.Scanner.ProbeFileByID(pCtx, fid)
+			cancel()
+			if err == nil {
+				changed = true
+			}
+		}
+		if changed && s.Hub != nil {
+			s.Hub.Publish("library_changed", map[string]any{"item_id": itemID, "source": "probe"})
+		}
+	}()
 }
 
 func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request, _ *db.AdminAccount, _ *db.SessionRecord) {
@@ -134,20 +163,43 @@ func (s *Server) handlePersonDetail(w http.ResponseWriter, r *http.Request, _ *d
 	if detail.Person.Biography == nil && detail.Person.Provider == "tmdb" && detail.Person.ExternalID != nil && *detail.Person.ExternalID != "" {
 		cfg := s.Store.GetServerSettings()
 		if cfg.TmdbAPIKey != "" {
-			if pMeta, mErr := s.Meta.GetPerson(r.Context(), "tmdb", *detail.Person.ExternalID, cfg.ScraperLang, false); mErr == nil {
-				_, _ = s.Store.DB().Exec(`
-					UPDATE people SET photo_source = COALESCE(NULLIF(photo_source,''), ?),
-						biography = ?, birthday = ?, department = ?, place_of_birth = ?
-					WHERE id = ?`,
-					pMeta.ProfilePath, pMeta.Biography, pMeta.Birthday, pMeta.KnownForDepartment, pMeta.PlaceOfBirth, pid,
-				)
-				if refreshed, rErr := s.Store.GetPersonDetail(pid); rErr == nil {
-					detail = refreshed
-				}
-			}
+			s.triggerAsyncPersonHydrate(pid, *detail.Person.ExternalID, cfg.ScraperLang)
 		}
 	}
 	writeJSON(w, r, http.StatusOK, map[string]any{"code": 0, "detail": detail})
+}
+
+func (s *Server) triggerAsyncPersonHydrate(pid int64, externalID, lang string) {
+	s.bgMu.Lock()
+	if s.bgPeople[pid] {
+		s.bgMu.Unlock()
+		return
+	}
+	s.bgPeople[pid] = true
+	s.bgMu.Unlock()
+
+	go func() {
+		defer func() {
+			s.bgMu.Lock()
+			delete(s.bgPeople, pid)
+			s.bgMu.Unlock()
+		}()
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		pMeta, mErr := s.Meta.GetPerson(ctx, "tmdb", externalID, lang, false)
+		if mErr != nil {
+			return
+		}
+		_, _ = s.Store.DB().Exec(`
+			UPDATE people SET photo_source = COALESCE(NULLIF(photo_source,''), ?),
+				biography = ?, birthday = ?, department = ?, place_of_birth = ?
+			WHERE id = ?`,
+			pMeta.ProfilePath, pMeta.Biography, pMeta.Birthday, pMeta.KnownForDepartment, pMeta.PlaceOfBirth, pid,
+		)
+		if s.Hub != nil {
+			s.Hub.Publish("library_changed", map[string]any{"person_id": pid, "source": "person"})
+		}
+	}()
 }
 
 func (s *Server) handleFavorite(w http.ResponseWriter, r *http.Request, _ *db.AdminAccount, _ *db.SessionRecord) {
