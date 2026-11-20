@@ -584,8 +584,8 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
-          go-version-file: sync_server/go.mod
-          cache-dependency-path: sync_server/go.sum
+          go-version-file: media_server/go.mod
+          cache-dependency-path: media_server/go.sum
 
       - name: Run server checks
         run: scripts/ci_server_checks.sh
