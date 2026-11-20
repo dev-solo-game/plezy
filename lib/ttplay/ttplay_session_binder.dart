@@ -1,9 +1,14 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import '../library/local_library_client.dart';
+import '../library_cloud/cloud_api_client.dart';
+import '../library_cloud/projection_sync.dart';
+import '../library_cloud/scan_session_runner.dart';
+import '../library_cloud/source_repository.dart';
 import '../providers/multi_server_provider.dart';
 import '../services/multi_server_manager.dart';
 import '../session/app_session_controller.dart';
@@ -35,6 +40,10 @@ class TtplaySessionBinder extends ChangeNotifier {
   MultiServerProvider? _multiServerProvider;
   TtplayApiClient? _apiClient;
   TtplayAdminService? _adminService;
+  CloudApiClient? _cloudApiClient;
+  CloudSourceRepository? _cloudSourceRepository;
+  CloudScanSessionRunner? _cloudScanRunner;
+  CloudProjectionSyncClient? _cloudProjectionSync;
   TtplayServerClient? _primaryClient;
   List<TtplayExternalServerClient> _externalClients = const [];
   List<TtplayExternalServerSummary> _externalSummaries = const [];
@@ -45,6 +54,10 @@ class TtplaySessionBinder extends ChangeNotifier {
 
   TtplayApiClient? get activeApiClient => _apiClient;
   TtplayAdminService? get adminService => _apiClient == null ? null : (_adminService ??= TtplayAdminService(_apiClient!));
+  CloudApiClient? get cloudApiClient => _cloudApiClient;
+  CloudSourceRepository? get cloudSourceRepository => _cloudSourceRepository;
+  CloudScanSessionRunner? get cloudScanRunner => _cloudScanRunner;
+  CloudProjectionSyncClient? get cloudProjectionSync => _cloudProjectionSync;
   TtplayServerClient? get primaryClient => _primaryClient;
   List<TtplayExternalServerClient> get externalClients => List.unmodifiable(_externalClients);
   List<TtplayExternalServerSummary> get externalServerSummaries => List.unmodifiable(_externalSummaries);
@@ -75,6 +88,7 @@ class TtplaySessionBinder extends ChangeNotifier {
 
     _apiClient = api;
     _adminService = null;
+    _bindCloudClients(session);
     _primaryClient = primary;
     _externalClients = const [];
     _externalSummaries = const [];
@@ -110,6 +124,7 @@ class TtplaySessionBinder extends ChangeNotifier {
 
         _apiClient = api;
         _adminService = null;
+        _bindCloudClients(session);
         _primaryClient = primary;
         _externalClients = const [];
         _externalSummaries = const [];
@@ -181,9 +196,41 @@ class TtplaySessionBinder extends ChangeNotifier {
     }
   }
 
+  void _bindCloudClients(SelfHostedSession session) {
+    _cloudApiClient?.close();
+    final cloudApi = CloudApiClient(
+      baseUrl: session.serverUrl,
+      accessToken: session.accessToken,
+      httpClient: httpClientFactory?.call(),
+    );
+    Uint8List? masterKeyProvider() {
+      final raw = sessionController.selfHostedSession?.masterKeyB64 ?? session.masterKeyB64;
+      if (raw == null || raw.isEmpty) return null;
+      try {
+        return Uint8List.fromList(base64Decode(raw));
+      } catch (_) {
+        return null;
+      }
+    }
+
+    _cloudApiClient = cloudApi;
+    _cloudSourceRepository = CloudSourceRepository(
+      api: cloudApi,
+      masterKeyProvider: masterKeyProvider,
+      keyEpoch: session.keyEpoch,
+    );
+    _cloudScanRunner = CloudScanSessionRunner(api: cloudApi);
+    _cloudProjectionSync = CloudProjectionSyncClient(cloudApi);
+  }
+
   void _clearSelfHostedState() {
     final primaryRegistered = _primaryClient != null && serverManager.isSelfHostedServer(_primaryClient!.serverId);
     final staleApi = _apiClient;
+    _cloudApiClient?.close();
+    _cloudApiClient = null;
+    _cloudSourceRepository = null;
+    _cloudScanRunner = null;
+    _cloudProjectionSync = null;
     _apiClient = null;
     _adminService = null;
     _primaryClient = null;
@@ -222,6 +269,11 @@ class TtplaySessionBinder extends ChangeNotifier {
     if (_disposed) return;
     _disposed = true;
     _multiServerProvider = null;
+    _cloudApiClient?.close();
+    _cloudApiClient = null;
+    _cloudSourceRepository = null;
+    _cloudScanRunner = null;
+    _cloudProjectionSync = null;
     _apiClient = null;
     _adminService = null;
     _primaryClient = null;

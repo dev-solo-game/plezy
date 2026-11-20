@@ -57,6 +57,8 @@ import 'general_settings_screen.dart';
 import 'keyboard_shortcuts_screen.dart';
 import '../../connection/connection_registry.dart';
 import '../../connection/connection.dart';
+import '../library_admin/cloud_unmatched_screen.dart';
+import '../sources/cloud_sources_screen.dart';
 import '../storage/lan_devices_screen.dart';
 import '../storage/mounts_screen.dart';
 import '../storage/scraper_settings_screen.dart';
@@ -218,8 +220,9 @@ class _SettingsScreenState extends State<SettingsScreen> with FocusableTab, Moun
 
   Widget _buildContent(BuildContext sheetContext, {required bool hasLibraries}) {
     final appSession = maybeWatchAppSession(sheetContext);
+    final ttplayBinder = maybeWatchTtplayBinder(sheetContext);
     final isSelfHosted = appSession?.isSelfHosted == true;
-    final isTv = PlatformDetector.isTV();
+    final showSelfHostedAdmin = canUseTtplayAdmin(session: appSession, binder: ttplayBinder);
 
     return Scaffold(
       body: Focus(
@@ -250,11 +253,9 @@ class _SettingsScreenState extends State<SettingsScreen> with FocusableTab, Moun
                     ],
                   ),
 
-                  if (isSelfHosted) ...[
-                    if (!isTv) _buildSelfHostedAdminSection(),
-                    const SizedBox(height: 16),
-                    SettingsGroup(children: [_buildLanDevicesTile()]),
-                  ] else ...[
+                  if (showSelfHostedAdmin) _buildSelfHostedAdminSection(),
+
+                  if (!isSelfHosted) ...[
                     _buildMediaSourcesSection(),
                     const SizedBox(height: 16),
                     SettingsGroup(
@@ -269,6 +270,8 @@ class _SettingsScreenState extends State<SettingsScreen> with FocusableTab, Moun
                       ],
                     ),
                   ],
+
+                  SettingsGroup(title: t.companionRemote.title, children: [_buildLanDevicesTile()]),
 
                   // Server connections only matter to installs that still have some.
                   if (_hasServerConnections) _buildConnectionsSection(sheetContext),
@@ -407,6 +410,18 @@ class _SettingsScreenState extends State<SettingsScreen> with FocusableTab, Moun
       title: t.serverAdmin.sectionTitle,
       children: [
         SettingNavigationTile(
+          icon: Symbols.cloud_sync_rounded,
+          title: '云端媒体源（客户端扫描）',
+          subtitle: '管理端到端加密的夸克 / WebDAV / Emby / Jellyfin 媒体源与扫描上报',
+          destinationBuilder: (_) => const CloudSourcesScreen(),
+        ),
+        SettingNavigationTile(
+          icon: Symbols.help_center_rounded,
+          title: '云端待匹配中心',
+          subtitle: '查看未识别云端文件、手工匹配并生成自动目录规则',
+          destinationBuilder: (_) => const CloudUnmatchedScreen(),
+        ),
+        SettingNavigationTile(
           focusNode: _focusTracker.get(_kStorageMounts),
           icon: Symbols.hard_drive_rounded,
           title: t.serverAdmin.mountsTitle,
@@ -443,7 +458,6 @@ class _SettingsScreenState extends State<SettingsScreen> with FocusableTab, Moun
           subtitle: t.storage.description,
           destinationBuilder: (context) => const MountsScreen(),
         ),
-        _buildLanDevicesTile(),
         SettingNavigationTile(
           icon: Symbols.dns_rounded,
           title: 'Emby / Jellyfin',

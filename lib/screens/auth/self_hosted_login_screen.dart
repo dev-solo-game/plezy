@@ -26,10 +26,13 @@ class _SelfHostedLoginScreenState extends State<SelfHostedLoginScreen> {
   late final TextEditingController _serverController = TextEditingController(text: widget.initialServerUrl ?? '');
   final TextEditingController _usernameController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
+  final TextEditingController _inviteCodeController = TextEditingController();
 
+  bool _isRegisterMode = false;
   bool _obscurePassword = true;
   bool _testing = false;
   bool _submitting = false;
+  SelfHostedServerBootstrap? _probedBootstrap;
   ({bool ok, String message})? _probeStatus;
   String? _errorMessage;
 
@@ -38,6 +41,7 @@ class _SelfHostedLoginScreenState extends State<SelfHostedLoginScreen> {
     _serverController.dispose();
     _usernameController.dispose();
     _passwordController.dispose();
+    _inviteCodeController.dispose();
     super.dispose();
   }
 
@@ -72,6 +76,7 @@ class _SelfHostedLoginScreenState extends State<SelfHostedLoginScreen> {
       final info = await session.probeSelfHostedServer(rawUrl);
       if (!mounted) return;
       _serverController.text = info.serverUrl;
+      _probedBootstrap = info;
       if (!info.initialized) {
         setState(() {
           _probeStatus = (ok: false, message: t.session.errUninitializedServer);
@@ -81,6 +86,7 @@ class _SelfHostedLoginScreenState extends State<SelfHostedLoginScreen> {
             ? t.session.serverConnected(name: info.serverName)
             : t.session.serverConnectedUnnamed;
         setState(() {
+          if (!info.allowsRegistration) _isRegisterMode = false;
           _probeStatus = (ok: true, message: msg);
         });
       }
@@ -110,11 +116,22 @@ class _SelfHostedLoginScreenState extends State<SelfHostedLoginScreen> {
     });
 
     try {
-      await session.loginSelfHosted(
-        serverUrl: _serverController.text.trim(),
-        username: _usernameController.text.trim(),
-        password: _passwordController.text,
-      );
+      if (_isRegisterMode) {
+        await session.registerSelfHosted(
+          serverUrl: _serverController.text.trim(),
+          username: _usernameController.text.trim(),
+          password: _passwordController.text,
+          inviteCode: _inviteCodeController.text.trim(),
+          bootstrap: _probedBootstrap,
+        );
+      } else {
+        await session.loginSelfHosted(
+          serverUrl: _serverController.text.trim(),
+          username: _usernameController.text.trim(),
+          password: _passwordController.text,
+          bootstrap: _probedBootstrap,
+        );
+      }
       if (!mounted) return;
       Navigator.of(context).pop(true);
     } on SelfHostedAuthException catch (e) {
@@ -218,6 +235,22 @@ class _SelfHostedLoginScreenState extends State<SelfHostedLoginScreen> {
                         ),
                       ),
                     ],
+                    if (_probedBootstrap?.allowsRegistration != false) ...[
+                      const SizedBox(height: 14),
+                      SegmentedButton<bool>(
+                        segments: [
+                          ButtonSegment<bool>(value: false, label: Text(t.session.signInButton)),
+                          const ButtonSegment<bool>(value: true, label: Text('注册账号')),
+                        ],
+                        selected: {_isRegisterMode},
+                        onSelectionChanged: _submitting
+                            ? null
+                            : (sel) => setState(() {
+                                  _isRegisterMode = sel.first;
+                                  _errorMessage = null;
+                                }),
+                      ),
+                    ],
                     const SizedBox(height: 16),
                     FocusableTextFormField(
                       controller: _usernameController,
@@ -235,8 +268,8 @@ class _SelfHostedLoginScreenState extends State<SelfHostedLoginScreen> {
                       controller: _passwordController,
                       enabled: !_submitting,
                       obscureText: _obscurePassword,
-                      textInputAction: TextInputAction.done,
-                      onFieldSubmitted: (_) => unawaited(_submit()),
+                      textInputAction: _isRegisterMode ? TextInputAction.next : TextInputAction.done,
+                      onFieldSubmitted: _isRegisterMode ? null : (_) => unawaited(_submit()),
                       decoration: InputDecoration(
                         labelText: t.session.passwordLabel,
                         prefixIcon: const AppIcon(Symbols.lock_rounded),
@@ -246,8 +279,34 @@ class _SelfHostedLoginScreenState extends State<SelfHostedLoginScreen> {
                           icon: AppIcon(_obscurePassword ? Symbols.visibility_rounded : Symbols.visibility_off_rounded),
                         ),
                       ),
-                      validator: (value) => (value == null || value.isEmpty) ? t.session.errRequiredField : null,
+                      validator: (value) {
+                        if (value == null || value.isEmpty) return t.session.errRequiredField;
+                        if (_isRegisterMode && value.length < 8) return '密码至少需要 8 位字符';
+                        return null;
+                      },
                     ),
+                    if (_isRegisterMode && (_probedBootstrap == null || _probedBootstrap!.requiresInviteCode)) ...[
+                      const SizedBox(height: 14),
+                      FocusableTextFormField(
+                        controller: _inviteCodeController,
+                        enabled: !_submitting,
+                        textInputAction: TextInputAction.done,
+                        onFieldSubmitted: (_) => unawaited(_submit()),
+                        decoration: InputDecoration(
+                          labelText: _probedBootstrap?.requiresInviteCode == true ? '邀请码（必填）' : '邀请码（如服务器要求）',
+                          prefixIcon: const AppIcon(Symbols.confirmation_number_rounded),
+                          border: const OutlineInputBorder(),
+                        ),
+                        validator: (value) {
+                          if (_isRegisterMode &&
+                              _probedBootstrap?.requiresInviteCode == true &&
+                              (value == null || value.trim().isEmpty)) {
+                            return t.session.errRequiredField;
+                          }
+                          return null;
+                        },
+                      ),
+                    ],
                     const SizedBox(height: 12),
                     Text(
                       t.session.archiveHint,
@@ -278,7 +337,7 @@ class _SelfHostedLoginScreenState extends State<SelfHostedLoginScreen> {
                                 dimension: 18,
                                 child: CircularProgressIndicator(strokeWidth: 2),
                               )
-                            : Text(t.session.signInButton),
+                            : Text(_isRegisterMode ? '注册并登录' : t.session.signInButton),
                       ),
                     ),
                   ],

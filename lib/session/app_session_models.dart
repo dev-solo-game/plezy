@@ -21,6 +21,9 @@ class SelfHostedServerBootstrap {
     required this.serverName,
     required this.accentTheme,
     required this.version,
+    this.protocolVersion = 0,
+    this.minProtocolVersion = 0,
+    this.registrationMode = 'closed',
   });
 
   final String serverUrl;
@@ -28,6 +31,13 @@ class SelfHostedServerBootstrap {
   final String serverName;
   final String accentTheme;
   final String version;
+  final int protocolVersion;
+  final int minProtocolVersion;
+  final String registrationMode; // open | invite | closed
+
+  bool get isMediaLibraryV1 => protocolVersion >= 1;
+  bool get allowsRegistration => registrationMode == 'open' || registrationMode == 'invite';
+  bool get requiresInviteCode => registrationMode == 'invite';
 }
 
 class SelfHostedSession {
@@ -39,6 +49,12 @@ class SelfHostedSession {
     this.serverName,
     this.accentTheme,
     this.expiresAt,
+    this.householdId,
+    this.memberId,
+    this.deviceId,
+    this.deviceClass,
+    this.masterKeyB64,
+    this.keyEpoch = 1,
   }) : serverUrl = normalizeServerUrl(serverUrl);
 
   final String serverUrl;
@@ -48,6 +64,12 @@ class SelfHostedSession {
   final String? serverName;
   final String? accentTheme;
   final int? expiresAt;
+  final String? householdId;
+  final String? memberId;
+  final String? deviceId;
+  final String? deviceClass;
+  final String? masterKeyB64;
+  final int keyEpoch;
 
   static String normalizeServerUrl(String raw) {
     var url = raw.trim();
@@ -68,6 +90,12 @@ class SelfHostedSession {
     if (serverName != null) 'server_name': serverName,
     if (accentTheme != null) 'accent_theme': accentTheme,
     if (expiresAt != null) 'expires_at': expiresAt,
+    if (householdId != null) 'household_id': householdId,
+    if (memberId != null) 'member_id': memberId,
+    if (deviceId != null) 'device_id': deviceId,
+    if (deviceClass != null) 'device_class': deviceClass,
+    if (masterKeyB64 != null) 'master_key_b64': masterKeyB64,
+    'key_epoch': keyEpoch,
   };
 
   factory SelfHostedSession.fromJson(Map<String, dynamic> json) => SelfHostedSession(
@@ -78,6 +106,12 @@ class SelfHostedSession {
     serverName: json['server_name'] as String?,
     accentTheme: json['accent_theme'] as String?,
     expiresAt: (json['expires_at'] as num?)?.toInt(),
+    householdId: json['household_id'] as String?,
+    memberId: json['member_id'] as String?,
+    deviceId: json['device_id'] as String?,
+    deviceClass: json['device_class'] as String?,
+    masterKeyB64: json['master_key_b64'] as String?,
+    keyEpoch: (json['key_epoch'] as num?)?.toInt() ?? 1,
   );
 }
 

@@ -8,10 +8,12 @@ import 'package:http/http.dart' as http;
 import '../database/app_database.dart';
 import '../library/library_scan_service.dart';
 import '../library/local_workspace_archive.dart';
+import '../library_cloud/cloud_keyring.dart';
 import '../services/companion_remote/lan_identity_store.dart';
 import '../storage/mount_manager.dart';
 import '../utils/app_logger.dart';
 import '../utils/device_identity.dart';
+import '../utils/platform_detector.dart';
 import 'app_session_models.dart';
 import 'app_session_store.dart';
 
@@ -108,12 +110,19 @@ class AppSessionController extends ChangeNotifier {
       if (body is! Map || body['code'] != 0) {
         throw const SelfHostedAuthException(SelfHostedAuthErrorKind.serverError, 'Unexpected server response');
       }
+      final protocolVersion = (body['protocol_version'] as num?)?.toInt() ?? 0;
+      final minProtocolVersion = (body['min_protocol_version'] as num?)?.toInt() ?? 0;
+      final regMode = (body['registration_mode'] as String?)?.trim().toLowerCase() ?? 'closed';
+      final isInitialized = body.containsKey('initialized') ? body['initialized'] == true : protocolVersion >= 1;
       return SelfHostedServerBootstrap(
         serverUrl: normalized,
-        initialized: body['initialized'] == true,
+        initialized: isInitialized,
         serverName: (body['server_name'] as String?) ?? '',
         accentTheme: (body['accent_theme'] as String?) ?? '',
         version: (body['version'] as String?) ?? '',
+        protocolVersion: protocolVersion,
+        minProtocolVersion: minProtocolVersion,
+        registrationMode: regMode,
       );
     } on SelfHostedAuthException {
       rethrow;
@@ -179,59 +188,58 @@ class AppSessionController extends ChangeNotifier {
         );
       }
 
-      String deviceName = Platform.localHostname;
-      String platform = Platform.operatingSystem;
-      if (identityStore != null) {
-        deviceName = await identityStore!.getDeviceName();
-      } else {
-        try {
-          final id = await DeviceIdentityService.resolve();
-          final candidate = id.deviceName?.trim();
-          if (isMeaningfulDeviceName(candidate)) {
-            deviceName = candidate!;
-          }
-          platform = id.platform;
-        } catch (_) {}
-      }
+      final device = await _resolveDeviceDescriptor();
 
       final resp = await _httpClient
           .post(
             Uri.parse('$normalized/api/v1/auth/login'),
-            headers: const {'content-type': 'application/json'},
+            headers: const {'content-type': 'application/json', 'x-ttplay-client': 'plezy/client/1'},
             body: jsonEncode({
               'username': username.trim(),
               'password': password,
-              'device_name': deviceName,
-              'platform': platform,
+              'device_name': device.name,
+              'platform': device.platform,
+              'device': {
+                if (device.deviceId != null && device.deviceId!.isNotEmpty) 'device_id': device.deviceId,
+                'class': device.deviceClass,
+                'platform': device.platform,
+                'name': device.name,
+                'app_version': '1.0.0',
+              },
             }),
           )
           .timeout(const Duration(seconds: 10));
 
-      Map<String, dynamic>? body;
-      try {
-        final decoded = jsonDecode(resp.body);
-        if (decoded is Map) body = Map<String, dynamic>.from(decoded);
-      } catch (_) {}
-
-      if (resp.statusCode == HttpStatus.unauthorized || resp.statusCode == HttpStatus.forbidden) {
-        throw SelfHostedAuthException(
-          SelfHostedAuthErrorKind.invalidCredentials,
-          (body?['error'] as String?) ?? 'Invalid username or password',
-          statusCode: resp.statusCode,
-        );
-      }
-      if (resp.statusCode < 200 || resp.statusCode >= 300 || body == null || body['code'] != 0) {
-        throw SelfHostedAuthException(
-          SelfHostedAuthErrorKind.serverError,
-          (body?['error'] as String?) ?? 'HTTP ${resp.statusCode}',
-          statusCode: resp.statusCode,
-        );
-      }
-
+      final body = _decodeAuthBody(resp);
       final token = body['access_token'] as String? ?? '';
       if (token.isEmpty) {
         throw const SelfHostedAuthException(SelfHostedAuthErrorKind.serverError, 'Missing access token in response');
       }
+
+      String? masterKeyB64;
+      var keyEpoch = 1;
+      final wrapsRaw = body['key_wraps'];
+      if (wrapsRaw is List) {
+        for (final w in wrapsRaw) {
+          if (w is Map && (w['wrap_type'] == CloudKeyring.wrapTypeAccountPassword)) {
+            try {
+              final unwrapped = await CloudKeyring.unwrapMasterKey(
+                wrap: Map<String, dynamic>.from(w),
+                password: password,
+              );
+              masterKeyB64 = base64Encode(unwrapped);
+              keyEpoch = (w['key_epoch'] as num?)?.toInt() ?? 1;
+              break;
+            } catch (e) {
+              appLogger.w('Failed to unwrap E2EE master key from server wrap: $e');
+            }
+          }
+        }
+      }
+
+      final householdMap = body['household'] is Map ? Map<String, dynamic>.from(body['household'] as Map) : null;
+      final memberMap = body['member'] is Map ? Map<String, dynamic>.from(body['member'] as Map) : null;
+      final principalMap = body['principal'] is Map ? Map<String, dynamic>.from(body['principal'] as Map) : null;
 
       final nextSession = SelfHostedSession(
         serverUrl: normalized,
@@ -243,28 +251,15 @@ class AppSessionController extends ChangeNotifier {
         serverName: probed.serverName.isNotEmpty ? probed.serverName : null,
         accentTheme: probed.accentTheme.isNotEmpty ? probed.accentTheme : null,
         expiresAt: (body['expires_at'] as num?)?.toInt(),
+        householdId: (householdMap?['id'] as String?) ?? (principalMap?['household_id'] as String?),
+        memberId: (memberMap?['id'] as String?) ?? (principalMap?['member_id'] as String?),
+        deviceId: (principalMap?['device_id'] as String?) ?? device.deviceId,
+        deviceClass: (principalMap?['device_class'] as String?) ?? device.deviceClass,
+        masterKeyB64: masterKeyB64,
+        keyEpoch: keyEpoch,
       );
 
-      final previousSession = _selfHostedSession;
-      await _cancelLocalActivity();
-
-      // Archive offline local library before clearing, preserving any existing
-      // snapshot if we were already in self-hosted mode.
-      final shouldArchive = _mode == AppLoginMode.offline || await _archive.hasLocalLibraryData();
-      if (shouldArchive) {
-        await _archive.captureSnapshot();
-        await _archive.clearLocalLibraryTables();
-      }
-
-      await _store.saveSelfHostedSession(nextSession);
-      _mode = AppLoginMode.selfHosted;
-      _selfHostedSession = nextSession;
-      _explicitlyLoggedOut = false;
-
-      if (previousSession != null && previousSession.accessToken != nextSession.accessToken) {
-        unawaited(_bestEffortLogout(previousSession));
-      }
-
+      await _activateSelfHostedSession(nextSession);
       return nextSession;
     } on SelfHostedAuthException catch (e) {
       _error = e.message;
@@ -277,6 +272,167 @@ class AppSessionController extends ChangeNotifier {
       throw const SelfHostedAuthException(SelfHostedAuthErrorKind.network, 'Connection timed out');
     } finally {
       _setBusy(false);
+    }
+  }
+
+  /// Registers a new single-account user on `media_library` (`POST /api/v1/auth/register`),
+  /// generating a client-side 256-bit E2EE master key wrapped with [password].
+  Future<SelfHostedSession> registerSelfHosted({
+    required String serverUrl,
+    required String username,
+    required String password,
+    String? email,
+    String? inviteCode,
+    SelfHostedServerBootstrap? bootstrap,
+  }) async {
+    if (_busy) {
+      throw StateError('Session transition already in progress');
+    }
+    final normalized = SelfHostedSession.normalizeServerUrl(serverUrl);
+    final uri = Uri.tryParse(normalized);
+    if (uri == null || !uri.hasScheme || uri.host.isEmpty) {
+      throw const SelfHostedAuthException(SelfHostedAuthErrorKind.invalidUrl, 'Invalid server URL');
+    }
+
+    _setBusy(true, error: null);
+    try {
+      final probed = bootstrap ?? await probeSelfHostedServer(normalized);
+      final device = await _resolveDeviceDescriptor();
+
+      final masterKey = CloudKeyring.generateMasterKey();
+      final accountWrap = await CloudKeyring.wrapMasterKey(masterKey: masterKey, password: password);
+
+      final resp = await _httpClient
+          .post(
+            Uri.parse('$normalized/api/v1/auth/register'),
+            headers: const {'content-type': 'application/json', 'x-ttplay-client': 'plezy/client/1'},
+            body: jsonEncode({
+              'username': username.trim(),
+              if (email != null && email.trim().isNotEmpty) 'email': email.trim(),
+              'password': password,
+              if (inviteCode != null && inviteCode.trim().isNotEmpty) 'invite_code': inviteCode.trim(),
+              'device': {
+                if (device.deviceId != null && device.deviceId!.isNotEmpty) 'device_id': device.deviceId,
+                'class': device.deviceClass,
+                'platform': device.platform,
+                'name': device.name,
+                'app_version': '1.0.0',
+              },
+              'key_wraps': [accountWrap],
+            }),
+          )
+          .timeout(const Duration(seconds: 15));
+
+      final body = _decodeAuthBody(resp);
+      final token = body['access_token'] as String? ?? '';
+      if (token.isEmpty) {
+        throw const SelfHostedAuthException(SelfHostedAuthErrorKind.serverError, 'Missing access token in response');
+      }
+
+      final householdMap = body['household'] is Map ? Map<String, dynamic>.from(body['household'] as Map) : null;
+      final memberMap = body['member'] is Map ? Map<String, dynamic>.from(body['member'] as Map) : null;
+      final principalMap = body['principal'] is Map ? Map<String, dynamic>.from(body['principal'] as Map) : null;
+
+      final nextSession = SelfHostedSession(
+        serverUrl: normalized,
+        username: username.trim(),
+        accessToken: token,
+        tokenId: body['token_id'] as String?,
+        serverName: probed.serverName.isNotEmpty ? probed.serverName : null,
+        accentTheme: probed.accentTheme.isNotEmpty ? probed.accentTheme : null,
+        expiresAt: (body['expires_at'] as num?)?.toInt(),
+        householdId: (householdMap?['id'] as String?) ?? (principalMap?['household_id'] as String?),
+        memberId: (memberMap?['id'] as String?) ?? (principalMap?['member_id'] as String?),
+        deviceId: (principalMap?['device_id'] as String?) ?? device.deviceId,
+        deviceClass: (principalMap?['device_class'] as String?) ?? device.deviceClass,
+        masterKeyB64: base64Encode(masterKey),
+        keyEpoch: 1,
+      );
+
+      await _activateSelfHostedSession(nextSession);
+      return nextSession;
+    } on SelfHostedAuthException catch (e) {
+      _error = e.message;
+      rethrow;
+    } on SocketException catch (e) {
+      _error = e.message;
+      throw SelfHostedAuthException(SelfHostedAuthErrorKind.network, e.message);
+    } on TimeoutException {
+      _error = 'Connection timed out';
+      throw const SelfHostedAuthException(SelfHostedAuthErrorKind.network, 'Connection timed out');
+    } finally {
+      _setBusy(false);
+    }
+  }
+
+  Future<({String? deviceId, String deviceClass, String platform, String name})> _resolveDeviceDescriptor() async {
+    String? deviceId;
+    String deviceName = Platform.localHostname;
+    String platform = Platform.operatingSystem;
+    if (identityStore != null) {
+      deviceName = await identityStore!.getDeviceName();
+      deviceId = await identityStore!.getOrCreateDeviceId();
+    } else {
+      try {
+        final id = await DeviceIdentityService.resolve();
+        final candidate = id.deviceName?.trim();
+        if (isMeaningfulDeviceName(candidate)) {
+          deviceName = candidate!;
+        }
+        platform = id.platform;
+      } catch (_) {}
+    }
+    final deviceClass = PlatformDetector.isTV()
+        ? 'tv'
+        : PlatformDetector.isDesktopOS()
+        ? 'desktop'
+        : 'phone';
+    return (deviceId: deviceId, deviceClass: deviceClass, platform: platform, name: deviceName);
+  }
+
+  Map<String, dynamic> _decodeAuthBody(http.Response resp) {
+    Map<String, dynamic>? body;
+    try {
+      final decoded = jsonDecode(resp.body);
+      if (decoded is Map) body = Map<String, dynamic>.from(decoded);
+    } catch (_) {}
+
+    if (resp.statusCode == HttpStatus.unauthorized || resp.statusCode == HttpStatus.forbidden) {
+      throw SelfHostedAuthException(
+        SelfHostedAuthErrorKind.invalidCredentials,
+        (body?['message'] as String?) ?? (body?['error'] as String?) ?? 'Invalid username or password',
+        statusCode: resp.statusCode,
+      );
+    }
+    if (resp.statusCode < 200 || resp.statusCode >= 300 || body == null || body['code'] != 0) {
+      throw SelfHostedAuthException(
+        SelfHostedAuthErrorKind.serverError,
+        (body?['message'] as String?) ?? (body?['error'] as String?) ?? 'HTTP ${resp.statusCode}',
+        statusCode: resp.statusCode,
+      );
+    }
+    return body;
+  }
+
+  Future<void> _activateSelfHostedSession(SelfHostedSession nextSession) async {
+    final previousSession = _selfHostedSession;
+    await _cancelLocalActivity();
+
+    // Archive offline local library before clearing, preserving any existing
+    // snapshot if we were already in self-hosted mode.
+    final shouldArchive = _mode == AppLoginMode.offline || await _archive.hasLocalLibraryData();
+    if (shouldArchive) {
+      await _archive.captureSnapshot();
+      await _archive.clearLocalLibraryTables();
+    }
+
+    await _store.saveSelfHostedSession(nextSession);
+    _mode = AppLoginMode.selfHosted;
+    _selfHostedSession = nextSession;
+    _explicitlyLoggedOut = false;
+
+    if (previousSession != null && previousSession.accessToken != nextSession.accessToken) {
+      unawaited(_bestEffortLogout(previousSession));
     }
   }
 
