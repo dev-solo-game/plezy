@@ -29,6 +29,7 @@ class _CloudSourcesScreenState extends State<CloudSourcesScreen> {
   List<CloudSource> _sources = const [];
   final Map<String, CloudScanProgress> _scanProgress = {};
   bool _loading = true;
+  bool _syncingProjection = false;
   String? _error;
 
   @override
@@ -69,6 +70,24 @@ class _CloudSourcesScreenState extends State<CloudSourcesScreen> {
         _loading = false;
         _error = e is CloudApiException ? e.message : '$e';
       });
+    }
+  }
+
+  Future<void> _syncProjection() async {
+    final binder = maybeReadTtplayBinder(context);
+    if (binder == null || _syncingProjection) return;
+    setState(() => _syncingProjection = true);
+    try {
+      final res = await binder.syncCloudProjection(full: true);
+      if (!mounted) return;
+      if (res != null) {
+        showSuccessSnackBar(context, '片库已同步：${res.itemsProjected} 部作品 · ${res.filesProjected} 个文件');
+      }
+      await _load();
+    } catch (e) {
+      if (mounted) showErrorSnackBar(context, e is CloudApiException ? e.message : '$e');
+    } finally {
+      if (mounted) setState(() => _syncingProjection = false);
     }
   }
 
@@ -230,6 +249,12 @@ class _CloudSourcesScreenState extends State<CloudSourcesScreen> {
       appBar: AppBar(
         title: const Text('云端媒体源（客户端扫描）'),
         actions: [
+          OutlinedButton.icon(
+            onPressed: _syncingProjection ? null : _syncProjection,
+            icon: const AppIcon(Symbols.sync_rounded, size: 18),
+            label: Text(_syncingProjection ? '同步中...' : '同步片库'),
+          ),
+          const SizedBox(width: 6),
           IconButton(tooltip: '刷新', icon: const AppIcon(Symbols.refresh_rounded), onPressed: _load),
           if (!isTv) ...[
             const SizedBox(width: 4),

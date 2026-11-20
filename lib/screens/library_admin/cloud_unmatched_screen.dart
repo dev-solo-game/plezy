@@ -87,6 +87,15 @@ class _CloudUnmatchedScreenState extends State<CloudUnmatchedScreen> {
     }
   }
 
+  Future<void> _openMatchRulesDialog() async {
+    final sync = _sync;
+    if (sync == null) return;
+    await showDialog<void>(
+      context: context,
+      builder: (_) => _CloudMatchRulesDialog(sync: sync),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final session = maybeWatchAppSession(context);
@@ -100,6 +109,12 @@ class _CloudUnmatchedScreenState extends State<CloudUnmatchedScreen> {
       appBar: AppBar(
         title: Text(_total > 0 ? '云端待匹配中心 ($_total)' : '云端待匹配中心'),
         actions: [
+          OutlinedButton.icon(
+            onPressed: _openMatchRulesDialog,
+            icon: const AppIcon(Symbols.rule_folder_rounded, size: 18),
+            label: const Text('匹配规则'),
+          ),
+          const SizedBox(width: 4),
           IconButton(tooltip: '刷新', icon: const AppIcon(Symbols.refresh_rounded), onPressed: _load),
           const SizedBox(width: 8),
         ],
@@ -379,6 +394,104 @@ class _CloudManualMatchDialogState extends State<_CloudManualMatchDialog> {
       ),
       actions: [
         TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('关闭')),
+      ],
+    );
+  }
+}
+
+class _CloudMatchRulesDialog extends StatefulWidget {
+  const _CloudMatchRulesDialog({required this.sync});
+
+  final CloudProjectionSyncClient sync;
+
+  @override
+  State<_CloudMatchRulesDialog> createState() => _CloudMatchRulesDialogState();
+}
+
+class _CloudMatchRulesDialogState extends State<_CloudMatchRulesDialog> {
+  List<Map<String, dynamic>> _rules = const [];
+  bool _loading = true;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_load());
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final list = await widget.sync.listMatchRules();
+      if (mounted) {
+        setState(() {
+          _rules = list;
+          _loading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _error = e is CloudApiException ? e.message : '$e';
+        });
+      }
+    }
+  }
+
+  Future<void> _deleteRule(String id) async {
+    try {
+      await widget.sync.deleteMatchRule(id);
+      if (mounted) await _load();
+    } catch (e) {
+      if (mounted) showErrorSnackBar(context, e is CloudApiException ? e.message : '$e');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('云端目录匹配规则'),
+      content: SizedBox(
+        width: 540,
+        height: 380,
+        child: _loading
+            ? const Center(child: CircularProgressIndicator())
+            : _error != null
+            ? Center(child: Text(_error!))
+            : _rules.isEmpty
+            ? const Center(child: Text('暂无目录匹配规则'))
+            : ListView.separated(
+                itemCount: _rules.length,
+                separatorBuilder: (_, _) => const Divider(height: 1),
+                itemBuilder: (context, index) {
+                  final r = _rules[index];
+                  final id = r['id'] as String? ?? '';
+                  final prefix = r['path_prefix'] as String? ?? '';
+                  final action = r['action'] as String? ?? 'bind';
+                  final target = [
+                    if ((r['target_provider'] as String?)?.isNotEmpty == true) r['target_provider'],
+                    if ((r['target_kind'] as String?)?.isNotEmpty == true) r['target_kind'],
+                    if ((r['target_ext_id'] as String?)?.isNotEmpty == true) '#${r['target_ext_id']}',
+                  ].join(':');
+                  return ListTile(
+                    dense: true,
+                    title: Text(prefix, maxLines: 1, overflow: TextOverflow.ellipsis),
+                    subtitle: Text(target.isNotEmpty ? '$action → $target' : action),
+                    trailing: IconButton(
+                      tooltip: '删除规则',
+                      icon: const AppIcon(Symbols.delete_rounded),
+                      onPressed: id.isEmpty ? null : () => _deleteRule(id),
+                    ),
+                  );
+                },
+              ),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text('关闭')),
       ],
     );
   }

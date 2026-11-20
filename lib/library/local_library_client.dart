@@ -118,6 +118,14 @@ class LocalLibraryClient implements MediaServerClient, StreamQualityClient {
   LibraryScrapeRunner? scrapeRunner;
   final Duration seekDebounceDuration;
   String tmdbImageBase = TmdbProvider.defaultImageBase;
+
+  lib.LibraryRepository get repository => _repo;
+  MountManager get mountManager => _mountManager;
+
+  /// Optional upstream sync bridge attached when logged into a `media_library`
+  /// v1 server so local watch progress & favorites automatically push by
+  /// `work_key` (never sending local file paths).
+  LocalCloudUserDataBridge? cloudUserDataBridge;
   Map<String, StorageMount> _mountsById = const {};
   bool _closed = false;
 
@@ -778,6 +786,7 @@ class LocalLibraryClient implements MediaServerClient, StreamQualityClient {
     final id = _id(item.id);
     if (id == null) return;
     await _repo.markWatched(id, watched: true);
+    unawaited(_pushCloudWatchMutation(id, watched: true));
   }
 
   @override
@@ -785,6 +794,7 @@ class LocalLibraryClient implements MediaServerClient, StreamQualityClient {
     final id = _id(item.id);
     if (id == null) return;
     await _repo.markWatched(id, watched: false);
+    unawaited(_pushCloudWatchMutation(id, watched: false, positionMs: 0));
   }
 
   @override
@@ -792,6 +802,7 @@ class LocalLibraryClient implements MediaServerClient, StreamQualityClient {
     final id = _id(item.id);
     if (id == null) return;
     await _repo.hideFromContinueWatching(id);
+    unawaited(_pushCloudHideContinue(id));
   }
 
   @override
@@ -802,6 +813,7 @@ class LocalLibraryClient implements MediaServerClient, StreamQualityClient {
     final id = _id(item.id);
     if (id == null) return;
     await _repo.setFavorite(id, favorite: isFavorite);
+    unawaited(_pushCloudFavorite(id, isFavorite));
   }
 
   @override
@@ -849,6 +861,74 @@ class LocalLibraryClient implements MediaServerClient, StreamQualityClient {
     final id = _id(itemId);
     if (id == null) return;
     await _repo.setProgress(id, positionMs: position.inMilliseconds, durationMs: duration?.inMilliseconds);
+    unawaited(
+      _pushCloudWatchMutation(
+        id,
+        positionMs: position.inMilliseconds,
+        durationMs: duration?.inMilliseconds,
+      ),
+    );
+  }
+
+  Future<({String workKey, int seasonNumber, int episodeNumber})?> _resolveCloudWorkCoords(int itemId) async {
+    final row = (await _repo.getItem(itemId))?.item;
+    if (row == null) return null;
+    if (row.kind == lib.LibraryKinds.episode && row.showId != null) {
+      final show = (await _repo.getItem(row.showId!))?.item;
+      final rootKey = show?.workKey;
+      if (rootKey == null || rootKey.isEmpty) return null;
+      return (workKey: rootKey, seasonNumber: row.seasonNumber ?? 0, episodeNumber: row.episodeNumber ?? 0);
+    }
+    final wk = row.workKey;
+    if (wk == null || wk.isEmpty) return null;
+    return (workKey: wk, seasonNumber: 0, episodeNumber: 0);
+  }
+
+  Future<void> _pushCloudWatchMutation(int itemId, {int? positionMs, int? durationMs, bool? watched}) async {
+    final bridge = cloudUserDataBridge;
+    if (bridge == null) return;
+    try {
+      final coords = await _resolveCloudWorkCoords(itemId);
+      if (coords == null) return;
+      await bridge.pushProgress(
+        workKey: coords.workKey,
+        seasonNumber: coords.seasonNumber,
+        episodeNumber: coords.episodeNumber,
+        positionMs: positionMs ?? 0,
+        durationMs: durationMs,
+        watched: watched,
+      );
+    } catch (e) {
+      appLogger.d('CloudUserDataBridge progress sync skipped: $e');
+    }
+  }
+
+  Future<void> _pushCloudFavorite(int itemId, bool isFavorite) async {
+    final bridge = cloudUserDataBridge;
+    if (bridge == null) return;
+    try {
+      final coords = await _resolveCloudWorkCoords(itemId);
+      if (coords == null) return;
+      await bridge.pushFavorite(workKey: coords.workKey, isFavorite: isFavorite);
+    } catch (e) {
+      appLogger.d('CloudUserDataBridge favorite sync skipped: $e');
+    }
+  }
+
+  Future<void> _pushCloudHideContinue(int itemId) async {
+    final bridge = cloudUserDataBridge;
+    if (bridge == null) return;
+    try {
+      final coords = await _resolveCloudWorkCoords(itemId);
+      if (coords == null) return;
+      await bridge.pushHideContinue(
+        workKey: coords.workKey,
+        seasonNumber: coords.seasonNumber,
+        episodeNumber: coords.episodeNumber,
+      );
+    } catch (e) {
+      appLogger.d('CloudUserDataBridge hide-continue sync skipped: $e');
+    }
   }
 
   // ─── Collections and playlists ─────────────────────────────────────────
@@ -1675,4 +1755,21 @@ class _NoLiveTv implements LiveTvSupport {
   @override
   dynamic noSuchMethod(Invocation invocation) =>
       throw UnsupportedError('Live TV is not available in the local library');
+}
+
+/// Callback bridge used by [LocalLibraryClient] to mirror playback progress and
+/// favorites upstream to a `media_library` v1 server by `work_key`.
+abstract class LocalCloudUserDataBridge {
+  Future<void> pushProgress({
+    required String workKey,
+    int seasonNumber = 0,
+    int episodeNumber = 0,
+    required int positionMs,
+    int? durationMs,
+    bool? watched,
+  });
+
+  Future<void> pushFavorite({required String workKey, required bool isFavorite});
+
+  Future<void> pushHideContinue({required String workKey, int seasonNumber = 0, int episodeNumber = 0});
 }

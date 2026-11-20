@@ -77,6 +77,7 @@ class ServerIdentifyResult {
     required this.source,
     required this.bridgedFrom,
     required this.impliedSeason,
+    this.workKey,
     this.work,
   });
 
@@ -85,6 +86,7 @@ class ServerIdentifyResult {
   final String source;
   final String bridgedFrom;
   final int impliedSeason;
+  final String? workKey;
   final ScrapedTitle? work;
 }
 
@@ -133,6 +135,8 @@ class ServerMetadataProvider implements MetadataProvider {
   final HttpClient _client;
   final bool _ownsClient;
   final void Function(String imageBase)? onImageBaseDiscovered;
+
+  bool get _useAuthenticatedEndpoints => (accessToken?.trim().isNotEmpty ?? false);
 
   static Future<ServerMetadataConfig> fetchConfig({
     required String serverUrl,
@@ -254,7 +258,7 @@ class ServerMetadataProvider implements MetadataProvider {
     final prov = (provider != null && provider.isNotEmpty) ? provider : source;
     final decoded = await _requestJson(
       'GET',
-      '/api/v1/public/metadata/search',
+      _useAuthenticatedEndpoints ? '/api/v1/metadata/search' : '/api/v1/public/metadata/search',
       query: {
         'provider': prov,
         'kind': kind,
@@ -313,7 +317,7 @@ class ServerMetadataProvider implements MetadataProvider {
   }) async {
     final decoded = await _requestJson(
       'POST',
-      '/api/v1/public/metadata/identify',
+      _useAuthenticatedEndpoints ? '/api/v1/metadata/identify' : '/api/v1/public/metadata/identify',
       body: {
         'title': title,
         'year': ?year,
@@ -338,6 +342,7 @@ class ServerMetadataProvider implements MetadataProvider {
       source: decoded.str('source') ?? '',
       bridgedFrom: decoded.str('bridged_from') ?? '',
       impliedSeason: decoded.integer('implied_season') ?? 0,
+      workKey: decoded.str('work_key'),
       work: workMap == null
           ? null
           : workFromJson(
@@ -356,9 +361,10 @@ class ServerMetadataProvider implements MetadataProvider {
     bool refresh = false,
   }) async {
     final effectiveProvider = (provider.isEmpty || provider == 'all') ? 'tmdb' : provider;
+    final workPrefix = _useAuthenticatedEndpoints ? '/api/v1/metadata/works' : '/api/v1/public/metadata/work';
     final decoded = await _requestJson(
       'GET',
-      '/api/v1/public/metadata/work/${Uri.encodeComponent(effectiveProvider)}/$kind/${Uri.encodeComponent(id)}',
+      '$workPrefix/${Uri.encodeComponent(effectiveProvider)}/$kind/${Uri.encodeComponent(id)}',
       query: {'lang': language, if (refresh) 'refresh': 'true'},
     );
     if (decoded is! Map || decoded.obj('work') == null) {
@@ -388,9 +394,10 @@ class ServerMetadataProvider implements MetadataProvider {
   }) async {
     final effectiveProvider = (provider.isEmpty || provider == 'all') ? 'tmdb' : provider;
     if (effectiveProvider == 'bangumi' && season != 1) return null;
+    final seasonPrefix = _useAuthenticatedEndpoints ? '/api/v1/metadata/seasons' : '/api/v1/public/metadata/season';
     final decoded = await _requestJson(
       'GET',
-      '/api/v1/public/metadata/season/${Uri.encodeComponent(effectiveProvider)}/${Uri.encodeComponent(id)}/$season',
+      '$seasonPrefix/${Uri.encodeComponent(effectiveProvider)}/${Uri.encodeComponent(id)}/$season',
       query: {'lang': language, if (refresh) 'refresh': 'true'},
     );
     if (decoded is! Map || decoded.obj('season') == null) return null;

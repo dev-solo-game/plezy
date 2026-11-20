@@ -317,4 +317,19 @@ class CloudProjectionSyncClient {
       },
     );
   }
+
+  Future<List<Map<String, dynamic>>> listMatchRules({String? sourceId}) async {
+    final resp = await api.getJson(
+      '/api/v1/match-rules',
+      query: {if (sourceId != null && sourceId.isNotEmpty) 'source_id': sourceId},
+    );
+    return [
+      for (final r in (resp['rules'] as List? ?? const []))
+        if (r is Map) Map<String, dynamic>.from(r),
+    ];
+  }
+
+  Future<void> deleteMatchRule(String ruleId) async {
+    await api.deleteJson('/api/v1/match-rules/${Uri.encodeComponent(ruleId)}');
+  }
 }

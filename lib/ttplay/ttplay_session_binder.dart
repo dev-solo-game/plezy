@@ -4,8 +4,11 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
+import '../library/deterministic_keys.dart';
 import '../library/local_library_client.dart';
 import '../library_cloud/cloud_api_client.dart';
+import '../library_cloud/cloud_mount_mirror.dart';
+import '../library_cloud/cloud_projection_engine.dart';
 import '../library_cloud/projection_sync.dart';
 import '../library_cloud/scan_session_runner.dart';
 import '../library_cloud/source_repository.dart';
@@ -44,6 +47,8 @@ class TtplaySessionBinder extends ChangeNotifier {
   CloudSourceRepository? _cloudSourceRepository;
   CloudScanSessionRunner? _cloudScanRunner;
   CloudProjectionSyncClient? _cloudProjectionSync;
+  CloudMountMirror? _cloudMountMirror;
+  CloudProjectionEngine? _cloudProjectionEngine;
   TtplayServerClient? _primaryClient;
   List<TtplayExternalServerClient> _externalClients = const [];
   List<TtplayExternalServerSummary> _externalSummaries = const [];
@@ -58,6 +63,8 @@ class TtplaySessionBinder extends ChangeNotifier {
   CloudSourceRepository? get cloudSourceRepository => _cloudSourceRepository;
   CloudScanSessionRunner? get cloudScanRunner => _cloudScanRunner;
   CloudProjectionSyncClient? get cloudProjectionSync => _cloudProjectionSync;
+  CloudMountMirror? get cloudMountMirror => _cloudMountMirror;
+  CloudProjectionEngine? get cloudProjectionEngine => _cloudProjectionEngine;
   TtplayServerClient? get primaryClient => _primaryClient;
   List<TtplayExternalServerClient> get externalClients => List.unmodifiable(_externalClients);
   List<TtplayExternalServerSummary> get externalServerSummaries => List.unmodifiable(_externalSummaries);
@@ -196,7 +203,38 @@ class TtplaySessionBinder extends ChangeNotifier {
     }
   }
 
+  /// Triggers a cloud-to-local snapshot or incremental projection sync for the
+  /// active `media_library` v1 session and refreshes [localLibraryClient].
+  Future<CloudSyncResult?> syncCloudProjection({bool full = false}) async {
+    final engine = _cloudProjectionEngine;
+    if (engine == null || _disposed) return null;
+    final res = full ? await engine.syncFullSnapshot() : await engine.syncIncremental();
+    if (!_disposed) {
+      await localLibraryClient.refreshMounts();
+      notifyListeners();
+    }
+    return res;
+  }
+
+  /// Removes all mirrored `cloud:*` mounts and empty projected library items
+  /// while keeping the device's own local-folder mounts intact.
+  Future<void> clearCloudProjectionData() async {
+    final registry = localLibraryClient.mountManager.registry;
+    final mounts = await registry.list();
+    for (final m in mounts) {
+      if (CloudMountMirror.isCloudMountId(m.id)) {
+        await localLibraryClient.mountManager.dropCachedDriver(m.id);
+        await registry.remove(m.id);
+      }
+    }
+    final engine = _cloudProjectionEngine;
+    if (engine != null) {
+      await engine.pruneEmptyProjectedItems();
+    }
+  }
+
   void _bindCloudClients(SelfHostedSession session) {
+    _cloudProjectionEngine?.stopListeningEvents();
     _cloudApiClient?.close();
     final cloudApi = CloudApiClient(
       baseUrl: session.serverUrl,
@@ -213,24 +251,59 @@ class TtplaySessionBinder extends ChangeNotifier {
       }
     }
 
-    _cloudApiClient = cloudApi;
-    _cloudSourceRepository = CloudSourceRepository(
+    final repo = CloudSourceRepository(
       api: cloudApi,
       masterKeyProvider: masterKeyProvider,
       keyEpoch: session.keyEpoch,
     );
+    final syncClient = CloudProjectionSyncClient(cloudApi);
+    final mirror = CloudMountMirror(
+      sourceRepository: repo,
+      mountRegistry: localLibraryClient.mountManager.registry,
+      mountManager: localLibraryClient.mountManager,
+    );
+    final engine = CloudProjectionEngine(
+      db: localLibraryClient.repository.database,
+      syncClient: syncClient,
+      mountMirror: mirror,
+      onLibraryUpdated: () {
+        if (!_disposed) {
+          unawaited(localLibraryClient.refreshMounts());
+          notifyListeners();
+        }
+      },
+    );
+
+    _cloudApiClient = cloudApi;
+    _cloudSourceRepository = repo;
     _cloudScanRunner = CloudScanSessionRunner(api: cloudApi);
-    _cloudProjectionSync = CloudProjectionSyncClient(cloudApi);
+    _cloudProjectionSync = syncClient;
+    _cloudMountMirror = mirror;
+    _cloudProjectionEngine = engine;
+    localLibraryClient.cloudUserDataBridge = _CloudUserDataBridgeImpl(syncClient);
+    if (session.householdId != null && session.householdId!.isNotEmpty) {
+      engine.startListeningEvents();
+    }
   }
 
   void _clearSelfHostedState() {
     final primaryRegistered = _primaryClient != null && serverManager.isSelfHostedServer(_primaryClient!.serverId);
     final staleApi = _apiClient;
+    final hadCloud = _cloudProjectionEngine != null;
+    _cloudProjectionEngine?.stopListeningEvents();
+    localLibraryClient.cloudUserDataBridge = null;
+    if (hadCloud) {
+      unawaited(clearCloudProjectionData().catchError((Object e) {
+        appLogger.d('Ignoring cloud projection cleanup error: $e');
+      }));
+    }
     _cloudApiClient?.close();
     _cloudApiClient = null;
     _cloudSourceRepository = null;
     _cloudScanRunner = null;
     _cloudProjectionSync = null;
+    _cloudMountMirror = null;
+    _cloudProjectionEngine = null;
     _apiClient = null;
     _adminService = null;
     _primaryClient = null;
@@ -269,11 +342,15 @@ class TtplaySessionBinder extends ChangeNotifier {
     if (_disposed) return;
     _disposed = true;
     _multiServerProvider = null;
+    _cloudProjectionEngine?.stopListeningEvents();
+    localLibraryClient.cloudUserDataBridge = null;
     _cloudApiClient?.close();
     _cloudApiClient = null;
     _cloudSourceRepository = null;
     _cloudScanRunner = null;
     _cloudProjectionSync = null;
+    _cloudMountMirror = null;
+    _cloudProjectionEngine = null;
     _apiClient = null;
     _adminService = null;
     _primaryClient = null;
@@ -281,5 +358,44 @@ class TtplaySessionBinder extends ChangeNotifier {
     _externalSummaries = const [];
     _boundSessionKey = null;
     super.dispose();
+  }
+}
+
+class _CloudUserDataBridgeImpl implements LocalCloudUserDataBridge {
+  _CloudUserDataBridgeImpl(this._sync);
+
+  final CloudProjectionSyncClient _sync;
+
+  @override
+  Future<void> pushProgress({
+    required String workKey,
+    int seasonNumber = 0,
+    int episodeNumber = 0,
+    required int positionMs,
+    int? durationMs,
+    bool? watched,
+  }) => _sync.upsertProgress(
+    workKey: workKey,
+    seasonNumber: seasonNumber,
+    episodeNumber: episodeNumber,
+    positionMs: positionMs,
+    durationMs: durationMs,
+    watched: watched,
+  );
+
+  @override
+  Future<void> pushFavorite({required String workKey, required bool isFavorite}) =>
+      isFavorite ? _sync.addFavorite(workKey) : _sync.removeFavorite(workKey);
+
+  @override
+  Future<void> pushHideContinue({required String workKey, int seasonNumber = 0, int episodeNumber = 0}) {
+    final isEpisode = seasonNumber > 0 || episodeNumber > 0;
+    final progressKey = DeterministicKeys.generateProgressKey(
+      workKey: workKey,
+      kind: isEpisode ? 'show' : 'movie',
+      seasonNum: isEpisode ? seasonNumber : -1,
+      episodeNum: isEpisode ? episodeNumber : -1,
+    );
+    return _sync.hideContinueWatching(progressKey);
   }
 }
