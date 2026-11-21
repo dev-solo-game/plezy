@@ -104,6 +104,7 @@ extension _VideoPlayerReloadMethods on VideoPlayerScreenState {
     TranscodeQualityPreset? newPreset,
     int? newAudioStreamId,
     PlaybackSourceSubtitleChoice? newSubtitleChoice,
+    bool forceReload = false,
   }) async {
     final currentPlayer = player;
     if (!mounted || currentPlayer == null) return PlaybackSourceChangeOutcome.unavailable;
@@ -128,6 +129,7 @@ extension _VideoPlayerReloadMethods on VideoPlayerScreenState {
         newPreset: newPreset,
         newAudioStreamId: newAudioStreamId,
         newSubtitleChoice: newSubtitleChoice,
+        forceReload: forceReload,
       );
     } finally {
       _transitionGate.release(transitionLease);
@@ -141,6 +143,7 @@ extension _VideoPlayerReloadMethods on VideoPlayerScreenState {
     TranscodeQualityPreset? newPreset,
     int? newAudioStreamId,
     PlaybackSourceSubtitleChoice? newSubtitleChoice,
+    bool forceReload = false,
   }) async {
     bool isCurrentSourceSwitch() =>
         mounted &&
@@ -205,7 +208,11 @@ extension _VideoPlayerReloadMethods on VideoPlayerScreenState {
     final effectivePreset = newPreset ?? _selectedQualityPreset;
     final effectiveAudioStreamId = newAudioStreamId ?? _selectedAudioStreamId;
     final currentSubtitleChoice = _selectedSourceSubtitleChoiceForControls(_sourceSubtitleTracksForControls());
-    final preferredSubtitleTrackForReload = newSubtitleChoice == null
+    final isSubtitleOffOrAbsent =
+        currentPlayer.state.track.subtitle == null || currentPlayer.state.track.subtitle?.id == SubtitleTrack.off.id;
+    final preferredSubtitleTrackForReload = forceReload && newSubtitleChoice == null && isSubtitleOffOrAbsent
+        ? null
+        : newSubtitleChoice == null
         ? SubtitlePreference.trackOrNull(_playbackSession?.subtitleSelection.primaryTrack)
         : newSubtitleChoice.isOff
         ? const SubtitlePreference.off()
@@ -222,7 +229,7 @@ extension _VideoPlayerReloadMethods on VideoPlayerScreenState {
     final isPresetChange = effectivePreset != _selectedQualityPreset;
     final isAudioChange = effectiveAudioStreamId != _selectedAudioStreamId;
     final isSubtitleChange = newSubtitleChoice != null && newSubtitleChoice != currentSubtitleChoice;
-    if (!isVersionChange && !isPresetChange && !isAudioChange && !isSubtitleChange) {
+    if (!forceReload && !isVersionChange && !isPresetChange && !isAudioChange && !isSubtitleChange) {
       rememberSourceAudioPreference();
       rememberSourceSubtitlePreference();
       return PlaybackSourceChangeOutcome.unchanged;

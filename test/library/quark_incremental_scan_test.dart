@@ -292,9 +292,10 @@ void main() {
     );
   });
 
-  test('subtitle-only uploads are found on detail and direct playback, with a cached fallback', () async {
+  test('subtitle-only uploads are found via refreshDirectorySubtitles without listing directories on playback', () async {
     seasonFiles.add(_file('sub-en', 'Old Movie (2022).en.srt', baseline));
     await scanner.scan(mount, driver);
+    folderReads.clear();
     final repository = LibraryRepository(db);
     final mounts = _MountManager(MountRegistry(db), driver);
     addTearDown(mounts.dispose);
@@ -304,22 +305,19 @@ void main() {
     final options = PlaybackInitializationOptions(metadata: media, selectedMediaIndex: 0);
     seasonFiles.add(_file('sub-zh', 'Old Movie (2022).chs.ass', next));
 
-    final fromDetail = client();
-    await fromDetail.prefetchSubtitles(media.id);
-    folderReads.clear();
-    final detailPlayback = await fromDetail.getPlaybackInitialization(options);
-    expect(detailPlayback.subtitleSidecars.map((sidecar) => sidecar.track.language), ['en', 'zh-Hans']);
+    final initialPlayback = await client().getPlaybackInitialization(options);
+    expect(initialPlayback.subtitleSidecars.map((sidecar) => sidecar.track.language), ['en']);
     expect(folderReads, isEmpty);
     expect(await repository.subtitlesOf(indexedVideo.id), hasLength(1));
 
-    final directPlayback = await client().getPlaybackInitialization(options);
-    expect(directPlayback.subtitleSidecars, hasLength(2));
+    final added = await client().refreshDirectorySubtitles(media.id);
+    expect(added, 1);
     expect(folderReads, ['season']);
 
-    failFolderReads = true;
-    final fallback = await client().getPlaybackInitialization(options);
-    expect(fallback.videoUrl, isNotNull);
-    expect(fallback.subtitleSidecars.single.track.language, 'en');
+    final reloadedPlayback = await client().getPlaybackInitialization(options);
+    expect(reloadedPlayback.subtitleSidecars.map((sidecar) => sidecar.track.language), unorderedEquals(['en', 'zh-Hans']));
+    expect(folderReads, ['season']);
+    expect(await repository.subtitlesOf(indexedVideo.id), hasLength(2));
   });
 
   test('an existing Web mount can establish a baseline and update through the service', () async {

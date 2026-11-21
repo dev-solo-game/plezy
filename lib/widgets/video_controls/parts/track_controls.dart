@@ -226,7 +226,40 @@ extension _PlexVideoControlsTrackMethods on _PlexVideoControlsState {
       // for Jellyfin items. The check uses the registered client type for
       // this metadata's serverId.
       subtitleSearchSupported: _isPlexBackedMetadata(),
+      onRefreshDirectorySubtitles: _buildRefreshDirectorySubtitlesCallback(),
     );
+  }
+
+  LocalLibraryClient? _resolveLocalLibraryClient() {
+    try {
+      final serverId = widget.metadata.serverId;
+      if (serverId == null || serverId.isEmpty) return null;
+      final manager = context.read<MultiServerProvider>().serverManager;
+      final client = manager.getClient(ServerId(serverId));
+      return client is LocalLibraryClient ? client : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<int> Function()? _buildRefreshDirectorySubtitlesCallback() {
+    if (widget.isLive || widget.isOfflinePlayback) return null;
+    final localClient = _resolveLocalLibraryClient();
+    if (localClient == null) return null;
+    final mediaSourceId =
+        (widget.selectedMediaIndex >= 0 && widget.selectedMediaIndex < widget.availableVersions.length)
+        ? widget.availableVersions[widget.selectedMediaIndex].id
+        : null;
+    return () async {
+      final added = await localClient.refreshDirectorySubtitles(
+        widget.metadata.id,
+        mediaSourceId: mediaSourceId,
+      );
+      if (added > 0) {
+        await widget.onPlaybackSourceChanged?.call(forceReload: true);
+      }
+      return added;
+    };
   }
 
   /// True when the active server supports external subtitle search (Plex

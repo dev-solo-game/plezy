@@ -6,6 +6,8 @@ import '../../../mpv/mpv.dart';
 import '../../../services/playback_subtitle_resolver.dart';
 import '../../../services/track_selection_service.dart';
 import '../../../i18n/strings.g.dart';
+import '../../../utils/error_message_utils.dart';
+import '../../../utils/snackbar_helper.dart';
 import '../../../utils/track_label_builder.dart';
 import '../../../widgets/app_icon.dart';
 import '../../../widgets/focusable_list_tile.dart';
@@ -228,7 +230,7 @@ class _SourceSubtitleColumn extends StatelessWidget {
       headerLabel: showHeader ? t.videoControls.subtitlesLabel : null,
       itemCount: tracks.length + 1,
       initialIndex: selectedIndex,
-      footer: _buildSubtitleSearchFooter(context, trackControlsState),
+      footer: _buildSubtitleFooter(context, trackControlsState),
       itemBuilder: (context, index, scope) {
         if (index == 0) {
           return TrackSelectionHelper.buildOffTile(
@@ -379,7 +381,7 @@ class _SubtitleColumn extends StatelessWidget {
       headerLabel: showHeader ? t.videoControls.subtitlesLabel : null,
       itemCount: itemCount,
       initialIndex: selectedIndex,
-      footer: _buildSubtitleSearchFooter(context, trackControlsState),
+      footer: _buildSubtitleFooter(context, trackControlsState),
       itemBuilder: (context, index, scope) {
         if (index == 0) {
           return TrackSelectionHelper.buildOffTile(
@@ -490,24 +492,87 @@ class _SubtitleColumn extends StatelessWidget {
   }
 }
 
-List<Widget> _buildSubtitleSearchFooter(BuildContext context, TrackControlsState state) {
-  if (!state.canSearchSubtitles) return const [];
+List<Widget> _buildSubtitleFooter(BuildContext context, TrackControlsState state) {
+  final refreshCallback = state.onRefreshDirectorySubtitles;
+  if (refreshCallback == null && !state.canSearchSubtitles) return const [];
 
   return [
-    Divider(height: 1, color: Theme.of(context).dividerColor),
-    FocusableListTile(
-      leading: const AppIcon(Symbols.search_rounded),
-      title: Text(t.videoControls.searchSubtitles),
-      onTap: () {
-        OverlaySheetController.of(context).push(
-          builder: (_) => SubtitleSearchSheet(
-            ratingKey: state.ratingKey,
-            serverId: state.serverId!,
-            mediaTitle: state.mediaTitle,
-            onSubtitleDownloaded: state.onSubtitleDownloaded,
-          ),
-        );
-      },
-    ),
+    if (refreshCallback != null) ...[
+      Divider(height: 1, color: Theme.of(context).dividerColor),
+      _RefreshDirectorySubtitlesTile(onRefresh: refreshCallback),
+    ],
+    if (state.canSearchSubtitles) ...[
+      Divider(height: 1, color: Theme.of(context).dividerColor),
+      FocusableListTile(
+        leading: const AppIcon(Symbols.search_rounded),
+        title: Text(t.videoControls.searchSubtitles),
+        onTap: () {
+          OverlaySheetController.of(context).push(
+            builder: (_) => SubtitleSearchSheet(
+              ratingKey: state.ratingKey,
+              serverId: state.serverId!,
+              mediaTitle: state.mediaTitle,
+              onSubtitleDownloaded: state.onSubtitleDownloaded,
+            ),
+          );
+        },
+      ),
+    ],
   ];
+}
+
+class _RefreshDirectorySubtitlesTile extends StatefulWidget {
+  final Future<int> Function() onRefresh;
+
+  const _RefreshDirectorySubtitlesTile({required this.onRefresh});
+
+  @override
+  State<_RefreshDirectorySubtitlesTile> createState() => _RefreshDirectorySubtitlesTileState();
+}
+
+class _RefreshDirectorySubtitlesTileState extends State<_RefreshDirectorySubtitlesTile> {
+  bool _loading = false;
+
+  Future<void> _handleTap() async {
+    if (_loading) return;
+    setState(() => _loading = true);
+    try {
+      final added = await widget.onRefresh();
+      if (!mounted) return;
+      final isZh = Localizations.localeOf(context).languageCode == 'zh';
+      if (added > 0) {
+        showAppSnackBar(
+          context,
+          isZh ? '发现并加载了 $added 个外挂字幕' : 'Found and loaded $added folder subtitle(s)',
+        );
+        OverlaySheetController.of(context).close();
+      } else {
+        showAppSnackBar(
+          context,
+          isZh ? '同目录未发现新的外挂字幕' : 'No new subtitles found in folder',
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        showErrorSnackBar(context, localizedErrorReason(e));
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _loading = false);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isZh = Localizations.localeOf(context).languageCode == 'zh';
+    return FocusableListTile(
+      leading: _loading
+          ? const SizedBox.square(dimension: 20, child: CircularProgressIndicator(strokeWidth: 2))
+          : const AppIcon(Symbols.refresh_rounded),
+      title: Text(isZh ? '扫描同目录字幕' : 'Scan folder subtitles'),
+      enabled: !_loading,
+      onTap: _handleTap,
+    );
+  }
 }

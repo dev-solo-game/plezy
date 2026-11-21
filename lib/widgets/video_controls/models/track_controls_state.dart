@@ -87,6 +87,7 @@ class TrackControlsState {
   final MediaItem? metadata;
   final Future<SubtitleDownloadApplyOutcome> Function({required String serverId, required String ratingKey})?
   onSubtitleDownloaded;
+  final Future<int> Function()? onRefreshDirectorySubtitles;
 
   /// Whether OpenSubtitles search is reachable for this server. The Plex
   /// server proxies the OpenSubtitles plugin; Jellyfin doesn't expose an
@@ -152,6 +153,7 @@ class TrackControlsState {
     this.ratingKey = '',
     this.mediaTitle,
     this.onSubtitleDownloaded,
+    this.onRefreshDirectorySubtitles,
     this.subtitleSearchSupported = true,
   });
 
@@ -208,6 +210,7 @@ class TrackControlsState {
     return canUseSourceSubtitles ||
         directPlaySourceSidecars.isNotEmpty ||
         TrackFilterHelper.hasTracks<SubtitleTrack>(playerSubtitles) ||
-        canSearchSubtitles;
+        canSearchSubtitles ||
+        onRefreshDirectorySubtitles != null;
   }
 }

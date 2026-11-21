@@ -37,6 +37,7 @@ import '../../focus/focus_navigation_intent.dart';
 import '../../focus/transport_keys.dart';
 
 import '../../database/app_database.dart';
+import '../../library/local_library_client.dart';
 import '../../media/media_backend.dart';
 import '../../media/media_item.dart';
 import '../../media/stepped_seek.dart';
@@ -556,6 +557,7 @@ typedef PlaybackSourceChangeCallback =
       TranscodeQualityPreset? newPreset,
       int? newAudioStreamId,
       PlaybackSourceSubtitleChoice? newSubtitleChoice,
+      bool forceReload,
     });
 
 enum PlaybackSourceChangeOutcome { applied, unchanged, busy, unavailable, superseded, failed }

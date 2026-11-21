@@ -1333,24 +1333,16 @@ class LocalLibraryClient implements MediaServerClient, StreamQualityClient {
 
   Future<List<SubtitleTrack>> _externalSubtitles(LibraryFileRow video) async {
     final mount = await _mountOf(video);
-    final entries = await _subtitleDirectory(mount, video);
     final tracks = <SubtitleTrack>[];
-    final subtitles =
-        entries != null &&
-            entries.any((entry) => !entry.isDirectory && entry.path == video.path && entry.id == video.remoteId)
-        ? [
-            for (final match in LibraryScanner.matchSubtitles(entries))
-              if (match.owner.path == video.path) (entry: match.subtitle, language: match.language),
-          ]
-        : [for (final row in await _repo.subtitlesOf(video.id)) (entry: _entryOf(row), language: row.language)];
-    for (final (:entry, :language) in subtitles) {
+    for (final row in await _repo.subtitlesOf(video.id)) {
+      final entry = _entryOf(row);
       try {
         final url = await _mountManager.streamUrl(mount, entry);
         tracks.add(
           SubtitleTrack.uri(
             url.toString(),
-            title: language ?? entry.name,
-            language: language,
+            title: row.language ?? entry.name,
+            language: row.language,
             codec: StoragePath.extension(entry.name),
           ),
         );
@@ -1361,56 +1353,39 @@ class LocalLibraryClient implements MediaServerClient, StreamQualityClient {
     return tracks;
   }
 
-  static const _subtitleLookupTimeout = Duration(seconds: 3);
-  static const _subtitleCacheLifetime = Duration(minutes: 2);
-  final _subtitleDirectories =
-      <(StorageDriver, String), ({DateTime requestedAt, Future<List<StorageEntry>?> entries})>{};
-  final _subtitleLookups = <(StorageDriver, String), Future<List<StorageEntry>?>>{};
+  static const Duration _subtitleRefreshTimeout = Duration(seconds: 8);
 
-  /// Starts a fresh lookup each time the detail page opens. Playback shares
-  /// the result or queries the actual version's directory on demand.
-  Future<void> prefetchSubtitles(String itemId) async {
-    try {
-      final video = (await _versions(itemId)).firstOrNull;
-      if (video != null) await _subtitleDirectory(await _mountOf(video), video, refresh: true);
-    } catch (error) {
-      appLogger.d('Could not prefetch media library subtitles', error: error);
+  /// Lists the parent directory of [itemId]'s active video version once on
+  /// explicit user demand, matches co-located external subtitles, persists them
+  /// into `library_files`, and returns how many new subtitle files were added.
+  Future<int> refreshDirectorySubtitles(String itemId, {String? mediaSourceId}) async {
+    final picked = _pickVersion(await _versions(itemId), 0, mediaSourceId);
+    if (picked == null) return 0;
+    final mount = await _mountOf(picked.file);
+    final driver = _mountManager.driverFor(mount);
+    final directory = StoragePath.parent(picked.file.path);
+    final entries = await driver.list(directory).timeout(_subtitleRefreshTimeout);
+    final existing = await _repo.subtitlesOf(picked.file.id);
+    final existingPaths = {for (final row in existing) row.path};
+    var added = 0;
+    for (final match in LibraryScanner.matchSubtitles(entries)) {
+      if (match.owner.path != picked.file.path) continue;
+      if (!existingPaths.contains(match.subtitle.path)) {
+        added++;
+      }
+      await _repo.upsertFile(
+        mountId: mount.id,
+        path: match.subtitle.path,
+        role: lib.LibraryFileRoles.subtitle,
+        scanId: picked.file.seenInScan,
+        remoteId: match.subtitle.id,
+        size: match.subtitle.size,
+        modifiedAt: match.subtitle.modifiedAt?.millisecondsSinceEpoch,
+        ownerFileId: picked.file.id,
+        language: match.language,
+      );
     }
-  }
-
-  Future<List<StorageEntry>?> _subtitleDirectory(StorageMount mount, LibraryFileRow video, {bool refresh = false}) {
-    final StorageDriver driver;
-    try {
-      driver = _mountManager.driverFor(mount);
-    } catch (error) {
-      appLogger.d('Could not open storage driver for subtitles', error: error);
-      return Future.value(null);
-    }
-    final directory = StoragePath.parent(video.path);
-    final key = (driver, directory);
-    final active = _subtitleLookups[key];
-    if (active != null) return active;
-    final now = DateTime.now();
-    _subtitleDirectories.removeWhere((_, value) => now.difference(value.requestedAt) >= _subtitleCacheLifetime);
-    final cached = _subtitleDirectories[key];
-    if (!refresh && cached != null) return cached.entries;
-
-    final lookup = Future.sync(() => driver.list(directory))
-        .timeout(_subtitleLookupTimeout)
-        .then<List<StorageEntry>?>(
-          (entries) => entries,
-          onError: (Object error) {
-            appLogger.d('Could not list the media library subtitle directory', error: error);
-            return null;
-          },
-        )
-        .whenComplete(() {
-          _subtitleLookups.remove(key);
-        });
-    _subtitleLookups[key] = lookup;
-    if (_subtitleDirectories.length >= 16) _subtitleDirectories.remove(_subtitleDirectories.keys.first);
-    _subtitleDirectories[key] = (requestedAt: now, entries: lookup);
-    return lookup;
+    return added;
   }
 
   @override
