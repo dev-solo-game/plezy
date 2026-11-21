@@ -27,15 +27,19 @@ func (s *Server) handleGetLibrarySnapshot(w http.ResponseWriter, r *http.Request
 		}
 	}
 
+	incFilesRaw := strings.ToLower(strings.TrimSpace(q.Get("include_files")))
+	includeFiles := incFilesRaw == "1" || incFilesRaw == "true"
+
 	res, err := s.Feed.GetSnapshot(p, feed.SnapshotRequest{
-		Kind:        q.Get("kind"),
-		LibraryType: firstNonEmpty(q.Get("library_type"), q.Get("shelf")),
-		SourceID:    q.Get("source_id"),
-		ParentID:    parentID,
-		Query:       q.Get("q"),
-		Sort:        q.Get("sort"),
-		Page:        page,
-		PageSize:    pageSize,
+		Kind:         q.Get("kind"),
+		LibraryType:  firstNonEmpty(q.Get("library_type"), q.Get("shelf")),
+		SourceID:     q.Get("source_id"),
+		ParentID:     parentID,
+		Query:        q.Get("q"),
+		Sort:         q.Get("sort"),
+		Page:         page,
+		PageSize:     pageSize,
+		IncludeFiles: includeFiles,
 	})
 	if err != nil {
 		writeMappedError(w, r, err)
@@ -65,8 +69,10 @@ func (s *Server) handleGetLibraryChanges(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	limit, _ := strconv.Atoi(q.Get("limit"))
+	incFilesRaw := strings.ToLower(strings.TrimSpace(q.Get("include_files")))
+	includeFiles := incFilesRaw == "1" || incFilesRaw == "true"
 
-	res, err := s.Feed.GetChanges(p, sinceSeq, limit)
+	res, err := s.Feed.GetChangesWithOpts(p, sinceSeq, limit, includeFiles)
 	if err != nil {
 		writeMappedError(w, r, err)
 		return
@@ -94,6 +100,28 @@ func (s *Server) handleGetItemDetail(w http.ResponseWriter, r *http.Request) {
 	}
 	p := UserPrincipalFromContext(r.Context())
 	det, err := s.Feed.GetItemDetail(p, itemID)
+	if err != nil {
+		writeMappedError(w, r, err)
+		return
+	}
+	writeJSON(w, r, http.StatusOK, map[string]any{
+		"code": 0,
+		"item": det,
+	})
+}
+
+func (s *Server) handleGetItemDetailByWorkKey(w http.ResponseWriter, r *http.Request) {
+	if s.Feed == nil {
+		writeErrCode(w, r, http.StatusServiceUnavailable, "unavailable", "feed service unavailable")
+		return
+	}
+	wk := strings.TrimSpace(r.URL.Query().Get("work_key"))
+	if wk == "" {
+		writeErrCode(w, r, http.StatusBadRequest, "invalid_input", "work_key is required")
+		return
+	}
+	p := UserPrincipalFromContext(r.Context())
+	det, err := s.Feed.GetItemDetailByWorkKey(p, wk)
 	if err != nil {
 		writeMappedError(w, r, err)
 		return

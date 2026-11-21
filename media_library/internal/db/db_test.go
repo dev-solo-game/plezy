@@ -37,8 +37,8 @@ func TestMigrationsIdempotencyAndAllTables(t *testing.T) {
 		t.Fatalf("expected library.db file: %v", err)
 	}
 	ver, err := s1.SchemaVersion()
-	if err != nil || ver != 2 {
-		t.Fatalf("schema version = %d, err = %v, want 2", ver, err)
+	if err != nil || ver != 3 {
+		t.Fatalf("schema version = %d, err = %v, want 3", ver, err)
 	}
 	_ = s1.Close()
 
@@ -49,8 +49,8 @@ func TestMigrationsIdempotencyAndAllTables(t *testing.T) {
 	}
 	defer s2.Close()
 	ver2, err := s2.SchemaVersion()
-	if err != nil || ver2 != 2 {
-		t.Fatalf("schema version on reopen = %d, err = %v, want 2", ver2, err)
+	if err != nil || ver2 != 3 {
+		t.Fatalf("schema version on reopen = %d, err = %v, want 3", ver2, err)
 	}
 
 	expectedTables := []string{
@@ -255,5 +255,49 @@ func TestAppendChangeTxMonotonicAndTenantIsolated(t *testing.T) {
 	_ = s.ReadDB().QueryRow(`SELECT COUNT(*) FROM change_log WHERE household_id = 'hh-b'`).Scan(&cntB)
 	if cntA != 2 || cntB != 1 {
 		t.Fatalf("unexpected change_log counts: hh-a=%d hh-b=%d", cntA, cntB)
+	}
+}
+
+func TestMigration3RecomputesSourceAddedAtToMax(t *testing.T) {
+	s := openTestStore(t)
+	now := s.NowMs()
+
+	_, _ = s.DB().Exec(`INSERT INTO accounts(id, username, password_salt, password_hash, created_at, updated_at) VALUES ('acc-m3', 'u-m3', 's', 'h', ?, ?)`, now, now)
+	_, _ = s.DB().Exec(`INSERT INTO households(id, owner_account_id, name, created_at, updated_at) VALUES ('hh-m3', 'acc-m3', 'Home', ?, ?)`, now, now)
+	_, _ = s.DB().Exec(`INSERT INTO members(id, household_id, nickname, role, permissions, created_at, updated_at) VALUES ('mem-m3', 'hh-m3', 'Owner', 'owner', 63, ?, ?)`, now, now)
+	_, _ = s.DB().Exec(`INSERT INTO sources(id, household_id, kind, name, identity_key, status, created_by_member, created_by_device, created_at, updated_at) VALUES ('src-m3', 'hh-m3', 'quark', 'Quark', 'qk-m3', 'active', 'mem-m3', 'dev-m3', ?, ?)`, now, now)
+
+	res, err := s.DB().Exec(`
+		INSERT INTO media_items(household_id, work_key, kind, library_type, title, sort_title, added_at, source_added_at, updated_at)
+		VALUES ('hh-m3', 'tmdb:show:9001', 'show', 'show', 'Test', 'test', ?, 1000000, ?)`, now, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	showID, _ := res.LastInsertId()
+	epRes, _ := s.DB().Exec(`
+		INSERT INTO media_items(household_id, kind, library_type, parent_id, show_id, title, sort_title, season_number, episode_number, added_at, updated_at)
+		VALUES ('hh-m3', 'episode', 'show', ?, ?, 'E1', 'e1', 1, 1, ?, ?)`, showID, showID, now, now)
+	epID, _ := epRes.LastInsertId()
+	_, _ = s.DB().Exec(`
+		INSERT INTO media_files(household_id, source_id, path, role, item_id, mtime_s, state, match_state, added_at, updated_at, last_seen_at)
+		VALUES ('hh-m3', 'src-m3', '/TV/Test/E1.mkv', 'video', ?, 1000, 'active', 'matched', ?, ?, ?)`, epID, now, now, now)
+	_, _ = s.DB().Exec(`
+		INSERT INTO media_files(household_id, source_id, path, role, item_id, mtime_s, state, match_state, added_at, updated_at, last_seen_at)
+		VALUES ('hh-m3', 'src-m3', '/TV/Test/E2.mkv', 'video', ?, 4500, 'active', 'matched', ?, ?, ?)`, epID, now, now, now)
+
+	// Roll back migration 3 marker and re-run migrations to test upgrade path.
+	if _, err := s.DB().Exec(`DELETE FROM schema_migrations WHERE version = 3`); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.runMigrations(); err != nil {
+		t.Fatalf("rerun migration 3 failed: %v", err)
+	}
+
+	var migrated int64
+	if err := s.ReadDB().QueryRow(`SELECT source_added_at FROM media_items WHERE id = ?`, showID).Scan(&migrated); err != nil {
+		t.Fatal(err)
+	}
+	if migrated != 4500*1000 {
+		t.Fatalf("expected migration 3 to set source_added_at=%d, got %d", 4500*1000, migrated)
 	}
 }

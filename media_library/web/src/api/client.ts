@@ -152,7 +152,7 @@ export const api = {
 
   listInvites: () => request<{ invites: InviteCode[] }>('/api/admin/invites'),
 
-  createInvite: (payload: { max_uses?: number; expires_in_hours?: number; note?: string }) =>
+  createInvite: (payload: { max_uses?: number; expires_at?: number; note?: string }) =>
     request<{ invite: InviteCode }>('/api/admin/invites', {
       method: 'POST',
       body: JSON.stringify(payload),

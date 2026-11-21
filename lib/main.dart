@@ -1654,8 +1654,13 @@ class _MainAppState extends State<MainApp> with WidgetsBindingObserver {
       repository: _libraryRepository,
       settings: _librarySettingsStore,
       mounts: _mountManager,
-      resolveMetadataEndpoint: () async =>
-          (serverUrl: ServerMetadataProvider.defaultOfficialMetadataUrl, accessToken: null, isOfficial: true),
+      resolveMetadataEndpoint: () async {
+        final session = _appSessionController.selfHostedSession;
+        if (_appSessionController.isSelfHosted && session != null && session.serverUrl.trim().isNotEmpty) {
+          return (serverUrl: session.serverUrl, accessToken: session.accessToken, isOfficial: false);
+        }
+        return (serverUrl: ServerMetadataProvider.defaultOfficialMetadataUrl, accessToken: null, isOfficial: true);
+      },
       onImageBaseUpdated: (imageBase) {
         final trimmed = imageBase.trim();
         if (trimmed.isNotEmpty) {
@@ -1701,6 +1706,7 @@ class _MainAppState extends State<MainApp> with WidgetsBindingObserver {
       sessionController: _appSessionController,
       serverManager: _serverManager,
       localLibraryClient: _localLibraryClient,
+      onLocalLibraryMutated: _libraryScanService.notifyLibraryChanged,
     );
     if (bootstrap?.loginMode != null) {
       unawaited(_appSessionController.initialize());

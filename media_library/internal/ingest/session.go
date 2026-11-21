@@ -142,7 +142,7 @@ func (s *Service) loadScannableSource(q queryRunner, p *account.Principal, sourc
 			return nil, ErrForbidden
 		}
 	}
-	if src.Kind != db.SourceKindQuark && src.Kind != db.SourceKindWebDAV {
+	if src.Kind != db.SourceKindQuark && src.Kind != db.SourceKindWebDAV && src.Kind != db.SourceKindSMB {
 		return nil, fmt.Errorf("%w: %s sources cannot be scanned", ErrInvalidInput, src.Kind)
 	}
 	return &src, nil

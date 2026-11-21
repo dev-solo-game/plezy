@@ -2644,7 +2644,7 @@ class _Translations$storage$zh_Hant extends Translations$storage$zh {
 	@override String get tmdbImageBase => 'TMDB 圖片位址';
 	@override String get manualMatch => '手動匹配';
 	@override String get noMatchResults => '沒有結果';
-	@override String get mediaSources => '媒體來源';
+	@override String get mediaSources => '本地掛載';
 	@override String get scraperSettingsDescription => '官方中繼資料服務與刮削語言偏好';
 	@override String get addScanFolder => '新增目錄';
 	@override String get allFolders => '全部目錄（掃描整盤）';
@@ -6177,7 +6177,7 @@ extension on TranslationsZhHant {
 			'storage.tmdbImageBase' => 'TMDB 圖片位址',
 			'storage.manualMatch' => '手動匹配',
 			'storage.noMatchResults' => '沒有結果',
-			'storage.mediaSources' => '媒體來源',
+			'storage.mediaSources' => '本地掛載',
 			'storage.scraperSettingsDescription' => '官方中繼資料服務與刮削語言偏好',
 			'storage.addScanFolder' => '新增目錄',
 			'storage.allFolders' => '全部目錄（掃描整盤）',

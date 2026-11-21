@@ -134,6 +134,9 @@ func (s *Server) handleCancelScanSession(w http.ResponseWriter, r *http.Request)
 		writeMappedError(w, r, err)
 		return
 	}
+	if s.Idf != nil {
+		s.Idf.Wake()
+	}
 	writeJSON(w, r, http.StatusOK, map[string]any{
 		"code":    0,
 		"session": sess,

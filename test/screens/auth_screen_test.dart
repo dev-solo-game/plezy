@@ -133,11 +133,13 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byType(SelfHostedLoginScreen), findsOneWidget);
+    expect(find.text(SelfHostedLoginScreen.defaultServerUrl), findsOneWidget);
+    expect(SelfHostedLoginScreen.defaultServerUrl, 'https://play.ttai.net');
     expect(find.text(t.session.serverUrlLabel), findsOneWidget);
     expect(find.text(t.session.testServer), findsOneWidget);
     expect(find.text(t.session.usernameLabel), findsOneWidget);
     expect(find.text(t.session.passwordLabel), findsOneWidget);
-    expect(find.text(t.session.signInButton), findsOneWidget);
+    expect(find.widgetWithText(FilledButton, t.session.signInButton), findsOneWidget);
   });
 
   test('selecting Offline mode persists AppLoginMode.offline without requiring a server', () async {

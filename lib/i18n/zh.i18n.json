@@ -2780,7 +2780,7 @@
     "tmdbImageBase": "TMDB 图片地址",
     "manualMatch": "手动匹配",
     "noMatchResults": "没有结果",
-    "mediaSources": "媒体来源",
+    "mediaSources": "本地挂载",
     "scraperSettingsDescription": "官方元数据服务与刮削语言偏好",
     "metadataServiceTitle": "官方元数据服务",
     "metadataServiceOfficial": "当前使用 TTPlay 官方通用元数据服务",
@@ -3006,7 +3006,7 @@
     "errServer": "服务器返回异常：${error}"
   },
   "serverAdmin": {
-    "sectionTitle": "自建服务器管理",
+    "sectionTitle": "云端挂载",
     "mountsTitle": "服务端挂载源",
     "mountsSubtitle": "添加、编辑、扫描与移除服务器存储挂载",
     "scraperTitle": "服务端刮削与元数据",

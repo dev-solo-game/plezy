@@ -23,7 +23,7 @@ const (
 	DefaultWatchedThreshold           = 0.9
 	DefaultAccentTheme                = "glacier"
 	DefaultRegistrationMode           = RegistrationModeOpen
-	DefaultSourceAddPolicyJSON        = `{"desktop":["quark","emby","jellyfin"],"phone":["webdav","emby","jellyfin"],"tablet":["webdav","emby","jellyfin"],"tv":[],"web":[]}`
+	DefaultSourceAddPolicyJSON        = `{"desktop":["quark","webdav","smb","emby","jellyfin"],"phone":["quark","webdav","smb","emby","jellyfin"],"tablet":["quark","webdav","smb","emby","jellyfin"],"tv":[],"web":[]}`
 	DefaultFullScanAllowedDevicesJSON = `["desktop","phone","tablet"]`
 	DefaultMinProtocolVersion         = 1
 )

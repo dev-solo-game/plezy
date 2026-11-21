@@ -404,8 +404,30 @@ func TestPartialStaleBulkDeleteProtectionDeviceRulesQuotasAndSoftDelete(t *testi
 	if _, err := env.ingSvc.SubmitBatch(phone, s1.ID, ingest.SubmitBatchRequest{BatchNo: 1, Upserts: items}, "10.2.0.1"); err != nil {
 		t.Fatal(err)
 	}
+	// Seed another source's future identify_queue row to confirm expedition is source-scoped.
+	otherNotBefore := env.nowFn().UnixMilli() + 60000
+	if _, err := env.store.DB().Exec(`
+		INSERT INTO identify_queue(household_id, group_key, reason, status, not_before, attempts, last_error_code, created_at, updated_at)
+		VALUES (?, 'other-source:file:/Other/foo.mkv', 'new', 'queued', ?, 0, '', ?, ?)`,
+		phone.HouseholdID, otherNotBefore, env.nowFn().UnixMilli(), env.nowFn().UnixMilli(),
+	); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := env.ingSvc.CompleteSession(phone, s1.ID, ingest.CompleteSessionRequest{Complete: true}, "10.2.0.1"); err != nil {
 		t.Fatal(err)
+	}
+	var maxReadyNB int64
+	if err := env.store.ReadDB().QueryRow(`
+		SELECT COALESCE(MAX(not_before), 0) FROM identify_queue
+		WHERE household_id = ? AND status = 'queued' AND group_key LIKE ?`,
+		phone.HouseholdID, src.ID+":%",
+	).Scan(&maxReadyNB); err != nil || maxReadyNB > env.nowFn().UnixMilli() {
+		t.Fatalf("expected CompleteSession to expedite queued identify tasks <= %d, got %d err=%v", env.nowFn().UnixMilli(), maxReadyNB, err)
+	}
+	var gotOtherNB int64
+	_ = env.store.ReadDB().QueryRow(`SELECT not_before FROM identify_queue WHERE household_id = ? AND group_key = 'other-source:file:/Other/foo.mkv'`, phone.HouseholdID).Scan(&gotOtherNB)
+	if gotOtherNB != otherNotBefore {
+		t.Fatalf("expected other source identify_queue untouched (%d), got %d", otherNotBefore, gotOtherNB)
 	}
 
 	// Complete=false (cancelled) must NOT mark missing even if empty
@@ -453,6 +475,14 @@ func TestPartialStaleBulkDeleteProtectionDeviceRulesQuotasAndSoftDelete(t *testi
 	if _, err := env.ingSvc.CancelSession(phone, s3.ID, "10.2.0.1"); err != nil {
 		t.Fatal(err)
 	}
+	var cancelMaxNB int64
+	if err := env.store.ReadDB().QueryRow(`
+		SELECT COALESCE(MAX(not_before), 0) FROM identify_queue
+		WHERE household_id = ? AND status = 'queued' AND group_key LIKE ?`,
+		phone.HouseholdID, src.ID+":%",
+	).Scan(&cancelMaxNB); err != nil || cancelMaxNB > env.nowFn().UnixMilli() {
+		t.Fatalf("expected CancelSession to expedite queued identify tasks <= %d, got %d err=%v", env.nowFn().UnixMilli(), cancelMaxNB, err)
+	}
 
 	// Confirm pending deletion -> remaining 103 files become missing (items[0] and items[1] stay active)
 	if _, err := env.ingSvc.ConfirmPendingDeletion(phone, compRes.PendingDeletionID, "10.2.0.1"); err != nil {
@@ -492,5 +522,70 @@ func TestPartialStaleBulkDeleteProtectionDeviceRulesQuotasAndSoftDelete(t *testi
 		Upserts: []ingest.BatchFileItem{{Path: "/Bulk/NewAfterDelete.mkv", Size: i64(10), MtimeS: i64(1)}},
 	}, "10.2.0.1"); !errors.Is(err, ingest.ErrSourceDeleted) && !strings.Contains(err.Error(), "deleted") {
 		t.Fatalf("expected ErrSourceDeleted after source deletion, got %v", err)
+	}
+}
+
+func TestExplicitRemovedRecomputesShowSourceAddedAt(t *testing.T) {
+	env := openTestEnv(t)
+	pc := env.registerDevice(t, "rem_owner", db.DeviceClassDesktop, "10.3.0.1")
+	src, err := env.srcSvc.CreateSource(pc, source.CreateSourceRequest{
+		Kind:        db.SourceKindQuark,
+		Name:        "Quark Rem",
+		IdentityKey: "qk_rem",
+		Ciphertext:  "c",
+		Folders:     []source.FolderInput{{Path: "/TV"}},
+	}, "10.3.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s1, _ := env.ingSvc.CreateSession(pc, src.ID, ingest.CreateSessionRequest{Type: ingest.ScanTypeFull}, "10.3.0.1")
+	rec, err := env.ingSvc.SubmitBatch(pc, s1.ID, ingest.SubmitBatchRequest{
+		BatchNo: 1,
+		Upserts: []ingest.BatchFileItem{
+			{Path: "/TV/ShowA/S01E01.mkv", RemoteID: sPtr("rk-e1"), Size: i64(100), MtimeS: i64(1000)},
+			{Path: "/TV/ShowA/S01E02.mkv", RemoteID: sPtr("rk-e2"), Size: i64(100), MtimeS: i64(5000)},
+		},
+	}, "10.3.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = env.ingSvc.CompleteSession(pc, s1.ID, ingest.CompleteSessionRequest{Complete: true}, "10.3.0.1")
+
+	now := env.nowFn().UnixMilli()
+	showRes, err := env.store.DB().Exec(`
+		INSERT INTO media_items(household_id, work_key, kind, library_type, title, sort_title, added_at, source_added_at, updated_at)
+		VALUES (?, 'tmdb:show:777', 'show', 'show', 'ShowA', 'showa', ?, ?, ?)`, pc.HouseholdID, now, 5000*1000, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	showID, _ := showRes.LastInsertId()
+	e1Res, _ := env.store.DB().Exec(`
+		INSERT INTO media_items(household_id, kind, library_type, parent_id, show_id, title, sort_title, season_number, episode_number, added_at, updated_at)
+		VALUES (?, 'episode', 'show', ?, ?, 'E1', 'e1', 1, 1, ?, ?)`, pc.HouseholdID, showID, showID, now, now)
+	e1ItemID, _ := e1Res.LastInsertId()
+	e2Res, _ := env.store.DB().Exec(`
+		INSERT INTO media_items(household_id, kind, library_type, parent_id, show_id, title, sort_title, season_number, episode_number, added_at, updated_at)
+		VALUES (?, 'episode', 'show', ?, ?, 'E2', 'e2', 1, 2, ?, ?)`, pc.HouseholdID, showID, showID, now, now)
+	e2ItemID, _ := e2Res.LastInsertId()
+	_, _ = env.store.DB().Exec(`UPDATE media_files SET item_id = ?, match_state = 'matched' WHERE id = ?`, e1ItemID, rec.FileIDs["/TV/ShowA/S01E01.mkv"])
+	_, _ = env.store.DB().Exec(`UPDATE media_files SET item_id = ?, match_state = 'matched' WHERE id = ?`, e2ItemID, rec.FileIDs["/TV/ShowA/S01E02.mkv"])
+
+	// Explicitly remove newer episode E02 -> show source_added_at must recompute to E01's 1000*1000.
+	env.advance(5 * time.Second)
+	s2, _ := env.ingSvc.CreateSession(pc, src.ID, ingest.CreateSessionRequest{Type: ingest.ScanTypeIncremental}, "10.3.0.1")
+	if _, err := env.ingSvc.SubmitBatch(pc, s2.ID, ingest.SubmitBatchRequest{
+		BatchNo: 1,
+		Removed: []ingest.BatchRemovedItem{{RemoteID: "rk-e2"}},
+	}, "10.3.0.1"); err != nil {
+		t.Fatal(err)
+	}
+
+	var updatedSrcAdded int64
+	if err := env.store.ReadDB().QueryRow(`SELECT source_added_at FROM media_items WHERE id = ?`, showID).Scan(&updatedSrcAdded); err != nil {
+		t.Fatal(err)
+	}
+	if updatedSrcAdded != 1000*1000 {
+		t.Fatalf("expected recomputed source_added_at=%d after removing newest episode, got %d", 1000*1000, updatedSrcAdded)
 	}
 }

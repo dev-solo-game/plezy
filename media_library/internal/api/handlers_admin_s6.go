@@ -447,6 +447,10 @@ func (s *Server) handleWebSPA(w http.ResponseWriter, r *http.Request) {
 	if serveFile(clean, cacheCtrl) {
 		return
 	}
+	if strings.HasPrefix(clean, "assets/") || path.Ext(clean) != "" {
+		http.NotFound(w, r)
+		return
+	}
 	if !serveFile("index.html", "no-cache") {
 		http.NotFound(w, r)
 	}

@@ -309,3 +309,75 @@ func itoa64(v int64) string {
 	}
 	return string(buf[i:])
 }
+
+func TestSourceAddedAtUsesLatestMtimeAndUpdatesLockedShow(t *testing.T) {
+	mockSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/3/search/tv":
+			_, _ = w.Write([]byte(`{"results":[{"id":279155,"name":"谷雨","original_name":"谷雨","first_air_date":"2026-01-01"}]}`))
+		case "/3/tv/279155":
+			_, _ = w.Write([]byte(`{"id":279155,"name":"谷雨","original_name":"谷雨","first_air_date":"2026-01-01"}`))
+		case "/3/tv/279155/season/1":
+			_, _ = w.Write([]byte(`{"season_number":1,"name":"第 1 季","episodes":[{"episode_number":1,"name":"第 1 集"},{"episode_number":2,"name":"第 2 集"},{"episode_number":3,"name":"第 3 集"}]}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer mockSrv.Close()
+
+	dir := t.TempDir()
+	v, err := vault.Open(dir, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := db.Open(dir, v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	tmdbKey := "mock-key"
+	tmdbBase := mockSrv.URL + "/3"
+	falseVal := false
+	_, _ = store.UpdateServerSettings(db.ServerSettingsUpdate{
+		TmdbAPIKey: &tmdbKey, TmdbAPIBase: &tmdbBase,
+		DoubanEnabled: &falseVal, BangumiEnabled: &falseVal, AniListEnabled: &falseVal, ImdbEnabled: &falseVal,
+	})
+	seedTestHouseholdAndSource(t, store, "hh-max", "acc-m", "mem-m", "src-m")
+
+	now := store.NowMs()
+	_, _ = store.DB().Exec(`
+		INSERT INTO media_files(household_id, source_id, path, role, mtime_s, ctime_s, state, match_state, added_at, updated_at, last_seen_at)
+		VALUES ('hh-max', 'src-m', '/TV/谷雨/S01E01.mkv', 'video', 1000, 500, 'active', 'pending', ?, ?, ?)`, now, now, now)
+	_, _ = store.DB().Exec(`
+		INSERT INTO media_files(household_id, source_id, path, role, mtime_s, ctime_s, state, match_state, added_at, updated_at, last_seen_at)
+		VALUES ('hh-max', 'src-m', '/TV/谷雨/S01E02.mkv', 'video', 2000, 600, 'active', 'pending', ?, ?, ?)`, now, now, now)
+
+	sc := NewScraper(store, metadata.NewService(store))
+	_, _, gk := ParseAndGroup("src-m", "/TV/谷雨/S01E01.mkv")
+	if err := sc.IdentifyGroup(context.Background(), "hh-max", gk); err != nil {
+		t.Fatalf("IdentifyGroup initial failed: %v", err)
+	}
+
+	var showID, srcAdded int64
+	if err := store.ReadDB().QueryRow(`SELECT id, source_added_at FROM media_items WHERE household_id = 'hh-max' AND kind = 'show'`).Scan(&showID, &srcAdded); err != nil {
+		t.Fatal(err)
+	}
+	if srcAdded != 2000*1000 {
+		t.Fatalf("expected initial source_added_at=%d (MAX mtime_s), got %d", 2000*1000, srcAdded)
+	}
+
+	// Lock the show, add E03 with a newer mtime_s=3000 -> locked show's source_added_at must advance!
+	_, _ = store.DB().Exec(`UPDATE media_items SET locked = 1 WHERE id = ?`, showID)
+	_, _ = store.DB().Exec(`
+		INSERT INTO media_files(household_id, source_id, path, role, mtime_s, ctime_s, state, match_state, added_at, updated_at, last_seen_at)
+		VALUES ('hh-max', 'src-m', '/TV/谷雨/S01E03.mkv', 'video', 3000, 700, 'active', 'pending', ?, ?, ?)`, now, now, now)
+
+	if err := sc.IdentifyGroup(context.Background(), "hh-max", gk); err != nil {
+		t.Fatalf("IdentifyGroup E03 failed: %v", err)
+	}
+	_ = store.ReadDB().QueryRow(`SELECT source_added_at FROM media_items WHERE id = ?`, showID).Scan(&srcAdded)
+	if srcAdded != 3000*1000 {
+		t.Fatalf("expected locked show source_added_at updated to %d, got %d", 3000*1000, srcAdded)
+	}
+}

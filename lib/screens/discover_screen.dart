@@ -22,7 +22,7 @@ import '../utils/media_image_helper.dart';
 import '../utils/content_utils.dart';
 import '../widgets/cycling_media_backdrop.dart';
 import '../widgets/hero_carousel_backdrop.dart';
-import '../widgets/optimized_media_image.dart' show ClearLogoImage, blurArtwork;
+import '../widgets/optimized_media_image.dart' show ClearLogoImage, OptimizedMediaImage, blurArtwork;
 import '../widgets/rasterized_gradient.dart';
 import '../widgets/toolbar_scrim.dart';
 import '../widgets/system_clock.dart';
@@ -38,6 +38,7 @@ import 'profile/profile_teardown.dart';
 import 'storage/lan_devices_screen.dart';
 import '../services/companion_remote/lan_pairing_service.dart';
 import '../session/app_session_controller.dart';
+import '../library_cloud/cloud_projection_engine.dart' show CloudSyncResult;
 import '../ttplay/ttplay_session_binder.dart';
 import '../utils/initials_palette.dart';
 import '../services/settings_service.dart';
@@ -106,6 +107,7 @@ class _DiscoverScreenState extends State<DiscoverScreen>
 
   bool _initialLoadComplete = false;
   bool _pendingTvBrowseRailFocus = false;
+  bool _isManualRefreshing = false;
 
   /// The armed rail claim is the screen's first focus (its initial load),
   /// which a root route covering the session holds for the uncover instead of
@@ -633,7 +635,44 @@ class _DiscoverScreenState extends State<DiscoverScreen>
   }
 
   Future<void> _refreshFromToolbar() async {
-    final outcome = await _discover.refreshNow();
+    if (_isManualRefreshing) return;
+    setState(() => _isManualRefreshing = true);
+    OptimizedMediaImage.retryFailedImages();
+
+    TtplaySessionBinder? binder;
+    try {
+      binder = context.read<TtplaySessionBinder?>();
+    } on ProviderNotFoundException {
+      binder = null;
+    }
+
+    final isCloudV1 = binder != null && binder.isMediaLibraryV1Active;
+    CloudSyncResult? cloudRes;
+    var cloudSyncFailed = false;
+    var incrementalTriggered = false;
+    DiscoverRefreshOutcome? outcome;
+
+    try {
+      if (isCloudV1) {
+        try {
+          cloudRes = await binder.syncCloudProjection(full: false);
+        } catch (e) {
+          cloudSyncFailed = true;
+          appLogger.w('Discover cloud projection sync failed: $e');
+        }
+        if (!mounted) return;
+        try {
+          final incRes = await binder.triggerManualCloudIncrementalScan();
+          incrementalTriggered = incRes.triggered;
+        } catch (_) {}
+      }
+      outcome = await _discover.refreshNow();
+    } finally {
+      if (mounted) {
+        setState(() => _isManualRefreshing = false);
+      }
+    }
+
     if (!mounted) return;
     switch (outcome) {
       case DiscoverRefreshOutcome.failed:
@@ -641,7 +680,23 @@ class _DiscoverScreenState extends State<DiscoverScreen>
       case DiscoverRefreshOutcome.degraded:
         appLogger.w('Discover refresh completed with partial server failures');
       case DiscoverRefreshOutcome.cancelled:
+        break;
       case DiscoverRefreshOutcome.refreshed:
+        if (isCloudV1) {
+          if (cloudSyncFailed) {
+            showErrorSnackBar(context, t.errors.unableToLoad(context: t.discover.title));
+          } else if (cloudRes != null &&
+              (cloudRes.fullReset ||
+                  cloudRes.itemsProjected > 0 ||
+                  cloudRes.filesProjected > 0 ||
+                  cloudRes.hasChanges)) {
+            showAppSnackBar(context, '已同步最新片库');
+          } else if (incrementalTriggered) {
+            showAppSnackBar(context, '片库已是最新，正在后台检查云端新增文件');
+          } else {
+            showAppSnackBar(context, '片库已是最新');
+          }
+        }
         break;
     }
   }
@@ -920,7 +975,17 @@ class _DiscoverScreenState extends State<DiscoverScreen>
                     icon: Symbols.refresh_rounded,
                     iconColor: foregroundColor,
                     tooltip: t.common.refresh,
-                    onPressed: manualRefresh,
+                    onPressed: _isManualRefreshing ? null : manualRefresh,
+                    child: _isManualRefreshing
+                        ? IconButton(
+                            onPressed: null,
+                            tooltip: t.common.refresh,
+                            icon: SizedBox.square(
+                              dimension: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2, color: foregroundColor),
+                            ),
+                          )
+                        : null,
                   ),
                   // Companion Remote & Multi-Device Playback Status
                   FocusableAction(

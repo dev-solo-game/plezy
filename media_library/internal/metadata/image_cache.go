@@ -12,6 +12,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
+
+	"plezy/media_library/internal/applog"
 )
 
 type CachedImage struct {
@@ -121,45 +124,86 @@ func (s *Service) FetchRemoteImage(ctx context.Context, src, size string) (Cache
 		if err != nil {
 			return nil, err
 		}
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, nil)
-		if err != nil {
-			return nil, err
-		}
-		req.Header.Set("User-Agent", "ttplay-media-server/1.0")
-		if parsedImgURL, pErr := url.Parse(targetURL); pErr == nil {
-			h := strings.ToLower(parsedImgURL.Hostname())
-			if h == "doubanio.com" || strings.HasSuffix(h, ".doubanio.com") {
-				req.Header.Set("Referer", "https://movie.douban.com/")
-				req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+		redactedURL := applog.RedactURL(targetURL)
+		for attempt := 1; attempt <= 2; attempt++ {
+			start := time.Now()
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, nil)
+			if err != nil {
+				return nil, err
 			}
+			req.Header.Set("User-Agent", "ttplay-media-server/1.0")
+			if parsedImgURL, pErr := url.Parse(targetURL); pErr == nil {
+				h := strings.ToLower(parsedImgURL.Hostname())
+				if h == "doubanio.com" || strings.HasSuffix(h, ".doubanio.com") {
+					req.Header.Set("Referer", "https://movie.douban.com/")
+					req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+				}
+			}
+			resp, err := cli.Do(req)
+			if err != nil {
+				elapsedMs := time.Since(start).Milliseconds()
+				applog.Warnf("metadata", "拉取图片失败 (第%d次, %dms): %s -> %s", attempt, elapsedMs, redactedURL, applog.RedactURL(err.Error()))
+				if attempt == 1 && ctx.Err() == nil {
+					select {
+					case <-time.After(250 * time.Millisecond):
+						continue
+					case <-ctx.Done():
+						return nil, fmt.Errorf("%w: fetch image failed: %v", ErrUpstream, ctx.Err())
+					}
+				}
+				return nil, fmt.Errorf("%w: fetch image failed: %v", ErrUpstream, err)
+			}
+
+			if resp.StatusCode == http.StatusNotFound {
+				_ = resp.Body.Close()
+				return nil, ErrNotFound
+			}
+			if resp.StatusCode >= 400 {
+				status := resp.StatusCode
+				_ = resp.Body.Close()
+				elapsedMs := time.Since(start).Milliseconds()
+				applog.Warnf("metadata", "图片上游返回 HTTP %d (第%d次, %dms): %s", status, attempt, elapsedMs, redactedURL)
+				retryable := status == http.StatusTooManyRequests || status >= 500
+				if attempt == 1 && retryable && ctx.Err() == nil {
+					select {
+					case <-time.After(250 * time.Millisecond):
+						continue
+					case <-ctx.Done():
+						return nil, fmt.Errorf("%w: upstream image returned HTTP %d", ErrUpstream, status)
+					}
+				}
+				return nil, fmt.Errorf("%w: upstream image returned HTTP %d", ErrUpstream, status)
+			}
+
+			data, err := io.ReadAll(io.LimitReader(resp.Body, 12*1024*1024))
+			ct := resp.Header.Get("Content-Type")
+			_ = resp.Body.Close()
+			if err != nil {
+				elapsedMs := time.Since(start).Milliseconds()
+				applog.Warnf("metadata", "读取图片响应失败 (第%d次, %dms): %s -> %v", attempt, elapsedMs, redactedURL, err)
+				if attempt == 1 && ctx.Err() == nil {
+					select {
+					case <-time.After(250 * time.Millisecond):
+						continue
+					case <-ctx.Done():
+						return nil, fmt.Errorf("%w: read image failed: %v", ErrUpstream, ctx.Err())
+					}
+				}
+				return nil, fmt.Errorf("%w: read image failed: %v", ErrUpstream, err)
+			}
+			if ct == "" {
+				ct = http.DetectContentType(data)
+			}
+			if !strings.HasPrefix(strings.ToLower(ct), "image/") {
+				return nil, fmt.Errorf("%w: upstream did not return an image", ErrUpstream)
+			}
+			if err := os.MkdirAll(cacheDir, 0o755); err == nil {
+				_ = os.WriteFile(dataPath, data, 0o644)
+				_ = os.WriteFile(metaPath, []byte(ct), 0o644)
+			}
+			return CachedImage{Data: data, ContentType: ct}, nil
 		}
-		resp, err := cli.Do(req)
-		if err != nil {
-			return nil, fmt.Errorf("%w: fetch image failed: %v", ErrUpstream, err)
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode == http.StatusNotFound {
-			return nil, ErrNotFound
-		}
-		if resp.StatusCode >= 400 {
-			return nil, fmt.Errorf("%w: upstream image returned HTTP %d", ErrUpstream, resp.StatusCode)
-		}
-		data, err := io.ReadAll(io.LimitReader(resp.Body, 12*1024*1024))
-		if err != nil {
-			return nil, fmt.Errorf("%w: read image failed: %v", ErrUpstream, err)
-		}
-		ct := resp.Header.Get("Content-Type")
-		if ct == "" {
-			ct = http.DetectContentType(data)
-		}
-		if !strings.HasPrefix(strings.ToLower(ct), "image/") {
-			return nil, fmt.Errorf("%w: upstream did not return an image", ErrUpstream)
-		}
-		if err := os.MkdirAll(cacheDir, 0o755); err == nil {
-			_ = os.WriteFile(dataPath, data, 0o644)
-			_ = os.WriteFile(metaPath, []byte(ct), 0o644)
-		}
-		return CachedImage{Data: data, ContentType: ct}, nil
+		return nil, fmt.Errorf("%w: fetch image exhausted retries", ErrUpstream)
 	})
 	if sfErr != nil {
 		return CachedImage{}, sfErr

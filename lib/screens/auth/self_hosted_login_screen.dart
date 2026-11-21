@@ -8,12 +8,15 @@ import '../../focus/focusable_button.dart';
 import '../../focus/focusable_text_field.dart';
 import '../../focus/key_event_utils.dart';
 import '../../i18n/strings.g.dart';
+import '../../library/scrapers/server_metadata_provider.dart';
 import '../../session/app_session_controller.dart';
 import '../../session/app_session_models.dart';
 import '../../widgets/app_icon.dart';
 
 class SelfHostedLoginScreen extends StatefulWidget {
   const SelfHostedLoginScreen({super.key, this.initialServerUrl});
+
+  static const String defaultServerUrl = ServerMetadataProvider.defaultOfficialMetadataUrl;
 
   final String? initialServerUrl;
 
@@ -23,7 +26,11 @@ class SelfHostedLoginScreen extends StatefulWidget {
 
 class _SelfHostedLoginScreenState extends State<SelfHostedLoginScreen> {
   final _formKey = GlobalKey<FormState>();
-  late final TextEditingController _serverController = TextEditingController(text: widget.initialServerUrl ?? '');
+  late final TextEditingController _serverController = TextEditingController(
+    text: (widget.initialServerUrl?.trim().isNotEmpty == true)
+        ? widget.initialServerUrl!
+        : SelfHostedLoginScreen.defaultServerUrl,
+  );
   final TextEditingController _usernameController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
   final TextEditingController _inviteCodeController = TextEditingController();

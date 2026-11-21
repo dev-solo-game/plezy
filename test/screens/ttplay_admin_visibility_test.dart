@@ -408,17 +408,25 @@ void main() {
 
     await _pumpSelfHostedSettings(tester, env);
 
+    expect(find.text(t.storage.mediaSources), findsOneWidget);
     expect(find.text(t.serverAdmin.sectionTitle), findsOneWidget);
-    expect(find.text(t.serverAdmin.mountsTitle), findsOneWidget);
-    expect(find.text(t.serverAdmin.scraperTitle), findsOneWidget);
-    expect(find.text(t.serverAdmin.externalServersTitle), findsOneWidget);
+    expect(
+      tester.getTopLeft(find.text(t.storage.mediaSources)).dy,
+      lessThan(tester.getTopLeft(find.text(t.serverAdmin.sectionTitle)).dy),
+    );
+    expect(find.text('云端媒体源'), findsOneWidget);
+    expect(find.text('云端待匹配中心'), findsOneWidget);
+    // Deprecated legacy ttplay-server admin tiles are removed.
+    expect(find.text(t.serverAdmin.mountsTitle), findsNothing);
+    expect(find.text(t.serverAdmin.scraperTitle), findsNothing);
+    expect(find.text(t.serverAdmin.externalServersTitle), findsNothing);
     expect(find.text(t.sync.lanDevicesTitle), findsOneWidget);
-    // Offline-only local storage & scraper tiles are hidden in self-hosted mode.
-    expect(find.text(t.storage.title), findsNothing);
-    expect(find.text(t.storage.scraperSettings), findsNothing);
+    // Local folder mounts remain visible in both offline and online modes.
+    expect(find.text(t.storage.title), findsOneWidget);
+    expect(find.text(t.storage.scraperSettings), findsOneWidget);
   });
 
-  testWidgets('SettingsScreen hides all server-admin tiles on TV in self-hosted mode while keeping LAN devices', (
+  testWidgets('SettingsScreen hides cloud-admin tiles on TV in self-hosted mode while keeping local folders & LAN devices', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(1800, 3200);
@@ -435,10 +443,9 @@ void main() {
     await _pumpSelfHostedSettings(tester, env);
 
     expect(find.text(t.serverAdmin.sectionTitle), findsNothing);
-    expect(find.text(t.serverAdmin.mountsTitle), findsNothing);
-    expect(find.text(t.serverAdmin.scraperTitle), findsNothing);
-    expect(find.text(t.serverAdmin.externalServersTitle), findsNothing);
-    expect(find.text(t.storage.title), findsNothing);
+    expect(find.text('云端媒体源'), findsNothing);
+    expect(find.text('云端待匹配中心'), findsNothing);
+    expect(find.text(t.storage.title), findsOneWidget);
     expect(find.text(t.sync.lanDevicesTitle), findsOneWidget);
   });
 

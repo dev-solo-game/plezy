@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -12,25 +13,38 @@ import 'package:plezy/storage/storage_driver.dart';
 import 'package:plezy/storage/storage_mount.dart';
 
 class _MemoryDriver implements StorageDriver {
-  _MemoryDriver(this._tree, this._files);
+  _MemoryDriver(
+    this._tree,
+    this._files, {
+    this.driverKind = StorageKind.webdav,
+    this.onList,
+    this.onOpenRead,
+  });
 
   final Map<String, List<StorageEntry>> _tree;
   final Map<String, Uint8List> _files;
+  final StorageKind driverKind;
+  final Future<void> Function(String path)? onList;
+  final void Function(String path)? onOpenRead;
 
   @override
-  StorageKind get kind => StorageKind.webdav;
+  StorageKind get kind => driverKind;
 
   @override
   Future<void> check() async {}
 
   @override
-  Future<List<StorageEntry>> list(String path, {StorageEntry? parent}) async => _tree[path] ?? const [];
+  Future<List<StorageEntry>> list(String path, {StorageEntry? parent}) async {
+    if (onList != null) await onList!(path);
+    return _tree[path] ?? const [];
+  }
 
   @override
   Future<StorageEntry> stat(String path) async => StorageEntry(path: path, name: path.split('/').last, isDirectory: false);
 
   @override
   Stream<List<int>> openRead(StorageEntry entry, {int start = 0, int? end}) async* {
+    onOpenRead?.call(entry.path);
     final data = _files[entry.path];
     if (data == null) return;
     final stop = end == null || end + 1 > data.length ? data.length : end + 1;
@@ -263,5 +277,358 @@ void main() {
     final snap = await sync.fetchSnapshot(kind: 'movie');
     expect(snap.snapshotSeq, 7);
     expect(snap.items.single['title'], 'Inception');
+    runner.dispose();
+  });
+
+  test('CloudScanSessionRunner notifies globally, flushes pending files before /cancel, and skips Quark sidecars', () async {
+    final events = <String>[];
+    final uploadedPaths = <String>[];
+    var cancelCalled = false;
+    var openReadCount = 0;
+
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(() => server.close(force: true));
+
+    server.listen((req) async {
+      final path = req.uri.path;
+      List<int> rawBytes = await req.fold<List<int>>(<int>[], (acc, chunk) => acc..addAll(chunk));
+      if (req.headers.value('content-encoding') == 'gzip') {
+        rawBytes = gzip.decode(rawBytes);
+      }
+      if (req.method == 'POST' && path == '/api/v1/sources/src_q/scan-sessions') {
+        events.add('start');
+        req.response.statusCode = 200;
+        req.response.write(
+          jsonEncode({
+            'code': 0,
+            'session': {
+              'id': 'sess_q',
+              'source_id': 'src_q',
+              'folder_id': 'f_q',
+              'type': 'folder',
+              'folders': [
+                {'id': 'f_q', 'path': '/Anime', 'exclude_paths': <String>[]},
+              ],
+            },
+          }),
+        );
+      } else if (req.method == 'POST' && path == '/api/v1/scan-sessions/sess_q/batches') {
+        events.add('batch');
+        final body = jsonDecode(utf8.decode(rawBytes)) as Map<String, dynamic>;
+        final upserts = body['upserts'] as List;
+        for (final u in upserts) {
+          uploadedPaths.add((u as Map)['path'] as String);
+        }
+        req.response.statusCode = 200;
+        req.response.write(
+          jsonEncode({
+            'code': 0,
+            'receipt': {
+              'batch_no': body['batch_no'],
+              'accepted': upserts.length,
+              'added': upserts.length,
+              'changed': 0,
+              'missing_sidecars': <String>[],
+            },
+          }),
+        );
+      } else if (req.method == 'POST' && path == '/api/v1/scan-sessions/sess_q/progress') {
+        events.add('progress');
+        req.response.statusCode = 200;
+        req.response.write(jsonEncode({'code': 0}));
+      } else if (req.method == 'POST' && path == '/api/v1/scan-sessions/sess_q/cancel') {
+        events.add('cancel');
+        cancelCalled = true;
+        req.response.statusCode = 200;
+        req.response.write(jsonEncode({'code': 0}));
+      } else {
+        req.response.statusCode = 404;
+      }
+      await req.response.close();
+    });
+
+    final api = CloudApiClient(baseUrl: 'http://127.0.0.1:${server.port}', accessToken: 'usr_test');
+    addTearDown(api.close);
+
+    final runner = CloudScanSessionRunner(
+      api: api,
+      batchSize: 100, // large batch so only cancel-flush sends /Anime files when cancelled mid-scan
+      flushInterval: const Duration(minutes: 5),
+    );
+    addTearDown(runner.dispose);
+
+    final observedCancelling = <bool>[];
+    runner.addListener(() {
+      final p = runner.progressOf('src_q', folderId: 'f_q');
+      if (p != null) observedCancelling.add(p.cancelling);
+    });
+
+    final driver = _MemoryDriver(
+      {
+        '/Anime': [
+          const StorageEntry(path: '/Anime/Ep01.mkv', name: 'Ep01.mkv', isDirectory: false, size: 100),
+          const StorageEntry(path: '/Anime/poster.jpg', name: 'poster.jpg', isDirectory: false, size: 50),
+          const StorageEntry(path: '/Anime/Sub', name: 'Sub', isDirectory: true),
+        ],
+        '/Anime/Sub': [
+          const StorageEntry(path: '/Anime/Sub/Ep02.mkv', name: 'Ep02.mkv', isDirectory: false, size: 100),
+          const StorageEntry(path: '/Anime/Sub/Ep03.mkv', name: 'Ep03.mkv', isDirectory: false, size: 100),
+        ],
+      },
+      {
+        '/Anime/poster.jpg': Uint8List.fromList([1, 2, 3]),
+      },
+      driverKind: StorageKind.quark,
+      onOpenRead: (_) => openReadCount++,
+      onList: (path) async {
+        if (path == '/Anime/Sub') {
+          runner.cancelScan('src_q', folderId: 'f_q');
+          expect(runner.isCancelling('src_q', folderId: 'f_q'), isTrue);
+        }
+      },
+    );
+
+    final summary = await runner.runScan(
+      sourceId: 'src_q',
+      folderId: 'f_q',
+      scanType: 'folder',
+      targetLabel: 'Quark · /Anime',
+      driver: driver,
+    );
+
+    expect(summary.cancelled, isTrue);
+    expect(summary.cancelling, isFalse);
+    expect(summary.filesReported, 2);
+    expect(uploadedPaths, ['/Anime/Ep01.mkv', '/Anime/poster.jpg']);
+    expect(openReadCount, 0);
+    expect(cancelCalled, isTrue);
+    expect(events.indexOf('batch'), lessThan(events.indexOf('cancel')));
+    expect(observedCancelling, contains(true));
+    expect(runner.isScanning('src_q', folderId: 'f_q'), isFalse);
+    expect(runner.progressOf('src_q', folderId: 'f_q')?.cancelled, isTrue);
+  });
+
+  test('CloudScanSessionRunner flushes incrementally when flushInterval elapses', () async {
+    var batchesReceived = 0;
+    final batchSizes = <int>[];
+    var completeCalled = false;
+
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(() => server.close(force: true));
+
+    server.listen((req) async {
+      final path = req.uri.path;
+      List<int> rawBytes = await req.fold<List<int>>(<int>[], (acc, chunk) => acc..addAll(chunk));
+      if (req.headers.value('content-encoding') == 'gzip') {
+        rawBytes = gzip.decode(rawBytes);
+      }
+      if (req.method == 'POST' && path == '/api/v1/sources/src_t/scan-sessions') {
+        req.response.write(
+          jsonEncode({
+            'code': 0,
+            'session': {
+              'id': 'sess_t',
+              'source_id': 'src_t',
+              'type': 'full',
+              'folders': [
+                {'id': 'f_t', 'path': '/Shows', 'exclude_paths': <String>[]},
+              ],
+            },
+          }),
+        );
+      } else if (req.method == 'POST' && path == '/api/v1/scan-sessions/sess_t/batches') {
+        batchesReceived++;
+        final body = jsonDecode(utf8.decode(rawBytes)) as Map<String, dynamic>;
+        final upserts = body['upserts'] as List;
+        batchSizes.add(upserts.length);
+        req.response.write(
+          jsonEncode({
+            'code': 0,
+            'receipt': {'batch_no': body['batch_no'], 'accepted': upserts.length, 'added': upserts.length, 'changed': 0},
+          }),
+        );
+      } else if (req.method == 'POST' && path == '/api/v1/scan-sessions/sess_t/progress') {
+        req.response.write(jsonEncode({'code': 0}));
+      } else if (req.method == 'POST' && path == '/api/v1/scan-sessions/sess_t/complete') {
+        completeCalled = true;
+        req.response.write(jsonEncode({'code': 0}));
+      } else {
+        req.response.statusCode = 404;
+      }
+      await req.response.close();
+    });
+
+    final api = CloudApiClient(baseUrl: 'http://127.0.0.1:${server.port}', accessToken: 'usr_test');
+    addTearDown(api.close);
+
+    final runner = CloudScanSessionRunner(
+      api: api,
+      batchSize: 50,
+      flushInterval: const Duration(milliseconds: 15),
+    );
+    addTearDown(runner.dispose);
+
+    final driver = _MemoryDriver(
+      {
+        '/Shows': [
+          const StorageEntry(path: '/Shows/S01E01.mkv', name: 'S01E01.mkv', isDirectory: false, size: 100),
+          const StorageEntry(path: '/Shows/Season 1', name: 'Season 1', isDirectory: true),
+        ],
+        '/Shows/Season 1': [
+          const StorageEntry(path: '/Shows/Season 1/S01E02.mkv', name: 'S01E02.mkv', isDirectory: false, size: 100),
+        ],
+      },
+      const {},
+      onList: (p) async {
+        if (p == '/Shows/Season 1') {
+          await Future<void>.delayed(const Duration(milliseconds: 30));
+        }
+      },
+    );
+
+    final done = await runner.runScan(sourceId: 'src_t', driver: driver);
+    expect(done.completed, isTrue);
+    expect(done.filesReported, 2);
+    expect(completeCalled, isTrue);
+    expect(batchesReceived, 2);
+    expect(batchSizes, [1, 1]);
+  });
+
+  test('CloudScanSessionRunner.runQuarkIncrementalScan reports changed folder files, out-of-scope removals, and new watermark', () async {
+    String? requestedScanType;
+    final upsertedPaths = <String>[];
+    final removedIds = <String>[];
+    int? completedWatermark;
+
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(() => server.close(force: true));
+
+    server.listen((req) async {
+      final path = req.uri.path;
+      List<int> rawBytes = await req.fold<List<int>>(<int>[], (acc, chunk) => acc..addAll(chunk));
+      if (req.headers.value('content-encoding') == 'gzip') {
+        rawBytes = gzip.decode(rawBytes);
+      }
+      final bodyText = utf8.decode(rawBytes);
+      final bodyMap = bodyText.isNotEmpty ? jsonDecode(bodyText) as Map<String, dynamic> : const <String, dynamic>{};
+
+      if (req.method == 'POST' && path == '/api/v1/sources/src_qk/scan-sessions') {
+        requestedScanType = bodyMap['type'] as String?;
+        req.response.write(
+          jsonEncode({
+            'code': 0,
+            'session': {
+              'id': 'sess_inc',
+              'source_id': 'src_qk',
+              'type': 'incremental',
+              'incremental_watermark': 1700000000000,
+              'folders': [
+                {'id': 'f_anime', 'path': '/Anime', 'exclude_paths': <String>[]},
+              ],
+            },
+          }),
+        );
+      } else if (req.method == 'POST' && path == '/api/v1/scan-sessions/sess_inc/batches') {
+        for (final u in (bodyMap['upserts'] as List? ?? const [])) {
+          upsertedPaths.add((u as Map)['path'] as String);
+        }
+        for (final r in (bodyMap['removed'] as List? ?? const [])) {
+          final id = (r as Map)['remote_id'] as String?;
+          if (id != null) removedIds.add(id);
+        }
+        final upsertsLen = (bodyMap['upserts'] as List? ?? const []).length;
+        final removedLen = (bodyMap['removed'] as List? ?? const []).length;
+        req.response.write(
+          jsonEncode({
+            'code': 0,
+            'receipt': {
+              'batch_no': bodyMap['batch_no'],
+              'accepted': upsertsLen,
+              'added': upsertsLen,
+              'changed': 0,
+              'removed': removedLen,
+            },
+          }),
+        );
+      } else if (req.method == 'POST' && path == '/api/v1/scan-sessions/sess_inc/complete') {
+        completedWatermark = (bodyMap['new_watermark'] as num?)?.toInt();
+        req.response.write(jsonEncode({'code': 0}));
+      } else {
+        req.response.statusCode = 404;
+      }
+      await req.response.close();
+    });
+
+    final api = CloudApiClient(baseUrl: 'http://127.0.0.1:${server.port}', accessToken: 'usr_inc');
+    addTearDown(api.close);
+
+    final runner = CloudScanSessionRunner(api: api);
+    addTearDown(runner.dispose);
+
+    final driver = _MemoryDriver(
+      {
+        '/Anime/Show1': [
+          const StorageEntry(
+            id: 'fid_ep9',
+            path: '/Anime/Show1/S01E09.mkv',
+            name: 'S01E09.mkv',
+            isDirectory: false,
+            size: 4096,
+          ),
+          const StorageEntry(
+            id: 'fid_sub9',
+            path: '/Anime/Show1/S01E09.zh.srt',
+            name: 'S01E09.zh.srt',
+            isDirectory: false,
+            size: 256,
+          ),
+        ],
+      },
+      const {},
+      driverKind: StorageKind.quark,
+    );
+
+    final res = await runner.runQuarkIncrementalScan(
+      sourceId: 'src_qk',
+      driver: driver,
+      targetLabel: 'Quark',
+      rootFolderIdOverride: '0',
+      searchUpdatedPageOverride: (page, {size = 100}) async {
+        if (page > 1) return const [];
+        return [
+          (
+            entry: const StorageEntry(id: 'fid_ep9', path: '/S01E09.mkv', name: 'S01E09.mkv', isDirectory: false),
+            parentId: 'dir_show1',
+            updatedAt: 1700000100000,
+          ),
+          (
+            entry: const StorageEntry(id: 'fid_moved_out', path: '/Old.mkv', name: 'Old.mkv', isDirectory: false),
+            parentId: 'dir_trash',
+            updatedAt: 1700000090000,
+          ),
+          // Older than watermark overlap threshold -> ignored.
+          (
+            entry: const StorageEntry(id: 'fid_old', path: '/Ep01.mkv', name: 'Ep01.mkv', isDirectory: false),
+            parentId: 'dir_other',
+            updatedAt: 1699999000000,
+          ),
+        ];
+      },
+      folderAncestryOverride: (id) async => switch (id) {
+        'dir_show1' => [(id: 'dir_anime', name: 'Anime'), (id: 'dir_show1', name: 'Show1')],
+        'dir_trash' => [(id: 'dir_trash', name: 'Trash')],
+        _ => const [],
+      },
+    );
+
+    expect(requestedScanType, 'incremental');
+    expect(res.completed, isTrue);
+    expect(res.scanType, 'incremental');
+    expect(res.directoriesVisited, 1);
+    expect(res.filesAdded, 2);
+    expect(res.filesMissing, 1);
+    expect(upsertedPaths, ['/Anime/Show1/S01E09.mkv', '/Anime/Show1/S01E09.zh.srt']);
+    expect(removedIds, ['fid_moved_out']);
+    expect(completedWatermark, 1700000100000);
   });
 }

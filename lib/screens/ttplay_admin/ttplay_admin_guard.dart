@@ -12,7 +12,9 @@ import '../../widgets/app_icon.dart';
 
 /// Shared access guard & provider helpers for PC/Mobile server-admin screens.
 bool canUseTtplayAdmin({required AppSessionController? session, required TtplaySessionBinder? binder}) {
-  return !PlatformDetector.isTV() && (session?.isSelfHosted == true) && (binder?.adminService != null);
+  return !PlatformDetector.isTV() &&
+      (session?.isSelfHosted == true) &&
+      (binder?.cloudSourceRepository != null || binder?.adminService != null);
 }
 
 AppSessionController? maybeWatchAppSession(BuildContext context) {

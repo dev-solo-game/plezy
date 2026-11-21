@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/google/uuid"
@@ -75,6 +76,9 @@ func (s *Service) CompleteSession(p *account.Principal, sessionID string, req Co
 			sv.Status = SessionPartial
 			sv.FinishedAt = &nowMs
 			sv.LastActivityAt = nowMs
+		}
+		if err := expediteSourceIdentifyQueueTx(tx, p.HouseholdID, sv.SourceID, nowMs); err != nil {
+			return nil, err
 		}
 		if err := tx.Commit(); err != nil {
 			return nil, err
@@ -183,6 +187,11 @@ func (s *Service) CompleteSession(p *account.Principal, sessionID string, req Co
 						maxChangeSeq = seq
 					}
 				}
+				if seq, err := recomputeRootSourceAddedAtTx(tx, p.HouseholdID, missingCandidates, nowMs); err != nil {
+					return nil, err
+				} else if seq > maxChangeSeq {
+					maxChangeSeq = seq
+				}
 			}
 
 			for _, sc := range scopes {
@@ -237,6 +246,10 @@ func (s *Service) CompleteSession(p *account.Principal, sessionID string, req Co
 			"pending_deletion_id": pendingDeletionID,
 		},
 	}); err != nil {
+		return nil, err
+	}
+
+	if err := expediteSourceIdentifyQueueTx(tx, p.HouseholdID, sv.SourceID, nowMs); err != nil {
 		return nil, err
 	}
 
@@ -317,6 +330,23 @@ func (s *Service) ConfirmPendingDeletion(p *account.Principal, pendingID, ip str
 
 func (s *Service) DismissPendingDeletion(p *account.Principal, pendingID, ip string) (*PendingDeletionView, error) {
 	return s.resolvePendingDeletion(p, pendingID, false, ip)
+}
+
+func expediteSourceIdentifyQueueTx(tx *sql.Tx, hhID, sourceID string, nowMs int64) error {
+	sid := strings.TrimSpace(sourceID)
+	if hhID == "" || sid == "" {
+		return nil
+	}
+	likeEsc := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+	pat := likeEsc.Replace(sid) + ":%"
+	_, err := tx.Exec(`
+		UPDATE identify_queue
+		SET not_before = ?, updated_at = ?
+		WHERE household_id = ? AND status = 'queued' AND not_before > ?
+		  AND group_key LIKE ? ESCAPE '\'`,
+		nowMs, nowMs, hhID, nowMs, pat,
+	)
+	return err
 }
 
 func (s *Service) resolvePendingDeletion(p *account.Principal, pendingID string, confirm bool, ip string) (*PendingDeletionView, error) {
@@ -411,6 +441,11 @@ func (s *Service) resolvePendingDeletion(p *account.Principal, pendingID string,
 				}
 			}
 		}
+		if seq, err := recomputeRootSourceAddedAtTx(tx, p.HouseholdID, fileIDs, nowMs); err != nil {
+			return nil, err
+		} else if seq > maxSeq {
+			maxSeq = seq
+		}
 	}
 
 	if _, err := tx.Exec(`
@@ -453,4 +488,97 @@ func (s *Service) resolvePendingDeletion(p *account.Principal, pendingID string,
 		s.publishLibraryChanged(p.HouseholdID, maxSeq)
 	}
 	return &pd, nil
+}
+
+// recomputeRootSourceAddedAtTx recalculates media_items.source_added_at for
+// every movie or show owning any of fileIDs after files are marked missing.
+func recomputeRootSourceAddedAtTx(tx *sql.Tx, householdID string, fileIDs []int64, nowMs int64) (int64, error) {
+	if len(fileIDs) == 0 {
+		return 0, nil
+	}
+	rootSet := make(map[int64]struct{})
+	const chunkSize = 200
+	for start := 0; start < len(fileIDs); start += chunkSize {
+		end := start + chunkSize
+		if end > len(fileIDs) {
+			end = len(fileIDs)
+		}
+		chunk := fileIDs[start:end]
+		placeholders := strings.Repeat("?,", len(chunk))
+		placeholders = placeholders[:len(placeholders)-1]
+		args := make([]any, 0, 1+len(chunk))
+		args = append(args, householdID)
+		for _, id := range chunk {
+			args = append(args, id)
+		}
+		rows, err := tx.Query(`
+			SELECT DISTINCT COALESCE(mi.show_id, mi.id)
+			FROM media_files mf
+			JOIN media_items mi ON mi.id = mf.item_id
+			WHERE mf.household_id = ? AND mf.role = 'video' AND mf.item_id IS NOT NULL
+			  AND mf.id IN (`+placeholders+`)`,
+			args...,
+		)
+		if err != nil {
+			return 0, err
+		}
+		for rows.Next() {
+			var rootID int64
+			if scanErr := rows.Scan(&rootID); scanErr == nil && rootID > 0 {
+				rootSet[rootID] = struct{}{}
+			}
+		}
+		_ = rows.Close()
+		if err := rows.Err(); err != nil {
+			return 0, err
+		}
+	}
+	if len(rootSet) == 0 {
+		return 0, nil
+	}
+	var maxSeq int64
+	for rootID := range rootSet {
+		var curSrcAdded, nextSrcAdded sql.NullInt64
+		if err := tx.QueryRow(`
+			SELECT source_added_at FROM media_items
+			WHERE id = ? AND household_id = ? AND kind IN ('movie', 'show')`,
+			rootID, householdID,
+		).Scan(&curSrcAdded); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				continue
+			}
+			return 0, err
+		}
+		if err := tx.QueryRow(`
+			SELECT MAX(CASE WHEN mf.mtime_s > 0 THEN mf.mtime_s WHEN mf.ctime_s > 0 THEN mf.ctime_s END) * 1000
+			FROM media_items leaf
+			JOIN media_files mf ON mf.item_id = leaf.id AND mf.role = 'video' AND mf.state = 'active'
+			JOIN sources src ON src.id = mf.source_id AND src.status = 'active'
+			WHERE leaf.household_id = ? AND (leaf.id = ? OR leaf.show_id = ?)`,
+			householdID, rootID, rootID,
+		).Scan(&nextSrcAdded); err != nil {
+			return 0, err
+		}
+		if !nextSrcAdded.Valid || nextSrcAdded.Int64 <= 0 {
+			continue
+		}
+		if curSrcAdded.Valid && curSrcAdded.Int64 == nextSrcAdded.Int64 {
+			continue
+		}
+		if _, err := tx.Exec(`
+			UPDATE media_items SET source_added_at = ?, updated_at = ?
+			WHERE id = ? AND household_id = ?`,
+			nextSrcAdded.Int64, nowMs, rootID, householdID,
+		); err != nil {
+			return 0, err
+		}
+		seq, err := db.AppendChangeTx(tx, householdID, nil, "item", strconv.FormatInt(rootID, 10), "upsert", nowMs)
+		if err != nil {
+			return 0, err
+		}
+		if seq > maxSeq {
+			maxSeq = seq
+		}
+	}
+	return maxSeq, nil
 }

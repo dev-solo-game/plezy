@@ -2,6 +2,8 @@ media_data*/
 library_data*/
 media-library*.exe
 ttplay-server*.exe
+media-library-linux-*
+dist-linux/
 *.log
 web/node_modules/
 web/dist/

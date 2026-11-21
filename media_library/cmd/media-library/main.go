@@ -48,7 +48,7 @@ func main() {
 	adminPassword := flag.String("admin-password", os.Getenv("LIBRARY_ADMIN_PASSWORD"), "Initial platform admin password (defaults to 'admin' with forced change on first login)")
 	adminAllowedCIDRs := flag.String("admin-allowed-cidrs", os.Getenv("LIBRARY_ADMIN_ALLOWED_CIDRS"), "Optional comma-separated IP/CIDR allowlist for /api/admin/*")
 	trustedProxies := flag.String("trusted-proxies", os.Getenv("LIBRARY_TRUSTED_PROXIES"), "Optional comma-separated reverse proxy IPs/CIDRs allowed to set X-Forwarded-For/Proto")
-	allowInsecureCredentials := flag.Bool("allow-insecure-credentials", envBool("LIBRARY_ALLOW_INSECURE_CREDENTIALS", false), "Allow credential transport over plain HTTP (debug/LAN only)")
+	allowInsecureCredentials := flag.Bool("allow-insecure-credentials", envBool("LIBRARY_ALLOW_INSECURE_CREDENTIALS", true), "Allow credential transport over plain HTTP (default true for dev/LAN; set false to enforce HTTPS)")
 	webDir := flag.String("web-dir", os.Getenv("LIBRARY_WEB_DIR"), "Optional path to web static directory")
 	logLevel := flag.String("log-level", envOr("LIBRARY_LOG_LEVEL", "debug"), "Server log level (debug, info, warn, error)")
 	flag.Parse()

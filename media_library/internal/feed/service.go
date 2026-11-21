@@ -36,9 +36,10 @@ func NewService(store *db.Store, ud *userdata.Service) *Service {
 }
 
 type ItemSummaryView struct {
-	ID               int64    `json:"id"`
-	WorkKey          string   `json:"work_key,omitempty"`
-	Kind             string   `json:"kind"`
+	ID               int64           `json:"id"`
+	WorkKey          string          `json:"work_key,omitempty"`
+	ShowWorkKey      string          `json:"show_work_key,omitempty"`
+	Kind             string          `json:"kind"`
 	LibraryType      string   `json:"library_type"`
 	ParentID         *int64   `json:"parent_id,omitempty"`
 	ShowID           *int64   `json:"show_id,omitempty"`
@@ -67,12 +68,13 @@ type ItemSummaryView struct {
 	Locked           bool     `json:"locked"`
 	FileCount        int      `json:"file_count"`
 	ChildCount       int      `json:"child_count"`
-	Watched          bool     `json:"watched"`
-	PositionMs       int64    `json:"position_ms"`
-	IsFavorite       bool     `json:"is_favorite"`
-	AddedAt          int64    `json:"added_at"`
-	SourceAddedAt    *int64   `json:"source_added_at,omitempty"`
-	UpdatedAt        int64    `json:"updated_at"`
+	Watched          bool            `json:"watched"`
+	PositionMs       int64           `json:"position_ms"`
+	IsFavorite       bool            `json:"is_favorite"`
+	AddedAt          int64           `json:"added_at"`
+	SourceAddedAt    *int64          `json:"source_added_at,omitempty"`
+	UpdatedAt        int64           `json:"updated_at"`
+	Files            []MediaFileView `json:"files,omitempty"`
 }
 
 type CreditView struct {
@@ -125,19 +127,21 @@ type ItemDetailView struct {
 	Credits   []CreditView                `json:"credits"`
 	Files     []MediaFileView             `json:"files"`
 	Children  []ItemSummaryView           `json:"children,omitempty"`
+	Episodes  []ItemSummaryView           `json:"episodes,omitempty"`
 	Progress  *userdata.WatchProgressView `json:"progress,omitempty"`
 	WorkPrefs *userdata.WorkPrefsView     `json:"work_prefs,omitempty"`
 }
 
 type SnapshotRequest struct {
-	Kind        string
-	LibraryType string
-	SourceID    string
-	ParentID    *int64
-	Query       string
-	Sort        string
-	Page        int
-	PageSize    int
+	Kind         string
+	LibraryType  string
+	SourceID     string
+	ParentID     *int64
+	Query        string
+	Sort         string
+	Page         int
+	PageSize     int
+	IncludeFiles bool
 }
 
 type SnapshotResponse struct {
@@ -191,14 +195,15 @@ func (s *Service) GetSnapshot(p *account.Principal, req SnapshotRequest) (Snapsh
 	conds = append(conds, "mi.household_id = ?")
 	args = append(args, p.HouseholdID)
 
+	k := strings.ToLower(strings.TrimSpace(req.Kind))
 	if req.ParentID != nil {
 		conds = append(conds, "mi.parent_id = ?")
 		args = append(args, *req.ParentID)
-	} else {
+	} else if k != db.KindSeason && k != db.KindEpisode {
 		conds = append(conds, "mi.parent_id IS NULL")
 	}
 
-	if k := strings.ToLower(strings.TrimSpace(req.Kind)); k != "" {
+	if k != "" {
 		conds = append(conds, "mi.kind = ?")
 		args = append(args, k)
 	}
@@ -213,27 +218,68 @@ func (s *Service) GetSnapshot(p *account.Principal, req SnapshotRequest) (Snapsh
 	}
 
 	// Ensure item has at least one active video file in an active source (optionally matching req.SourceID).
-	if srcID := strings.TrimSpace(req.SourceID); srcID != "" {
-		conds = append(conds, `EXISTS (
-			SELECT 1 FROM media_files mf
-			JOIN sources src ON src.id = mf.source_id
-			LEFT JOIN media_items child ON child.id = mf.item_id
-			WHERE mf.household_id = mi.household_id
-			  AND mf.state = 'active' AND mf.role = 'video'
-			  AND src.status = 'active' AND mf.source_id = ?
-			  AND (mf.item_id = mi.id OR child.parent_id = mi.id OR child.show_id = mi.id)
-		)`)
-		args = append(args, srcID)
-	} else {
-		conds = append(conds, `EXISTS (
-			SELECT 1 FROM media_files mf
-			JOIN sources src ON src.id = mf.source_id
-			LEFT JOIN media_items child ON child.id = mf.item_id
-			WHERE mf.household_id = mi.household_id
-			  AND mf.state = 'active' AND mf.role = 'video'
-			  AND src.status = 'active'
-			  AND (mf.item_id = mi.id OR child.parent_id = mi.id OR child.show_id = mi.id)
-		)`)
+	srcID := strings.TrimSpace(req.SourceID)
+	srcCond := ""
+	if srcID != "" {
+		srcCond = " AND mf.source_id = ?"
+	}
+	leafExists := `EXISTS (
+		SELECT 1 FROM media_files mf
+		JOIN sources src ON src.id = mf.source_id
+		WHERE mf.item_id = mi.id
+		  AND mf.household_id = mi.household_id
+		  AND mf.state = 'active' AND mf.role = 'video'
+		  AND src.status = 'active'` + srcCond + `
+	)`
+	seasonExists := `EXISTS (
+		SELECT 1 FROM media_items child
+		JOIN media_files mf ON mf.item_id = child.id
+		JOIN sources src ON src.id = mf.source_id
+		WHERE child.household_id = mi.household_id
+		  AND child.parent_id = mi.id
+		  AND mf.household_id = mi.household_id
+		  AND mf.state = 'active' AND mf.role = 'video'
+		  AND src.status = 'active'` + srcCond + `
+	)`
+	showExists := `EXISTS (
+		SELECT 1 FROM media_items child
+		JOIN media_files mf ON mf.item_id = child.id
+		JOIN sources src ON src.id = mf.source_id
+		WHERE child.household_id = mi.household_id
+		  AND child.show_id = mi.id
+		  AND mf.household_id = mi.household_id
+		  AND mf.state = 'active' AND mf.role = 'video'
+		  AND src.status = 'active'` + srcCond + `
+	)`
+
+	switch k {
+	case db.KindMovie, db.KindEpisode:
+		conds = append(conds, leafExists)
+		if srcID != "" {
+			args = append(args, srcID)
+		}
+	case db.KindSeason:
+		conds = append(conds, seasonExists)
+		if srcID != "" {
+			args = append(args, srcID)
+		}
+	case db.KindShow:
+		conds = append(conds, showExists)
+		if srcID != "" {
+			args = append(args, srcID)
+		}
+	default:
+		if req.ParentID != nil {
+			conds = append(conds, "("+leafExists+" OR "+seasonExists+" OR "+showExists+")")
+			if srcID != "" {
+				args = append(args, srcID, srcID, srcID)
+			}
+		} else {
+			conds = append(conds, "("+leafExists+" OR "+showExists+")")
+			if srcID != "" {
+				args = append(args, srcID, srcID)
+			}
+		}
 	}
 
 	whereSQL := strings.Join(conds, " AND ")
@@ -243,6 +289,9 @@ func (s *Service) GetSnapshot(p *account.Principal, req SnapshotRequest) (Snapsh
 	}
 
 	orderSQL := "COALESCE(mi.source_added_at, mi.added_at) DESC, mi.id DESC"
+	if strings.TrimSpace(req.Sort) == "" && (k == db.KindSeason || k == db.KindEpisode) {
+		orderSQL = "COALESCE(mi.show_id, 0) ASC, COALESCE(mi.season_number, 0) ASC, COALESCE(mi.episode_number, 0) ASC, mi.id ASC"
+	}
 	switch strings.ToLower(strings.TrimSpace(req.Sort)) {
 	case "title":
 		orderSQL = "mi.sort_title ASC, mi.id ASC"
@@ -288,8 +337,35 @@ func (s *Service) GetSnapshot(p *account.Principal, req SnapshotRequest) (Snapsh
 		return SnapshotResponse{}, err
 	}
 
+	if req.IncludeFiles && len(items) > 0 {
+		leafIDs := make([]int64, 0, len(items))
+		for i := range items {
+			if items[i].Kind == db.KindMovie || items[i].Kind == db.KindEpisode {
+				leafIDs = append(leafIDs, items[i].ID)
+			}
+		}
+		if len(leafIDs) > 0 {
+			filesByItem := s.loadBatchSnapshotFiles(p.HouseholdID, leafIDs, req.SourceID)
+			for i := range items {
+				if files, ok := filesByItem[items[i].ID]; ok {
+					items[i].Files = files
+				}
+			}
+		}
+	}
+
+	var hasArtworkSidecars int
+	_ = s.store.ReadDB().QueryRow(`
+		SELECT EXISTS(
+			SELECT 1 FROM media_files
+			WHERE household_id = ? AND role = 'artwork' AND state = 'active'
+			  AND sidecar_sha256 IS NOT NULL AND sidecar_sha256 != ''
+		)`,
+		p.HouseholdID,
+	).Scan(&hasArtworkSidecars)
+
 	for i := range items {
-		s.hydrateItemSummary(p.HouseholdID, p.MemberID, &items[i])
+		s.hydrateItemSummaryWithOpts(p.HouseholdID, p.MemberID, &items[i], hasArtworkSidecars != 0)
 	}
 
 	return SnapshotResponse{
@@ -302,7 +378,24 @@ func (s *Service) GetSnapshot(p *account.Principal, req SnapshotRequest) (Snapsh
 	}, nil
 }
 
+func (s *Service) hasActiveArtworkSidecars(householdID string) bool {
+	var has int
+	_ = s.store.ReadDB().QueryRow(`
+		SELECT EXISTS(
+			SELECT 1 FROM media_files
+			WHERE household_id = ? AND role = 'artwork' AND state = 'active'
+			  AND sidecar_sha256 IS NOT NULL AND sidecar_sha256 != ''
+		)`,
+		householdID,
+	).Scan(&has)
+	return has != 0
+}
+
 func (s *Service) GetChanges(p *account.Principal, sinceSeq int64, limit int) (ChangesResponse, error) {
+	return s.GetChangesWithOpts(p, sinceSeq, limit, false)
+}
+
+func (s *Service) GetChangesWithOpts(p *account.Principal, sinceSeq int64, limit int, includeFiles bool) (ChangesResponse, error) {
 	if p == nil {
 		return ChangesResponse{}, ErrUnauthorized
 	}
@@ -364,11 +457,50 @@ func (s *Service) GetChanges(p *account.Principal, sinceSeq int64, limit int) (C
 		rawEvents = rawEvents[:limit]
 	}
 
+	checkSidecars := s.hasActiveArtworkSidecars(p.HouseholdID)
+	itemCache := make(map[int64]cachedHydratedItem)
+	showWKCache := make(map[int64]string)
+
 	nextSince := sinceSeq
 	for i := range rawEvents {
 		nextSince = rawEvents[i].Seq
 		if rawEvents[i].Op == "upsert" {
-			s.hydrateChangeEvent(p, &rawEvents[i])
+			s.hydrateChangeEventWithOpts(p, &rawEvents[i], checkSidecars, itemCache, showWKCache)
+		}
+	}
+
+	if includeFiles && len(rawEvents) > 0 {
+		leafSet := make(map[int64]struct{})
+		leafIDs := make([]int64, 0)
+		for i := range rawEvents {
+			if rawEvents[i].Entity != "item" || rawEvents[i].Op != "upsert" {
+				continue
+			}
+			item, ok := rawEvents[i].Data.(ItemSummaryView)
+			if !ok || (item.Kind != db.KindMovie && item.Kind != db.KindEpisode) {
+				continue
+			}
+			if _, seen := leafSet[item.ID]; !seen {
+				leafSet[item.ID] = struct{}{}
+				leafIDs = append(leafIDs, item.ID)
+			}
+		}
+		if len(leafIDs) > 0 {
+			filesByItem := s.loadBatchSnapshotFiles(p.HouseholdID, leafIDs, "")
+			for i := range rawEvents {
+				if rawEvents[i].Entity != "item" || rawEvents[i].Op != "upsert" {
+					continue
+				}
+				item, ok := rawEvents[i].Data.(ItemSummaryView)
+				if !ok || (item.Kind != db.KindMovie && item.Kind != db.KindEpisode) {
+					continue
+				}
+				if files, ok := filesByItem[item.ID]; ok {
+					item.Files = files
+					item.FileCount = len(files)
+					rawEvents[i].Data = item
+				}
+			}
 		}
 	}
 
@@ -380,6 +512,30 @@ func (s *Service) GetChanges(p *account.Principal, sinceSeq int64, limit int) (C
 		HasMore:        hasMore,
 		Changes:        rawEvents,
 	}, nil
+}
+
+func (s *Service) GetItemDetailByWorkKey(p *account.Principal, workKey string) (ItemDetailView, error) {
+	if p == nil {
+		return ItemDetailView{}, ErrUnauthorized
+	}
+	wk := strings.TrimSpace(workKey)
+	if wk == "" {
+		return ItemDetailView{}, fmt.Errorf("%w: work_key is required", ErrInvalidInput)
+	}
+	var itemID int64
+	err := s.store.ReadDB().QueryRow(`
+		SELECT id FROM media_items
+		WHERE household_id = ? AND work_key = ?
+		LIMIT 1`,
+		p.HouseholdID, wk,
+	).Scan(&itemID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ItemDetailView{}, ErrNotFound
+	}
+	if err != nil {
+		return ItemDetailView{}, err
+	}
+	return s.GetItemDetail(p, itemID)
 }
 
 func (s *Service) GetItemDetail(p *account.Principal, itemID int64) (ItemDetailView, error) {
@@ -436,7 +592,8 @@ func (s *Service) GetItemDetail(p *account.Principal, itemID int64) (ItemDetailV
 		_ = s.store.ReadDB().QueryRow(`SELECT COALESCE(work_key, '') FROM media_items WHERE id = ? AND household_id = ?`, *det.ShowID, p.HouseholdID).Scan(&det.WorkKey)
 	}
 
-	s.hydrateItemSummary(p.HouseholdID, p.MemberID, &det.ItemSummaryView)
+	checkSidecars := s.hasActiveArtworkSidecars(p.HouseholdID)
+	s.hydrateItemSummaryWithOpts(p.HouseholdID, p.MemberID, &det.ItemSummaryView, checkSidecars)
 
 	// Genres (from item or parent show)
 	genreTargetID := det.ID
@@ -447,9 +604,12 @@ func (s *Service) GetItemDetail(p *account.Principal, itemID int64) (ItemDetailV
 	det.Credits = s.loadItemCredits(genreTargetID)
 	det.Files = s.loadItemFiles(p.HouseholdID, det.ID)
 
-	// Children (seasons for show, episodes for season)
+	// Children (seasons for show, episodes for season) + all show episodes
 	if det.Kind == db.KindShow || det.Kind == db.KindSeason {
-		det.Children = s.loadChildItems(p.HouseholdID, p.MemberID, det.ID, det.WorkKey)
+		det.Children = s.loadChildItemsWithOpts(p.HouseholdID, p.MemberID, det.ID, det.WorkKey, checkSidecars, det.Kind == db.KindSeason)
+		if det.Kind == db.KindShow {
+			det.Episodes = s.loadShowEpisodes(p.HouseholdID, p.MemberID, det.ID, det.WorkKey, checkSidecars)
+		}
 	}
 
 	// UserData progress & work prefs
@@ -470,6 +630,10 @@ func (s *Service) GetItemDetail(p *account.Principal, itemID int64) (ItemDetailV
 }
 
 func (s *Service) hydrateItemSummary(householdID, memberID string, item *ItemSummaryView) {
+	s.hydrateItemSummaryWithOpts(householdID, memberID, item, true)
+}
+
+func (s *Service) hydrateItemSummaryWithOpts(householdID, memberID string, item *ItemSummaryView, checkArtworkSidecars bool) {
 	item.PosterURL = resolveArtworkURL(item.PosterSource)
 	item.BackdropURL = resolveArtworkURL(item.BackdropSource)
 	item.LogoURL = resolveArtworkURL(item.LogoSource)
@@ -486,29 +650,63 @@ func (s *Service) hydrateItemSummary(householdID, memberID string, item *ItemSum
 
 	// Count active video files & check local sibling artwork sidecars (G10 dual image URLs).
 	var sampleSourceID, sampleVideoPath string
-	rows, err := s.store.ReadDB().Query(`
-		SELECT mf.source_id, mf.path
-		FROM media_files mf
-		JOIN sources src ON src.id = mf.source_id
-		LEFT JOIN media_items child ON child.id = mf.item_id
-		WHERE mf.household_id = ? AND mf.state = 'active' AND mf.role = 'video'
-		  AND src.status = 'active'
-		  AND (mf.item_id = ? OR child.parent_id = ? OR child.show_id = ?)
-		ORDER BY mf.id ASC`,
-		householdID, item.ID, item.ID, item.ID,
-	)
-	if err == nil {
-		for rows.Next() {
-			var sid, vp string
-			if rows.Scan(&sid, &vp) == nil {
-				item.FileCount++
-				if sampleVideoPath == "" {
-					sampleSourceID = sid
-					sampleVideoPath = vp
+	if len(item.Files) > 0 {
+		item.FileCount = len(item.Files)
+		sampleSourceID = item.Files[0].SourceID
+		sampleVideoPath = item.Files[0].Path
+	} else {
+		var rows *sql.Rows
+		var err error
+		switch item.Kind {
+		case db.KindSeason:
+			rows, err = s.store.ReadDB().Query(`
+				SELECT mf.source_id, mf.path
+				FROM media_items child
+				JOIN media_files mf ON mf.item_id = child.id
+				JOIN sources src ON src.id = mf.source_id
+				WHERE child.household_id = ? AND child.parent_id = ?
+				  AND mf.household_id = ? AND mf.state = 'active' AND mf.role = 'video'
+				  AND src.status = 'active'
+				ORDER BY mf.id ASC`,
+				householdID, item.ID, householdID,
+			)
+		case db.KindShow:
+			rows, err = s.store.ReadDB().Query(`
+				SELECT mf.source_id, mf.path
+				FROM media_items child
+				JOIN media_files mf ON mf.item_id = child.id
+				JOIN sources src ON src.id = mf.source_id
+				WHERE child.household_id = ? AND child.show_id = ?
+				  AND mf.household_id = ? AND mf.state = 'active' AND mf.role = 'video'
+				  AND src.status = 'active'
+				ORDER BY mf.id ASC`,
+				householdID, item.ID, householdID,
+			)
+		default:
+			rows, err = s.store.ReadDB().Query(`
+				SELECT mf.source_id, mf.path
+				FROM media_files mf
+				JOIN sources src ON src.id = mf.source_id
+				WHERE mf.item_id = ? AND mf.household_id = ?
+				  AND mf.state = 'active' AND mf.role = 'video'
+				  AND src.status = 'active'
+				ORDER BY mf.id ASC`,
+				item.ID, householdID,
+			)
+		}
+		if err == nil {
+			for rows.Next() {
+				var sid, vp string
+				if rows.Scan(&sid, &vp) == nil {
+					item.FileCount++
+					if sampleVideoPath == "" {
+						sampleSourceID = sid
+						sampleVideoPath = vp
+					}
 				}
 			}
+			_ = rows.Close()
 		}
-		_ = rows.Close()
 	}
 
 	if item.Kind == db.KindShow || item.Kind == db.KindSeason {
@@ -518,7 +716,8 @@ func (s *Service) hydrateItemSummary(householdID, memberID string, item *ItemSum
 		).Scan(&item.ChildCount)
 	}
 
-	if sampleVideoPath != "" && (item.LocalPosterURL == "" || item.LocalBackdropURL == "" || item.LocalLogoURL == "") {
+	if checkArtworkSidecars && item.Kind != db.KindEpisode && sampleVideoPath != "" &&
+		(item.LocalPosterURL == "" || item.LocalBackdropURL == "" || item.LocalLogoURL == "") {
 		lp, lb, ll := s.findSiblingLocalArtworkURLs(householdID, sampleSourceID, sampleVideoPath, item.Kind)
 		if item.LocalPosterURL == "" {
 			item.LocalPosterURL = lp
@@ -732,6 +931,126 @@ func (s *Service) loadItemFiles(householdID string, itemID int64) []MediaFileVie
 	return out
 }
 
+func (s *Service) loadBatchSnapshotFiles(householdID string, itemIDs []int64, sourceID string) map[int64][]MediaFileView {
+	res := make(map[int64][]MediaFileView)
+	if len(itemIDs) == 0 {
+		return res
+	}
+
+	placeholders := make([]string, len(itemIDs))
+	args := make([]any, 0, len(itemIDs)+2)
+	args = append(args, householdID)
+	for i, id := range itemIDs {
+		placeholders[i] = "?"
+		args = append(args, id)
+	}
+
+	sourceFilter := ""
+	if src := strings.TrimSpace(sourceID); src != "" {
+		sourceFilter = " AND mf.source_id = ?"
+		args = append(args, src)
+	}
+
+	rows, err := s.store.ReadDB().Query(`
+		SELECT mf.id, mf.item_id, mf.source_id, src.kind, src.name, mf.path, COALESCE(mf.remote_id, ''),
+		       mf.size, mf.mtime_s, COALESCE(mf.version_label, ''), mf.added_at, mf.updated_at
+		FROM media_files mf
+		JOIN sources src ON src.id = mf.source_id
+		WHERE mf.household_id = ?
+		  AND mf.item_id IN (`+strings.Join(placeholders, ",")+`)
+		  AND mf.role = 'video'
+		  AND mf.state = 'active'
+		  AND src.status = 'active'`+sourceFilter+`
+		ORDER BY mf.item_id ASC, mf.id ASC`,
+		args...,
+	)
+	if err != nil {
+		return res
+	}
+	defer rows.Close()
+
+	type fileRef struct {
+		itemID int64
+		idx    int
+	}
+	videoRefs := make(map[int64]fileRef)
+	videoIDs := make([]int64, 0, len(itemIDs))
+
+	for rows.Next() {
+		var (
+			itemID int64
+			f      MediaFileView
+			sz, mt sql.NullInt64
+		)
+		if err := rows.Scan(
+			&f.ID, &itemID, &f.SourceID, &f.SourceKind, &f.SourceName, &f.Path, &f.RemoteID,
+			&sz, &mt, &f.VersionLabel, &f.AddedAt, &f.UpdatedAt,
+		); err != nil {
+			continue
+		}
+		if sz.Valid {
+			v := sz.Int64
+			f.Size = &v
+		}
+		if mt.Valid {
+			v := mt.Int64
+			f.MtimeS = &v
+		}
+		list := res[itemID]
+		idx := len(list)
+		res[itemID] = append(list, f)
+		videoRefs[f.ID] = fileRef{itemID: itemID, idx: idx}
+		videoIDs = append(videoIDs, f.ID)
+	}
+
+	if len(videoIDs) == 0 {
+		return res
+	}
+
+	subPlaceholders := make([]string, len(videoIDs))
+	subArgs := make([]any, 0, len(videoIDs)+1)
+	subArgs = append(subArgs, householdID)
+	for i, vid := range videoIDs {
+		subPlaceholders[i] = "?"
+		subArgs = append(subArgs, vid)
+	}
+
+	subRows, err := s.store.ReadDB().Query(`
+		SELECT id, owner_file_id, source_id, path, COALESCE(remote_id, ''), COALESCE(language, ''), size
+		FROM media_files
+		WHERE household_id = ?
+		  AND owner_file_id IN (`+strings.Join(subPlaceholders, ",")+`)
+		  AND role = 'subtitle'
+		  AND state = 'active'
+		ORDER BY path ASC`,
+		subArgs...,
+	)
+	if err != nil {
+		return res
+	}
+	defer subRows.Close()
+
+	for subRows.Next() {
+		var (
+			ownerID int64
+			sf      SubtitleFileView
+			sz      sql.NullInt64
+		)
+		if subRows.Scan(&sf.ID, &ownerID, &sf.SourceID, &sf.Path, &sf.RemoteID, &sf.Language, &sz) != nil {
+			continue
+		}
+		if sz.Valid {
+			v := sz.Int64
+			sf.Size = &v
+		}
+		if ref, ok := videoRefs[ownerID]; ok {
+			res[ref.itemID][ref.idx].Subtitles = append(res[ref.itemID][ref.idx].Subtitles, sf)
+		}
+	}
+
+	return res
+}
+
 func (s *Service) loadVideoSubtitles(householdID string, videoFileID int64) []SubtitleFileView {
 	rows, err := s.store.ReadDB().Query(`
 		SELECT id, source_id, path, COALESCE(remote_id, ''), COALESCE(language, ''), size
@@ -760,7 +1079,22 @@ func (s *Service) loadVideoSubtitles(householdID string, videoFileID int64) []Su
 	return subs
 }
 
-func (s *Service) loadChildItems(householdID, memberID string, parentID int64, workKey string) []ItemSummaryView {
+type cachedHydratedItem struct {
+	deleted bool
+	item    ItemSummaryView
+}
+
+func (s *Service) lookupShowWorkKey(householdID string, showID int64, cache map[int64]string) string {
+	if wk, ok := cache[showID]; ok {
+		return wk
+	}
+	var wk string
+	_ = s.store.ReadDB().QueryRow(`SELECT COALESCE(work_key, '') FROM media_items WHERE id = ? AND household_id = ?`, showID, householdID).Scan(&wk)
+	cache[showID] = wk
+	return wk
+}
+
+func (s *Service) loadChildItemsWithOpts(householdID, memberID string, parentID int64, workKey string, checkArtworkSidecars, includeFiles bool) []ItemSummaryView {
 	rows, err := s.store.ReadDB().Query(`
 		SELECT mi.id, COALESCE(mi.work_key, ''), mi.kind, mi.library_type,
 		       mi.parent_id, mi.show_id, mi.title, COALESCE(mi.sort_title, ''),
@@ -781,26 +1115,95 @@ func (s *Service) loadChildItems(householdID, memberID string, parentID int64, w
 	defer rows.Close()
 
 	out := make([]ItemSummaryView, 0)
+	var epIDs []int64
 	for rows.Next() {
 		item, err := scanItemSummary(rows)
 		if err == nil {
 			if item.WorkKey == "" {
 				item.WorkKey = workKey
 			}
+			item.ShowWorkKey = workKey
 			out = append(out, item)
+			if item.Kind == db.KindEpisode {
+				epIDs = append(epIDs, item.ID)
+			}
 		}
 	}
+	var filesByItem map[int64][]MediaFileView
+	if includeFiles && len(epIDs) > 0 {
+		filesByItem = s.loadBatchSnapshotFiles(householdID, epIDs, "")
+	}
 	for i := range out {
-		s.hydrateItemSummary(householdID, memberID, &out[i])
+		if files, ok := filesByItem[out[i].ID]; ok {
+			out[i].Files = files
+		}
+		s.hydrateItemSummaryWithOpts(householdID, memberID, &out[i], checkArtworkSidecars)
 	}
 	return out
 }
 
-func (s *Service) hydrateChangeEvent(p *account.Principal, ev *ChangeEvent) {
+func (s *Service) loadShowEpisodes(householdID, memberID string, showID int64, workKey string, checkArtworkSidecars bool) []ItemSummaryView {
+	rows, err := s.store.ReadDB().Query(`
+		SELECT mi.id, COALESCE(mi.work_key, ''), mi.kind, mi.library_type,
+		       mi.parent_id, mi.show_id, mi.title, COALESCE(mi.sort_title, ''),
+		       COALESCE(mi.original_title, ''), mi.year, COALESCE(mi.release_date, ''),
+		       COALESCE(mi.summary, ''), COALESCE(mi.content_rating, ''), mi.rating, mi.runtime_ms,
+		       mi.season_number, mi.episode_number,
+		       COALESCE(mi.poster_source, ''), COALESCE(mi.backdrop_source, ''), COALESCE(mi.logo_source, ''),
+		       COALESCE(mi.tmdb_id, ''), COALESCE(mi.imdb_id, ''), mi.locked,
+		       mi.added_at, mi.source_added_at, mi.updated_at
+		FROM media_items mi
+		WHERE mi.household_id = ? AND mi.show_id = ? AND mi.kind = ?
+		ORDER BY COALESCE(mi.season_number, 0) ASC, COALESCE(mi.episode_number, 0) ASC, mi.id ASC`,
+		householdID, showID, db.KindEpisode,
+	)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	out := make([]ItemSummaryView, 0)
+	var epIDs []int64
+	for rows.Next() {
+		item, err := scanItemSummary(rows)
+		if err == nil {
+			item.ShowWorkKey = workKey
+			out = append(out, item)
+			epIDs = append(epIDs, item.ID)
+		}
+	}
+	var filesByItem map[int64][]MediaFileView
+	if len(epIDs) > 0 {
+		filesByItem = s.loadBatchSnapshotFiles(householdID, epIDs, "")
+	}
+	for i := range out {
+		if files, ok := filesByItem[out[i].ID]; ok {
+			out[i].Files = files
+		}
+		s.hydrateItemSummaryWithOpts(householdID, memberID, &out[i], checkArtworkSidecars)
+	}
+	return out
+}
+
+func (s *Service) hydrateChangeEventWithOpts(
+	p *account.Principal,
+	ev *ChangeEvent,
+	checkArtworkSidecars bool,
+	itemCache map[int64]cachedHydratedItem,
+	showWKCache map[int64]string,
+) {
 	switch ev.Entity {
 	case "item":
 		itemID, err := strconv.ParseInt(ev.EntityID, 10, 64)
 		if err != nil || itemID <= 0 {
+			return
+		}
+		if cached, ok := itemCache[itemID]; ok {
+			if cached.deleted {
+				ev.Op = "delete"
+			} else {
+				ev.Data = cached.item
+			}
 			return
 		}
 		row := s.store.ReadDB().QueryRow(`
@@ -819,13 +1222,25 @@ func (s *Service) hydrateChangeEvent(p *account.Principal, ev *ChangeEvent) {
 		item, err := scanItemSummary(row)
 		if err != nil {
 			ev.Op = "delete"
+			itemCache[itemID] = cachedHydratedItem{deleted: true}
 			return
 		}
-		s.hydrateItemSummary(p.HouseholdID, p.MemberID, &item)
+		if item.Kind == db.KindSeason || item.Kind == db.KindEpisode {
+			if item.ShowID != nil && *item.ShowID > 0 {
+				item.ShowWorkKey = s.lookupShowWorkKey(p.HouseholdID, *item.ShowID, showWKCache)
+			} else if item.ParentID != nil && *item.ParentID > 0 && item.Kind == db.KindSeason {
+				item.ShowWorkKey = s.lookupShowWorkKey(p.HouseholdID, *item.ParentID, showWKCache)
+			}
+		} else if item.Kind == db.KindShow && item.WorkKey != "" {
+			showWKCache[item.ID] = item.WorkKey
+		}
+		s.hydrateItemSummaryWithOpts(p.HouseholdID, p.MemberID, &item, checkArtworkSidecars)
 		if item.FileCount == 0 {
 			ev.Op = "delete"
+			itemCache[itemID] = cachedHydratedItem{deleted: true}
 			return
 		}
+		itemCache[itemID] = cachedHydratedItem{item: item}
 		ev.Data = item
 	case "progress":
 		if s.userData != nil {

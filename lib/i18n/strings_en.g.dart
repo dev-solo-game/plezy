@@ -6786,8 +6786,8 @@ class Translations$storage$en {
 	/// en: 'No results'
 	String get noMatchResults => 'No results';
 
-	/// en: 'Media sources'
-	String get mediaSources => 'Media sources';
+	/// en: 'Local Mounts'
+	String get mediaSources => 'Local Mounts';
 
 	/// en: 'Official metadata service & language preference'
 	String get scraperSettingsDescription => 'Official metadata service & language preference';
@@ -7479,8 +7479,8 @@ class Translations$serverAdmin$en {
 
 	// Translations
 
-	/// en: 'Self-Hosted Server Management'
-	String get sectionTitle => 'Self-Hosted Server Management';
+	/// en: 'Cloud Mounts'
+	String get sectionTitle => 'Cloud Mounts';
 
 	/// en: 'Server Mounts'
 	String get mountsTitle => 'Server Mounts';
@@ -12399,7 +12399,7 @@ extension on Translations {
 			'storage.tmdbImageBase' => 'TMDB image address',
 			'storage.manualMatch' => 'Match manually',
 			'storage.noMatchResults' => 'No results',
-			'storage.mediaSources' => 'Media sources',
+			'storage.mediaSources' => 'Local Mounts',
 			'storage.scraperSettingsDescription' => 'Official metadata service & language preference',
 			'storage.metadataServiceTitle' => 'Official Metadata Service',
 			'storage.metadataServiceOfficial' => 'Connected to TTPlay Official Metadata Service',
@@ -12617,7 +12617,7 @@ extension on Translations {
 			'session.errInvalidCredentials' => 'Invalid username or password.',
 			'session.errNetwork' => ({required Object error}) => 'Connection failed: ${error}',
 			'session.errServer' => ({required Object error}) => 'Server error: ${error}',
-			'serverAdmin.sectionTitle' => 'Self-Hosted Server Management',
+			'serverAdmin.sectionTitle' => 'Cloud Mounts',
 			'serverAdmin.mountsTitle' => 'Server Mounts',
 			'serverAdmin.mountsSubtitle' => 'Add, edit, scan and remove server storage mounts',
 			'serverAdmin.scraperTitle' => 'Server Scraper & Metadata',

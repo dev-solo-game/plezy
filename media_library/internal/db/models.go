@@ -38,6 +38,7 @@ const (
 
 	SourceKindQuark    = "quark"
 	SourceKindWebDAV   = "webdav"
+	SourceKindSMB      = "smb"
 	SourceKindEmby     = "emby"
 	SourceKindJellyfin = "jellyfin"
 

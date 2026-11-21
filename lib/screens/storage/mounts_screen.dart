@@ -8,6 +8,7 @@ import 'package:provider/provider.dart';
 
 import '../../i18n/strings.g.dart';
 import '../../library/library_scan_service.dart';
+import '../../library_cloud/cloud_mount_mirror.dart';
 import '../../storage/mount_manager.dart';
 import '../../storage/storage_mount.dart';
 import '../../storage/storage_path.dart';
@@ -145,8 +146,12 @@ class MountsScreen extends StatelessWidget {
       body: StreamBuilder<List<StorageMount>>(
         stream: manager.registry.watch(),
         builder: (context, snapshot) {
-          final mounts = snapshot.data;
-          if (mounts == null) return const Center(child: CircularProgressIndicator());
+          final allMounts = snapshot.data;
+          if (allMounts == null) return const Center(child: CircularProgressIndicator());
+          // Exclude cloud-mirrored (`cloud:*`) mounts; those are managed in CloudSourcesScreen.
+          final mounts = allMounts
+              .where((m) => !CloudMountMirror.isCloudMountId(m.id))
+              .toList(growable: false);
           if (mounts.isEmpty) return _EmptyState(onAdd: () => _edit(context));
           return Align(
             alignment: Alignment.topCenter,

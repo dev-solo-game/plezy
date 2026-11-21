@@ -2792,7 +2792,7 @@
     "tmdbImageBase": "TMDB image address",
     "manualMatch": "Match manually",
     "noMatchResults": "No results",
-    "mediaSources": "Media sources",
+    "mediaSources": "Local Mounts",
     "scraperSettingsDescription": "Official metadata service & language preference",
     "metadataServiceTitle": "Official Metadata Service",
     "metadataServiceOfficial": "Connected to TTPlay Official Metadata Service",
@@ -3018,7 +3018,7 @@
     "errServer": "Server error: ${error}"
   },
   "serverAdmin": {
-    "sectionTitle": "Self-Hosted Server Management",
+    "sectionTitle": "Cloud Mounts",
     "mountsTitle": "Server Mounts",
     "mountsSubtitle": "Add, edit, scan and remove server storage mounts",
     "scraperTitle": "Server Scraper & Metadata",

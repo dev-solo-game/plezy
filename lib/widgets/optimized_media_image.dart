@@ -9,6 +9,7 @@ import 'package:plezy/widgets/app_icon.dart';
 
 import '../media/media_server_client.dart';
 import '../services/device_performance.dart';
+import '../services/image_cache_service.dart';
 import '../utils/app_logger.dart';
 import '../utils/media_image_helper.dart';
 import '../utils/obfuscation_utils.dart';
@@ -56,6 +57,12 @@ Widget _withArtworkDim(Animation<double>? dim, Widget Function(Color? tint) buil
 }
 
 class OptimizedMediaImage extends StatefulWidget {
+  static final ValueNotifier<int> _failedRetryEpoch = ValueNotifier<int>(0);
+
+  /// Clears cached error state on image tiles that failed to load over the
+  /// network so they re-request without causing healthy images to flicker.
+  static void retryFailedImages() => _failedRetryEpoch.value++;
+
   final MediaServerClient? client;
   final String? imagePath;
   final double? width;
@@ -204,6 +211,44 @@ class _OptimizedMediaImageState extends State<OptimizedMediaImage> {
   double? _pendingHeight;
   (int, int, double)? _pendingTargetKey;
   Timer? _debounceTimer;
+  bool _hadNetworkError = false;
+  ImageProvider? _failedProvider;
+  String? _failedImageUrl;
+  int _retryNonce = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    OptimizedMediaImage._failedRetryEpoch.addListener(_onFailedRetryEpoch);
+  }
+
+  void _onFailedRetryEpoch() {
+    if (!mounted || !_hadNetworkError) return;
+    final provider = _failedProvider;
+    final url = _failedImageUrl;
+    if (provider != null) {
+      PaintingBinding.instance.imageCache.evict(provider);
+    }
+    unawaited(() async {
+      if (provider != null) {
+        try {
+          await provider.evict();
+        } catch (_) {}
+      }
+      if (url != null && url.isNotEmpty) {
+        try {
+          await PlexImageCacheManager.instance.removeFile(MediaImageHelper.serverArtworkCacheKey(url));
+        } catch (_) {}
+      }
+      if (!mounted || !_hadNetworkError) return;
+      setState(() {
+        _hadNetworkError = false;
+        _failedProvider = null;
+        _failedImageUrl = null;
+        _retryNonce++;
+      });
+    }());
+  }
 
   @override
   void didUpdateWidget(OptimizedMediaImage oldWidget) {
@@ -219,11 +264,15 @@ class _OptimizedMediaImageState extends State<OptimizedMediaImage> {
       _committedWidth = null;
       _committedHeight = null;
       _committedDensity = null;
+      _hadNetworkError = false;
+      _failedProvider = null;
+      _failedImageUrl = null;
     }
   }
 
   @override
   void dispose() {
+    OptimizedMediaImage._failedRetryEpoch.removeListener(_onFailedRetryEpoch);
     _debounceTimer?.cancel();
     _debounceTimer = null;
     super.dispose();
@@ -503,6 +552,7 @@ class _OptimizedMediaImageState extends State<OptimizedMediaImage> {
       return _withArtworkDim(
         widget.artworkDim,
         (tint) => Image(
+          key: ValueKey('img_retry_$_retryNonce'),
           image: resizedProvider,
           width: widget.width,
           height: widget.height,
@@ -513,9 +563,14 @@ class _OptimizedMediaImageState extends State<OptimizedMediaImage> {
           alignment: widget.alignment,
           color: tint,
           colorBlendMode: tint == null ? null : BlendMode.srcATop,
-          errorBuilder: _networkErrorBuilder(imageUrl),
+          errorBuilder: _networkErrorBuilder(imageUrl, resizedProvider),
           frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
-            if (wasSynchronouslyLoaded || frame != null) return child;
+            if (wasSynchronouslyLoaded || frame != null) {
+              _hadNetworkError = false;
+              _failedProvider = null;
+              _failedImageUrl = null;
+              return child;
+            }
             return _buildPlaceholder(context, imageUrl);
           },
         ),
@@ -523,6 +578,7 @@ class _OptimizedMediaImageState extends State<OptimizedMediaImage> {
     }
 
     return _FadeInNetworkImage(
+      key: ValueKey('img_retry_$_retryNonce'),
       image: resizedProvider,
       width: widget.width,
       height: widget.height,
@@ -531,13 +587,21 @@ class _OptimizedMediaImageState extends State<OptimizedMediaImage> {
       alignment: widget.alignment,
       duration: widget.fadeInDuration,
       placeholderBuilder: (context) => _buildPlaceholder(context, imageUrl),
-      errorBuilder: _networkErrorBuilder(imageUrl),
+      errorBuilder: _networkErrorBuilder(imageUrl, resizedProvider),
+      onFirstFrame: () {
+        _hadNetworkError = false;
+        _failedProvider = null;
+        _failedImageUrl = null;
+      },
       artworkDim: widget.artworkDim,
     );
   }
 
-  ImageErrorWidgetBuilder _networkErrorBuilder(String imageUrl) {
+  ImageErrorWidgetBuilder _networkErrorBuilder(String imageUrl, ImageProvider provider) {
     return (context, error, stackTrace) {
+      _hadNetworkError = true;
+      _failedProvider = provider;
+      _failedImageUrl = imageUrl;
       _imageFailureCount++;
       final now = DateTime.now();
       if (now.difference(_lastFailureLog) >= _logInterval) {
@@ -715,6 +779,7 @@ class ClearLogoImage extends StatelessWidget {
 /// AnimatedSwitcher cross-fade this replaces.
 class _FadeInNetworkImage extends StatefulWidget {
   const _FadeInNetworkImage({
+    super.key,
     required this.image,
     required this.width,
     required this.height,
@@ -724,6 +789,7 @@ class _FadeInNetworkImage extends StatefulWidget {
     required this.duration,
     required this.placeholderBuilder,
     required this.errorBuilder,
+    this.onFirstFrame,
     required this.artworkDim,
   });
 
@@ -736,6 +802,7 @@ class _FadeInNetworkImage extends StatefulWidget {
   final Duration duration;
   final WidgetBuilder placeholderBuilder;
   final ImageErrorWidgetBuilder errorBuilder;
+  final VoidCallback? onFirstFrame;
   final Animation<double>? artworkDim;
 
   @override
@@ -792,7 +859,10 @@ class _FadeInNetworkImageState extends State<_FadeInNetworkImage> with SingleTic
         opacity: _opacity,
         errorBuilder: widget.errorBuilder,
         frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
-          if (wasSynchronouslyLoaded) return child;
+          if (wasSynchronouslyLoaded) {
+            widget.onFirstFrame?.call();
+            return child;
+          }
           if (frame == null && !_sawFirstFrame) {
             // Async load in progress: hide the image and show the placeholder
             // beneath until the first frame arrives. Mutating outside setState
@@ -800,6 +870,7 @@ class _FadeInNetworkImageState extends State<_FadeInNetworkImage> with SingleTic
             _opacity.value = 0;
             _placeholderVisible = true;
           } else if (frame != null && !_sawFirstFrame) {
+            widget.onFirstFrame?.call();
             _startFade();
           }
           if (!_placeholderVisible) return child;

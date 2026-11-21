@@ -860,19 +860,19 @@ func (sc *Scraper) persistGroupMatchTx(tx *sql.Tx, p persistGroupParams) (int64,
 	}
 
 	earliestAdded := nowMs
-	var earliestSourceAdded sql.NullInt64
+	var latestSourceAdded sql.NullInt64
 	for _, a := range p.Assignments {
 		if a.file.AddedAt > 0 && a.file.AddedAt < earliestAdded {
 			earliestAdded = a.file.AddedAt
 		}
 		var ts int64
-		if a.file.CtimeS.Valid && a.file.CtimeS.Int64 > 0 {
-			ts = a.file.CtimeS.Int64 * 1000
-		} else if a.file.MtimeS.Valid && a.file.MtimeS.Int64 > 0 {
+		if a.file.MtimeS.Valid && a.file.MtimeS.Int64 > 0 {
 			ts = a.file.MtimeS.Int64 * 1000
+		} else if a.file.CtimeS.Valid && a.file.CtimeS.Int64 > 0 {
+			ts = a.file.CtimeS.Int64 * 1000
 		}
-		if ts > 0 && (!earliestSourceAdded.Valid || ts < earliestSourceAdded.Int64) {
-			earliestSourceAdded = sql.NullInt64{Int64: ts, Valid: true}
+		if ts > 0 && (!latestSourceAdded.Valid || ts > latestSourceAdded.Int64) {
+			latestSourceAdded = sql.NullInt64{Int64: ts, Valid: true}
 		}
 	}
 
@@ -933,7 +933,7 @@ func (sc *Scraper) persistGroupMatchTx(tx *sql.Tx, p persistGroupParams) (int64,
 			p.Work.Summary, p.Work.Tagline, p.Work.ContentRating, p.Work.Studio, p.Work.Rating, p.Work.RuntimeMs,
 			posterSrc, backdropSrc, logoSrc,
 			p.Work.TmdbID, p.Work.ImdbID, p.Work.TvdbID, p.Work.BangumiID, p.Work.DoubanID, p.Work.AniListID,
-			metaSrc, earliestAdded, earliestSourceAdded, nowMs, nowMs,
+			metaSrc, earliestAdded, latestSourceAdded, nowMs, nowMs,
 		)
 		if err != nil {
 			return 0, err
@@ -958,7 +958,7 @@ func (sc *Scraper) persistGroupMatchTx(tx *sql.Tx, p persistGroupParams) (int64,
 					logo_source = COALESCE(?, logo_source),
 					tmdb_id = ?, imdb_id = ?, tvdb_id = ?, bangumi_id = ?, douban_id = ?, anilist_id = ?,
 					metadata_source = ?, locked = ?,
-					source_added_at = COALESCE(MIN(source_added_at, ?), source_added_at, ?),
+					source_added_at = COALESCE(MAX(source_added_at, ?), source_added_at, ?),
 					updated_at = ?, scraped_at = ?
 				WHERE id = ?`,
 				p.Kind, p.Shelf, p.Work.Title, sortTitle, p.Work.OriginalTitle,
@@ -967,12 +967,18 @@ func (sc *Scraper) persistGroupMatchTx(tx *sql.Tx, p persistGroupParams) (int64,
 				posterSrc, backdropSrc, logoSrc,
 				p.Work.TmdbID, p.Work.ImdbID, p.Work.TvdbID, p.Work.BangumiID, p.Work.DoubanID, p.Work.AniListID,
 				metaSrc, lockedVal,
-				earliestSourceAdded, earliestSourceAdded, nowMs, nowMs, rootItemID,
+				latestSourceAdded, latestSourceAdded, nowMs, nowMs, rootItemID,
 			); err != nil {
 				return 0, err
 			}
 		} else {
-			if _, err := tx.Exec(`UPDATE media_items SET updated_at = ? WHERE id = ?`, nowMs, rootItemID); err != nil {
+			if _, err := tx.Exec(`
+				UPDATE media_items
+				SET source_added_at = COALESCE(MAX(source_added_at, ?), source_added_at, ?),
+				    updated_at = ?
+				WHERE id = ?`,
+				latestSourceAdded, latestSourceAdded, nowMs, rootItemID,
+			); err != nil {
 				return 0, err
 			}
 		}

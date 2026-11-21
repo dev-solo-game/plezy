@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:clock/clock.dart';
 import 'package:flutter/foundation.dart';
 
+import '../library_cloud/cloud_mount_mirror.dart';
 import '../storage/drivers/quark_storage_driver.dart';
 import '../storage/mount_manager.dart';
 import '../storage/storage_driver.dart';
@@ -214,10 +215,13 @@ class LibraryScanService extends ChangeNotifier {
     try {
       var nextCheck = automaticInterval;
       final due = <StorageMount>[];
-      final mounts = await _mountManager.registry.list();
+      final mounts = (await _mountManager.registry.list())
+          .where((m) => !CloudMountMirror.isCloudMountId(m.id))
+          .toList(growable: false);
       _automaticFailures.removeWhere((id, _) => !mounts.any((mount) => mount.id == id));
       for (final mount in mounts) {
         if (allowedMountIds != null && !allowedMountIds.contains(mount.id)) continue;
+        if (!mount.configBool(MountKeys.autoIncrementalScan)) continue;
         if (!_mountManager.isMountOnline(mount.id)) continue;
         final cookie = mount.secret(MountKeys.secretCookie);
         if (!supportsIncremental(mount) || cookie == null) continue;
@@ -280,7 +284,9 @@ class LibraryScanService extends ChangeNotifier {
   }
 
   Future<bool> scanAllMounts() async {
-    final mounts = await _mountManager.registry.list();
+    final mounts = (await _mountManager.registry.list())
+        .where((m) => !CloudMountMirror.isCloudMountId(m.id))
+        .toList(growable: false);
     if (_disposed) return false;
     if (mounts.isEmpty) {
       _libraryChanged();
@@ -506,7 +512,11 @@ class LibraryScanService extends ChangeNotifier {
     final seenTargets = <(String, String)>{};
     for (final episode in episodes.reversed) {
       for (final file in await repository.versionsOf(episode.item.id)) {
-        if (!_mountManager.isMountOnline(file.mountId) || _running.containsKey(file.mountId)) continue;
+        if (CloudMountMirror.isCloudMountId(file.mountId) ||
+            !_mountManager.isMountOnline(file.mountId) ||
+            _running.containsKey(file.mountId)) {
+          continue;
+        }
         seenTargets.add((file.mountId, StoragePath.parent(file.path)));
         if (seenTargets.length >= 4) break;
       }
@@ -655,6 +665,7 @@ class LibraryScanService extends ChangeNotifier {
   Future<int> refileAll() async {
     var moved = 0;
     for (final mount in await _mountManager.registry.list()) {
+      if (CloudMountMirror.isCloudMountId(mount.id)) continue;
       if (_running.containsKey(mount.id)) continue;
       moved += await _libraryScanner.refileFromNames(mount.id);
     }

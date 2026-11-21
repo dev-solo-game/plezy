@@ -89,6 +89,7 @@ class CloudProjectionSyncClient {
     String? sort,
     int page = 1,
     int pageSize = 100,
+    bool includeFiles = false,
   }) async {
     final resp = await api.getJson(
       '/api/v1/library/snapshot',
@@ -101,21 +102,32 @@ class CloudProjectionSyncClient {
         if (sort != null && sort.isNotEmpty) 'sort': sort,
         'page': '$page',
         'page_size': '$pageSize',
+        if (includeFiles) 'include_files': '1',
       },
     );
     return CloudSnapshotPage.fromJson(resp);
   }
 
-  Future<CloudChangesPage> fetchChanges({required int sinceSeq, int limit = 200}) async {
+  Future<CloudChangesPage> fetchChanges({required int sinceSeq, int limit = 200, bool includeFiles = false}) async {
     final resp = await api.getJson(
       '/api/v1/library/changes',
-      query: {'since_seq': '$sinceSeq', 'limit': '$limit'},
+      query: {
+        'since_seq': '$sinceSeq',
+        'limit': '$limit',
+        if (includeFiles) 'include_files': '1',
+      },
     );
     return CloudChangesPage.fromJson(resp);
   }
 
   Future<Map<String, dynamic>> fetchItemDetail(int itemId) async {
     final resp = await api.getJson('/api/v1/items/$itemId');
+    final item = resp['item'];
+    return item is Map ? Map<String, dynamic>.from(item) : const {};
+  }
+
+  Future<Map<String, dynamic>> fetchItemDetailByWorkKey(String workKey) async {
+    final resp = await api.getJson('/api/v1/items/by-work-key', query: {'work_key': workKey});
     final item = resp['item'];
     return item is Map ? Map<String, dynamic>.from(item) : const {};
   }

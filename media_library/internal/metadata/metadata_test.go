@@ -273,3 +273,47 @@ func TestDoubanImageProxyRefererAndAllowlist(t *testing.T) {
 		t.Fatalf("expected Douban Referer header, got %q", seenReferer)
 	}
 }
+
+func TestFetchRemoteImageTransientRetryAndNoRetryOn404(t *testing.T) {
+	svc, store := openTestMetadataService(t)
+	var retryHits atomic.Int32
+	var missingHits atomic.Int32
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/t/p/w500/flaky.jpg":
+			if retryHits.Add(1) == 1 {
+				w.WriteHeader(http.StatusBadGateway)
+				return
+			}
+			w.Header().Set("Content-Type", "image/jpeg")
+			_, _ = w.Write([]byte("\xff\xd8\xff\xe0OK"))
+		case "/t/p/w500/missing.jpg":
+			missingHits.Add(1)
+			w.WriteHeader(http.StatusNotFound)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	imgBase := srv.URL + "/t/p"
+	if _, err := store.UpdateServerSettings(db.ServerSettingsUpdate{TmdbImageBase: &imgBase}); err != nil {
+		t.Fatal(err)
+	}
+
+	img, err := svc.FetchRemoteImage(context.Background(), "/flaky.jpg", "w500")
+	if err != nil || len(img.Data) == 0 {
+		t.Fatalf("expected retry to recover from transient 502, got err=%v", err)
+	}
+	if retryHits.Load() != 2 {
+		t.Fatalf("expected 2 upstream hits (1 failure + 1 retry), got %d", retryHits.Load())
+	}
+
+	if _, err := svc.FetchRemoteImage(context.Background(), "/missing.jpg", "w500"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected ErrNotFound on 404, got %v", err)
+	}
+	if missingHits.Load() != 1 {
+		t.Fatalf("404 must not retry, got %d hits", missingHits.Load())
+	}
+}

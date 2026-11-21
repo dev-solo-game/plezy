@@ -119,7 +119,7 @@ class ServerMetadataProvider implements MetadataProvider {
 
   static const String defaultOfficialMetadataUrl = String.fromEnvironment(
     'PLEZY_OFFICIAL_METADATA_URL',
-    defaultValue: 'http://10.0.10.48:8090',
+    defaultValue: 'https://play.ttai.net',
   );
 
   static const String defaultArtworkProxyPath = '/api/v1/public/metadata/artwork';

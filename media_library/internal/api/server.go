@@ -209,7 +209,7 @@ func (s *Server) buildMux() http.Handler {
 	mux.HandleFunc("GET /api/v1/metadata/people", s.requireUserMetadataQuota(s.handleUserMetadataPerson))
 	mux.HandleFunc("GET /api/v1/metadata/people/{provider}/{id}", s.requireUserMetadataQuota(s.handleUserMetadataPerson))
 	mux.HandleFunc("POST /api/v1/metadata/identify", s.requireUserMetadataQuota(s.handleUserMetadataIdentify))
-	mux.HandleFunc("GET /api/v1/metadata/artwork", s.requireUser(s.handlePublicMetadataArtwork))
+	mux.HandleFunc("GET /api/v1/metadata/artwork", s.requireUserOrQueryToken(s.handlePublicMetadataArtwork))
 
 	mux.HandleFunc("GET /api/v1/library/unmatched", s.requireUser(s.requirePerm(account.PermBrowse, s.handleListUnmatched)))
 	mux.HandleFunc("POST /api/v1/library/unmatched/ignore", s.requireUser(s.requirePerm(account.PermManageSources, s.handleIgnoreUnmatched)))
@@ -223,6 +223,7 @@ func (s *Server) buildMux() http.Handler {
 	// Downstream library sync, sidecar download, SSE & member user data (S5)
 	mux.HandleFunc("GET /api/v1/library/snapshot", s.requireUser(s.requirePerm(account.PermBrowse, s.handleGetLibrarySnapshot)))
 	mux.HandleFunc("GET /api/v1/library/changes", s.requireUser(s.requirePerm(account.PermBrowse, s.handleGetLibraryChanges)))
+	mux.HandleFunc("GET /api/v1/items/by-work-key", s.requireUser(s.requirePerm(account.PermBrowse, s.handleGetItemDetailByWorkKey)))
 	mux.HandleFunc("GET /api/v1/items/{id}", s.requireUser(s.requirePerm(account.PermBrowse, s.handleGetItemDetail)))
 	mux.HandleFunc("GET /api/v1/sidecars/{sha256}", s.requireUser(s.requirePerm(account.PermBrowse, s.handleGetSidecar)))
 	mux.HandleFunc("GET /api/v1/events", s.requireUser(s.requirePerm(account.PermBrowse, s.handleEventsSSE)))
@@ -321,6 +322,32 @@ func (s *Server) requireUser(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 		tok := bearerToken(r)
+		if tok == "" {
+			writeErrCode(w, r, http.StatusUnauthorized, "unauthorized", "authentication required")
+			return
+		}
+		p, err := s.Acc.Authenticate(tok)
+		if err != nil {
+			writeMappedError(w, r, err)
+			return
+		}
+		ctx := context.WithValue(r.Context(), ctxKeyUserPrincipal, p)
+		next(w, r.WithContext(ctx))
+	}
+}
+
+// requireUserOrQueryToken accepts Authorization: Bearer or ?token=... for image
+// widgets that cannot attach custom headers to artwork proxy URLs.
+func (s *Server) requireUserOrQueryToken(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if s.Acc == nil {
+			writeErrCode(w, r, http.StatusUnauthorized, "unauthorized", "user auth service unavailable")
+			return
+		}
+		tok := bearerToken(r)
+		if tok == "" {
+			tok = strings.TrimSpace(r.URL.Query().Get("token"))
+		}
 		if tok == "" {
 			writeErrCode(w, r, http.StatusUnauthorized, "unauthorized", "authentication required")
 			return
@@ -525,20 +552,30 @@ func (s *Server) withRequestLogging(next http.Handler) http.Handler {
 			return
 		}
 
+		target := p
+		if r.URL.RawQuery != "" {
+			target += "?" + applog.RedactQuery(r.URL.RawQuery)
+		}
+
 		if st < http.StatusBadRequest {
 			switch {
 			case p == "/healthz", p == "/api/v1/health",
+				p == "/api/v1/events",
+				p == "/api/admin/logs", p == "/api/admin/logs/download",
+				strings.HasPrefix(p, "/api/v1/metadata/artwork"),
 				strings.HasPrefix(p, "/api/v1/public/metadata/artwork"):
+				return
+			}
+			if r.Method == http.MethodGet {
+				switch p {
+				case "/api/v1/library/changes", "/api/v1/library/snapshot", "/api/v1/sources":
+					applog.Debugf("api", "%s %s -> %d (%dms)", r.Method, target, st, elapsedMs)
+				}
 				return
 			}
 			if r.Method != http.MethodPost && r.Method != http.MethodPut && r.Method != http.MethodPatch && r.Method != http.MethodDelete {
 				return
 			}
-		}
-
-		target := p
-		if r.URL.RawQuery != "" {
-			target += "?" + applog.RedactQuery(r.URL.RawQuery)
 		}
 
 		switch {

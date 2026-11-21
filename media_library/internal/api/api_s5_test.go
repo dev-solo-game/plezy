@@ -87,6 +87,56 @@ func TestS5FeedSnapshotChangesSidecarSSEAndUserData(t *testing.T) {
 		t.Fatalf("expected total=1, got %d", snap1Data.Total)
 	}
 
+	// Snapshot with include_files=1 returns files inline for movie
+	snapInc := doJSONReq(srv, http.MethodGet, "/api/v1/library/snapshot?kind=movie&include_files=1", tok1, "", nil, nil)
+	if snapInc.Code != http.StatusOK || !strings.Contains(snapInc.Body.String(), `"files"`) || !strings.Contains(snapInc.Body.String(), "Inception.2010.mkv") {
+		t.Fatalf("snapshot include_files failed: %d %s", snapInc.Code, snapInc.Body.String())
+	}
+
+	// Seed a show -> season -> episode and verify /snapshot?kind=season and ?kind=episode&include_files=1
+	shRes, err := store.DB().Exec(`
+		INSERT INTO media_items(household_id, kind, library_type, work_key, title, sort_title, year, added_at, updated_at)
+		VALUES (?, 'show', 'show', 'tmdb:show:999', 'Test Series', 'test series', 2024, ?, ?)`,
+		hh1, nowMs, nowMs,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	showID, _ := shRes.LastInsertId()
+	seRes, err := store.DB().Exec(`
+		INSERT INTO media_items(household_id, kind, library_type, work_key, parent_id, show_id, title, sort_title, season_number, added_at, updated_at)
+		VALUES (?, 'season', 'show', '', ?, ?, 'Season 1', 'season 1', 1, ?, ?)`,
+		hh1, showID, showID, nowMs, nowMs,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seasonID, _ := seRes.LastInsertId()
+	epRes, err := store.DB().Exec(`
+		INSERT INTO media_items(household_id, kind, library_type, work_key, parent_id, show_id, title, sort_title, season_number, episode_number, added_at, updated_at)
+		VALUES (?, 'episode', 'show', '', ?, ?, 'Ep 1', 'ep 1', 1, 1, ?, ?)`,
+		hh1, seasonID, showID, nowMs, nowMs,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	epID, _ := epRes.LastInsertId()
+	if _, err := store.DB().Exec(`
+		INSERT INTO media_files(household_id, source_id, item_id, path, role, size, state, match_state, last_seen_at, added_at, updated_at)
+		VALUES (?, ?, ?, '/Shows/TestSeries/S01E01.mkv', 'video', 8192, 'active', 'matched', ?, ?, ?)`,
+		hh1, srcBody.Source.ID, epID, nowMs, nowMs, nowMs,
+	); err != nil {
+		t.Fatal(err)
+	}
+	seasonSnap := doJSONReq(srv, http.MethodGet, "/api/v1/library/snapshot?kind=season", tok1, "", nil, nil)
+	if seasonSnap.Code != http.StatusOK || !strings.Contains(seasonSnap.Body.String(), "Season 1") {
+		t.Fatalf("season snapshot failed: %d %s", seasonSnap.Code, seasonSnap.Body.String())
+	}
+	epSnap := doJSONReq(srv, http.MethodGet, "/api/v1/library/snapshot?kind=episode&include_files=1", tok1, "", nil, nil)
+	if epSnap.Code != http.StatusOK || !strings.Contains(epSnap.Body.String(), "/Shows/TestSeries/S01E01.mkv") {
+		t.Fatalf("episode snapshot failed: %d %s", epSnap.Code, epSnap.Body.String())
+	}
+
 	snap2 := doJSONReq(srv, http.MethodGet, "/api/v1/library/snapshot?kind=movie", tok2, "", nil, nil)
 	if snap2.Code != http.StatusOK || strings.Contains(snap2.Body.String(), "Inception") {
 		t.Fatalf("snapshot2 leaked cross-tenant data: %d %s", snap2.Code, snap2.Body.String())
@@ -100,6 +150,10 @@ func TestS5FeedSnapshotChangesSidecarSSEAndUserData(t *testing.T) {
 	det2 := doJSONReq(srv, http.MethodGet, "/api/v1/items/"+strconv.FormatInt(itemID, 10), tok2, "", nil, nil)
 	if det2.Code != http.StatusNotFound {
 		t.Fatalf("expected 404 cross-tenant item detail, got %d", det2.Code)
+	}
+	byWk := doJSONReq(srv, http.MethodGet, "/api/v1/items/by-work-key?work_key="+url.QueryEscape("tmdb:show:999"), tok1, "", nil, nil)
+	if byWk.Code != http.StatusOK || !strings.Contains(byWk.Body.String(), "/Shows/TestSeries/S01E01.mkv") {
+		t.Fatalf("item by-work-key failed: %d %s", byWk.Code, byWk.Body.String())
 	}
 
 	// User data: progress, continue watching, favorites, work prefs, lists

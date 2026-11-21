@@ -252,6 +252,14 @@ func (s *Service) SubmitBatch(p *account.Principal, sessionID string, req Submit
 					if groupKey != "" {
 						queuedGroups[groupKey] = "changed"
 					}
+				} else if role == db.FileRoleVideo && existing.ItemID.Valid {
+					itemSeq, err := db.AppendChangeTx(tx, p.HouseholdID, nil, "item", fmt.Sprintf("%d", existing.ItemID.Int64), "upsert", nowMs)
+					if err != nil {
+						return nil, err
+					}
+					if itemSeq > maxChangeSeq {
+						maxChangeSeq = itemSeq
+					}
 				} else if role == db.FileRoleNfo || role == db.FileRoleArtwork {
 					changedNfoOrArtDirs[dir] = struct{}{}
 				}
@@ -347,6 +355,7 @@ func (s *Service) SubmitBatch(p *account.Principal, sessionID string, req Submit
 	}
 
 	// Process explicit removals from incremental scans.
+	var removedFileIDs []int64
 	for _, rem := range req.Removed {
 		var (
 			normPath string
@@ -387,6 +396,7 @@ func (s *Service) SubmitBatch(p *account.Principal, sessionID string, req Submit
 				_ = tx.QueryRow(`SELECT id FROM media_files WHERE household_id = ? AND source_id = ? AND path = ?`, p.HouseholdID, sv.SourceID, normPath).Scan(&removedID)
 			}
 			if removedID > 0 {
+				removedFileIDs = append(removedFileIDs, removedID)
 				seq, err := db.AppendChangeTx(tx, p.HouseholdID, nil, "media_file", fmt.Sprintf("%d", removedID), "missing", nowMs)
 				if err != nil {
 					return nil, err
@@ -398,11 +408,22 @@ func (s *Service) SubmitBatch(p *account.Principal, sessionID string, req Submit
 			receipt.Removed += int(n)
 		}
 	}
+	if len(removedFileIDs) > 0 {
+		if seq, err := recomputeRootSourceAddedAtTx(tx, p.HouseholdID, removedFileIDs, nowMs); err != nil {
+			return nil, err
+		} else if seq > maxChangeSeq {
+			maxChangeSeq = seq
+		}
+	}
 
 	// Match subtitles and per-video NFOs in touched directories.
 	for dir := range dirtyDirs {
-		if err := matchDirectorySidecarsTx(tx, p.HouseholdID, sv.SourceID, dir, nowMs); err != nil {
+		seq, err := matchDirectorySidecarsTx(tx, p.HouseholdID, sv.SourceID, dir, nowMs)
+		if err != nil {
 			return nil, err
+		}
+		if seq > maxChangeSeq {
+			maxChangeSeq = seq
 		}
 	}
 
@@ -569,7 +590,7 @@ func applyBatchMediaSpecTx(tx *sql.Tx, hhID string, fileID int64, spec *MediaSpe
 	return err
 }
 
-func matchDirectorySidecarsTx(tx *sql.Tx, hhID, sourceID, dir string, nowMs int64) error {
+func matchDirectorySidecarsTx(tx *sql.Tx, hhID, sourceID, dir string, nowMs int64) (int64, error) {
 	likeEsc := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
 	var (
 		rows *sql.Rows
@@ -577,7 +598,7 @@ func matchDirectorySidecarsTx(tx *sql.Tx, hhID, sourceID, dir string, nowMs int6
 	)
 	if dir == pathutil.RootPath {
 		rows, err = tx.Query(`
-			SELECT id, path, role, owner_file_id, COALESCE(language, '')
+			SELECT id, path, role, owner_file_id, item_id, COALESCE(language, '')
 			FROM media_files
 			WHERE household_id = ? AND source_id = ? AND state = 'active'
 			  AND role IN ('video', 'subtitle', 'nfo')
@@ -588,7 +609,7 @@ func matchDirectorySidecarsTx(tx *sql.Tx, hhID, sourceID, dir string, nowMs int6
 		patDirect := likeEsc.Replace(dir) + "/%"
 		patDeeper := likeEsc.Replace(dir) + "/%/%"
 		rows, err = tx.Query(`
-			SELECT id, path, role, owner_file_id, COALESCE(language, '')
+			SELECT id, path, role, owner_file_id, item_id, COALESCE(language, '')
 			FROM media_files
 			WHERE household_id = ? AND source_id = ? AND state = 'active'
 			  AND role IN ('video', 'subtitle', 'nfo')
@@ -597,7 +618,7 @@ func matchDirectorySidecarsTx(tx *sql.Tx, hhID, sourceID, dir string, nowMs int6
 		)
 	}
 	if err != nil {
-		return err
+		return 0, err
 	}
 
 	type dirEntry struct {
@@ -606,14 +627,15 @@ func matchDirectorySidecarsTx(tx *sql.Tx, hhID, sourceID, dir string, nowMs int6
 		name    string
 		role    string
 		ownerID sql.NullInt64
+		itemID  sql.NullInt64
 		lang    string
 	}
 	var entries []dirEntry
 	for rows.Next() {
 		var e dirEntry
-		if scanErr := rows.Scan(&e.id, &e.path, &e.role, &e.ownerID, &e.lang); scanErr != nil {
+		if scanErr := rows.Scan(&e.id, &e.path, &e.role, &e.ownerID, &e.itemID, &e.lang); scanErr != nil {
 			_ = rows.Close()
-			return scanErr
+			return 0, scanErr
 		}
 		if pathutil.ParentPath(e.path) != dir {
 			continue
@@ -623,16 +645,20 @@ func matchDirectorySidecarsTx(tx *sql.Tx, hhID, sourceID, dir string, nowMs int6
 	}
 	_ = rows.Close()
 	if err := rows.Err(); err != nil {
-		return err
+		return 0, err
 	}
 
 	dirFiles := make([]library.DirFile, 0, len(entries))
 	pathToID := make(map[string]int64, len(entries))
+	videoItemByID := make(map[int64]int64)
 	videoStemToID := make(map[string]int64)
 	for _, e := range entries {
 		dirFiles = append(dirFiles, library.DirFile{Path: e.path, Name: e.name})
 		pathToID[e.path] = e.id
 		if e.role == db.FileRoleVideo {
+			if e.itemID.Valid && e.itemID.Int64 > 0 {
+				videoItemByID[e.id] = e.itemID.Int64
+			}
 			stem := strings.ToLower(library.FileStem(e.name))
 			videoStemToID[stem] = e.id
 		}
@@ -643,6 +669,8 @@ func matchDirectorySidecarsTx(tx *sql.Tx, hhID, sourceID, dir string, nowMs int6
 		subMatches[ms.Subtitle.Path] = ms
 	}
 
+	var maxSeq int64
+	notifiedItems := make(map[int64]struct{})
 	for _, e := range entries {
 		switch e.role {
 		case db.FileRoleSubtitle:
@@ -655,7 +683,19 @@ func matchDirectorySidecarsTx(tx *sql.Tx, hhID, sourceID, dir string, nowMs int6
 						WHERE id = ? AND household_id = ?`,
 						ownerID, m.Language, nowMs, e.id, hhID,
 					); err != nil {
-						return err
+						return 0, err
+					}
+					if ownerItemID, ok := videoItemByID[ownerID]; ok && ownerItemID > 0 {
+						if _, seen := notifiedItems[ownerItemID]; !seen {
+							notifiedItems[ownerItemID] = struct{}{}
+							seq, err := db.AppendChangeTx(tx, hhID, nil, "item", fmt.Sprintf("%d", ownerItemID), "upsert", nowMs)
+							if err != nil {
+								return 0, err
+							}
+							if seq > maxSeq {
+								maxSeq = seq
+							}
+						}
 					}
 				}
 			}
@@ -669,13 +709,13 @@ func matchDirectorySidecarsTx(tx *sql.Tx, hhID, sourceID, dir string, nowMs int6
 						WHERE id = ? AND household_id = ?`,
 						ownerID, nowMs, e.id, hhID,
 					); err != nil {
-						return err
+						return 0, err
 					}
 				}
 			}
 		}
 	}
-	return nil
+	return maxSeq, nil
 }
 
 func collectDirVideoGroupsTx(tx *sql.Tx, hhID, sourceID, dir string, out map[string]string) error {

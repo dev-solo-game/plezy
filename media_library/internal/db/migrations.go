@@ -638,6 +638,23 @@ var migrations = []Migration{
 			`CREATE INDEX IF NOT EXISTS idx_account_login_tickets_expires ON account_login_tickets(expires_at)`,
 		},
 	},
+	{
+		Version: 3,
+		Name:    "0003_source_added_at_max",
+		Statements: []string{
+			`UPDATE media_items
+			SET source_added_at = COALESCE(
+				(SELECT MAX(CASE WHEN mf.mtime_s > 0 THEN mf.mtime_s WHEN mf.ctime_s > 0 THEN mf.ctime_s END) * 1000
+				 FROM media_items leaf
+				 JOIN media_files mf ON mf.item_id = leaf.id AND mf.role = 'video' AND mf.state = 'active'
+				 JOIN sources src ON src.id = mf.source_id AND src.status = 'active'
+				 WHERE (leaf.id = media_items.id OR leaf.show_id = media_items.id)
+				   AND leaf.household_id = media_items.household_id),
+				source_added_at
+			)
+			WHERE kind IN ('movie', 'show')`,
+		},
+	},
 }
 
 func (s *Store) runMigrations() error {

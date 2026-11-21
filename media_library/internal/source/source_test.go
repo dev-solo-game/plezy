@@ -80,7 +80,7 @@ func TestDeviceAddPolicyAndDynamicUpdate(t *testing.T) {
 	tv := loginSameHousehold(t, accSvc, "alice_pol", db.DeviceClassTV, "10.0.0.3")
 	web := loginSameHousehold(t, accSvc, "alice_pol", db.DeviceClassWeb, "10.0.0.4")
 
-	// PC adds Quark -> OK; PC adds WebDAV -> blocked
+	// PC adds Quark, WebDAV, SMB -> OK
 	if _, err := srcSvc.CreateSource(pc.Principal, CreateSourceRequest{
 		Kind:        db.SourceKindQuark,
 		Name:        "My Quark",
@@ -94,11 +94,19 @@ func TestDeviceAddPolicyAndDynamicUpdate(t *testing.T) {
 		Name:        "PC WebDAV",
 		IdentityKey: "wd_hmac_1",
 		Ciphertext:  "cipher_wd_1",
-	}, "10.0.0.1"); !errors.Is(err, ErrKindNotAllowedOnDevice) {
-		t.Fatalf("expected desktop webdav ErrKindNotAllowedOnDevice, got %v", err)
+	}, "10.0.0.1"); err != nil {
+		t.Fatalf("desktop add webdav failed: %v", err)
+	}
+	if _, err := srcSvc.CreateSource(pc.Principal, CreateSourceRequest{
+		Kind:        db.SourceKindSMB,
+		Name:        "PC SMB",
+		IdentityKey: "smb_hmac_1",
+		Ciphertext:  "cipher_smb_1",
+	}, "10.0.0.1"); err != nil {
+		t.Fatalf("desktop add smb failed: %v", err)
 	}
 
-	// Phone adds WebDAV -> OK; Phone adds Quark -> blocked
+	// Phone adds WebDAV & Quark -> OK
 	if _, err := srcSvc.CreateSource(phone.Principal, CreateSourceRequest{
 		Kind:        db.SourceKindWebDAV,
 		Name:        "Phone NAS",
@@ -112,13 +120,13 @@ func TestDeviceAddPolicyAndDynamicUpdate(t *testing.T) {
 		Name:        "Phone Quark",
 		IdentityKey: "qk_hmac_2",
 		Ciphertext:  "cipher_qk_2",
-	}, "10.0.0.2"); !errors.Is(err, ErrKindNotAllowedOnDevice) {
-		t.Fatalf("expected phone quark ErrKindNotAllowedOnDevice, got %v", err)
+	}, "10.0.0.2"); err != nil {
+		t.Fatalf("phone add quark failed: %v", err)
 	}
 
 	// TV and Web cannot add any source by default
 	for _, dev := range []*account.AuthResult{tv, web} {
-		for _, k := range []string{db.SourceKindQuark, db.SourceKindWebDAV, db.SourceKindEmby, db.SourceKindJellyfin} {
+		for _, k := range []string{db.SourceKindQuark, db.SourceKindWebDAV, db.SourceKindSMB, db.SourceKindEmby, db.SourceKindJellyfin} {
 			if _, err := srcSvc.CreateSource(dev.Principal, CreateSourceRequest{
 				Kind:        k,
 				Name:        "Disallowed",
@@ -130,10 +138,18 @@ func TestDeviceAddPolicyAndDynamicUpdate(t *testing.T) {
 		}
 	}
 
-	// Admin updates policy dynamically to let TV add Emby
+	// Admin updates policy dynamically: restrict phone from adding quark, and let TV add Emby
 	newPolicy := `{"desktop":["quark","emby","jellyfin"],"phone":["webdav","emby","jellyfin"],"tablet":["webdav","emby","jellyfin"],"tv":["emby"],"web":[]}`
 	if _, err := store.UpdateServerSettings(db.ServerSettingsUpdate{SourceAddPolicyJSON: &newPolicy}); err != nil {
 		t.Fatal(err)
+	}
+	if _, err := srcSvc.CreateSource(phone.Principal, CreateSourceRequest{
+		Kind:        db.SourceKindQuark,
+		Name:        "Blocked Phone Quark",
+		IdentityKey: "qk_hmac_blocked",
+		Ciphertext:  "cipher",
+	}, "10.0.0.2"); !errors.Is(err, ErrKindNotAllowedOnDevice) {
+		t.Fatalf("expected phone quark blocked after policy update, got %v", err)
 	}
 	if _, err := srcSvc.CreateSource(tv.Principal, CreateSourceRequest{
 		Kind:        db.SourceKindEmby,
@@ -330,6 +346,11 @@ func TestCredentialOptimisticLockingAndStatusSSE(t *testing.T) {
 		t.Fatalf("expected CredentialConflictError with v2, got %v", err)
 	}
 
+	// Restrict phone from replacing Quark to verify device policy enforcement on replace
+	restrictPolicy := `{"desktop":["quark","webdav","smb","emby","jellyfin"],"phone":["webdav","emby","jellyfin"],"tablet":["webdav","emby","jellyfin"],"tv":[],"web":[]}`
+	if _, err := store.UpdateServerSettings(db.ServerSettingsUpdate{SourceAddPolicyJSON: &restrictPolicy}); err != nil {
+		t.Fatal(err)
+	}
 	// Phone cannot perform full replace on Quark (device policy!)
 	if _, err := srcSvc.UpdateCredential(phone.Principal, src.ID, UpdateCredentialRequest{
 		BaseVersion: 2,

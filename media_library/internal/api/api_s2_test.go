@@ -76,21 +76,7 @@ func TestS2DevicePolicyFoldersDedupAndQuota(t *testing.T) {
 	phoneTok, _, _, _ := mustRegisterAndLoginDevice(t, srv, "s2_alice", db.DeviceClassPhone, "10.5.0.2:1000", false)
 	tvTok, _, _, _ := mustRegisterAndLoginDevice(t, srv, "s2_alice", db.DeviceClassTV, "10.5.0.3:1000", false)
 
-	// 1. Device add policy enforcement
-	pcWebDAV := doJSONReq(srv, http.MethodPost, "/api/v1/sources", pcTok, "", nil, map[string]any{
-		"kind": "webdav", "name": "Bad", "identity_key": "wd1", "ciphertext": "enc",
-	})
-	if pcWebDAV.Code != http.StatusForbidden || !strings.Contains(pcWebDAV.Body.String(), "source_kind_not_allowed_on_device") {
-		t.Fatalf("expected 403 source_kind_not_allowed_on_device on PC WebDAV, got %d %s", pcWebDAV.Code, pcWebDAV.Body.String())
-	}
-
-	phoneQuark := doJSONReq(srv, http.MethodPost, "/api/v1/sources", phoneTok, "", nil, map[string]any{
-		"kind": "quark", "name": "BadQ", "identity_key": "qk1", "ciphertext": "enc",
-	})
-	if phoneQuark.Code != http.StatusForbidden || !strings.Contains(phoneQuark.Body.String(), "source_kind_not_allowed_on_device") {
-		t.Fatalf("expected 403 on Phone Quark, got %d %s", phoneQuark.Code, phoneQuark.Body.String())
-	}
-
+	// 1. Device add policy enforcement: TV is blocked by default
 	tvEmby := doJSONReq(srv, http.MethodPost, "/api/v1/sources", tvTok, "", nil, map[string]any{
 		"kind": "emby", "name": "BadE", "identity_key": "em1", "ciphertext": "enc",
 	})

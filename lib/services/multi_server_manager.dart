@@ -413,6 +413,41 @@ class MultiServerManager {
     _emitStatus();
   }
 
+  /// Registers direct external clients (such as cloud-synced Emby / Jellyfin
+  /// servers from `media_library` v1) without replacing the local library client.
+  void registerSelfHostedExternals(List<MediaServerClient> externals) {
+    final incomingIds = {for (final c in externals) c.serverId};
+    final incomingIdentity = Set<MediaServerClient>.identity()..addAll(externals);
+    final toClose = <MediaServerClient>{};
+
+    for (final oldId in _selfHostedServerIds.toList()) {
+      if (!incomingIds.contains(oldId)) {
+        final removed = _forgetServer(oldId);
+        if (removed != null) {
+          toClose.add(removed);
+        }
+      }
+    }
+
+    for (final client in externals) {
+      final existing = _clients[client.serverId];
+      if (existing != null && !identical(existing, client)) {
+        toClose.add(existing);
+      }
+      _clients[client.serverId] = client;
+      _serverStatus[client.serverId] = true;
+      _refusedServers.remove(client.serverId);
+      _selfHostedServerIds.add(client.serverId);
+    }
+
+    for (final stale in toClose) {
+      if (!incomingIdentity.contains(stale)) {
+        unawaited(_closeClientGracefully(stale));
+      }
+    }
+    _emitStatus();
+  }
+
   /// Detaches and gracefully closes all self-hosted `ttplay-server` and
   /// proxied external server clients.
   void clearSelfHostedServers() {

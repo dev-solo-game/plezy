@@ -432,6 +432,8 @@ class MediaImageHelper {
     return ToneMappedLogoImage(bounded, target: logoToneTarget, remapMixed: logoToneRemapMixed);
   }
 
+  static String serverArtworkCacheKey(String imageUrl) => _serverArtworkCacheKey(imageUrl);
+
   static final _serverArtworkCacheKeys = <String, String>{};
   static const _serverArtworkCacheKeyLimit = 512;
 

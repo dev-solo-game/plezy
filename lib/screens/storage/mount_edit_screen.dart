@@ -49,9 +49,6 @@ class MountEditScreen extends StatefulWidget {
 class _MountEditScreenState extends State<MountEditScreen> {
   static const List<StorageKind> _selectableKinds = [
     StorageKind.local,
-    StorageKind.smb,
-    StorageKind.webdav,
-    StorageKind.quark,
   ];
   static const double _fieldGap = 14;
 
@@ -60,6 +57,7 @@ class _MountEditScreenState extends State<MountEditScreen> {
   /// Null while a new mount is still on the type picker.
   StorageKind? _kind;
   late bool _allowInsecureTls;
+  late bool _autoIncrementalScan;
   late final TextEditingController _name;
   late final TextEditingController _rootPath;
   late final TextEditingController _baseUrl;
@@ -96,8 +94,11 @@ class _MountEditScreenState extends State<MountEditScreen> {
   void initState() {
     super.initState();
     final mount = widget.mount;
-    _kind = mount?.kind;
+    // Offline & local mounts only support local folders; cloud storage types
+    // (Quark / WebDAV / SMB / Emby / Jellyfin) live exclusively in CloudSourcesScreen.
+    _kind = mount?.kind ?? StorageKind.local;
     _allowInsecureTls = mount?.configBool(MountKeys.allowInsecureTls) ?? false;
+    _autoIncrementalScan = mount?.configBool(MountKeys.autoIncrementalScan) ?? false;
     _name = TextEditingController(text: mount?.displayName ?? '');
     _rootPath = TextEditingController(
       text: mount?.kind == StorageKind.local ? mount?.configString(MountKeys.rootPath) ?? '' : '',
@@ -213,7 +214,13 @@ class _MountEditScreenState extends State<MountEditScreen> {
       if (excludes.isNotEmpty) MountKeys.excludePaths: excludes,
     };
     final (Map<String, Object?> config, Map<String, String> secrets) = switch (kind) {
-      StorageKind.local => ({MountKeys.rootPath: _rootPath.text.trim()}, const <String, String>{}),
+      StorageKind.local => (
+        {
+          MountKeys.rootPath: _rootPath.text.trim(),
+          MountKeys.autoIncrementalScan: _autoIncrementalScan,
+        },
+        const <String, String>{},
+      ),
       StorageKind.webdav => (
         {
           MountKeys.baseUrl: _baseUrl.text.trim(),
@@ -300,8 +307,7 @@ class _MountEditScreenState extends State<MountEditScreen> {
         await scans.cancelAndAwaitMount(mount.id);
         await manager.save(mount);
         manager.setStatus(mount.id, resolvedStatus);
-        // A new or changed mount is scanned straight away; the list shows progress.
-        unawaited(scans.scan(mount));
+        // Do not auto-scan on add/edit; user manually triggers initial scan.
       }
     } on StorageException catch (e) {
       error = e.message;
@@ -512,6 +518,14 @@ class _MountEditScreenState extends State<MountEditScreen> {
                   : null,
             ),
             validator: _required,
+          ),
+          const SizedBox(height: 8),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('自动增量扫描'),
+            subtitle: const Text('仅在完成至少一次手动扫描后自动增量检查变更'),
+            value: _autoIncrementalScan,
+            onChanged: _saving ? null : (v) => setState(() => _autoIncrementalScan = v),
           ),
         ];
       case StorageKind.webdav:

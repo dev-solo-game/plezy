@@ -6,24 +6,41 @@ import '../i18n/strings.g.dart';
 import '../library/library_scan_service.dart';
 import '../library/library_scrape_runner.dart';
 import '../library/library_settings.dart';
+import '../library_cloud/scan_session_runner.dart';
+import '../screens/sources/cloud_sources_screen.dart';
 import '../screens/storage/scraper_settings_screen.dart';
+import '../ttplay/ttplay_session_binder.dart';
+import '../utils/platform_detector.dart';
 import 'app_icon.dart';
 
-/// Compact top-bar indicator displaying local library scan or scrape progress,
-/// or the latest scan/scrape failure.
+/// Compact top-bar indicator displaying local or cloud library scan/scrape
+/// progress, cloud projection sync activity, or the latest failure.
 class LibraryStatusIndicator extends StatelessWidget {
   const LibraryStatusIndicator({super.key});
 
   @override
   Widget build(BuildContext context) {
-    final scans = context.watch<LibraryScanService?>();
+    LibraryScanService? scans;
+    try {
+      scans = context.watch<LibraryScanService?>();
+    } on ProviderNotFoundException {
+      scans = null;
+    }
 
-    final status = _resolveStatus(scans);
+    TtplaySessionBinder? binder;
+    try {
+      binder = context.watch<TtplaySessionBinder?>();
+    } on ProviderNotFoundException {
+      binder = null;
+    }
+
+    final status = _resolveStatus(scans, binder);
     if (status == null) return const SizedBox.shrink();
 
     final theme = Theme.of(context);
     final color = status.failed ? theme.colorScheme.error : theme.colorScheme.onSurface;
     final canOpenSettings = status.isNoTmdbKey && Provider.of<LibrarySettingsStore?>(context, listen: false) != null;
+    final canOpenCloudSources = status.openCloudSources && !PlatformDetector.isTV();
 
     Widget content = Padding(
       padding: const EdgeInsetsDirectional.only(end: 8),
@@ -47,13 +64,18 @@ class LibraryStatusIndicator extends StatelessWidget {
       ),
     );
 
-    if (canOpenSettings) {
+    final VoidCallback? onTap = canOpenSettings
+        ? () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const ScraperSettingsScreen()))
+        : canOpenCloudSources
+        ? () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const CloudSourcesScreen()))
+        : null;
+
+    if (onTap != null) {
       content = MouseRegion(
         cursor: SystemMouseCursors.click,
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
-          onTap: () =>
-              Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const ScraperSettingsScreen())),
+          onTap: onTap,
           child: content,
         ),
       );
@@ -62,8 +84,9 @@ class LibraryStatusIndicator extends StatelessWidget {
     return Tooltip(message: status.tooltip, child: content);
   }
 
-  static ({String inlineText, String tooltip, bool failed, bool isNoTmdbKey})? _resolveStatus(
+  static ({String inlineText, String tooltip, bool failed, bool isNoTmdbKey, bool openCloudSources})? _resolveStatus(
     LibraryScanService? scans,
+    TtplaySessionBinder? binder,
   ) {
     final job = scans?.update;
     final files = job?.filesSeen ?? scans?.standaloneScanFiles;
@@ -126,6 +149,7 @@ class LibraryStatusIndicator extends StatelessWidget {
         tooltip: line2 == null ? line1 : '$line1\n$line2',
         failed: false,
         isNoTmdbKey: false,
+        openCloudSources: false,
       );
     }
 
@@ -133,7 +157,29 @@ class LibraryStatusIndicator extends StatelessWidget {
       final detail = scrapeStatus.total > 0
           ? t.storage.scrapingProgress(done: scrapeStatus.done, total: scrapeStatus.total)
           : t.storage.scraping;
-      return (inlineText: detail, tooltip: '${t.storage.scrapeTitle} · $detail', failed: false, isNoTmdbKey: false);
+      return (
+        inlineText: detail,
+        tooltip: '${t.storage.scrapeTitle} · $detail',
+        failed: false,
+        isNoTmdbKey: false,
+        openCloudSources: false,
+      );
+    }
+
+    final cloudRunner = binder?.cloudScanRunner;
+    if (cloudRunner != null && cloudRunner.hasActiveScans) {
+      final active = cloudRunner.activeScans;
+      return _resolveCloudScanStatus(active, syncingProjection: binder?.isCloudProjectionSyncing == true);
+    }
+
+    if (binder?.isCloudProjectionSyncing == true) {
+      return (
+        inlineText: '同步云端片库中...',
+        tooltip: '正在从服务端同步最新片库与元数据',
+        failed: false,
+        isNoTmdbKey: false,
+        openCloudSources: true,
+      );
     }
 
     if (scanError != null) {
@@ -147,6 +193,7 @@ class LibraryStatusIndicator extends StatelessWidget {
         tooltip: '$label\n$detail',
         failed: true,
         isNoTmdbKey: isNoKey,
+        openCloudSources: false,
       );
     }
 
@@ -159,9 +206,72 @@ class LibraryStatusIndicator extends StatelessWidget {
         tooltip: '${t.storage.scrapeTitle}\n$detail',
         failed: true,
         isNoTmdbKey: isNoKey,
+        openCloudSources: false,
+      );
+    }
+
+    final cloudError = cloudRunner?.latestError;
+    if (cloudError != null) {
+      return (
+        inlineText: '云端扫描失败',
+        tooltip: '云端扫描失败\n${cloudError.message}',
+        failed: true,
+        isNoTmdbKey: false,
+        openCloudSources: true,
       );
     }
 
     return null;
+  }
+
+  static ({String inlineText, String tooltip, bool failed, bool isNoTmdbKey, bool openCloudSources})
+      _resolveCloudScanStatus(
+    List<CloudScanProgress> active, {
+    required bool syncingProjection,
+  }) {
+    var totalDirs = 0;
+    var totalFound = 0;
+    var totalReported = 0;
+    var allCancelling = active.isNotEmpty;
+    final allIncremental = active.isNotEmpty && active.every((p) => p.scanType == 'incremental');
+    final lines = <String>[];
+
+    for (final p in active) {
+      totalDirs += p.directoriesVisited;
+      totalFound += p.filesFound;
+      totalReported += p.filesReported;
+      if (!p.cancelling) allCancelling = false;
+      final target = (p.targetLabel != null && p.targetLabel!.isNotEmpty) ? p.targetLabel! : p.sourceId;
+      final isInc = p.scanType == 'incremental';
+      final statusWord = p.cancelling ? '正在取消' : (isInc ? '增量扫描中' : '扫描中');
+      lines.add(
+        '$target（$statusWord）：已遍历 ${p.directoriesVisited} 目录 · 发现 ${p.filesFound} / 上报 ${p.filesReported} 文件'
+        '${p.filesAdded + p.filesChanged > 0 ? ' · 新增 ${p.filesAdded} / 更新 ${p.filesChanged}' : ''}',
+      );
+    }
+
+    if (syncingProjection) {
+      lines.add('同时正在同步最新已刮削片库...');
+    }
+
+    final prefix = allIncremental ? '云端增量扫描' : '云端扫描';
+    final String inlineText;
+    if (allCancelling) {
+      inlineText = '$prefix · 正在取消...';
+    } else if (totalFound > 0 || totalReported > 0) {
+      inlineText = '$prefix · 发现 $totalFound / 上报 $totalReported';
+    } else if (allIncremental && totalDirs == 0) {
+      inlineText = '云端增量检查中...';
+    } else {
+      inlineText = '$prefix · 已遍历 $totalDirs 目录';
+    }
+
+    return (
+      inlineText: inlineText,
+      tooltip: lines.isEmpty ? inlineText : lines.join('\n'),
+      failed: false,
+      isNoTmdbKey: false,
+      openCloudSources: true,
+    );
   }
 }

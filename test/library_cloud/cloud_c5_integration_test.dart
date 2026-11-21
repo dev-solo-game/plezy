@@ -253,21 +253,32 @@ void main() {
     );
     sessionController.debugSetStateForTesting(mode: AppLoginMode.selfHosted, selfHostedSession: session);
 
+    var localLibraryMutatedCalls = 0;
     final binder = TtplaySessionBinder(
       sessionController: sessionController,
       serverManager: serverManager,
       localLibraryClient: localClient,
       isTv: () => false,
+      onLocalLibraryMutated: () => localLibraryMutatedCalls++,
     );
     addTearDown(binder.dispose);
 
     binder.seedSelfHostedSynchronously(session);
     expect(binder.cloudProjectionEngine, isNotNull);
+    expect(binder.isMediaLibraryV1Active, isTrue);
+    expect(serverManager.registeredServerIds, contains(LocalLibraryClient.localServerId));
+
+    // Verify all poster artwork routes through our media_library server (never direct to TMDB).
+    final proxiedThumb = localClient.thumbnailUrl('/abc123.jpg', width: 500);
+    expect(proxiedThumb, startsWith('http://127.0.0.1:${server.port}/api/v1/metadata/artwork?src=%2Fabc123.jpg'));
+    expect(proxiedThumb, contains('token=usr_tok'));
+    expect(proxiedThumb, isNot(contains('image.tmdb.org')));
 
     // 1. Sync cloud projection -> DB now holds BOTH local Interstellar and cloud Inception
     final syncRes = await binder.syncCloudProjection(full: true);
     expect(syncRes, isNotNull);
     expect(syncRes!.itemsProjected, 1);
+    expect(localLibraryMutatedCalls, 1);
 
     final allItems = await db.select(db.libraryItems).get();
     expect(allItems.map((e) => e.title), containsAll(['Interstellar', 'Inception']));

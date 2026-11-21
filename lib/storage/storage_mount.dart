@@ -173,6 +173,22 @@ abstract final class MountKeys {
   static const String quarkDownloadConnections = 'downloadConnections';
   static const String quarkDownloadChunkMiB = 'downloadChunkMiB';
 
+  /// Per-mount opt-in for automatic incremental scan checks (only takes effect
+  /// after at least one manual scan has completed).
+  static const String autoIncrementalScan = 'autoIncrementalScan';
+
+  /// Automatic incremental scan interval in minutes.
+  static const String autoIncrementalIntervalMinutes = 'autoIncrementalIntervalMinutes';
+  static const int defaultAutoIncrementalIntervalMinutes = 15;
+  static const List<int> autoIncrementalIntervalPresets = [5, 15, 30, 60, 120];
+
+  static String formatAutoIncrementalInterval(int minutes) {
+    if (minutes % 60 == 0 && minutes >= 60) {
+      return '${minutes ~/ 60} 小时';
+    }
+    return '$minutes 分钟';
+  }
+
   static const String secretPassword = 'password';
   static const String secretCookie = 'cookie';
 }

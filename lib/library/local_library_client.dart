@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
+import 'package:drift/drift.dart' show Variable;
 import '../database/app_database.dart';
 import '../i18n/strings.g.dart';
 import '../media/artist_discography.dart';
@@ -53,6 +54,7 @@ import 'library_scanner.dart';
 import 'library_scrape_runner.dart';
 import 'media_probe.dart';
 import 'scrapers/bangumi_provider.dart';
+import 'scrapers/server_metadata_provider.dart';
 import 'scrapers/tmdb_image_url.dart';
 import 'scrapers/tmdb_provider.dart';
 
@@ -118,6 +120,13 @@ class LocalLibraryClient implements MediaServerClient, StreamQualityClient {
   LibraryScrapeRunner? scrapeRunner;
   final Duration seekDebounceDuration;
   String tmdbImageBase = TmdbProvider.defaultImageBase;
+
+  /// Active `media_library` server URL used to proxy all remote/TMDB artwork
+  /// so the client never connects directly to TMDB. Defaults to the official
+  /// public metadata server in offline mode and switches to the logged-in
+  /// self-hosted server in online mode.
+  String metadataServerUrl = ServerMetadataProvider.defaultOfficialMetadataUrl;
+  String? metadataAccessToken;
 
   lib.LibraryRepository get repository => _repo;
   MountManager get mountManager => _mountManager;
@@ -514,23 +523,68 @@ class LocalLibraryClient implements MediaServerClient, StreamQualityClient {
 
   // ─── Items ─────────────────────────────────────────────────────────────
 
+  Future<({bool isCloudOnly, int rootId, String workKey})?> _resolveCloudDetailTarget(int numericId) async {
+    final initial = (await _repo.getItem(numericId))?.item;
+    if (initial == null) return null;
+    final rootId = (initial.kind == lib.LibraryKinds.season || initial.kind == lib.LibraryKinds.episode)
+        ? (initial.showId ?? initial.parentId ?? initial.id)
+        : initial.id;
+    final root = rootId == initial.id ? initial : (await _repo.getItem(rootId))?.item;
+    if (root == null) return null;
+
+    final rows = await _repo.database
+        .customSelect(
+          "SELECT DISTINCT mount_id FROM library_files WHERE role = 'video' AND item_id IN "
+          '(SELECT id FROM library_items WHERE id = ? OR show_id = ?)',
+          variables: [Variable.withInt(root.id), Variable.withInt(root.id)],
+        )
+        .get();
+    var hasCloud = false;
+    var hasNonCloud = false;
+    for (final row in rows) {
+      final mountId = row.read<String>('mount_id');
+      if (mountId.startsWith('cloud:')) {
+        hasCloud = true;
+      } else {
+        hasNonCloud = true;
+      }
+    }
+    return (isCloudOnly: hasCloud && !hasNonCloud, rootId: root.id, workKey: root.workKey ?? '');
+  }
+
+  Future<bool> _hydrateDetailOnOpen(int numericId) async {
+    final target = await _resolveCloudDetailTarget(numericId);
+    if (target != null && target.isCloudOnly) {
+      final bridge = cloudUserDataBridge;
+      if (bridge == null || target.workKey.isEmpty) return false;
+      try {
+        return await bridge
+            .hydrateCloudItemDetail(target.rootId, target.workKey)
+            .timeout(const Duration(seconds: 4), onTimeout: () => false);
+      } catch (e) {
+        appLogger.d('Cloud detail hydration error in item($numericId): $e');
+        return false;
+      }
+    }
+    final runner = scrapeRunner;
+    if (runner == null) return false;
+    try {
+      return await runner
+          .hydrateItemDetailsIfNeeded(numericId)
+          .timeout(const Duration(seconds: 4), onTimeout: () => false);
+    } catch (e) {
+      appLogger.d('Lazy hydration error in item($numericId): $e');
+      return false;
+    }
+  }
+
   @override
   Future<MediaItem?> fetchItem(String id) async {
     final item = await _itemById(id, withDetails: true);
     if (item == null) return null;
     final numericId = _id(id);
-    final runner = scrapeRunner;
-    if (numericId != null && runner != null) {
-      try {
-        final hydrated = await runner
-            .hydrateItemDetailsIfNeeded(numericId)
-            .timeout(const Duration(seconds: 4), onTimeout: () => false);
-        if (hydrated) {
-          return (await _itemById(id, withDetails: true)) ?? item;
-        }
-      } catch (e) {
-        appLogger.d('Lazy hydration error in fetchItem($id): $e');
-      }
+    if (numericId != null && await _hydrateDetailOnOpen(numericId)) {
+      return (await _itemById(id, withDetails: true)) ?? item;
     }
     return item;
   }
@@ -545,21 +599,11 @@ class LocalLibraryClient implements MediaServerClient, StreamQualityClient {
     var current = item;
     onItemReady?.call(current);
     final numericId = _id(id);
-    final runner = scrapeRunner;
-    if (numericId != null && runner != null) {
-      try {
-        final hydrated = await runner
-            .hydrateItemDetailsIfNeeded(numericId)
-            .timeout(const Duration(seconds: 4), onTimeout: () => false);
-        if (hydrated) {
-          final refreshed = await _itemById(id, withDetails: true);
-          if (refreshed != null) {
-            current = refreshed;
-            onItemReady?.call(current);
-          }
-        }
-      } catch (e) {
-        appLogger.d('Lazy hydration error in fetchItemWithOnDeck($id): $e');
+    if (numericId != null && await _hydrateDetailOnOpen(numericId)) {
+      final refreshed = await _itemById(id, withDetails: true);
+      if (refreshed != null) {
+        current = refreshed;
+        onItemReady?.call(current);
       }
     }
     MediaItem? onDeck;
@@ -1113,23 +1157,50 @@ class LocalLibraryClient implements MediaServerClient, StreamQualityClient {
 
   // ─── Artwork ───────────────────────────────────────────────────────────
 
-  /// Resolves an artwork source to something an image widget can load: a
-  /// remote URL as it is, a relative TMDB path expanded via [tmdbImageBase],
-  /// or a proxy URL for an image on a mount.
+  /// Resolves an artwork source to something an image widget can load:
+  /// - `mount:<mountId>:<path>` -> local StreamProxy URL
+  /// - Server artwork paths (`/api/v1/...`) -> active `media_library` server
+  /// - Relative TMDB paths (`/abc.jpg`) or remote image URLs -> proxied through
+  ///   our `media_library` server artwork endpoint (never direct to TMDB).
   @override
   String thumbnailUrl(String? path, {int? width, int? height, bool cover = true}) {
-    if (path == null || path.isEmpty) return '';
-    if (!path.startsWith('mount:')) {
-      if (path.startsWith('/') && !path.startsWith('//')) {
-        return TmdbImageUrl.resolve(
-          path,
-          imageBase: tmdbImageBase,
-          size: TmdbImageUrl.sizeForWidth(width, path: path),
-        );
+    final trimmed = path?.trim();
+    if (trimmed == null || trimmed.isEmpty) return '';
+    if (!trimmed.startsWith('mount:')) {
+      final serverBase = metadataServerUrl.trim().replaceAll(RegExp(r'/+$'), '');
+      final token = metadataAccessToken?.trim();
+      final hasToken = token != null && token.isNotEmpty;
+      final size = TmdbImageUrl.sizeForWidth(width, path: trimmed);
+
+      // Already pointing at our server's artwork endpoint (relative or full).
+      if (trimmed.startsWith('/api/v1/')) {
+        if (serverBase.isEmpty) return trimmed;
+        final resolved = '$serverBase$trimmed';
+        if (hasToken && trimmed.startsWith('/api/v1/metadata/artwork') && !trimmed.contains('token=')) {
+          final sep = resolved.contains('?') ? '&' : '?';
+          return '$resolved${sep}token=${Uri.encodeQueryComponent(token)}';
+        }
+        return resolved;
       }
-      return path;
+      if (serverBase.isNotEmpty && trimmed.startsWith('$serverBase/api/v1/')) {
+        if (hasToken && trimmed.contains('/api/v1/metadata/artwork') && !trimmed.contains('token=')) {
+          final sep = trimmed.contains('?') ? '&' : '?';
+          return '$trimmed${sep}token=${Uri.encodeQueryComponent(token)}';
+        }
+        return trimmed;
+      }
+
+      // Proxy relative TMDB paths and remote artwork through our media_library server.
+      if (serverBase.isNotEmpty &&
+          (trimmed.startsWith('/') || trimmed.startsWith('http://') || trimmed.startsWith('https://'))) {
+        final proxyPath = hasToken ? '/api/v1/metadata/artwork' : ServerMetadataProvider.defaultArtworkProxyPath;
+        final tokenPart = hasToken ? '&token=${Uri.encodeQueryComponent(token)}' : '';
+        return '$serverBase$proxyPath?src=${Uri.encodeQueryComponent(trimmed)}&size=${Uri.encodeQueryComponent(size)}$tokenPart';
+      }
+
+      return trimmed;
     }
-    final rest = path.substring('mount:'.length);
+    final rest = trimmed.substring('mount:'.length);
     final separator = rest.indexOf(':');
     if (separator <= 0) return '';
     final mountId = rest.substring(0, separator);
@@ -1772,4 +1843,6 @@ abstract class LocalCloudUserDataBridge {
   Future<void> pushFavorite({required String workKey, required bool isFavorite});
 
   Future<void> pushHideContinue({required String workKey, int seasonNumber = 0, int episodeNumber = 0});
+
+  Future<bool> hydrateCloudItemDetail(int localItemId, String workKey) async => false;
 }

@@ -2731,7 +2731,7 @@
     "tmdbImageBase": "TMDB 圖片位址",
     "manualMatch": "手動匹配",
     "noMatchResults": "沒有結果",
-    "mediaSources": "媒體來源",
+    "mediaSources": "本地掛載",
     "scraperSettingsDescription": "官方中繼資料服務與刮削語言偏好",
     "addScanFolder": "新增目錄",
     "allFolders": "全部目錄（掃描整盤）"

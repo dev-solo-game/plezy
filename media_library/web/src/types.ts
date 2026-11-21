@@ -36,10 +36,11 @@ export interface PlatformOverview {
 }
 
 export interface CacheStats {
-  works: number;
-  seasons: number;
-  people: number;
-  search: number;
+  works?: number;
+  seasons?: number;
+  people?: number;
+  searches?: number;
+  search?: number;
   image_files?: number;
   image_bytes?: number;
 }
@@ -64,25 +65,27 @@ export interface IdentifyQueueStats {
 }
 
 export interface AccountSummary {
-  id: string;
+  account_id: string;
   username: string;
   email?: string;
   status: string;
+  must_change_password?: boolean;
   created_at: number;
-  register_ip?: string;
+  updated_at?: number;
+  registered_ip?: string;
   last_active_at?: number;
   delete_after?: number;
   household_id: string;
   household_name?: string;
   member_count: number;
   device_count: number;
-  source_count: number;
+  source_counts?: Record<string, number>;
   item_count: number;
   file_count: number;
   sidecar_bytes: number;
-  max_sources: number;
-  max_files: number;
-  max_sidecar_bytes: number;
+  quota_max_sources: number;
+  quota_max_files: number;
+  quota_max_sidecar_bytes: number;
 }
 
 export interface InviteCode {

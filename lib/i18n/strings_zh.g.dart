@@ -2691,7 +2691,7 @@ class Translations$storage$zh extends Translations$storage$en {
 	@override String get tmdbImageBase => 'TMDB 图片地址';
 	@override String get manualMatch => '手动匹配';
 	@override String get noMatchResults => '没有结果';
-	@override String get mediaSources => '媒体来源';
+	@override String get mediaSources => '本地挂载';
 	@override String get scraperSettingsDescription => '官方元数据服务与刮削语言偏好';
 	@override String get metadataServiceTitle => '官方元数据服务';
 	@override String get metadataServiceOfficial => '当前使用 TTPlay 官方通用元数据服务';
@@ -2952,7 +2952,7 @@ class Translations$serverAdmin$zh extends Translations$serverAdmin$en {
 	final TranslationsZh _root; // ignore: unused_field
 
 	// Translations
-	@override String get sectionTitle => '自建服务器管理';
+	@override String get sectionTitle => '云端挂载';
 	@override String get mountsTitle => '服务端挂载源';
 	@override String get mountsSubtitle => '添加、编辑、扫描与移除服务器存储挂载';
 	@override String get scraperTitle => '服务端刮削与元数据';
@@ -6594,7 +6594,7 @@ extension on TranslationsZh {
 			'storage.tmdbImageBase' => 'TMDB 图片地址',
 			'storage.manualMatch' => '手动匹配',
 			'storage.noMatchResults' => '没有结果',
-			'storage.mediaSources' => '媒体来源',
+			'storage.mediaSources' => '本地挂载',
 			'storage.scraperSettingsDescription' => '官方元数据服务与刮削语言偏好',
 			'storage.metadataServiceTitle' => '官方元数据服务',
 			'storage.metadataServiceOfficial' => '当前使用 TTPlay 官方通用元数据服务',
@@ -6812,7 +6812,7 @@ extension on TranslationsZh {
 			'session.errInvalidCredentials' => '用户名或密码错误。',
 			'session.errNetwork' => ({required Object error}) => '连接失败：${error}',
 			'session.errServer' => ({required Object error}) => '服务器返回异常：${error}',
-			'serverAdmin.sectionTitle' => '自建服务器管理',
+			'serverAdmin.sectionTitle' => '云端挂载',
 			'serverAdmin.mountsTitle' => '服务端挂载源',
 			'serverAdmin.mountsSubtitle' => '添加、编辑、扫描与移除服务器存储挂载',
 			'serverAdmin.scraperTitle' => '服务端刮削与元数据',

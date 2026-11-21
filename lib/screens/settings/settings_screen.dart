@@ -47,10 +47,7 @@ import '../../widgets/setting_tile.dart';
 import '../../widgets/settings_builder.dart';
 import '../../widgets/settings_section.dart';
 import '../../widgets/system_bottom_inset.dart';
-import '../../profiles/active_profile_provider.dart';
 import 'about_screen.dart';
-import 'add_connection_screen.dart';
-import '../profile/profile_detail_screen.dart';
 import 'account_preferences_screen.dart';
 import 'appearance_settings_screen.dart';
 import 'general_settings_screen.dart';
@@ -63,9 +60,6 @@ import '../storage/lan_devices_screen.dart';
 import '../storage/mounts_screen.dart';
 import '../storage/scraper_settings_screen.dart';
 import '../ttplay_admin/ttplay_admin_guard.dart';
-import '../ttplay_admin/ttplay_external_servers_screen.dart';
-import '../ttplay_admin/ttplay_mounts_screen.dart';
-import '../ttplay_admin/ttplay_scraper_settings_screen.dart';
 import 'logs_screen.dart';
 import 'playback_settings_screen.dart';
 import 'services_settings_screen.dart';
@@ -221,7 +215,6 @@ class _SettingsScreenState extends State<SettingsScreen> with FocusableTab, Moun
   Widget _buildContent(BuildContext sheetContext, {required bool hasLibraries}) {
     final appSession = maybeWatchAppSession(sheetContext);
     final ttplayBinder = maybeWatchTtplayBinder(sheetContext);
-    final isSelfHosted = appSession?.isSelfHosted == true;
     final showSelfHostedAdmin = canUseTtplayAdmin(session: appSession, binder: ttplayBinder);
 
     return Scaffold(
@@ -253,23 +246,21 @@ class _SettingsScreenState extends State<SettingsScreen> with FocusableTab, Moun
                     ],
                   ),
 
-                  if (showSelfHostedAdmin) _buildSelfHostedAdminSection(),
+                  _buildMediaSourcesSection(),
 
-                  if (!isSelfHosted) ...[
-                    _buildMediaSourcesSection(),
-                    const SizedBox(height: 16),
-                    SettingsGroup(
-                      children: [
-                        SettingNavigationTile(
-                          focusNode: _focusTracker.get(_kScraperSettings),
-                          icon: Symbols.travel_explore_rounded,
-                          title: t.storage.scraperSettings,
-                          subtitle: t.storage.scraperSettingsDescription,
-                          destinationBuilder: (_) => const ScraperSettingsScreen(),
-                        ),
-                      ],
-                    ),
-                  ],
+                  if (showSelfHostedAdmin) _buildSelfHostedAdminSection(),
+                  const SizedBox(height: 16),
+                  SettingsGroup(
+                    children: [
+                      SettingNavigationTile(
+                        focusNode: _focusTracker.get(_kScraperSettings),
+                        icon: Symbols.travel_explore_rounded,
+                        title: t.storage.scraperSettings,
+                        subtitle: t.storage.scraperSettingsDescription,
+                        destinationBuilder: (_) => const ScraperSettingsScreen(),
+                      ),
+                    ],
+                  ),
 
                   SettingsGroup(title: t.companionRemote.title, children: [_buildLanDevicesTile()]),
 
@@ -411,60 +402,30 @@ class _SettingsScreenState extends State<SettingsScreen> with FocusableTab, Moun
       children: [
         SettingNavigationTile(
           icon: Symbols.cloud_sync_rounded,
-          title: '云端媒体源（客户端扫描）',
-          subtitle: '管理端到端加密的夸克 / WebDAV / Emby / Jellyfin 媒体源与扫描上报',
+          title: '云端媒体源',
+          subtitle: '管理跨端加密同步的夸克网盘 / WebDAV / SMB / Emby / Jellyfin',
           destinationBuilder: (_) => const CloudSourcesScreen(),
         ),
         SettingNavigationTile(
           icon: Symbols.help_center_rounded,
           title: '云端待匹配中心',
-          subtitle: '查看未识别云端文件、手工匹配并生成自动目录规则',
+          subtitle: '查看未识别云端文件、手工匹配并管理自动目录规则',
           destinationBuilder: (_) => const CloudUnmatchedScreen(),
-        ),
-        SettingNavigationTile(
-          focusNode: _focusTracker.get(_kStorageMounts),
-          icon: Symbols.hard_drive_rounded,
-          title: t.serverAdmin.mountsTitle,
-          subtitle: t.serverAdmin.mountsSubtitle,
-          destinationBuilder: (_) => const TtplayMountsScreen(),
-        ),
-        SettingNavigationTile(
-          focusNode: _focusTracker.get(_kScraperSettings),
-          icon: Symbols.travel_explore_rounded,
-          title: t.serverAdmin.scraperTitle,
-          subtitle: t.serverAdmin.scraperSubtitle,
-          destinationBuilder: (_) => const TtplayScraperSettingsScreen(),
-        ),
-        SettingNavigationTile(
-          icon: Symbols.dns_rounded,
-          title: t.serverAdmin.externalServersTitle,
-          subtitle: t.serverAdmin.externalServersSubtitle,
-          destinationBuilder: (_) => const TtplayExternalServersScreen(),
         ),
       ],
     );
   }
 
   Widget _buildMediaSourcesSection() {
-    final active = context.watch<ActiveProfileProvider?>()?.active;
-
     return SettingsGroup(
       title: t.storage.mediaSources,
       children: [
         SettingNavigationTile(
           focusNode: _focusTracker.get(_kStorageMounts),
-          icon: Symbols.hard_drive_rounded,
+          icon: Symbols.folder_rounded,
           title: t.storage.title,
           subtitle: t.storage.description,
           destinationBuilder: (context) => const MountsScreen(),
-        ),
-        SettingNavigationTile(
-          icon: Symbols.dns_rounded,
-          title: 'Emby / Jellyfin',
-          subtitle: t.addServer.connectToMediaBrowserCardSubtitle,
-          destinationBuilder: (_) => active == null
-              ? const AddConnectionScreen(mediaBrowserOnly: true)
-              : ProfileDetailScreen(profile: active, mediaSourcesOnly: true),
         ),
       ],
     );
